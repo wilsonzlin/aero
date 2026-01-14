@@ -234,6 +234,7 @@ dependencies = [
  "aero-devices",
  "aero-gpu",
  "aero-gpu-vga",
+ "aero-io-snapshot",
  "aero-protocol",
  "memory",
  "pollster",

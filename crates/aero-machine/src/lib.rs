@@ -11081,7 +11081,20 @@ impl snapshot::SnapshotSource for Machine {
             id: snapshot::DeviceId::MEMORY,
             version: V1,
             flags: 0,
-            data: vec![self.chipset.a20().enabled() as u8],
+            data: {
+                // Legacy snapshots stored only A20 enabled state.
+                // Newer snapshots append the platform clock (ns) so time-based device models
+                // (RTC/HPET/AeroGPU vblank scheduling) can be restored deterministically.
+                let mut data = Vec::with_capacity(1 + 8);
+                data.push(self.chipset.a20().enabled() as u8);
+                let now_ns = self
+                    .platform_clock
+                    .as_ref()
+                    .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
+                    .unwrap_or(0);
+                data.extend_from_slice(&now_ns.to_le_bytes());
+                data
+            },
         });
 
         // Accumulated serial output (drained from the UART by `Machine::run_slice`).
@@ -11841,6 +11854,17 @@ impl snapshot::SnapshotTarget for Machine {
                 let enabled = state.data.first().copied().unwrap_or(0) != 0;
                 self.chipset.a20().set_enabled(enabled);
                 self.cpu.state.a20_enabled = enabled;
+
+                // Newer snapshots append the platform clock `now_ns` after the A20 byte. Restore it
+                // *early* so time-based devices (RTC/HPET/AeroGPU vblank scheduling) observe the
+                // correct time during their own `load_state()` calls.
+                if let Some(clock) = &self.platform_clock {
+                    if state.data.len() >= 1 + 8 {
+                        let mut buf = [0u8; 8];
+                        buf.copy_from_slice(&state.data[1..9]);
+                        clock.set_ns(u64::from_le_bytes(buf));
+                    }
+                }
             }
         }
 
@@ -12364,6 +12388,46 @@ impl snapshot::SnapshotTarget for Machine {
                 let mut hpet = hpet.borrow_mut();
                 let mut interrupts = interrupts.borrow_mut();
                 hpet.sync_levels_to_sink(&mut *interrupts);
+            }
+        }
+
+        // Restore AeroGPU after the interrupt controller + PCI INTx router so any restored legacy
+        // INTx level can be re-driven into the sink deterministically.
+        if let (Some(aerogpu_mmio), Some(state)) = (
+            &self.aerogpu_mmio,
+            by_id.remove(&snapshot::DeviceId::AEROGPU),
+        ) {
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *aerogpu_mmio.borrow_mut(),
+            );
+
+            // Ensure the PCI INTx router's level for AeroGPU reflects the restored IRQ bits even if
+            // the snapshot was taken before the machine polled/synced INTx sources.
+            if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
+                let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = aerogpu_mmio.borrow().irq_level();
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                let mut pci_intx = pci_intx.borrow_mut();
+                let mut interrupts = interrupts.borrow_mut();
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
         }
 

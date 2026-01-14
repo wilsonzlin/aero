@@ -5,6 +5,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_bytes, cmd_stream_has_vsync_present_reader,
     decode_cmd_stream_header_le, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotResult};
 use memory::MemoryBus;
 
 use crate::backend::{
@@ -872,6 +874,147 @@ impl AeroGpuExecutor {
         if (regs.irq_enable & irq_bits::FENCE) != 0 {
             regs.irq_status |= irq_bits::FENCE;
         }
+    }
+
+    pub(crate) fn save_snapshot_state(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+
+        enc = enc.u32(self.pending_fences.len() as u32);
+        for entry in &self.pending_fences {
+            let kind = match entry.kind {
+                PendingFenceKind::Immediate => 0u8,
+                PendingFenceKind::Vblank => 1u8,
+            };
+            enc = enc.u64(entry.fence).bool(entry.wants_irq).u8(kind);
+        }
+
+        enc = enc.u32(self.in_flight.len() as u32);
+        for (_fence, entry) in &self.in_flight {
+            let desc = &entry.desc;
+            let kind = match entry.kind {
+                PendingFenceKind::Immediate => 0u8,
+                PendingFenceKind::Vblank => 1u8,
+            };
+            enc = enc
+                .u32(desc.desc_size_bytes)
+                .u32(desc.flags)
+                .u32(desc.context_id)
+                .u32(desc.engine_id)
+                .u64(desc.cmd_gpa)
+                .u32(desc.cmd_size_bytes)
+                .u64(desc.alloc_table_gpa)
+                .u32(desc.alloc_table_size_bytes)
+                .u64(desc.signal_fence)
+                .u8(kind)
+                .bool(entry.completed_backend)
+                .bool(entry.vblank_ready);
+        }
+
+        // `HashSet` iteration order is nondeterministic; sort for canonical encoding.
+        let mut completed: Vec<u64> = self.completed_before_submit.iter().copied().collect();
+        completed.sort_unstable();
+        enc = enc.u32(completed.len() as u32);
+        for fence in completed {
+            enc = enc.u64(fence);
+        }
+
+        enc.finish()
+    }
+
+    pub(crate) fn load_snapshot_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        // These structures are guest-controlled (via ring submissions) and can grow without
+        // bound. Snapshots may come from untrusted sources, so cap sizes to keep decode bounded.
+        const MAX_PENDING_FENCES: usize = 65_536;
+        const MAX_IN_FLIGHT: usize = 65_536;
+        const MAX_COMPLETED_BEFORE_SUBMIT: usize = 65_536;
+
+        let mut d = Decoder::new(bytes);
+
+        let pending_count = d.u32()? as usize;
+        if pending_count > MAX_PENDING_FENCES {
+            return Err(SnapshotError::InvalidFieldEncoding("pending_fences"));
+        }
+        let mut pending_fences = VecDeque::new();
+        pending_fences
+            .try_reserve_exact(pending_count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+        for _ in 0..pending_count {
+            let fence = d.u64()?;
+            let wants_irq = d.bool()?;
+            let kind = match d.u8()? {
+                0 => PendingFenceKind::Immediate,
+                1 => PendingFenceKind::Vblank,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("pending_fences.kind")),
+            };
+            pending_fences.push_back(PendingFenceCompletion {
+                fence,
+                wants_irq,
+                kind,
+            });
+        }
+
+        let in_flight_count = d.u32()? as usize;
+        if in_flight_count > MAX_IN_FLIGHT {
+            return Err(SnapshotError::InvalidFieldEncoding("in_flight"));
+        }
+        let mut in_flight = BTreeMap::new();
+        for _ in 0..in_flight_count {
+            let desc = AeroGpuSubmitDesc {
+                desc_size_bytes: d.u32()?,
+                flags: d.u32()?,
+                context_id: d.u32()?,
+                engine_id: d.u32()?,
+                cmd_gpa: d.u64()?,
+                cmd_size_bytes: d.u32()?,
+                alloc_table_gpa: d.u64()?,
+                alloc_table_size_bytes: d.u32()?,
+                signal_fence: d.u64()?,
+            };
+            let kind = match d.u8()? {
+                0 => PendingFenceKind::Immediate,
+                1 => PendingFenceKind::Vblank,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("in_flight.kind")),
+            };
+            let completed_backend = d.bool()?;
+            let vblank_ready = d.bool()?;
+
+            if in_flight
+                .insert(
+                    desc.signal_fence,
+                    InFlightSubmission {
+                        desc,
+                        kind,
+                        completed_backend,
+                        vblank_ready,
+                    },
+                )
+                .is_some()
+            {
+                return Err(SnapshotError::InvalidFieldEncoding("in_flight.duplicate_fence"));
+            }
+        }
+
+        let completed_count = d.u32()? as usize;
+        if completed_count > MAX_COMPLETED_BEFORE_SUBMIT {
+            return Err(SnapshotError::InvalidFieldEncoding("completed_before_submit"));
+        }
+        let mut completed_before_submit = HashSet::new();
+        completed_before_submit
+            .try_reserve(completed_count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+        for _ in 0..completed_count {
+            completed_before_submit.insert(d.u64()?);
+        }
+
+        d.finish()?;
+
+        // Apply decoded state.
+        self.last_submissions.clear();
+        self.pending_fences = pending_fences;
+        self.in_flight = in_flight;
+        self.completed_before_submit = completed_before_submit;
+
+        Ok(())
     }
 }
 

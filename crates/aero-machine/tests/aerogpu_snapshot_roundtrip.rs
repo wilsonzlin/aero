@@ -1,6 +1,7 @@
-use aero_devices::pci::PciBdf;
+use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_devices::pci::{profile, PciBdf, PciInterruptPin};
 use aero_machine::{Machine, MachineConfig, VBE_LFB_OFFSET};
-use aero_protocol::aerogpu::aerogpu_pci;
+use aero_protocol::aerogpu::aerogpu_pci as aerogpu_pci;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -122,7 +123,6 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
 
     // Restore into a fresh machine and validate VRAM + scanout state survives.
     let mut vm2 = Machine::new(cfg).unwrap();
-    vm2.reset();
     vm2.restore_snapshot_bytes(&snap).unwrap();
 
     // Legacy window bytes.
@@ -133,4 +133,138 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     assert_eq!(vm2.display_resolution(), (width, height));
     let fb_after = vm2.display_framebuffer();
     assert_eq!(fb_after[0..4], fb_before[0..4]);
+}
+
+#[test]
+fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 4 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        // Keep this test focused on AeroGPU + PCI snapshot plumbing.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).expect("machine init should succeed");
+    // Enable A20 so high MMIO addresses are not masked.
+    src.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = profile::AEROGPU.bdf;
+    let (bar0_base, gsi) = {
+        let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+        let pci_intx = src.pci_intx_router().expect("pc platform enabled");
+        let bar0 = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0)
+        };
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        (bar0, gsi)
+    };
+    assert!(bar0_base != 0, "AeroGPU BAR0 must be assigned by BIOS POST");
+    let bar0 = bar0_base as u64;
+
+    // Enable scanout + vblank IRQ so vblank ticks both advance counters and latch an interrupt bit.
+    src.write_physical_u32(bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    src.write_physical_u32(
+        bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_IRQ_ENABLE),
+        aerogpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK,
+    );
+
+    let period = u64::from(src.read_physical_u32(
+        bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
+    ));
+    assert!(period > 0, "vblank period must be non-zero when vblank feature is enabled");
+
+    // Seed the first vblank deadline at t=0 so ticking by one full period produces the first edge.
+    src.poll_pci_intx_lines();
+
+    src.tick_platform(period);
+    src.poll_pci_intx_lines();
+    src.tick_platform(period);
+    src.poll_pci_intx_lines();
+    assert_eq!(
+        src.read_physical_u64(
+            bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO),
+        ),
+        2
+    );
+    assert_eq!(
+        src.read_physical_u64(
+            bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO),
+        ),
+        2 * period
+    );
+
+    // Advance half a period and snapshot mid-frame.
+    let half1 = period / 2;
+    let half2 = period - half1;
+    src.tick_platform(half1);
+    assert_eq!(
+        src.read_physical_u64(
+            bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO),
+        ),
+        2
+    );
+
+    // Intentionally desynchronize PCI INTx router state (GSI low) from the AeroGPU device's
+    // restored pending IRQ state (IRQ status bit still set) to ensure restore re-drives the INTx
+    // level from device state.
+    {
+        let interrupts = src.platform_interrupts().expect("pc platform enabled");
+        let pci_intx = src.pci_intx_router().expect("pc platform enabled");
+        pci_intx
+            .borrow_mut()
+            .set_intx_level(bdf, PciInterruptPin::IntA, false, &mut *interrupts.borrow_mut());
+        assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+    }
+
+    let snapshot = src.take_snapshot_full().expect("snapshot should succeed");
+
+    let mut dst = Machine::new(cfg).expect("machine init should succeed");
+    // Defensive: enable A20 before restore so RAM replay is safe even if snapshot sections reorder.
+    dst.io_write(A20_GATE_PORT, 1, 0x02);
+    dst.restore_snapshot_bytes(&snapshot)
+        .expect("snapshot restore should succeed");
+
+    // Re-drive INTx levels during restore (see `Machine::restore_device_states`).
+    let interrupts = dst.platform_interrupts().expect("pc platform enabled");
+    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+
+    // Continue ticking from the restored timebase; the next half period should reach the third
+    // vblank exactly.
+    dst.tick_platform(half2);
+    dst.poll_pci_intx_lines();
+
+    // Re-read the BAR0 base after restore (PCI config is restored via the `PCI_CFG` device state).
+    let bar0 = {
+        let pci_cfg = dst.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .and_then(|cfg| cfg.bar_range(0))
+            .map(|range| range.base as u64)
+            .unwrap_or(0)
+    };
+    assert_eq!(
+        dst.read_physical_u64(
+            bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO),
+        ),
+        3
+    );
+    assert_eq!(
+        dst.read_physical_u64(
+            bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO),
+        ),
+        3 * period
+    );
 }

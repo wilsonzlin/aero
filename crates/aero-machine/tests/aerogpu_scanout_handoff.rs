@@ -264,7 +264,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (0, 0));
     assert!(m.display_framebuffer().is_empty());
 
-    // Reset returns scanout ownership to legacy.
+    // Reset remains in legacy.
     m.reset();
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);

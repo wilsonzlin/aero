@@ -18,6 +18,7 @@ aero-devices = { path = "../devices" }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-gpu = { path = "../aero-gpu", optional = true }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 pollster = { version = "0.3", optional = true }
 

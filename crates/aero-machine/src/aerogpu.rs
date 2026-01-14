@@ -10,6 +10,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
@@ -1125,6 +1128,9 @@ impl AeroGpuMmioDevice {
         let Some(interval_ns) = self.vblank_interval_ns else {
             return;
         };
+        if interval_ns == 0 {
+            return;
+        }
 
         // When scanout is disabled, stop vblank scheduling and clear any pending vblank IRQ.
         if !self.scanout0_enable {
@@ -1133,9 +1139,17 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        let mut next = self
-            .next_vblank_ns
-            .unwrap_or(now_ns.saturating_add(interval_ns));
+        let mut next = self.next_vblank_ns.unwrap_or_else(|| {
+            // Schedule the next vblank edge deterministically relative to the machine's timebase.
+            // Align edges to the vblank period so restores can resume pacing from the restored
+            // `now_ns` without needing to snapshot a separate "next deadline" field.
+            let rem = now_ns % interval_ns;
+            if rem == 0 {
+                now_ns.saturating_add(interval_ns)
+            } else {
+                now_ns.saturating_add(interval_ns.saturating_sub(rem))
+            }
+        });
         if now_ns < next {
             self.next_vblank_ns = Some(next);
             return;
@@ -1159,7 +1173,12 @@ impl AeroGpuMmioDevice {
 
             // Avoid unbounded catch-up work if the host stalls for a very long time.
             if ticks >= 1024 {
-                next = now_ns.saturating_add(interval_ns);
+                let rem = now_ns % interval_ns;
+                next = if rem == 0 {
+                    now_ns.saturating_add(interval_ns)
+                } else {
+                    now_ns.saturating_add(interval_ns.saturating_sub(rem))
+                };
                 break;
             }
         }
@@ -1700,6 +1719,12 @@ impl AeroGpuMmioDevice {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
+                }
+                if !new_enable {
+                    // If the guest explicitly disables scanout, revert ownership back to legacy
+                    // VGA/VBE presentation. This matches the host-visible scanout handoff contract:
+                    // WDDM owns scanout only while `SCANOUT0_ENABLE=1` with a valid configuration.
+                    self.wddm_scanout_active = false;
                 }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -2361,5 +2386,281 @@ mod tests {
 
         let out = state.read_rgba8888(&mut mem).unwrap();
         assert_eq!(out, vec![0x0000_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]);
+    }
+}
+
+impl IoSnapshot for AeroGpuMmioDevice {
+    const DEVICE_ID: [u8; 4] = *b"AGPU";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ABI_VERSION: u16 = 1;
+        const TAG_FEATURES: u16 = 2;
+        const TAG_RING_GPA: u16 = 3;
+        const TAG_RING_SIZE_BYTES: u16 = 4;
+        const TAG_RING_CONTROL: u16 = 5;
+        const TAG_FENCE_GPA: u16 = 6;
+        const TAG_COMPLETED_FENCE: u16 = 7;
+        const TAG_IRQ_STATUS: u16 = 8;
+        const TAG_IRQ_ENABLE: u16 = 9;
+
+        const TAG_SCANOUT0_ENABLE: u16 = 10;
+        const TAG_SCANOUT0_WIDTH: u16 = 11;
+        const TAG_SCANOUT0_HEIGHT: u16 = 12;
+        const TAG_SCANOUT0_FORMAT: u16 = 13;
+        const TAG_SCANOUT0_PITCH_BYTES: u16 = 14;
+        const TAG_SCANOUT0_FB_GPA: u16 = 15;
+        const TAG_SCANOUT0_VBLANK_SEQ: u16 = 16;
+        const TAG_SCANOUT0_VBLANK_TIME_NS: u16 = 17;
+        const TAG_SCANOUT0_VBLANK_PERIOD_NS: u16 = 18;
+
+        const TAG_VBLANK_INTERVAL_NS: u16 = 19;
+        const TAG_NEXT_VBLANK_NS: u16 = 20;
+        const TAG_WDDM_SCANOUT_ACTIVE: u16 = 21;
+
+        const TAG_CURSOR_ENABLE: u16 = 22;
+        const TAG_CURSOR_X: u16 = 23;
+        const TAG_CURSOR_Y: u16 = 24;
+        const TAG_CURSOR_HOT_X: u16 = 25;
+        const TAG_CURSOR_HOT_Y: u16 = 26;
+        const TAG_CURSOR_WIDTH: u16 = 27;
+        const TAG_CURSOR_HEIGHT: u16 = 28;
+        const TAG_CURSOR_FORMAT: u16 = 29;
+        const TAG_CURSOR_FB_GPA: u16 = 30;
+        const TAG_CURSOR_PITCH_BYTES: u16 = 31;
+
+        const TAG_DOORBELL_PENDING: u16 = 32;
+        const TAG_RING_RESET_PENDING: u16 = 33;
+
+        // Scanout dirty flag exists only when atomic shared scanout is enabled.
+        const TAG_SCANOUT0_DIRTY: u16 = 34;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u32(TAG_ABI_VERSION, self.abi_version);
+        w.field_u64(TAG_FEATURES, self.supported_features);
+        w.field_u64(TAG_RING_GPA, self.ring_gpa);
+        w.field_u32(TAG_RING_SIZE_BYTES, self.ring_size_bytes);
+        w.field_u32(TAG_RING_CONTROL, self.ring_control);
+        w.field_u64(TAG_FENCE_GPA, self.fence_gpa);
+        w.field_u64(TAG_COMPLETED_FENCE, self.completed_fence);
+        w.field_u32(TAG_IRQ_STATUS, self.irq_status);
+        w.field_u32(TAG_IRQ_ENABLE, self.irq_enable);
+
+        w.field_bool(TAG_SCANOUT0_ENABLE, self.scanout0_enable);
+        w.field_u32(TAG_SCANOUT0_WIDTH, self.scanout0_width);
+        w.field_u32(TAG_SCANOUT0_HEIGHT, self.scanout0_height);
+        w.field_u32(TAG_SCANOUT0_FORMAT, self.scanout0_format);
+        w.field_u32(TAG_SCANOUT0_PITCH_BYTES, self.scanout0_pitch_bytes);
+        w.field_u64(TAG_SCANOUT0_FB_GPA, self.scanout0_fb_gpa);
+        w.field_u64(TAG_SCANOUT0_VBLANK_SEQ, self.scanout0_vblank_seq);
+        w.field_u64(TAG_SCANOUT0_VBLANK_TIME_NS, self.scanout0_vblank_time_ns);
+        w.field_u32(TAG_SCANOUT0_VBLANK_PERIOD_NS, self.scanout0_vblank_period_ns);
+
+        if let Some(interval) = self.vblank_interval_ns {
+            w.field_u64(TAG_VBLANK_INTERVAL_NS, interval);
+        }
+        if let Some(next) = self.next_vblank_ns {
+            w.field_u64(TAG_NEXT_VBLANK_NS, next);
+        }
+        w.field_bool(TAG_WDDM_SCANOUT_ACTIVE, self.wddm_scanout_active);
+
+        w.field_bool(TAG_CURSOR_ENABLE, self.cursor_enable);
+        w.field_i32(TAG_CURSOR_X, self.cursor_x);
+        w.field_i32(TAG_CURSOR_Y, self.cursor_y);
+        w.field_u32(TAG_CURSOR_HOT_X, self.cursor_hot_x);
+        w.field_u32(TAG_CURSOR_HOT_Y, self.cursor_hot_y);
+        w.field_u32(TAG_CURSOR_WIDTH, self.cursor_width);
+        w.field_u32(TAG_CURSOR_HEIGHT, self.cursor_height);
+        w.field_u32(TAG_CURSOR_FORMAT, self.cursor_format);
+        w.field_u64(TAG_CURSOR_FB_GPA, self.cursor_fb_gpa);
+        w.field_u32(TAG_CURSOR_PITCH_BYTES, self.cursor_pitch_bytes);
+
+        w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
+        w.field_bool(TAG_RING_RESET_PENDING, self.ring_reset_pending);
+
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            w.field_bool(TAG_SCANOUT0_DIRTY, self.scanout0_dirty);
+        }
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ABI_VERSION: u16 = 1;
+        const TAG_FEATURES: u16 = 2;
+        const TAG_RING_GPA: u16 = 3;
+        const TAG_RING_SIZE_BYTES: u16 = 4;
+        const TAG_RING_CONTROL: u16 = 5;
+        const TAG_FENCE_GPA: u16 = 6;
+        const TAG_COMPLETED_FENCE: u16 = 7;
+        const TAG_IRQ_STATUS: u16 = 8;
+        const TAG_IRQ_ENABLE: u16 = 9;
+
+        const TAG_SCANOUT0_ENABLE: u16 = 10;
+        const TAG_SCANOUT0_WIDTH: u16 = 11;
+        const TAG_SCANOUT0_HEIGHT: u16 = 12;
+        const TAG_SCANOUT0_FORMAT: u16 = 13;
+        const TAG_SCANOUT0_PITCH_BYTES: u16 = 14;
+        const TAG_SCANOUT0_FB_GPA: u16 = 15;
+        const TAG_SCANOUT0_VBLANK_SEQ: u16 = 16;
+        const TAG_SCANOUT0_VBLANK_TIME_NS: u16 = 17;
+        const TAG_SCANOUT0_VBLANK_PERIOD_NS: u16 = 18;
+
+        const TAG_VBLANK_INTERVAL_NS: u16 = 19;
+        const TAG_NEXT_VBLANK_NS: u16 = 20;
+        const TAG_WDDM_SCANOUT_ACTIVE: u16 = 21;
+
+        const TAG_CURSOR_ENABLE: u16 = 22;
+        const TAG_CURSOR_X: u16 = 23;
+        const TAG_CURSOR_Y: u16 = 24;
+        const TAG_CURSOR_HOT_X: u16 = 25;
+        const TAG_CURSOR_HOT_Y: u16 = 26;
+        const TAG_CURSOR_WIDTH: u16 = 27;
+        const TAG_CURSOR_HEIGHT: u16 = 28;
+        const TAG_CURSOR_FORMAT: u16 = 29;
+        const TAG_CURSOR_FB_GPA: u16 = 30;
+        const TAG_CURSOR_PITCH_BYTES: u16 = 31;
+
+        const TAG_DOORBELL_PENDING: u16 = 32;
+        const TAG_RING_RESET_PENDING: u16 = 33;
+
+        const TAG_SCANOUT0_DIRTY: u16 = 34;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let abi_version = r
+            .u32(TAG_ABI_VERSION)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing abi_version"))?;
+        let features = r
+            .u64(TAG_FEATURES)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing features"))?;
+        let ring_gpa = r
+            .u64(TAG_RING_GPA)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_gpa"))?;
+        let ring_size_bytes = r
+            .u32(TAG_RING_SIZE_BYTES)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_size_bytes"))?;
+        let ring_control = r
+            .u32(TAG_RING_CONTROL)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_control"))?;
+        let fence_gpa = r
+            .u64(TAG_FENCE_GPA)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing fence_gpa"))?;
+        let completed_fence = r
+            .u64(TAG_COMPLETED_FENCE)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing completed_fence"))?;
+        let irq_status = r
+            .u32(TAG_IRQ_STATUS)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing irq_status"))?;
+        let irq_enable = r
+            .u32(TAG_IRQ_ENABLE)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing irq_enable"))?;
+
+        let scanout0_enable = r
+            .bool(TAG_SCANOUT0_ENABLE)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_enable"))?;
+        let scanout0_width = r
+            .u32(TAG_SCANOUT0_WIDTH)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_width"))?;
+        let scanout0_height = r
+            .u32(TAG_SCANOUT0_HEIGHT)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_height"))?;
+        let scanout0_format = r
+            .u32(TAG_SCANOUT0_FORMAT)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_format"))?;
+        let scanout0_pitch_bytes = r
+            .u32(TAG_SCANOUT0_PITCH_BYTES)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_pitch_bytes"))?;
+        let scanout0_fb_gpa = r
+            .u64(TAG_SCANOUT0_FB_GPA)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_fb_gpa"))?;
+        let scanout0_vblank_seq = r
+            .u64(TAG_SCANOUT0_VBLANK_SEQ)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_seq"))?;
+        let scanout0_vblank_time_ns = r
+            .u64(TAG_SCANOUT0_VBLANK_TIME_NS)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_time_ns"))?;
+        let scanout0_vblank_period_ns = r
+            .u32(TAG_SCANOUT0_VBLANK_PERIOD_NS)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_period_ns"))?;
+
+        let vblank_interval_ns = r.u64(TAG_VBLANK_INTERVAL_NS)?;
+        let next_vblank_ns = r.u64(TAG_NEXT_VBLANK_NS)?;
+        let wddm_scanout_active = r.bool(TAG_WDDM_SCANOUT_ACTIVE)?.unwrap_or(false);
+
+        let cursor_enable = r.bool(TAG_CURSOR_ENABLE)?.unwrap_or(false);
+        let cursor_x = r.i32(TAG_CURSOR_X)?.unwrap_or(0);
+        let cursor_y = r.i32(TAG_CURSOR_Y)?.unwrap_or(0);
+        let cursor_hot_x = r.u32(TAG_CURSOR_HOT_X)?.unwrap_or(0);
+        let cursor_hot_y = r.u32(TAG_CURSOR_HOT_Y)?.unwrap_or(0);
+        let cursor_width = r.u32(TAG_CURSOR_WIDTH)?.unwrap_or(0);
+        let cursor_height = r.u32(TAG_CURSOR_HEIGHT)?.unwrap_or(0);
+        let cursor_format = r.u32(TAG_CURSOR_FORMAT)?.unwrap_or(0);
+        let cursor_fb_gpa = r.u64(TAG_CURSOR_FB_GPA)?.unwrap_or(0);
+        let cursor_pitch_bytes = r.u32(TAG_CURSOR_PITCH_BYTES)?.unwrap_or(0);
+
+        let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
+        let ring_reset_pending = r.bool(TAG_RING_RESET_PENDING)?.unwrap_or(false);
+
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        let scanout0_dirty = r.bool(TAG_SCANOUT0_DIRTY)?.unwrap_or(true);
+
+        // Apply decoded state.
+        self.abi_version = abi_version;
+        // Never advertise unsupported feature bits even if a corrupted snapshot attempts to.
+        self.supported_features = features & supported_features();
+
+        self.ring_gpa = ring_gpa;
+        self.ring_size_bytes = ring_size_bytes;
+        self.ring_control = ring_control;
+
+        self.fence_gpa = fence_gpa;
+        self.completed_fence = completed_fence;
+
+        self.irq_status = irq_status;
+        self.irq_enable = irq_enable;
+
+        self.scanout0_enable = scanout0_enable;
+        self.scanout0_width = scanout0_width;
+        self.scanout0_height = scanout0_height;
+        self.scanout0_format = scanout0_format;
+        self.scanout0_pitch_bytes = scanout0_pitch_bytes;
+        self.scanout0_fb_gpa = scanout0_fb_gpa;
+        self.scanout0_vblank_seq = scanout0_vblank_seq;
+        self.scanout0_vblank_time_ns = scanout0_vblank_time_ns;
+        self.scanout0_vblank_period_ns = scanout0_vblank_period_ns;
+
+        self.vblank_interval_ns = vblank_interval_ns;
+        self.next_vblank_ns = next_vblank_ns;
+        self.wddm_scanout_active = wddm_scanout_active;
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            self.scanout0_dirty = scanout0_dirty;
+        }
+
+        self.cursor_enable = cursor_enable;
+        self.cursor_x = cursor_x;
+        self.cursor_y = cursor_y;
+        self.cursor_hot_x = cursor_hot_x;
+        self.cursor_hot_y = cursor_hot_y;
+        self.cursor_width = cursor_width;
+        self.cursor_height = cursor_height;
+        self.cursor_format = cursor_format;
+        self.cursor_fb_gpa = cursor_fb_gpa;
+        self.cursor_pitch_bytes = cursor_pitch_bytes;
+
+        self.doorbell_pending = doorbell_pending;
+        self.ring_reset_pending = ring_reset_pending;
+
+        // Defensive: if scanout or vblank pacing is disabled, do not leave a pending deadline.
+        if self.vblank_interval_ns.is_none() || !self.scanout0_enable {
+            self.next_vblank_ns = None;
+            self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+        }
+
+        Ok(())
     }
 }

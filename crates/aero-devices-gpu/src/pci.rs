@@ -5,6 +5,10 @@ use std::rc::Rc;
 
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
 use aero_protocol::aerogpu::aerogpu_pci as proto;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use memory::{MemoryBus, MmioHandler};
 
 use crate::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
@@ -821,4 +825,226 @@ fn all_ones(size: usize) -> u64 {
         return u64::MAX;
     }
     (1u64 << (size * 8)) - 1
+}
+
+impl IoSnapshot for AeroGpuPciDevice {
+    const DEVICE_ID: [u8; 4] = *b"AGPU";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_REGS: u16 = 1;
+        const TAG_EXECUTOR: u16 = 2;
+        const TAG_VBLANK_PERIOD_NS: u16 = 3;
+        const TAG_NEXT_VBLANK_DEADLINE_NS: u16 = 4;
+        const TAG_BOOT_TIME_NS: u16 = 5;
+        const TAG_VBLANK_IRQ_ENABLE_PENDING: u16 = 6;
+        const TAG_DOORBELL_PENDING: u16 = 7;
+        const TAG_RING_RESET_PENDING_DMA: u16 = 8;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_bytes(TAG_REGS, encode_regs(&self.regs));
+        w.field_bytes(TAG_EXECUTOR, self.executor.save_snapshot_state());
+        if let Some(vblank_period_ns) = self.vblank_period_ns {
+            w.field_u64(TAG_VBLANK_PERIOD_NS, vblank_period_ns);
+        }
+        if let Some(next) = self.next_vblank_deadline_ns {
+            w.field_u64(TAG_NEXT_VBLANK_DEADLINE_NS, next);
+        }
+        if let Some(boot) = self.boot_time_ns {
+            w.field_u64(TAG_BOOT_TIME_NS, boot);
+        }
+        w.field_bool(TAG_VBLANK_IRQ_ENABLE_PENDING, self.vblank_irq_enable_pending);
+        w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
+        w.field_bool(TAG_RING_RESET_PENDING_DMA, self.ring_reset_pending_dma);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_REGS: u16 = 1;
+        const TAG_EXECUTOR: u16 = 2;
+        const TAG_VBLANK_PERIOD_NS: u16 = 3;
+        const TAG_NEXT_VBLANK_DEADLINE_NS: u16 = 4;
+        const TAG_BOOT_TIME_NS: u16 = 5;
+        const TAG_VBLANK_IRQ_ENABLE_PENDING: u16 = 6;
+        const TAG_DOORBELL_PENDING: u16 = 7;
+        const TAG_RING_RESET_PENDING_DMA: u16 = 8;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let regs = match r.bytes(TAG_REGS) {
+            Some(buf) => decode_regs(buf)?,
+            None => return Err(SnapshotError::InvalidFieldEncoding("missing regs")),
+        };
+
+        let vblank_period_ns = r.u64(TAG_VBLANK_PERIOD_NS)?;
+        let next_vblank_deadline_ns = r.u64(TAG_NEXT_VBLANK_DEADLINE_NS)?;
+        let boot_time_ns = r.u64(TAG_BOOT_TIME_NS)?;
+        let vblank_irq_enable_pending = r.bool(TAG_VBLANK_IRQ_ENABLE_PENDING)?.unwrap_or(false);
+        let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
+        let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
+
+        // Executor state is optional for forward/backward compatibility; missing means "reset".
+        if let Some(exec_bytes) = r.bytes(TAG_EXECUTOR) {
+            self.executor.load_snapshot_state(exec_bytes)?;
+        } else {
+            self.executor.reset();
+            self.executor.last_submissions.clear();
+        }
+
+        self.regs = regs;
+        self.vblank_period_ns = vblank_period_ns;
+        self.next_vblank_deadline_ns = next_vblank_deadline_ns;
+        self.boot_time_ns = boot_time_ns;
+        self.vblank_irq_enable_pending = vblank_irq_enable_pending;
+        self.doorbell_pending = doorbell_pending;
+        self.ring_reset_pending_dma = ring_reset_pending_dma;
+
+        // If vblank is disabled or scanout is off, ensure no vblank deadline remains scheduled.
+        if self.vblank_period_ns.is_none() || !self.regs.scanout0.enable {
+            self.next_vblank_deadline_ns = None;
+        }
+
+        self.update_irq_level();
+        Ok(())
+    }
+}
+
+fn encode_regs(regs: &AeroGpuRegs) -> Vec<u8> {
+    Encoder::new()
+        .u32(regs.abi_version)
+        .u64(regs.features)
+        .u64(regs.ring_gpa)
+        .u32(regs.ring_size_bytes)
+        .u32(regs.ring_control)
+        .u64(regs.fence_gpa)
+        .u64(regs.completed_fence)
+        .u32(regs.irq_status)
+        .u32(regs.irq_enable)
+        // error reporting
+        .u32(regs.error_code)
+        .u64(regs.error_fence)
+        .u32(regs.error_count)
+        .u64(regs.current_submission_fence)
+        // scanout0
+        .bool(regs.scanout0.enable)
+        .u32(regs.scanout0.width)
+        .u32(regs.scanout0.height)
+        .u32(regs.scanout0.format as u32)
+        .u32(regs.scanout0.pitch_bytes)
+        .u64(regs.scanout0.fb_gpa)
+        // vblank
+        .u64(regs.scanout0_vblank_seq)
+        .u64(regs.scanout0_vblank_time_ns)
+        .u32(regs.scanout0_vblank_period_ns)
+        // cursor
+        .bool(regs.cursor.enable)
+        .i32(regs.cursor.x)
+        .i32(regs.cursor.y)
+        .u32(regs.cursor.hot_x)
+        .u32(regs.cursor.hot_y)
+        .u32(regs.cursor.width)
+        .u32(regs.cursor.height)
+        .u32(regs.cursor.format as u32)
+        .u64(regs.cursor.fb_gpa)
+        .u32(regs.cursor.pitch_bytes)
+        // stats (not guest-visible, but deterministic for host debugging)
+        .u64(regs.stats.doorbells)
+        .u64(regs.stats.submissions)
+        .u64(regs.stats.malformed_submissions)
+        .u64(regs.stats.gpu_exec_errors)
+        .finish()
+}
+
+fn decode_regs(bytes: &[u8]) -> SnapshotResult<AeroGpuRegs> {
+    let mut d = Decoder::new(bytes);
+
+    let abi_version = d.u32()?;
+    let features = d.u64()?;
+    let ring_gpa = d.u64()?;
+    let ring_size_bytes = d.u32()?;
+    let ring_control = d.u32()?;
+    let fence_gpa = d.u64()?;
+    let completed_fence = d.u64()?;
+    let irq_status = d.u32()?;
+    let irq_enable = d.u32()?;
+
+    let error_code = d.u32()?;
+    let error_fence = d.u64()?;
+    let error_count = d.u32()?;
+    let current_submission_fence = d.u64()?;
+
+    let scanout0_enable = d.bool()?;
+    let scanout0_width = d.u32()?;
+    let scanout0_height = d.u32()?;
+    let scanout0_format = AeroGpuFormat::from_u32(d.u32()?);
+    let scanout0_pitch_bytes = d.u32()?;
+    let scanout0_fb_gpa = d.u64()?;
+
+    let scanout0_vblank_seq = d.u64()?;
+    let scanout0_vblank_time_ns = d.u64()?;
+    let scanout0_vblank_period_ns = d.u32()?;
+
+    let cursor_enable = d.bool()?;
+    let cursor_x = d.i32()?;
+    let cursor_y = d.i32()?;
+    let cursor_hot_x = d.u32()?;
+    let cursor_hot_y = d.u32()?;
+    let cursor_width = d.u32()?;
+    let cursor_height = d.u32()?;
+    let cursor_format = AeroGpuFormat::from_u32(d.u32()?);
+    let cursor_fb_gpa = d.u64()?;
+    let cursor_pitch_bytes = d.u32()?;
+
+    let stats_doorbells = d.u64()?;
+    let stats_submissions = d.u64()?;
+    let stats_malformed_submissions = d.u64()?;
+    let stats_gpu_exec_errors = d.u64()?;
+
+    d.finish()?;
+
+    Ok(AeroGpuRegs {
+        abi_version,
+        features,
+        ring_gpa,
+        ring_size_bytes,
+        ring_control,
+        fence_gpa,
+        completed_fence,
+        irq_status,
+        irq_enable,
+        error_code,
+        error_fence,
+        error_count,
+        current_submission_fence,
+        scanout0: crate::scanout::AeroGpuScanoutConfig {
+            enable: scanout0_enable,
+            width: scanout0_width,
+            height: scanout0_height,
+            format: scanout0_format,
+            pitch_bytes: scanout0_pitch_bytes,
+            fb_gpa: scanout0_fb_gpa,
+        },
+        scanout0_vblank_seq,
+        scanout0_vblank_time_ns,
+        scanout0_vblank_period_ns,
+        cursor: crate::scanout::AeroGpuCursorConfig {
+            enable: cursor_enable,
+            x: cursor_x,
+            y: cursor_y,
+            hot_x: cursor_hot_x,
+            hot_y: cursor_hot_y,
+            width: cursor_width,
+            height: cursor_height,
+            format: cursor_format,
+            fb_gpa: cursor_fb_gpa,
+            pitch_bytes: cursor_pitch_bytes,
+        },
+        stats: crate::regs::AeroGpuStats {
+            doorbells: stats_doorbells,
+            submissions: stats_submissions,
+            malformed_submissions: stats_malformed_submissions,
+            gpu_exec_errors: stats_gpu_exec_errors,
+        },
+    })
 }
