@@ -823,9 +823,9 @@ D3d9TraceCall::~D3d9TraceCall() {
     return;
   }
 
+  const char* name = func_name(func_);
   const bool should_dump_on_fail = g_trace_dump_on_fail && FAILED(hr_);
-  const bool should_dump_on_stub =
-      g_trace_dump_on_stub && std::strstr(func_name(func_), "(stub)") != nullptr;
+  const bool should_dump_on_stub = g_trace_dump_on_stub && std::strstr(name, "(stub)") != nullptr;
 
   if (!should_dump_on_fail && !should_dump_on_stub) {
     return;
@@ -845,7 +845,7 @@ D3d9TraceCall::~D3d9TraceCall() {
     }
   }
 
-  dump_trace_impl(func_name(func_));
+  dump_trace_impl(name);
 }
 
 } // namespace aerogpu
