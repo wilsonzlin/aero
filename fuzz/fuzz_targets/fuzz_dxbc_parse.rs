@@ -42,6 +42,7 @@ const COMMON_FOURCCS: &[FourCC] = &[
     FourCC(*b"SHDR"),
     FourCC(*b"SHEX"),
     FourCC(*b"RDEF"),
+    FourCC(*b"RD11"),
     FourCC(*b"STAT"),
     FourCC(*b"CTAB"),
     FourCC(*b"SPDB"),
@@ -102,7 +103,7 @@ fn fuzz_reflection_decoders(fourcc: FourCC, bytes: &[u8]) {
         return;
     }
     match fourcc.0 {
-        [b'R', b'D', b'E', b'F'] => {
+        [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] => {
             let _ = aero_dxbc::parse_rdef_chunk_for_fourcc(fourcc, bytes);
         }
         [b'C', b'T', b'A', b'B'] => {
@@ -163,6 +164,20 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         let _ = dxbc.get_signature(FourCC(*b"PSGN"));
         let _ = aero_d3d11::parse_signatures(&dxbc);
     }
+
+    // Exercise higher-level aero-dxbc reflection helpers (`get_rdef`/`get_ctab`), but only when
+    // all reflection chunks are within conservative size caps. These helpers scan the whole chunk
+    // list and parse the first matching chunk, so keep them bounded.
+    let safe_for_reflection = dxbc.chunks().take(chunk_count).all(|chunk| {
+        !matches!(
+            chunk.fourcc.0,
+            [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] | [b'C', b'T', b'A', b'B']
+        ) || chunk.data.len() <= MAX_REFLECTION_CHUNK_BYTES
+    });
+    if safe_for_reflection {
+        let _ = dxbc.get_rdef();
+        let _ = dxbc.get_ctab();
+    }
 }
 
 fn take_capped_bytes<'a>(u: &mut Unstructured<'a>, cap: usize) -> &'a [u8] {
@@ -180,7 +195,11 @@ fn build_patched_signature_chunk(fourcc: FourCC, seed: &[u8]) -> Vec<u8> {
     //
     // The resulting buffer size stays well below `MAX_PATCHED_SIG_BYTES`.
     let mut u = Unstructured::new(seed);
-    let entry_size = if fourcc.0[3] == b'1' { 32usize } else { 24usize };
+    let entry_size = if fourcc.0[3] == b'1' {
+        32usize
+    } else {
+        24usize
+    };
     let param_count = (u.arbitrary::<u8>().unwrap_or(0) % 4) as usize + 1; // 1..=4
     let header_len = 8usize;
     let table_len = param_count * entry_size;
@@ -272,7 +291,7 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     out[entry + 8..entry + 12].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // return_type
     out[entry + 12..entry + 16].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // dimension
     out[entry + 16..entry + 20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // sample_count
-    out[entry + 20..entry + 24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // bind_point
+    out[entry + 20..entry + 24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
     // bind_count: keep non-zero and small
     let bind_count: u32 = u32::from(u.arbitrary::<u8>().unwrap_or(0) % 8) + 1;
     out[entry + 24..entry + 28].copy_from_slice(&bind_count.to_le_bytes());
@@ -366,6 +385,11 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     } else {
         FourCC(*b"PCG1")
     };
+    let rdef_fourcc = if selector & 32 == 0 {
+        FourCC(*b"RDEF")
+    } else {
+        FourCC(*b"RD11")
+    };
 
     let isgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let osgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
@@ -388,7 +412,7 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
         (psgn_fourcc, &psgn_payload),
         (pcsg_fourcc, &pcsg_payload),
         (shader_fourcc, shader_bytes),
-        (FourCC(*b"RDEF"), &rdef_payload),
+        (rdef_fourcc, &rdef_payload),
         (FourCC(*b"CTAB"), &ctab_payload),
         (FourCC(*b"STAT"), stat_bytes),
     ];
