@@ -2755,6 +2755,11 @@ constexpr uint32_t kD3d9ShaderStagePs = 1u;
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 constexpr D3DDDIFORMAT kD3dFmtIndex32 = static_cast<D3DDDIFORMAT>(102); // D3DFMT_INDEX32
 
+// SetStreamSourceFreq encodings (from d3d9types.h).
+constexpr uint32_t kD3DStreamSourceMask = 0xC0000000u;
+constexpr uint32_t kD3DStreamSourceIndexedData = 0x40000000u;
+constexpr uint32_t kD3DStreamSourceInstanceData = 0x80000000u;
+
 uint32_t d3d9_stage_to_aerogpu_stage(uint32_t stage) {
   return (stage == kD3d9ShaderStageVs) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
 }
@@ -5922,6 +5927,49 @@ HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
 
   Resource* old = dev->up_vertex_buffer;
   dev->up_vertex_buffer = vb.release();
+  if (old) {
+    (void)emit_destroy_resource_locked(dev, old->handle);
+    delete old;
+  }
+  return S_OK;
+}
+
+HRESULT ensure_instancing_vertex_buffer_locked(Device* dev, uint32_t stream, uint32_t required_size) {
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+  if (stream >= 16 || required_size == 0) {
+    return E_INVALIDARG;
+  }
+
+  Resource*& slot = dev->instancing_vertex_buffers[stream];
+  const uint32_t current_size = slot ? slot->size_bytes : 0;
+  if (slot && current_size >= required_size) {
+    return S_OK;
+  }
+
+  // Grow to the next power-of-two-ish size to avoid reallocating every draw.
+  uint32_t new_size = current_size ? current_size : 4096u;
+  while (new_size < required_size) {
+    new_size = (new_size > (0x7FFFFFFFu / 2)) ? required_size : (new_size * 2);
+  }
+
+  auto vb = std::make_unique<Resource>();
+  vb->handle = allocate_global_handle(dev->adapter);
+  vb->kind = ResourceKind::Buffer;
+  vb->size_bytes = new_size;
+  try {
+    vb->storage.resize(new_size);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (!emit_create_resource_locked(dev, vb.get())) {
+    return E_OUTOFMEMORY;
+  }
+
+  Resource* old = slot;
+  slot = vb.release();
   if (old) {
     (void)emit_destroy_resource_locked(dev, old->handle);
     delete old;
@@ -9522,6 +9570,24 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
 #endif
       delete dev->up_vertex_buffer;
       dev->up_vertex_buffer = nullptr;
+    }
+    for (uint32_t s = 0; s < 16; ++s) {
+      Resource* vb = dev->instancing_vertex_buffers[s];
+      if (!vb) {
+        continue;
+      }
+      (void)emit_destroy_resource_locked(dev, vb->handle);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        (void)wddm_destroy_allocation(dev->wddm_callbacks,
+                                      dev->wddm_device,
+                                      vb->wddm_hAllocation,
+                                      dev->wddm_context.hContext);
+        vb->wddm_hAllocation = 0;
+      }
+#endif
+      delete vb;
+      dev->instancing_vertex_buffers[s] = nullptr;
     }
     if (dev->up_index_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_index_buffer->handle);
@@ -20894,6 +20960,749 @@ HRESULT AEROGPU_D3D9_CALL device_delete_patch(D3DDDI_HDEVICE hDevice, UINT Handl
   return trace.ret(S_OK);
 }
 
+namespace {
+
+struct ScopedResourceRead {
+  const uint8_t* data = nullptr;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  Device* dev = nullptr;
+  WddmAllocationHandle hAllocation = 0;
+  uint32_t alloc_id = 0;
+  const char* tag = nullptr;
+  bool locked = false;
+  void* locked_ptr = nullptr;
+#endif
+
+  HRESULT lock(Device* dev_in, Resource* res, uint64_t offset_bytes, uint64_t size_bytes, const char* tag_in) {
+    data = nullptr;
+    if (!dev_in || !res || size_bytes == 0) {
+      return E_INVALIDARG;
+    }
+    if (offset_bytes > res->size_bytes || size_bytes > res->size_bytes - offset_bytes) {
+      return E_INVALIDARG;
+    }
+
+    bool use_storage = res->storage.size() >= static_cast<size_t>(offset_bytes + size_bytes);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    // Guest-backed buffers can have a CPU shadow allocation when they are
+    // shared/OpenResource'd; in WDDM builds the underlying allocation memory is
+    // authoritative.
+    if (res->backing_alloc_id != 0) {
+      use_storage = false;
+    }
+#endif
+    if (use_storage) {
+      data = res->storage.data() + static_cast<size_t>(offset_bytes);
+      return S_OK;
+    }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    if (res->wddm_hAllocation != 0 && dev_in->wddm_device != 0) {
+      dev = dev_in;
+      hAllocation = res->wddm_hAllocation;
+      alloc_id = res->backing_alloc_id;
+      tag = tag_in;
+      const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                   dev->wddm_device,
+                                                   res->wddm_hAllocation,
+                                                   offset_bytes,
+                                                   size_bytes,
+                                                   kD3DLOCK_READONLY,
+                                                   &locked_ptr,
+                                                   dev->wddm_context.hContext);
+      if (FAILED(lock_hr) || !locked_ptr) {
+        return FAILED(lock_hr) ? lock_hr : E_FAIL;
+      }
+      locked = true;
+      data = static_cast<const uint8_t*>(locked_ptr);
+      return S_OK;
+    }
+#endif
+
+    return E_INVALIDARG;
+  }
+
+  ~ScopedResourceRead() {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
+      const HRESULT hr =
+          wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
+      if (FAILED(hr)) {
+        logf("aerogpu-d3d9: ScopedResourceRead UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+             tag ? tag : "?",
+             static_cast<unsigned long>(hr),
+             static_cast<unsigned>(alloc_id),
+             static_cast<unsigned long long>(hAllocation));
+      }
+    }
+#endif
+  }
+};
+
+bool vertex_decl_used_streams(const VertexDecl* decl, std::bitset<16>* out) {
+  if (!out) {
+    return false;
+  }
+  out->reset();
+  if (!decl || decl->blob.empty()) {
+    return false;
+  }
+  if ((decl->blob.size() % sizeof(D3DVERTEXELEMENT9_COMPAT)) != 0) {
+    return false;
+  }
+  const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
+  const size_t count = decl->blob.size() / sizeof(D3DVERTEXELEMENT9_COMPAT);
+  for (size_t i = 0; i < count; ++i) {
+    const auto& e = elems[i];
+    if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
+      break;
+    }
+    if (e.Stream < 16) {
+      out->set(e.Stream);
+    }
+  }
+  return true;
+}
+
+struct InstancingConfig {
+  uint32_t instance_count = 1;
+  std::array<bool, 16> stream_is_instanced{};
+};
+
+HRESULT parse_instancing_config_locked(Device* dev, const std::bitset<16>& used_streams, InstancingConfig* out) {
+  if (!dev || !out) {
+    return E_INVALIDARG;
+  }
+  *out = {};
+  out->instance_count = 1;
+  out->stream_is_instanced.fill(false);
+
+  // Instancing in D3D9 is driven by stream 0's INDEXEDDATA | N encoding.
+  if (!used_streams.test(0)) {
+    return kD3DErrInvalidCall;
+  }
+
+  const uint32_t freq0 = dev->stream_source_freq[0];
+  const uint32_t mode0 = freq0 & kD3DStreamSourceMask;
+  if (mode0 != kD3DStreamSourceIndexedData) {
+    return kD3DErrInvalidCall;
+  }
+  const uint32_t instance_count = freq0 & ~kD3DStreamSourceMask;
+  if (instance_count == 0) {
+    return kD3DErrInvalidCall;
+  }
+  out->instance_count = instance_count;
+
+  // Validate and classify the streams that participate in the current vertex decl.
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+
+    const uint32_t freq = dev->stream_source_freq[s];
+    if (freq == 1u) {
+      continue;
+    }
+    const uint32_t mode = freq & kD3DStreamSourceMask;
+    const uint32_t val = freq & ~kD3DStreamSourceMask;
+
+    if (mode == kD3DStreamSourceIndexedData) {
+      if (val != instance_count) {
+        return kD3DErrInvalidCall;
+      }
+      continue;
+    }
+    if (mode == kD3DStreamSourceInstanceData) {
+      if (val != 1u) {
+        return kD3DErrInvalidCall;
+      }
+      out->stream_is_instanced[s] = true;
+      continue;
+    }
+    return kD3DErrInvalidCall;
+  }
+
+  return S_OK;
+}
+
+bool any_stream_source_freq_non_default_locked(const Device* dev) {
+  if (!dev) {
+    return false;
+  }
+  for (uint32_t i = 0; i < 16; ++i) {
+    if (dev->stream_source_freq[i] != 1u) {
+      return true;
+    }
+  }
+  return false;
+}
+
+HRESULT try_draw_instanced_primitive_locked(
+    Device* dev,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t start_vertex,
+    uint32_t primitive_count) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (!any_stream_source_freq_non_default_locked(dev)) {
+    return S_FALSE;
+  }
+
+  // MVP guardrail: CPU expansion currently only supports triangle lists.
+  if (type != D3DDDIPT_TRIANGLELIST) {
+    return kD3DErrInvalidCall;
+  }
+
+  std::bitset<16> used_streams{};
+  if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+    return kD3DErrInvalidCall;
+  }
+
+  bool any_used_non_default = false;
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+      any_used_non_default = true;
+      break;
+    }
+  }
+  if (!any_used_non_default) {
+    return S_FALSE;
+  }
+
+  InstancingConfig cfg{};
+  HRESULT hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  bool has_instanced_stream = false;
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (used_streams.test(s) && cfg.stream_is_instanced[s]) {
+      has_instanced_stream = true;
+      break;
+    }
+  }
+  if (cfg.instance_count == 1 && !has_instanced_stream) {
+    return S_FALSE;
+  }
+
+  // Instancing requires a vertex shader to consume per-instance attributes.
+  if (!dev->user_vs) {
+    return kD3DErrInvalidCall;
+  }
+
+  const uint32_t vertices_per_instance = vertex_count_from_primitive(type, primitive_count);
+  if (vertices_per_instance == 0) {
+    return S_OK;
+  }
+
+  const uint64_t expanded_vertex_count_u64 =
+      static_cast<uint64_t>(vertices_per_instance) * static_cast<uint64_t>(cfg.instance_count);
+  if (expanded_vertex_count_u64 == 0 || expanded_vertex_count_u64 > 0x7FFFFFFFu) {
+    return E_INVALIDARG;
+  }
+  const uint32_t expanded_vertex_count = static_cast<uint32_t>(expanded_vertex_count_u64);
+
+  // CPU-expand all participating streams *before* emitting any vertex-buffer
+  // bindings, so invalid-call failures do not mutate device state.
+  std::array<std::vector<uint8_t>, 16> expanded_streams{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+    const DeviceStateStream& ss = dev->streams[s];
+    if (!ss.vb || ss.stride_bytes == 0) {
+      return kD3DErrInvalidCall;
+    }
+
+    const uint64_t stride = ss.stride_bytes;
+    const uint64_t expanded_size_u64 =
+        static_cast<uint64_t>(vertices_per_instance) * static_cast<uint64_t>(cfg.instance_count) * stride;
+    if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+      return E_INVALIDARG;
+    }
+
+    const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
+    try {
+      expanded_streams[s].resize(expanded_size);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+
+    uint8_t* dst_all = expanded_streams[s].data();
+
+    if (cfg.stream_is_instanced[s]) {
+      const uint64_t src_offset = ss.offset_bytes;
+      const uint64_t src_size = static_cast<uint64_t>(cfg.instance_count) * stride;
+      ScopedResourceRead src;
+      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+      if (FAILED(hr) || !src.data) {
+        return FAILED(hr) ? hr : E_INVALIDARG;
+      }
+
+      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+        const uint8_t* inst_data = src.data + static_cast<size_t>(inst) * static_cast<size_t>(stride);
+        uint8_t* dst_base =
+            dst_all + (static_cast<size_t>(inst) * vertices_per_instance) * static_cast<size_t>(stride);
+        for (uint32_t v = 0; v < vertices_per_instance; ++v) {
+          std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                      inst_data,
+                      static_cast<size_t>(stride));
+        }
+      }
+    } else {
+      const uint64_t src_offset =
+          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * stride;
+      const uint64_t src_size = static_cast<uint64_t>(vertices_per_instance) * stride;
+      ScopedResourceRead src;
+      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
+      if (FAILED(hr) || !src.data) {
+        return FAILED(hr) ? hr : E_INVALIDARG;
+      }
+
+      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+        uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
+        std::memcpy(dst, src.data, static_cast<size_t>(src_size));
+      }
+    }
+  }
+
+  DrawShaderOverride shader_override{};
+  hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
+
+  // Save stream bindings (for state restoration after draw + in error paths).
+  std::array<DeviceStateStream, 16> saved_streams{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    saved_streams[s] = dev->streams[s];
+  }
+
+  auto restore_streams = [&]() {
+    bool ok = true;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+      const DeviceStateStream& saved = saved_streams[s];
+      ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    }
+    return ok;
+  };
+
+  // Upload + bind expanded buffers.
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+
+    const DeviceStateStream& saved = saved_streams[s];
+    const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
+
+    hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+    Resource* dst_vb = dev->instancing_vertex_buffers[s];
+    hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+    if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+  }
+
+  const uint32_t topology = d3d9_prim_to_topology(type);
+  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
+                            align_up(sizeof(aerogpu_cmd_draw), 4);
+  if (!ensure_cmd_space(dev, draw_bytes)) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  if (!emit_set_topology_locked(dev, topology)) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  hr = track_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    (void)restore_streams();
+    return hr;
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  cmd->vertex_count = expanded_vertex_count;
+  cmd->instance_count = 1;
+  cmd->first_vertex = 0;
+  cmd->first_instance = 0;
+
+  if (!restore_streams()) {
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  return S_OK;
+}
+
+HRESULT try_draw_instanced_indexed_primitive_locked(
+    Device* dev,
+    D3DDDIPRIMITIVETYPE type,
+    int32_t base_vertex,
+    uint32_t min_index,
+    uint32_t num_vertices,
+    uint32_t start_index,
+    uint32_t primitive_count) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (!any_stream_source_freq_non_default_locked(dev)) {
+    return S_FALSE;
+  }
+
+  // MVP guardrail: CPU expansion currently only supports triangle lists.
+  if (type != D3DDDIPT_TRIANGLELIST) {
+    return kD3DErrInvalidCall;
+  }
+
+  std::bitset<16> used_streams{};
+  if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+    return kD3DErrInvalidCall;
+  }
+
+  bool any_used_non_default = false;
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+      any_used_non_default = true;
+      break;
+    }
+  }
+  if (!any_used_non_default) {
+    return S_FALSE;
+  }
+
+  InstancingConfig cfg{};
+  HRESULT hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  bool has_instanced_stream = false;
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (used_streams.test(s) && cfg.stream_is_instanced[s]) {
+      has_instanced_stream = true;
+      break;
+    }
+  }
+  if (cfg.instance_count == 1 && !has_instanced_stream) {
+    return S_FALSE;
+  }
+
+  if (!dev->user_vs) {
+    return kD3DErrInvalidCall;
+  }
+
+  if (!dev->index_buffer || (dev->index_format != kD3dFmtIndex16 && dev->index_format != kD3dFmtIndex32)) {
+    return kD3DErrInvalidCall;
+  }
+  if (num_vertices == 0) {
+    return kD3DErrInvalidCall;
+  }
+
+  const uint32_t index_count = index_count_from_primitive(type, primitive_count);
+  const uint32_t index_size = (dev->index_format == kD3dFmtIndex32) ? 4u : 2u;
+  const uint64_t src_index_offset =
+      static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
+  const uint64_t src_index_size = static_cast<uint64_t>(index_count) * index_size;
+
+  // Read + expand indices on the CPU.
+  ScopedResourceRead index_src;
+  hr = index_src.lock(dev, dev->index_buffer, src_index_offset, src_index_size, "instancing IB");
+  if (FAILED(hr) || !index_src.data) {
+    return FAILED(hr) ? hr : E_INVALIDARG;
+  }
+
+  const uint64_t expanded_index_count_u64 =
+      static_cast<uint64_t>(index_count) * static_cast<uint64_t>(cfg.instance_count);
+  const uint64_t expanded_index_bytes_u64 = expanded_index_count_u64 * 4u;
+  if (expanded_index_count_u64 == 0 || expanded_index_bytes_u64 == 0 || expanded_index_bytes_u64 > 0x7FFFFFFFu) {
+    return E_INVALIDARG;
+  }
+  const uint32_t expanded_index_count = static_cast<uint32_t>(expanded_index_count_u64);
+  const uint32_t expanded_index_bytes = static_cast<uint32_t>(expanded_index_bytes_u64);
+
+  std::vector<uint32_t> expanded_indices;
+  try {
+    expanded_indices.resize(static_cast<size_t>(expanded_index_count));
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+    const uint32_t base = inst * num_vertices;
+    for (uint32_t i = 0; i < index_count; ++i) {
+      uint32_t idx = 0;
+      if (index_size == 4) {
+        std::memcpy(&idx, index_src.data + static_cast<size_t>(i) * 4u, sizeof(idx));
+      } else {
+        uint16_t idx16 = 0;
+        std::memcpy(&idx16, index_src.data + static_cast<size_t>(i) * 2u, sizeof(idx16));
+        idx = idx16;
+      }
+      if (idx < min_index || idx >= min_index + num_vertices) {
+        return kD3DErrInvalidCall;
+      }
+      expanded_indices[static_cast<size_t>(inst) * index_count + i] = (idx - min_index) + base;
+    }
+  }
+
+  const int64_t vertex_start_signed = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(min_index);
+  if (vertex_start_signed < 0) {
+    return E_INVALIDARG;
+  }
+  const uint32_t vertex_start = static_cast<uint32_t>(vertex_start_signed);
+
+  // CPU-expand all participating streams *before* mutating stream bindings.
+  std::array<std::vector<uint8_t>, 16> expanded_streams{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+    const DeviceStateStream& ss = dev->streams[s];
+    if (!ss.vb || ss.stride_bytes == 0) {
+      return kD3DErrInvalidCall;
+    }
+
+    const uint64_t stride = ss.stride_bytes;
+    const uint64_t expanded_size_u64 =
+        static_cast<uint64_t>(num_vertices) * static_cast<uint64_t>(cfg.instance_count) * stride;
+    if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+      return E_INVALIDARG;
+    }
+    const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
+    try {
+      expanded_streams[s].resize(expanded_size);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+
+    uint8_t* dst_all = expanded_streams[s].data();
+
+    if (cfg.stream_is_instanced[s]) {
+      const uint64_t src_offset = ss.offset_bytes;
+      const uint64_t src_size = static_cast<uint64_t>(cfg.instance_count) * stride;
+      ScopedResourceRead src;
+      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+      if (FAILED(hr) || !src.data) {
+        return FAILED(hr) ? hr : E_INVALIDARG;
+      }
+
+      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+        const uint8_t* inst_data = src.data + static_cast<size_t>(inst) * static_cast<size_t>(stride);
+        uint8_t* dst_base = dst_all + (static_cast<size_t>(inst) * num_vertices) * static_cast<size_t>(stride);
+        for (uint32_t v = 0; v < num_vertices; ++v) {
+          std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                      inst_data,
+                      static_cast<size_t>(stride));
+        }
+      }
+    } else {
+      const uint64_t src_offset =
+          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vertex_start) * stride;
+      const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
+      ScopedResourceRead src;
+      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
+      if (FAILED(hr) || !src.data) {
+        return FAILED(hr) ? hr : E_INVALIDARG;
+      }
+
+      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+        uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
+        std::memcpy(dst, src.data, static_cast<size_t>(src_size));
+      }
+    }
+  }
+
+  DrawShaderOverride shader_override{};
+  hr = bind_draw_shaders_locked(dev, &shader_override);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  struct AutoRestoreShaders {
+    Device* dev = nullptr;
+    DrawShaderOverride* state = nullptr;
+    ~AutoRestoreShaders() {
+      if (dev && state) {
+        (void)restore_draw_shaders_locked(dev, state);
+      }
+    }
+  };
+  [[maybe_unused]] AutoRestoreShaders shader_restore_guard{dev, &shader_override};
+
+  // Save state for restoration.
+  std::array<DeviceStateStream, 16> saved_streams{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    saved_streams[s] = dev->streams[s];
+  }
+  Resource* saved_ib = dev->index_buffer;
+  const D3DDDIFORMAT saved_fmt = dev->index_format;
+  const uint32_t saved_offset = dev->index_offset_bytes;
+
+  auto restore_streams = [&]() {
+    bool ok = true;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+      const DeviceStateStream& saved = saved_streams[s];
+      ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    }
+    return ok;
+  };
+
+  auto restore_index = [&]() {
+    dev->index_buffer = saved_ib;
+    dev->index_format = saved_fmt;
+    dev->index_offset_bytes = saved_offset;
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!cmd) {
+      return false;
+    }
+    cmd->buffer = saved_ib ? saved_ib->handle : 0;
+    cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
+    cmd->offset_bytes = saved_offset;
+    cmd->reserved0 = 0;
+    return true;
+  };
+
+  // Upload + bind expanded vertex buffers.
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+    const DeviceStateStream& saved = saved_streams[s];
+    const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
+
+    hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+    Resource* dst_vb = dev->instancing_vertex_buffers[s];
+    hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+    if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+  }
+
+  // Upload expanded index buffer and bind it.
+  hr = ensure_up_index_buffer_locked(dev, expanded_index_bytes);
+  if (FAILED(hr)) {
+    (void)restore_streams();
+    return hr;
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_index_buffer, expanded_indices.data(), expanded_index_bytes);
+  if (FAILED(hr)) {
+    (void)restore_streams();
+    return hr;
+  }
+
+  dev->index_buffer = dev->up_index_buffer;
+  dev->index_format = kD3dFmtIndex32;
+  dev->index_offset_bytes = 0;
+  auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    (void)restore_streams();
+    dev->index_buffer = saved_ib;
+    dev->index_format = saved_fmt;
+    dev->index_offset_bytes = saved_offset;
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
+  ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex32);
+  ib_cmd->offset_bytes = 0;
+  ib_cmd->reserved0 = 0;
+
+  const uint32_t topology = d3d9_prim_to_topology(type);
+  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
+                            align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+  if (!ensure_cmd_space(dev, draw_bytes)) {
+    (void)restore_streams();
+    (void)restore_index();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  if (!emit_set_topology_locked(dev, topology)) {
+    (void)restore_streams();
+    (void)restore_index();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+    (void)restore_streams();
+    (void)restore_index();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  hr = track_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    (void)restore_streams();
+    (void)restore_index();
+    return hr;
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    (void)restore_streams();
+    (void)restore_index();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  cmd->index_count = expanded_index_count;
+  cmd->instance_count = 1;
+  cmd->first_index = 0;
+  cmd->base_vertex = 0;
+  cmd->first_instance = 0;
+
+  if (!restore_streams()) {
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  if (!restore_index()) {
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  return S_OK;
+}
+
+} // namespace
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
@@ -20915,6 +21724,11 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
+  }
+
+  const HRESULT inst_hr = try_draw_instanced_primitive_locked(dev, type, start_vertex, primitive_count);
+  if (inst_hr != S_FALSE) {
+    return trace.ret(inst_hr);
   }
 
   DrawShaderOverride shader_override{};
@@ -21712,6 +22526,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
+  }
+
+  const HRESULT inst_hr = try_draw_instanced_indexed_primitive_locked(
+      dev, type, base_vertex, min_index, num_vertices, start_index, primitive_count);
+  if (inst_hr != S_FALSE) {
+    return trace.ret(inst_hr);
   }
 
   DrawShaderOverride shader_override{};

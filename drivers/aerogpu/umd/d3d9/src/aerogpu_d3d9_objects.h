@@ -983,6 +983,11 @@ struct Device {
   // transformed vertex uploads.
   Resource* up_vertex_buffer = nullptr;
 
+  // Scratch vertex buffers used to CPU-expand D3D9 instanced draws
+  // (SetStreamSourceFreq). These are host-only buffers (backing_alloc_id==0) and
+  // are lazily allocated per stream.
+  Resource* instancing_vertex_buffers[16] = {};
+
   // Scratch index buffer used to emulate DrawIndexedPrimitiveUP-style paths.
   Resource* up_index_buffer = nullptr;
 
