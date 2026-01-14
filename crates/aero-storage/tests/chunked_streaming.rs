@@ -24,7 +24,6 @@ struct Counters {
 struct State {
     image: Arc<Vec<u8>>,
     chunk_size: u64,
-    chunk_index_width: usize,
     manifest_body: String,
     wrong_chunk: Option<(u64, Vec<u8>)>,
     counters: Counters,
@@ -39,7 +38,6 @@ async fn start_chunked_server(
     let state = Arc::new(State {
         image: Arc::new(image),
         chunk_size,
-        chunk_index_width: 8,
         manifest_body,
         wrong_chunk,
         counters: Counters::default(),
@@ -281,4 +279,3 @@ async fn sha256_mismatch_is_deterministic_error() {
 
     let _ = shutdown.send(());
 }
-
