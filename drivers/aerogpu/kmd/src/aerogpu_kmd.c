@@ -9928,11 +9928,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
 
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
                 if (adapter->RingHeader) {
-                    ULONG tail = adapter->RingTail;
-                    if (tail >= adapter->RingEntryCount) {
-                        tail = 0;
-                        adapter->RingTail = 0;
-                    }
+                    const ULONG tail = adapter->RingTail;
                     adapter->RingHeader->head = tail;
                     adapter->RingHeader->tail = tail;
                     KeMemoryBarrier();
@@ -10106,11 +10102,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
                 adapter->RingHeader->entry_stride_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
                 adapter->RingHeader->flags = 0;
 
-                ULONG tail = adapter->RingTail;
-                if (tail >= ringEntryCount) {
-                    tail = 0;
-                    adapter->RingTail = 0;
-                }
+                const ULONG tail = adapter->RingTail;
                 adapter->RingHeader->head = tail;
                 adapter->RingHeader->tail = tail;
                 KeMemoryBarrier();
