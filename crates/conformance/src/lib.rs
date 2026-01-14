@@ -22,6 +22,10 @@
 //!   - `name:<substring>`: substring match on template name (case-insensitive)
 //!   - unprefixed: if it matches a known `coverage_key`, it selects that key exactly; otherwise it
 //!     is treated as a case-insensitive substring match on template name.
+//! - `AERO_CONFORMANCE_REFERENCE` (optional): select the reference backend.
+//!   - `qemu`: use QEMU if the crate is built with the `qemu-reference` feature and a
+//!     `qemu-system-*` binary is available.
+//!   - any other value / unset: use the host reference backend (x86_64 + unix only).
 //! - `AERO_CONFORMANCE_REFERENCE_ISOLATE` (default: `1`): run the host reference backend in a
 //!   forked child process for isolation. Some templates intentionally fault and require isolation.
 //! - `AERO_CONFORMANCE_REPORT_PATH` (optional): write a JSON conformance report to this path
@@ -171,6 +175,10 @@ pub fn run(
     // so `ConformanceReport::new()` always uses the complete template corpus to build the
     // expected coverage key list. Counts are incremented only for the executed templates.
     let mut report = ConformanceReport::new(cases);
+    let reference_env = std::env::var("AERO_CONFORMANCE_REFERENCE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let filter_env = std::env::var("AERO_CONFORMANCE_FILTER")
         .ok()
         .map(|v| v.trim().to_string())
@@ -192,11 +200,18 @@ pub fn run(
             let isolate_setting = if isolate { 1 } else { 0 };
             let minimal_cases = case_idx + 1;
 
-            let mut repro_lines = vec![
-                format!("AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting}"),
-                format!("AERO_CONFORMANCE_CASES={minimal_cases}"),
-                format!("AERO_CONFORMANCE_SEED={seed:#x}"),
-            ];
+            let mut repro_lines = Vec::<String>::new();
+            // Preserve reference backend selection in case the user is running with QEMU.
+            // (This is ignored by the default host backend.)
+            if let Some(v) = reference_env.as_deref() {
+                repro_lines.push(format!(
+                    "AERO_CONFORMANCE_REFERENCE={}",
+                    shell_quote_single(v)
+                ));
+            }
+            repro_lines.push(format!("AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting}"));
+            repro_lines.push(format!("AERO_CONFORMANCE_CASES={minimal_cases}"));
+            repro_lines.push(format!("AERO_CONFORMANCE_SEED={seed:#x}"));
             if let Some(filter) = filter_env.as_deref() {
                 repro_lines.push(format!(
                     "AERO_CONFORMANCE_FILTER={}",
