@@ -52,6 +52,10 @@ param(
   # Win7 audio/input support varies by virtio-win version; by default this script
   # requires storage+network (viostor, netkvm) and attempts to include audio/input
   # (viosnd, vioinput) on a best-effort basis.
+  #
+  # Note: optional drivers must be present for BOTH arches. If an optional driver is
+  # present for only one arch, it is omitted entirely (treated as missing for both)
+  # unless -StrictOptional is set.
   [string[]]$Drivers = @("viostor", "netkvm", "viosnd", "vioinput"),
 
   # If set, fail when optional drivers are requested but missing.
