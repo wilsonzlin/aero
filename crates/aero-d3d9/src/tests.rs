@@ -820,6 +820,104 @@ fn assemble_ps3_mova_relative_const() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_relative_const_clamp_low() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, -1000.0, 0.0, 0.0, 0.0 (large negative offset)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0xC47A_0000, // -1000.0
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+
+    // mova a0.x, c2.x
+    out.extend(enc_inst(
+        0x002E,
+        &[enc_dst(3, 0, 0x1), enc_src(2, 2, 0x00)],
+    ));
+
+    // mov oC0, c1[a0.x]
+    // With a0.x = -1000, the index clamps to 0, so we read `c0` (red).
+    let mut c1_rel = enc_src(2, 1, 0xE4);
+    c1_rel |= 0x0000_2000; // RELATIVE flag
+    out.extend(enc_inst(
+        0x0001,
+        &[
+            enc_dst(8, 0, 0xF),
+            c1_rel,
+            enc_src(3, 0, 0x00), // a0.x
+        ],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_relative_const_clamp_high() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1000.0, 0.0, 0.0, 0.0 (large positive offset)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x447A_0000, // 1000.0
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c255, 0.0, 1.0, 0.0, 1.0 (green)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 255, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // mova a0.x, c0.x
+    out.extend(enc_inst(
+        0x002E,
+        &[enc_dst(3, 0, 0x1), enc_src(2, 0, 0x00)],
+    ));
+
+    // mov oC0, c254[a0.x]
+    // With a0.x = 1000, the index clamps to 255, so we read `c255` (green).
+    let mut c254_rel = enc_src(2, 254, 0xE4);
+    c254_rel |= 0x0000_2000; // RELATIVE flag
+    out.extend(enc_inst(
+        0x0001,
+        &[
+            enc_dst(8, 0, 0xF),
+            c254_rel,
+            enc_src(3, 0, 0x00), // a0.x
+        ],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_dp2_constant() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -2591,6 +2689,84 @@ fn sm3_mova_relative_const_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b"
+    );
+}
+
+#[test]
+fn sm3_relative_const_clamps_index_low_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_relative_const_clamp_low());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, software::Vec4::new(1.0, 1.0, 1.0, 1.0));
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    assert_eq!(rt.get(4, 4).to_rgba8(), [255, 0, 0, 255]);
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "ae1a8e1ea93708f5a75c5932aee528e3fc81af1ab92ef21524a7f1fea3e8705b"
+    );
+}
+
+#[test]
+fn sm3_relative_const_clamps_index_high_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_relative_const_clamp_high());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, software::Vec4::new(1.0, 1.0, 1.0, 1.0));
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    assert_eq!(rt.get(4, 4).to_rgba8(), [0, 255, 0, 255]);
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "32d50bc1260d5807d2440d1d2e09b5a297e3d1a90dd55d4b93dedc3236081f7b"
     );
 }
 
