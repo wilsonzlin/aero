@@ -16,7 +16,7 @@ export type HidSendReportForwardingResult =
       ringFailed: boolean;
     };
 
-const MAX_HID_SEND_REPORT_PAYLOAD_BYTES = 0xffff;
+const MAX_HID_CONTROL_TRANSFER_BYTES = 0xffff;
 
 function toTransferableArrayBufferBacked(view: Uint8Array): Uint8Array<ArrayBuffer> {
   // We transfer `data.buffer` across threads. Ensure the view's backing buffer is:
@@ -40,7 +40,9 @@ export function forwardHidSendReportToMainThread(
   // Hard cap so a buggy/malicious guest can't trick us into copying/transferring absurdly large
   // output/feature report payloads. USB control transfers have a u16 `wLength`, so larger payloads
   // are not representable anyway.
-  const clamped = payload.data.byteLength > MAX_HID_SEND_REPORT_PAYLOAD_BYTES ? payload.data.subarray(0, MAX_HID_SEND_REPORT_PAYLOAD_BYTES) : payload.data;
+  // The HID report ID is also present as a prefix byte on-wire when `reportId != 0`.
+  const maxPayloadBytes = (payload.reportId >>> 0) === 0 ? MAX_HID_CONTROL_TRANSFER_BYTES : MAX_HID_CONTROL_TRANSFER_BYTES - 1;
+  const clamped = payload.data.byteLength > maxPayloadBytes ? payload.data.subarray(0, maxPayloadBytes) : payload.data;
 
   const ring = opts.outputRing;
   if (ring) {

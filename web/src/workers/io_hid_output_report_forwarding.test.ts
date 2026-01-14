@@ -101,7 +101,8 @@ describe("io_hid_output_report_forwarding", () => {
 
     expect(res).toEqual({ path: "postMessage", ringFailed: false });
     const [msg] = postMessage.mock.calls[0]!;
-    expect(msg.data.byteLength).toBe(0xffff);
+    // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+    expect(msg.data.byteLength).toBe(0xfffe);
     expect(Array.from(msg.data.slice(0, 3))).toEqual([1, 2, 3]);
   });
 });

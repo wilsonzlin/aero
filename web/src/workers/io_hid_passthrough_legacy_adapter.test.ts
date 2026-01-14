@@ -181,7 +181,8 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
     const msg = adapter.sendReport({ deviceId: 10, reportType: "feature", reportId: 9, data: view });
     expect(msg).not.toBeNull();
     expect(msg!.type).toBe("hid:sendReport");
-    expect(new Uint8Array(msg!.data).byteLength).toBe(0xffff);
+    // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+    expect(new Uint8Array(msg!.data).byteLength).toBe(0xfffe);
     expect(Array.from(new Uint8Array(msg!.data).slice(0, 3))).toEqual([1, 2, 3]);
   });
 
