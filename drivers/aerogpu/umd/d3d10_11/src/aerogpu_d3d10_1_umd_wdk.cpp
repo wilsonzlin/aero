@@ -6138,7 +6138,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
 
     const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
         rts, rt_count, pDesc->AlphaToCoverageEnable ? true : false, &base);
-    if (FAILED(hr) && hr != E_NOTIMPL) {
+    if (FAILED(hr)) {
       return hr;
     }
   }
