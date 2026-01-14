@@ -8,6 +8,7 @@ import {
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
+  VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
   resolveVmSnapshotSaveToOpfsExport,
@@ -61,7 +62,9 @@ const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`
 const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
 // `aero_snapshot::DeviceId::VIRTIO_INPUT` (24): virtio-input (virtio-pci) multi-function device
 // wrapper (keyboard + mouse).
-const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}24`;
+//
+// This uses the canonical string kind (`input.virtio_input`) from `vm_snapshot_wasm.ts` so restore
+// paths that normalize `device.<id>` kinds continue to work.
 
 function isPciBusSnapshot(bytes: Uint8Array): boolean {
   // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets

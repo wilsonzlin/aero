@@ -25,11 +25,12 @@ import {
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
+  VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
 } from "./vm_snapshot_wasm";
 
 const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
 const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
-const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}24`;
+const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_ID_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}24`;
 function makeAeroIoSnapshotHeader(tag: string): Uint8Array {
   const bytes = new Uint8Array(16);
   bytes[0] = 0x41;
@@ -189,7 +190,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(devices.map((d) => d.kind)).toEqual([
       `device.${VM_SNAPSHOT_DEVICE_ID_USB}`,
       `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`,
-      VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
+      VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_ID_KIND,
       `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`,
       `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`,
       VM_SNAPSHOT_DEVICE_PCI_CFG_KIND,
@@ -205,7 +206,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`)?.bytes).toBe(e1000State);
     expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`)?.bytes).toBe(stackState);
 
-    const vinp = devices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND);
+    const vinp = devices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_ID_KIND);
     expect(vinp).not.toBeNull();
     const fields = decodeVinpSnapshot(vinp!.bytes);
     expect(fields.get(VINP_TAG_KEYBOARD)).toEqual(virtioKeyboardState);
@@ -274,7 +275,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       devices: [
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
-        { kind: VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND, bytes: virtioInputState },
+        { kind: VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_ID_KIND, bytes: virtioInputState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`, bytes: virtioSndState },
         { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes: pciState },
