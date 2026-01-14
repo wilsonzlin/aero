@@ -548,6 +548,12 @@ impl Sm3TranslateFailure {
                 }
 
                 let msg = e.message.to_ascii_lowercase();
+                // Similar to WGSL lowering errors: relative addressing failures are treated as
+                // malformed bytecode, not a fallbackable "unsupported feature". Otherwise hostile
+                // inputs could use legacy fallback as an escape hatch.
+                if msg.contains("relative") && msg.contains("address") {
+                    return false;
+                }
                 // Do **not** fall back for opcode-specific encoding errors (e.g. invalid TEX opcode
                 // "specific" fields). Those indicate malformed bytecode and the legacy translator
                 // is intentionally more permissive, which could make fallback an escape hatch.

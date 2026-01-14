@@ -485,6 +485,14 @@ fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
             message: "sampler register used as a source operand".to_owned(),
         });
     }
+    // Label registers (`l#`) are only meaningful as operands to `call`/`label` instructions, which
+    // the IR builder lowers into structured call statements. Any remaining label references would
+    // result in invalid WGSL (labels are not runtime registers) and indicate malformed bytecode.
+    if src.reg.file == RegFile::Label {
+        return Err(VerifyError {
+            message: "label register used as a source operand".to_owned(),
+        });
+    }
     if matches!(src.modifier, SrcModifier::Unknown(_)) {
         return Err(VerifyError {
             message: "unknown source modifier in IR".to_owned(),
@@ -510,10 +518,23 @@ fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
 }
 
 fn verify_dst(dst: &Dst) -> Result<(), VerifyError> {
-    // Sampler registers (`s#`) are not writable.
-    if dst.reg.file == RegFile::Sampler {
+    // Reject writes to register files that are not writable in D3D9 SM2/SM3 and/or would produce
+    // invalid WGSL output.
+    if matches!(
+        dst.reg.file,
+        // Sampler registers (`s#`) are not writable.
+        RegFile::Sampler
+        // Constant registers (`c#`) are read-only at runtime (only `def` writes them, and those are
+        // extracted into `ShaderIr.const_defs_*` rather than emitted as ops).
+        | RegFile::Const
+        // `defi`/`defb` constant registers are also read-only at runtime.
+        | RegFile::ConstInt
+        | RegFile::ConstBool
+        // Label registers are not runtime storage.
+        | RegFile::Label
+    ) {
         return Err(VerifyError {
-            message: "sampler register used as a destination operand".to_owned(),
+            message: format!("{:?} register used as a destination operand", dst.reg.file),
         });
     }
     Ok(())
