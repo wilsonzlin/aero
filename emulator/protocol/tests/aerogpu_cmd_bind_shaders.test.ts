@@ -59,6 +59,26 @@ test("decodeCmdBindShadersPayload decodes extended packet", () => {
   assert.deepEqual(decoded.ex, { gs: 4, hs: 5, ds: 6 });
 });
 
+test("decodeCmdBindShadersPayload treats appended {gs,hs,ds} as authoritative even when reserved0 is non-zero", () => {
+  // Some emitters may mirror legacy GS in reserved0 (or leave it non-zero) while still appending the
+  // extended `{gs,hs,ds}` tail. The decoder must treat the appended values as authoritative.
+  const bytes = new Uint8Array(36);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
+  view.setUint32(4, bytes.byteLength, true);
+  view.setUint32(8, 1, true); // vs
+  view.setUint32(12, 2, true); // ps
+  view.setUint32(16, 3, true); // cs
+  view.setUint32(20, 0xaabbccdd, true); // reserved0 (legacy field; ignored when tail is present)
+  view.setUint32(24, 4, true); // gs
+  view.setUint32(28, 5, true); // hs
+  view.setUint32(32, 6, true); // ds
+
+  const decoded = decodeCmdBindShadersPayload(bytes, 0);
+  assert.equal(decoded.reserved0, 0xaabbccdd >>> 0);
+  assert.deepEqual(decoded.ex, { gs: 4, hs: 5, ds: 6 });
+});
+
 test("decodeCmdBindShadersPayload ignores trailing bytes after extended handles", () => {
   const bytes = new Uint8Array(40);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -76,4 +96,3 @@ test("decodeCmdBindShadersPayload ignores trailing bytes after extended handles"
   const decoded = decodeCmdBindShadersPayload(bytes, 0);
   assert.deepEqual(decoded.ex, { gs: 4, hs: 5, ds: 6 });
 });
-
