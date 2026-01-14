@@ -2357,6 +2357,23 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
         chosen = &fixed;
     }
 
+    /*
+     * Validate that the requested audio range can accept the chosen format.
+     *
+     * Even though PortCls selects MatchingDataRange from the pin's advertised
+     * data ranges, KSDATARANGE_AUDIO only encodes a *maximum* channel count. If
+     * the system chooses a data range with a larger channel count than the
+     * request (e.g. because multiple ranges are compatible), ensure we return
+     * NO_MATCH so PortCls can try another candidate.
+     */
+    if (requested->MaximumChannels < chosen->Channels ||
+        requested->MinimumBitsPerSample > chosen->BitsPerSample ||
+        requested->MaximumBitsPerSample < chosen->BitsPerSample ||
+        requested->MinimumSampleFrequency > chosen->SampleRate ||
+        requested->MaximumSampleFrequency < chosen->SampleRate) {
+        return STATUS_NO_MATCH;
+    }
+
     RtlZeroMemory(&format, sizeof(format));
 
     format.DataFormat.FormatSize = sizeof(format);
