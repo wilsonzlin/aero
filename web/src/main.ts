@@ -191,7 +191,8 @@ configManager.subscribe((state) => {
 });
 const wasmInitPromise = perf.spanAsync("wasm:init", async () => {
   const preferThreaded = (() => {
-    if (!(globalThis as any).crossOriginIsolated) return false;
+    const crossOriginIsolated = (globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated;
+    if (crossOriginIsolated !== true) return false;
     if (typeof SharedArrayBuffer === "undefined") return false;
     if (typeof Atomics === "undefined") return false;
     if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return false;
@@ -636,8 +637,7 @@ function renderWasmPanel(): HTMLElement {
       status.textContent = `Loaded variant: ${variant}\nReason: ${reason}`;
       output.textContent = `greet(\"Aero\") → ${api.greet("Aero")}\nadd(2, 3) → ${api.add(2, 3)}`;
       // Expose for quick interactive debugging / Playwright assertions.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroWasmApi = api;
+      (globalThis as unknown as { __aeroWasmApi?: unknown }).__aeroWasmApi = api;
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -827,8 +827,7 @@ function renderMachinePanel(): HTMLElement {
   const encoder = new TextEncoder();
 
   // Expose machine panel state for Playwright smoke tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const testState = ((globalThis as any).__aeroMachinePanelTest = {
+  const testState = {
     ready: false,
     vgaSupported: false,
     framesPresented: 0,
@@ -838,7 +837,8 @@ function renderMachinePanel(): HTMLElement {
     height: 0,
     strideBytes: 0,
     error: null as string | null,
-  });
+  };
+  (globalThis as unknown as { __aeroMachinePanelTest?: typeof testState }).__aeroMachinePanelTest = testState;
 
   function setError(msg: string): void {
     error.textContent = msg;
@@ -1380,8 +1380,7 @@ function renderMachinePanel(): HTMLElement {
           sharedVgaStrideBytes = strideBytes;
 
           // Expose the SAB for harnesses / debugging (optional).
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (globalThis as any).__aeroMachineVgaFramebuffer = sharedVgaSab;
+          (globalThis as unknown as { __aeroMachineVgaFramebuffer?: unknown }).__aeroMachineVgaFramebuffer = sharedVgaSab;
           return sharedVga;
         }
 
@@ -1671,8 +1670,7 @@ function renderMachineWorkerPanel(): HTMLElement {
   const decoder = new TextDecoder();
 
   // Expose worker demo state for Playwright smoke tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const testState = ((globalThis as any).__aeroMachineWorkerPanelTest = {
+  const testState = {
     ready: true,
     running: false,
     transport: "none" as "none" | "shared" | "copy",
@@ -1681,7 +1679,8 @@ function renderMachineWorkerPanel(): HTMLElement {
     height: 0,
     strideBytes: 0,
     error: null as string | null,
-  });
+  };
+  (globalThis as unknown as { __aeroMachineWorkerPanelTest?: typeof testState }).__aeroMachineWorkerPanelTest = testState;
 
   let worker: Worker | null = null;
   let presenter: VgaPresenter | null = null;
@@ -1838,8 +1837,9 @@ function renderMachineWorkerPanel(): HTMLElement {
     attachInput();
 
     w.addEventListener("message", (ev: MessageEvent<unknown>) => {
-      const msg = ev.data as any;
-      if (!msg || typeof msg !== "object") return;
+      const data = ev.data as unknown;
+      if (!data || typeof data !== "object") return;
+      const msg = data as Record<string, unknown>;
 
       if (msg.type === "machineVga.ready") {
         const transport = msg.transport === "shared" ? "shared" : "copy";
@@ -2055,12 +2055,12 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   let unloadHandlerAttached = false;
 
   // Expose current snapshot panel state for Playwright smoke tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const testState = ((globalThis as any).__aeroDemoVmSnapshot = {
+  const testState = {
     ready: false,
     streaming: false,
     error: null as string | null,
-  });
+  };
+  (globalThis as unknown as { __aeroDemoVmSnapshot?: typeof testState }).__aeroDemoVmSnapshot = testState;
 
   function clearError(): void {
     error.textContent = "";
@@ -3659,7 +3659,8 @@ function renderAudioPanel(): HTMLElement {
   let tonePhase = 0;
   let toneGeneration = 0;
   let wasmBridge: unknown | null = null;
-  let wasmTone: { free(): void } | null = null;
+  type WasmSineTone = InstanceType<NonNullable<WasmApi["SineTone"]>> & { free?: () => void };
+  let wasmTone: WasmSineTone | null = null;
   let stopPerfSampling: (() => void) | null = null;
 
   let loopbackTimer: number | null = null;
@@ -3679,10 +3680,8 @@ function renderAudioPanel(): HTMLElement {
       stopPerfSampling();
       stopPerfSampling = null;
     }
-    if (wasmTone) {
-      wasmTone.free();
-      wasmTone = null;
-    }
+    wasmTone?.free?.();
+    wasmTone = null;
     if (wasmBridge && typeof (wasmBridge as { free?: () => void }).free === "function") {
       (wasmBridge as { free(): void }).free();
       wasmBridge = null;
@@ -3712,8 +3711,7 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
     hdaDemoStats = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroAudioHdaDemoStats = undefined;
+    (globalThis as unknown as { __aeroAudioHdaDemoStats?: unknown }).__aeroAudioHdaDemoStats = undefined;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
@@ -3726,8 +3724,7 @@ function renderAudioPanel(): HTMLElement {
     virtioSndDemoWorker.terminate();
     virtioSndDemoWorker = null;
     virtioSndDemoStats = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroAudioVirtioSndDemoStats = undefined;
+    (globalThis as unknown as { __aeroAudioVirtioSndDemoStats?: unknown }).__aeroAudioVirtioSndDemoStats = undefined;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
@@ -3757,8 +3754,7 @@ function renderAudioPanel(): HTMLElement {
     };
 
     let writeTone = writeToneJs;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroAudioToneBackend = "js";
+    (globalThis as unknown as { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "js";
 
     const gen = toneGeneration;
     void wasmInitPromise
@@ -3772,18 +3768,16 @@ function renderAudioPanel(): HTMLElement {
           return;
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        wasmBridge = (api.attach_worklet_bridge as any)(output.ringBuffer.buffer, output.ringBuffer.capacityFrames, channelCount);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        wasmTone = new (api.SineTone as any)() as { free(): void; write: (...args: unknown[]) => number };
+        const bridge = api.attach_worklet_bridge(output.ringBuffer.buffer, output.ringBuffer.capacityFrames, channelCount);
+        const tone = new api.SineTone();
+        wasmBridge = bridge;
+        wasmTone = tone;
 
         writeTone = (frames: number) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (wasmTone as any).write(wasmBridge, frames, freqHz, sr, gain);
+          tone.write(bridge, frames, freqHz, sr, gain);
         };
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).__aeroAudioToneBackend = "wasm";
+        (globalThis as unknown as { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "wasm";
       })
       .catch(() => {
         // Keep JS fallback.
@@ -3830,8 +3824,7 @@ function renderAudioPanel(): HTMLElement {
       stopVirtioSndDemo();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutput = output;
+      (globalThis as unknown as { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -3879,10 +3872,8 @@ function renderAudioPanel(): HTMLElement {
         ringBufferFrames: Math.floor(48_000 / 5),
       });
       // Expose for Playwright smoke tests.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutputWorker = output;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioToneBackendWorker = "cpu-worker-wasm";
+      (globalThis as unknown as { __aeroAudioOutputWorker?: unknown }).__aeroAudioOutputWorker = output;
+      (globalThis as unknown as { __aeroAudioToneBackendWorker?: unknown }).__aeroAudioToneBackendWorker = "cpu-worker-wasm";
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -3971,17 +3962,14 @@ function renderAudioPanel(): HTMLElement {
         ringBufferFrames: 16_384, // ~340ms @ 48k
       });
       // Expose for Playwright smoke tests / e2e assertions.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutputHdaDemo = output;
+      (globalThis as unknown as { __aeroAudioOutputHdaDemo?: unknown }).__aeroAudioOutputHdaDemo = output;
       // Back-compat: older tests/debug helpers look for `__aeroAudioOutput`.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutput = output;
+      (globalThis as unknown as { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioToneBackend = "wasm-hda";
+      (globalThis as unknown as { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "wasm-hda";
 
       // Prefill the ring with silence so the worker has time to attach and start producing audio
       // without incurring startup underruns.
@@ -4004,8 +3992,7 @@ function renderAudioPanel(): HTMLElement {
         if (!msg || msg.type !== "audioOutputHdaDemo.stats") return;
         hdaDemoStats = msg as { [k: string]: unknown };
         // Expose for Playwright/debugging.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).__aeroAudioHdaDemoStats = hdaDemoStats;
+        (globalThis as unknown as { __aeroAudioHdaDemoStats?: unknown }).__aeroAudioHdaDemoStats = hdaDemoStats;
       });
 
       const workerReady = new Promise<void>((resolve, reject) => {
@@ -4133,14 +4120,12 @@ function renderAudioPanel(): HTMLElement {
         ringBufferFrames: 16_384,
       });
       // Expose for Playwright smoke tests / e2e assertions.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutputVirtioSndDemo = output;
+      (globalThis as unknown as { __aeroAudioOutputVirtioSndDemo?: unknown }).__aeroAudioOutputVirtioSndDemo = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioToneBackend = "wasm-virtio-snd";
+      (globalThis as unknown as { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "wasm-virtio-snd";
 
       // Prefill the ring with silence so the worker has time to attach and start producing audio
       // without incurring startup underruns.
@@ -4156,8 +4141,8 @@ function renderAudioPanel(): HTMLElement {
         if (!msg || msg.type !== "audioOutputVirtioSndDemo.stats") return;
         virtioSndDemoStats = msg as { [k: string]: unknown };
         // Expose for Playwright/debugging.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).__aeroAudioVirtioSndDemoStats = virtioSndDemoStats;
+        (globalThis as unknown as { __aeroAudioVirtioSndDemoStats?: unknown }).__aeroAudioVirtioSndDemoStats =
+          virtioSndDemoStats;
       });
 
       const workerReady = new Promise<void>((resolve, reject) => {
@@ -4270,8 +4255,7 @@ function renderAudioPanel(): HTMLElement {
         ringBufferFrames: 16_384, // ~340ms @ 48k; target buffering stays ~200ms.
       });
       // Expose for Playwright.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioOutputLoopback = output;
+      (globalThis as unknown as { __aeroAudioOutputLoopback?: unknown }).__aeroAudioOutputLoopback = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -4287,8 +4271,7 @@ function renderAudioPanel(): HTMLElement {
         gain: 0.1,
       });
       syntheticMic = mic;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroSyntheticMic = mic;
+      (globalThis as unknown as { __aeroSyntheticMic?: unknown }).__aeroSyntheticMic = mic;
 
       // Prefill ~200ms of silence so the AudioWorklet doesn't count underruns
       // while the workers spin up.
@@ -4367,8 +4350,7 @@ function renderAudioPanel(): HTMLElement {
         loopbackTimer = timer as unknown as number;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioLoopbackBackend = backend;
+      (globalThis as unknown as { __aeroAudioLoopbackBackend?: unknown }).__aeroAudioLoopbackBackend = backend;
 
       await output.resume();
       status.textContent = workerError
@@ -4465,18 +4447,31 @@ function renderAudioPanel(): HTMLElement {
 
   function snapshotAudioOutput(out: unknown): unknown {
     if (!out || (typeof out !== "object" && typeof out !== "function")) return null;
-    const o = out as any;
-    const metrics = typeof o.getMetrics === "function" ? o.getMetrics() : null;
-    const ring = o.ringBuffer as any;
+    const o = out as Record<string, unknown>;
+    const getMetrics = o.getMetrics;
+    const metrics = typeof getMetrics === "function" ? (getMetrics as () => unknown).call(out) : null;
+    const ringRaw = o.ringBuffer;
+    const ring = ringRaw && (typeof ringRaw === "object" || typeof ringRaw === "function") ? (ringRaw as Record<string, unknown>) : null;
     let ringCounters: unknown = null;
-    if (ring?.readIndex && ring?.writeIndex && ring?.underrunCount && ring?.overrunCount) {
+    if (ring) {
+      const readIndex = ring.readIndex;
+      const writeIndex = ring.writeIndex;
+      const underrunCount = ring.underrunCount;
+      const overrunCount = ring.overrunCount;
       try {
-        ringCounters = {
-          readFrameIndex: Atomics.load(ring.readIndex as Uint32Array, 0) >>> 0,
-          writeFrameIndex: Atomics.load(ring.writeIndex as Uint32Array, 0) >>> 0,
-          underrunCount: Atomics.load(ring.underrunCount as Uint32Array, 0) >>> 0,
-          overrunCount: Atomics.load(ring.overrunCount as Uint32Array, 0) >>> 0,
-        };
+        if (
+          readIndex instanceof Uint32Array &&
+          writeIndex instanceof Uint32Array &&
+          underrunCount instanceof Uint32Array &&
+          overrunCount instanceof Uint32Array
+        ) {
+          ringCounters = {
+            readFrameIndex: Atomics.load(readIndex, 0) >>> 0,
+            writeFrameIndex: Atomics.load(writeIndex, 0) >>> 0,
+            underrunCount: Atomics.load(underrunCount, 0) >>> 0,
+            overrunCount: Atomics.load(overrunCount, 0) >>> 0,
+          };
+        }
       } catch {
         // ignore; best-effort only.
       }
@@ -4655,33 +4650,44 @@ function renderAudioPanel(): HTMLElement {
     opts: { maxSeconds: number },
   ): { ok: true; wav: Uint8Array; meta: AudioOutputWavSnapshotMeta } | { ok: false; error: string } {
     if (!out || (typeof out !== "object" && typeof out !== "function")) return { ok: false, error: "Audio output missing." };
-    const o = out as any;
-    const ring = o.ringBuffer as any;
+    const o = out as Record<string, unknown>;
+    const ringRaw = o.ringBuffer;
+    const ring = ringRaw && (typeof ringRaw === "object" || typeof ringRaw === "function") ? (ringRaw as Record<string, unknown>) : null;
     if (!ring) return { ok: false, error: "Audio output has no ringBuffer." };
-    if (!(ring.samples instanceof Float32Array)) return { ok: false, error: "Audio output ringBuffer.samples missing." };
-    if (!(ring.readIndex instanceof Uint32Array) || !(ring.writeIndex instanceof Uint32Array)) {
+    const samples = ring.samples;
+    if (!(samples instanceof Float32Array)) return { ok: false, error: "Audio output ringBuffer.samples missing." };
+    const readIndexRaw = ring.readIndex;
+    const writeIndexRaw = ring.writeIndex;
+    if (!(readIndexRaw instanceof Uint32Array) || !(writeIndexRaw instanceof Uint32Array)) {
       return { ok: false, error: "Audio output ringBuffer indices missing." };
     }
     const cc = typeof ring.channelCount === "number" ? ring.channelCount >>> 0 : 0;
     const cap = typeof ring.capacityFrames === "number" ? ring.capacityFrames >>> 0 : 0;
     if (cc === 0 || cap === 0) return { ok: false, error: "Audio output ringBuffer has invalid channelCount/capacityFrames." };
 
-    const metrics = (typeof o.getMetrics === "function" ? o.getMetrics() : null) as AudioOutputMetrics | null;
-    const sampleRate = typeof metrics?.sampleRate === "number" ? metrics.sampleRate : typeof o.context?.sampleRate === "number" ? o.context.sampleRate : 0;
+    const getMetrics = o.getMetrics;
+    const metrics = (typeof getMetrics === "function" ? (getMetrics as () => unknown).call(out) : null) as AudioOutputMetrics | null;
+    const ctx = o.context as { sampleRate?: unknown; state?: unknown } | undefined;
+    const sampleRate =
+      typeof metrics?.sampleRate === "number"
+        ? metrics.sampleRate
+        : typeof ctx?.sampleRate === "number"
+          ? ctx.sampleRate
+          : 0;
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) return { ok: false, error: "Audio output sample rate unavailable." };
 
     const audioContextState =
       typeof metrics?.state === "string"
         ? metrics.state
-        : typeof o.context?.state === "string"
-          ? o.context.state
+        : typeof ctx?.state === "string"
+          ? ctx.state
           : null;
     const baseLatencySeconds = typeof metrics?.baseLatencySeconds === "number" && Number.isFinite(metrics.baseLatencySeconds) ? metrics.baseLatencySeconds : null;
     const outputLatencySeconds =
       typeof metrics?.outputLatencySeconds === "number" && Number.isFinite(metrics.outputLatencySeconds) ? metrics.outputLatencySeconds : null;
 
-    const readIndex = ring.readIndex as Uint32Array;
-    const writeIndex = ring.writeIndex as Uint32Array;
+    const readIndex = readIndexRaw;
+    const writeIndex = writeIndexRaw;
     let read: number;
     let write: number;
     try {
@@ -4722,9 +4728,9 @@ function renderAudioPanel(): HTMLElement {
     const secondFrames = frames - firstFrames;
 
     const interleaved = new Float32Array(frames * cc);
-    interleaved.set(ring.samples.subarray(start * cc, (start + firstFrames) * cc), 0);
+    interleaved.set(samples.subarray(start * cc, (start + firstFrames) * cc), 0);
     if (secondFrames > 0) {
-      interleaved.set(ring.samples.subarray(0, secondFrames * cc), firstFrames * cc);
+      interleaved.set(samples.subarray(0, secondFrames * cc), firstFrames * cc);
     }
 
     const wav = encodeWavPcm16(interleaved, sampleRate, cc);
@@ -4916,8 +4922,13 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const g = globalThis as any;
+        const g = globalThis as unknown as {
+          __aeroAudioOutput?: unknown;
+          __aeroAudioOutputWorker?: unknown;
+          __aeroAudioOutputHdaDemo?: unknown;
+          __aeroAudioOutputVirtioSndDemo?: unknown;
+          __aeroAudioOutputLoopback?: unknown;
+        };
 
         const timeIso = new Date().toISOString();
         const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
@@ -5123,8 +5134,13 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const g = globalThis as any;
+        const g = globalThis as unknown as {
+          __aeroAudioOutput?: unknown;
+          __aeroAudioOutputWorker?: unknown;
+          __aeroAudioOutputHdaDemo?: unknown;
+          __aeroAudioOutputVirtioSndDemo?: unknown;
+          __aeroAudioOutputLoopback?: unknown;
+        };
         const encoder = new TextEncoder();
         const timeIso = new Date().toISOString();
         const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
@@ -5721,10 +5737,11 @@ function renderAudioPanel(): HTMLElement {
         // Perf HUD export (best-effort). This captures the low-rate perf telemetry visible in the
         // on-page HUD and can be useful for correlating audio underruns with CPU/GPU stalls.
         try {
-          const perfApi = (globalThis as any)?.aero?.perf;
-          const exportFn = perfApi?.export;
+          const aero = (globalThis as unknown as { aero?: unknown }).aero;
+          const perfApi = aero && typeof aero === "object" ? (aero as { perf?: unknown }).perf : undefined;
+          const exportFn = (perfApi as { export?: unknown } | undefined)?.export;
           if (typeof exportFn === "function") {
-            const data = exportFn.call(perfApi);
+            const data = (exportFn as (this: unknown) => unknown).call(perfApi);
             const perfHudBytes = encoder.encode(JSON.stringify(data, null, 2));
             entries.push({ path: `${dir}/perf-hud.json`, data: perfHudBytes });
             entries.push({
@@ -7197,8 +7214,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     }
 
     // Expose for Playwright / devtools.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroJitDemo = response;
+    (globalThis as unknown as { __aeroJitDemo?: unknown }).__aeroJitDemo = response;
 
     if (response.type === "jit:error") {
       jitDemoLine.textContent = `jit: error (${response.code ?? "unknown"}) in ${response.durationMs ?? 0}ms`;
