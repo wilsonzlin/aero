@@ -90,23 +90,8 @@ impl CodeCache {
         let entry_rip = handle.entry_rip;
         let byte_len = handle.meta.byte_len as usize;
 
-        match self.map.entry(entry_rip) {
-            Entry::Occupied(entry) => {
-                let idx = *entry.get();
-                let prev_len = self.nodes[idx]
-                    .as_ref()
-                    .expect("LRU node must exist for map entry")
-                    .handle
-                    .meta
-                    .byte_len as usize;
-                self.current_bytes = self.current_bytes.saturating_sub(prev_len);
-                self.current_bytes = self.current_bytes.saturating_add(byte_len);
-                self.nodes[idx]
-                    .as_mut()
-                    .expect("LRU node must exist for map entry")
-                    .handle = handle;
-                self.touch_idx(idx);
-            }
+        let idx = match self.map.entry(entry_rip) {
+            Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 self.current_bytes = self.current_bytes.saturating_add(byte_len);
                 let idx = Self::alloc_node_inner(&mut self.nodes, &mut self.free_list, LruNode {
@@ -115,11 +100,25 @@ impl CodeCache {
                     prev: None,
                     next: None,
                 });
-                entry.insert(idx);
+                let _ = entry.insert(idx);
                 self.link_front(idx);
+                return self.evict_if_needed();
             }
         };
 
+        let prev_len = self.nodes[idx]
+            .as_ref()
+            .expect("LRU node must exist for map entry")
+            .handle
+            .meta
+            .byte_len as usize;
+        self.current_bytes = self.current_bytes.saturating_sub(prev_len);
+        self.current_bytes = self.current_bytes.saturating_add(byte_len);
+        self.nodes[idx]
+            .as_mut()
+            .expect("LRU node must exist for map entry")
+            .handle = handle;
+        self.touch_idx(idx);
         let evicted = self.evict_if_needed();
         self.debug_assert_invariants();
         evicted

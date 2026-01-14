@@ -1696,7 +1696,7 @@ fn string_element_size(instruction: &Instruction) -> Option<usize> {
 }
 
 fn fixup_rep_string(
-    case_idx: usize,
+    _case_idx: usize,
     instruction: &Instruction,
     init: &mut CpuState,
     memory_len: usize,
@@ -1708,31 +1708,28 @@ fn fixup_rep_string(
         None => return,
     };
 
-    // Toggle DF across cases so we test both directions.
-    let df_set = (case_idx & 1) != 0;
-    if df_set {
-        init.rflags |= FLAG_DF;
-    } else {
-        init.rflags &= !FLAG_DF;
-    }
+    let df_set = (init.rflags & FLAG_DF) != 0;
 
     // Keep all string operations inside the "data" prefix of the testcase buffer (avoid the code
     // region at `CODE_OFF..`).
     let data_len = memory_len.min(CODE_OFF);
 
     let has_rep = instruction.has_rep_prefix() || instruction.has_repne_prefix();
+    let max_count = (data_len / elem_size).min(32);
     let count = if has_rep {
-        // Keep it bounded to avoid pathological slowdowns in an interpreter loop.
-        let max_count = (data_len / elem_size).min(32);
-        let count = if max_count == 0 {
+        if max_count == 0 {
+            init.rcx = 0;
+            0
+        } else if init.rcx == 0 {
             0
         } else {
-            (rng.next_u64() % ((max_count + 1) as u64)) as usize
-        };
-        init.rcx = count as u64;
-        count
+            // Clamp to a safe non-zero range while preserving the randomized seed (and any
+            // template-provided init preset).
+            let count = (((init.rcx - 1) % (max_count as u64)) + 1) as usize;
+            init.rcx = count as u64;
+            count
+        }
     } else {
-        // Non-REP string instructions do one iteration.
         1
     };
 
@@ -1744,38 +1741,33 @@ fn fixup_rep_string(
         return;
     }
 
-    let (rsi_off, rdi_off) = if !df_set {
-        let max_start = data_len.saturating_sub(total_bytes);
-        let rsi_off = if max_start == 0 {
-            0
-        } else {
-            (rng.next_u64() % ((max_start + 1) as u64)) as usize
-        };
-        let rdi_off = if max_start == 0 {
-            0
-        } else {
-            (rng.next_u64() % ((max_start + 1) as u64)) as usize
-        };
-        (rsi_off, rdi_off)
+    let (min_start, max_start) = if !df_set {
+        (0usize, data_len.saturating_sub(total_bytes))
     } else {
-        // DF=1: the first access is at RSI/RDI, then pointers are decremented.
-        let min_start = (count_for_bounds - 1).saturating_mul(elem_size);
-        let max_start = data_len.saturating_sub(elem_size);
-        let span = max_start.saturating_sub(min_start);
-        let rsi_off = min_start
-            + if span == 0 {
-                0
-            } else {
-                (rng.next_u64() % ((span + 1) as u64)) as usize
-            };
-        let rdi_off = min_start
-            + if span == 0 {
-                0
-            } else {
-                (rng.next_u64() % ((span + 1) as u64)) as usize
-            };
-        (rsi_off, rdi_off)
+        (
+            (count_for_bounds - 1).saturating_mul(elem_size),
+            data_len.saturating_sub(elem_size),
+        )
     };
+
+    let choose_off = |addr: u64, rng: &mut XorShift64| -> usize {
+        let current = addr
+            .checked_sub(mem_base)
+            .and_then(|v| usize::try_from(v).ok());
+        if let Some(off) = current {
+            if (min_start..=max_start).contains(&off) {
+                return off;
+            }
+        }
+        if min_start == max_start {
+            return min_start;
+        }
+        let span = (max_start - min_start + 1) as u64;
+        min_start + (rng.next_u64() % span) as usize
+    };
+
+    let rsi_off = choose_off(init.rsi, rng);
+    let rdi_off = choose_off(init.rdi, rng);
 
     init.rsi = mem_base.wrapping_add(rsi_off as u64);
     init.rdi = mem_base.wrapping_add(rdi_off as u64);
