@@ -44,7 +44,7 @@ Steps:
   2. cargo test -p aero-usb --locked
   3. (unless --rust-only) npm -w web run test:unit -- src/input
   4. (optional, unless --rust-only) npm run test:e2e -- <input-related specs...>
-     (defaults to --project=chromium; sets AERO_WASM_PACKAGES=core unless already set)
+     (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
@@ -56,6 +56,7 @@ Examples:
   cargo xtask input --rust-only
   cargo xtask input --e2e
   cargo xtask input --e2e -- --project=chromium
+  cargo xtask input --e2e -- --project=chromium --workers=4
   cargo xtask input --e2e -- --project=chromium --project=firefox --project=webkit
 "
     );
@@ -173,6 +174,10 @@ fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
     if !pw_extra_args.iter().any(|arg| arg == "--project" || arg.starts_with("--project=")) {
         cmd.arg("--project=chromium");
     }
+    // Default to a single worker for reliability in constrained environments.
+    if !pw_extra_args.iter().any(|arg| arg == "--workers" || arg.starts_with("--workers=")) {
+        cmd.arg("--workers=1");
+    }
     cmd.args(INPUT_E2E_SPECS);
     // Developers can add extra Playwright args after `--`.
     cmd.args(pw_extra_args);
@@ -195,7 +200,16 @@ fn e2e_step_detail(pw_extra_args: &[String]) -> String {
         "AERO_WASM_PACKAGES=core".to_string()
     };
 
-    format!("{project_detail}, {wasm_detail}")
+    let workers_detail = if pw_extra_args
+        .iter()
+        .any(|arg| arg == "--workers" || arg.starts_with("--workers="))
+    {
+        "workers=custom".to_string()
+    } else {
+        "workers=1".to_string()
+    };
+
+    format!("{project_detail}, {workers_detail}, {wasm_detail}")
 }
 
 #[cfg(test)]
@@ -274,6 +288,28 @@ mod tests {
         assert!(
             project_pos < spec_pos,
             "expected --project=chromium to appear before curated spec paths"
+        );
+    }
+
+    #[test]
+    fn e2e_cmd_defaults_to_one_worker_when_no_workers_specified() {
+        let cmd = build_e2e_cmd(Path::new("."), &[]);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        let workers_pos = args
+            .iter()
+            .position(|arg| arg == "--workers=1")
+            .expect("expected --workers=1 to be present by default");
+        let spec_pos = args
+            .iter()
+            .position(|arg| arg == INPUT_E2E_SPECS[0])
+            .expect("expected curated specs to be present in the command args");
+        assert!(
+            workers_pos < spec_pos,
+            "expected --workers=1 to appear before curated spec paths"
         );
     }
 

@@ -24,18 +24,6 @@ fn reports_fixture_dxbc() {
 }
 
 #[test]
-#[cfg(not(feature = "shader-opcode-report"))]
-fn reports_fixture_dxbc_requires_feature() {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("shader-opcode-report")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "requires building `xtask` with the `shader-opcode-report` feature",
-        ));
-}
-
-#[test]
 #[cfg(feature = "shader-opcode-report")]
 fn deny_unsupported_exits_nonzero() {
     let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
@@ -57,12 +45,27 @@ fn deny_unsupported_exits_nonzero() {
 
 #[test]
 #[cfg(not(feature = "shader-opcode-report"))]
-fn deny_unsupported_requires_feature() {
+fn reports_fixture_dxbc_requires_feature() {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["shader-opcode-report", "--deny-unsupported"])
+        .arg("shader-opcode-report")
         .assert()
         .failure()
         .stderr(predicate::str::contains(
             "requires building `xtask` with the `shader-opcode-report` feature",
-        ));
+        ))
+        .stderr(predicate::str::contains("--features shader-opcode-report"));
+}
+
+#[test]
+#[cfg(not(feature = "shader-opcode-report"))]
+fn deny_unsupported_requires_feature() {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["shader-opcode-report", "--deny-unsupported"])
+        .arg("dummy.dxbc")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "requires building `xtask` with the `shader-opcode-report` feature",
+        ))
+        .stderr(predicate::str::contains("--features shader-opcode-report"));
 }
