@@ -1116,6 +1116,116 @@ fn tier1_inline_tlb_cross_page_store_fastpath_hits_prefilled_tlb_entries() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_hits_prefilled_tlb_entries_with_tlb_index_wrap() {
+    // Ensure the split-access fast-path handles TLB index wrap (idx 255 -> 0) correctly.
+    let addr = (JIT_TLB_INDEX_MASK << PAGE_SHIFT) + 0xFF9;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; ((JIT_TLB_INDEX_MASK + 2) << PAGE_SHIFT) as usize];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    // Pre-fill both pages (vpn 255 and 256) so the cross-page fast-path doesn't call
+    // `mmu_translate`.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags;
+    let page1_vaddr = (JIT_TLB_ENTRIES as u64) << PAGE_SHIFT; // vpn 256
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags;
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        (JIT_TLB_INDEX_MASK + 2) << PAGE_SHIFT,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_hits_prefilled_tlb_entries_with_tlb_index_wrap() {
+    // Ensure the split-store fast-path handles TLB index wrap (idx 255 -> 0) correctly.
+    let addr = (JIT_TLB_INDEX_MASK << PAGE_SHIFT) + 0xFF9;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; ((JIT_TLB_INDEX_MASK + 2) << PAGE_SHIFT) as usize];
+
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags;
+    let page1_vaddr = (JIT_TLB_ENTRIES as u64) << PAGE_SHIFT; // vpn 256
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        (JIT_TLB_INDEX_MASK + 2) << PAGE_SHIFT,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_fastpath_permission_miss_on_second_page_calls_translate() {
     let addr = 0xFF9u64;
 
@@ -1395,6 +1505,183 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pag
         ));
     }
     assert_eq!(table, vec![1, 0, 1, 0]);
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space() {
+    // x86 effective addresses wrap modulo 2^64. A wide unaligned load can therefore cross the
+    // u64 boundary and wrap to vaddr=0.
+    //
+    // Choose an address such that `addr + 7 == 0` (for a W64 cross-page load where shift_bytes=1).
+    let addr = u64::MAX - 6;
+    let hi_vpn = addr >> PAGE_SHIFT;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Match `run_wasm_inner` layout.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
+
+    // Provide RAM for two physical pages:
+    // - the wrapped-to-zero page (phys page 0) supplies the final high byte
+    // - the high virtual page is remapped to phys page 1 (0x1000) to keep the access in-bounds
+    let mut ram = vec![0u8; 0x2000];
+    ram[0] = 8;
+    ram[0x1FF9..0x2000].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, u64::MAX);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    // Remap the high VPN into a small physical page so the test can allocate backing RAM.
+    store.data_mut().override_vpn = Some(hi_vpn);
+    store.data_mut().override_phys_base = 0x1000;
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+
+    assert_eq!(snap.rip, 0x3000);
+    assert_eq!(
+        snap.gpr[Gpr::Rax.as_u8() as usize],
+        0x0807_0605_0403_0201
+    );
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space() {
+    // x86 effective addresses wrap modulo 2^64. A wide unaligned store can therefore cross the
+    // u64 boundary and wrap to vaddr=0.
+    //
+    // Choose an address such that `addr + 7 == 0` (for a W64 cross-page store where shift_bytes=1).
+    let addr = u64::MAX - 6;
+    let hi_vpn = addr >> PAGE_SHIFT;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x0807_0605_0403_0201);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Match `run_wasm_inner` layout.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
+
+    // Provide RAM for two physical pages:
+    // - the wrapped-to-zero page (phys page 0) receives the final high byte
+    // - the high virtual page is remapped to phys page 1 (0x1000) to keep the access in-bounds
+    let ram = vec![0u8; 0x2000];
+
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, u64::MAX);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    // Remap the high VPN into a small physical page so the test can allocate backing RAM.
+    store.data_mut().override_vpn = Some(hi_vpn);
+    store.data_mut().override_phys_base = 0x1000;
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+
+    assert_eq!(snap.rip, 0x3000);
+
+    let got_ram = &got_mem[ram_base as usize..ram_base as usize + ram.len()];
+    assert_eq!(got_ram[0], 8);
+    assert_eq!(&got_ram[0x1FF9..0x2000], &[1, 2, 3, 4, 5, 6, 7]);
 
     let host_state = *store.data();
     assert_eq!(host_state.mmio_exit_calls, 0);
