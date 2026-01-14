@@ -1,5 +1,7 @@
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
-use aero_devices::pci::profile::VIRTIO_BLK;
+use aero_devices::pci::profile::{
+    VIRTIO_BAR0_SIZE, VIRTIO_BLK, VIRTIO_COMMON_CFG_BAR0_OFFSET, VIRTIO_NOTIFY_CFG_BAR0_OFFSET,
+};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
@@ -106,7 +108,7 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
 
     // Locate + enable MSI-X.
     let msix_cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSIX)
@@ -136,8 +138,8 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -258,4 +260,3 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     assert_eq!(restored.memory.read_u8(status), 0);
     assert_eq!(restored.interrupts.borrow().get_pending(), Some(0x55));
 }
-

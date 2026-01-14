@@ -424,7 +424,13 @@ pub const RTL8139_BARS: [PciBarProfile; 2] = [
     PciBarProfile::mem32(1, 0x100, false),
 ];
 
-pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
+/// PCI BAR index used for the virtio-pci MMIO register window (BAR0).
+pub const VIRTIO_BAR0_INDEX: u8 = 0;
+/// Size in bytes of the virtio-pci MMIO register window (BAR0).
+pub const VIRTIO_BAR0_SIZE: u64 = 0x4000;
+
+pub const VIRTIO_BARS: [PciBarProfile; 1] =
+    [PciBarProfile::mem64(VIRTIO_BAR0_INDEX, VIRTIO_BAR0_SIZE, false)];
 
 /// AeroGPU BAR0 index (MMIO control registers).
 pub const AEROGPU_BAR0_INDEX: u8 = 0;
@@ -447,21 +453,64 @@ pub const AEROGPU_BARS: [PciBarProfile; 2] = [
     PciBarProfile::mem32(AEROGPU_BAR1_VRAM_INDEX, AEROGPU_VRAM_SIZE, true),
 ];
 
-pub const VIRTIO_CAP_COMMON: [u8; 14] = [
-    16, 1, 0, 0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-];
+/// Virtio BAR0 offset of the "common configuration" structure.
+pub const VIRTIO_COMMON_CFG_BAR0_OFFSET: u32 = 0x0000;
+/// Virtio BAR0 size of the "common configuration" structure.
+pub const VIRTIO_COMMON_CFG_BAR0_SIZE: u32 = 0x0100;
 
-pub const VIRTIO_CAP_NOTIFY: [u8; 18] = [
-    20, 2, 0, 0, 0, 0, 0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
-];
+/// Virtio BAR0 offset of the "notify" structure.
+pub const VIRTIO_NOTIFY_CFG_BAR0_OFFSET: u32 = 0x1000;
+/// Virtio BAR0 size of the "notify" structure.
+pub const VIRTIO_NOTIFY_CFG_BAR0_SIZE: u32 = 0x0100;
+/// Virtio notify offset multiplier.
+pub const VIRTIO_NOTIFY_OFF_MULTIPLIER: u32 = 4;
 
-pub const VIRTIO_CAP_ISR: [u8; 14] = [
-    16, 3, 0, 0, 0, 0, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
-];
+/// Virtio BAR0 offset of the ISR structure.
+pub const VIRTIO_ISR_CFG_BAR0_OFFSET: u32 = 0x2000;
+/// Virtio BAR0 size of the ISR structure.
+pub const VIRTIO_ISR_CFG_BAR0_SIZE: u32 = 0x0020;
 
-pub const VIRTIO_CAP_DEVICE: [u8; 14] = [
-    16, 4, 0, 0, 0, 0, 0x00, 0x30, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-];
+/// Virtio BAR0 offset of the device-specific configuration structure.
+pub const VIRTIO_DEVICE_CFG_BAR0_OFFSET: u32 = 0x3000;
+/// Virtio BAR0 size of the device-specific configuration structure.
+pub const VIRTIO_DEVICE_CFG_BAR0_SIZE: u32 = 0x0100;
+
+pub const VIRTIO_CAP_COMMON: [u8; 14] = {
+    let off = VIRTIO_COMMON_CFG_BAR0_OFFSET.to_le_bytes();
+    let len = VIRTIO_COMMON_CFG_BAR0_SIZE.to_le_bytes();
+    [
+        16, 1, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
+        len[3],
+    ]
+};
+
+pub const VIRTIO_CAP_NOTIFY: [u8; 18] = {
+    let off = VIRTIO_NOTIFY_CFG_BAR0_OFFSET.to_le_bytes();
+    let len = VIRTIO_NOTIFY_CFG_BAR0_SIZE.to_le_bytes();
+    let mult = VIRTIO_NOTIFY_OFF_MULTIPLIER.to_le_bytes();
+    [
+        20, 2, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
+        len[3], mult[0], mult[1], mult[2], mult[3],
+    ]
+};
+
+pub const VIRTIO_CAP_ISR: [u8; 14] = {
+    let off = VIRTIO_ISR_CFG_BAR0_OFFSET.to_le_bytes();
+    let len = VIRTIO_ISR_CFG_BAR0_SIZE.to_le_bytes();
+    [
+        16, 3, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
+        len[3],
+    ]
+};
+
+pub const VIRTIO_CAP_DEVICE: [u8; 14] = {
+    let off = VIRTIO_DEVICE_CFG_BAR0_OFFSET.to_le_bytes();
+    let len = VIRTIO_DEVICE_CFG_BAR0_SIZE.to_le_bytes();
+    [
+        16, 4, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
+        len[3],
+    ]
+};
 
 pub const VIRTIO_VENDOR_CAPS: [PciCapabilityProfile; 4] = [
     PciCapabilityProfile::VendorSpecific {
@@ -482,7 +531,8 @@ pub const VIRTIO_VENDOR_CAPS: [PciCapabilityProfile; 4] = [
 ///
 /// This offset is chosen to live immediately after the 0x100-byte device-specific config window
 /// (0x3000..=0x30ff) used by the canonical virtio-pci capability payloads above.
-pub const VIRTIO_MSIX_TABLE_BAR0_OFFSET: u32 = 0x3100;
+pub const VIRTIO_MSIX_TABLE_BAR0_OFFSET: u32 =
+    VIRTIO_DEVICE_CFG_BAR0_OFFSET + VIRTIO_DEVICE_CFG_BAR0_SIZE;
 
 const VIRTIO_MSIX_TABLE_ENTRY_SIZE_BYTES: u32 = 16;
 
@@ -528,9 +578,9 @@ pub const fn virtio_msix_capability_profile_for_table_size(
 ) -> PciCapabilityProfile {
     PciCapabilityProfile::Msix {
         table_size,
-        table_bar: 0,
+        table_bar: VIRTIO_BAR0_INDEX,
         table_offset: VIRTIO_MSIX_TABLE_BAR0_OFFSET,
-        pba_bar: 0,
+        pba_bar: VIRTIO_BAR0_INDEX,
         pba_offset: virtio_msix_pba_offset(table_size),
     }
 }

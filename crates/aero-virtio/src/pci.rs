@@ -198,18 +198,18 @@ impl VirtioPciDevice {
         let mut me = Self {
             // Placeholder identity; overwritten by `build_config_space`.
             config: PciConfigSpace::new(PCI_VENDOR_ID_VIRTIO, 0),
-            bar0_common_offset: 0x0000,
-            bar0_notify_offset: 0x1000,
-            bar0_isr_offset: 0x2000,
-            bar0_device_offset: 0x3000,
-            bar0_size: 0x4000,
+            bar0_common_offset: u64::from(profile::VIRTIO_COMMON_CFG_BAR0_OFFSET),
+            bar0_notify_offset: u64::from(profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET),
+            bar0_isr_offset: u64::from(profile::VIRTIO_ISR_CFG_BAR0_OFFSET),
+            bar0_device_offset: u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET),
+            bar0_size: profile::VIRTIO_BAR0_SIZE,
             bar2_size: if options.legacy_io_enabled { 0x100 } else { 0 },
             modern_enabled: options.modern_enabled,
             legacy_io_enabled: options.legacy_io_enabled,
             use_transitional_device_id: options.use_transitional_device_id,
             transport_mode: TransportMode::Unknown,
             features_negotiated: false,
-            notify_off_multiplier: 4,
+            notify_off_multiplier: profile::VIRTIO_NOTIFY_OFF_MULTIPLIER,
             device,
             interrupts,
             device_feature_select: 0,
@@ -235,7 +235,10 @@ impl VirtioPciDevice {
     }
 
     pub fn bar0_base(&self) -> u64 {
-        self.config.bar_range(0).map(|r| r.base).unwrap_or(0)
+        self.config
+            .bar_range(profile::VIRTIO_BAR0_INDEX)
+            .map(|r| r.base)
+            .unwrap_or(0)
     }
 
     pub fn legacy_io_size(&self) -> u64 {
@@ -419,7 +422,7 @@ impl VirtioPciDevice {
         // MSI-X table / PBA live in BAR0 and must be accessible independently of virtio transport
         // mode. Handle them before dispatching to virtio capability regions.
         if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
-            if msix.table_bir() == 0 {
+            if msix.table_bir() == profile::VIRTIO_BAR0_INDEX {
                 let base = u64::from(msix.table_offset());
                 let end = base.saturating_add(msix.table_len_bytes() as u64);
                 if offset >= base && offset < end {
@@ -427,7 +430,7 @@ impl VirtioPciDevice {
                     return;
                 }
             }
-            if msix.pba_bir() == 0 {
+            if msix.pba_bir() == profile::VIRTIO_BAR0_INDEX {
                 let base = u64::from(msix.pba_offset());
                 let end = base.saturating_add(msix.pba_len_bytes() as u64);
                 if offset >= base && offset < end {
@@ -437,11 +440,18 @@ impl VirtioPciDevice {
             }
         }
 
-        if offset >= self.bar0_common_offset && offset < self.bar0_common_offset + 0x100 {
+        if offset >= self.bar0_common_offset
+            && offset < self.bar0_common_offset + u64::from(profile::VIRTIO_COMMON_CFG_BAR0_SIZE)
+        {
             self.common_cfg_read(offset - self.bar0_common_offset, data);
-        } else if offset >= self.bar0_isr_offset && offset < self.bar0_isr_offset + 0x20 {
+        } else if offset >= self.bar0_isr_offset
+            && offset < self.bar0_isr_offset + u64::from(profile::VIRTIO_ISR_CFG_BAR0_SIZE)
+        {
             self.isr_cfg_read(offset - self.bar0_isr_offset, data);
-        } else if offset >= self.bar0_device_offset && offset < self.bar0_device_offset + 0x100 {
+        } else if offset >= self.bar0_device_offset
+            && offset
+                < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
+        {
             self.device_cfg_read(offset - self.bar0_device_offset, data);
         } else {
             // notify is write-only; unknown region reads as 0.
@@ -468,7 +478,7 @@ impl VirtioPciDevice {
 
         // MSI-X table / PBA are PCI-level and are not subject to the virtio transport-mode lock.
         if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
-            if msix.table_bir() == 0 {
+            if msix.table_bir() == profile::VIRTIO_BAR0_INDEX {
                 let base = u64::from(msix.table_offset());
                 let end = base.saturating_add(msix.table_len_bytes() as u64);
                 if offset >= base && offset < end {
@@ -480,7 +490,7 @@ impl VirtioPciDevice {
                     return;
                 }
             }
-            if msix.pba_bir() == 0 {
+            if msix.pba_bir() == profile::VIRTIO_BAR0_INDEX {
                 let base = u64::from(msix.pba_offset());
                 let end = base.saturating_add(msix.pba_len_bytes() as u64);
                 if offset >= base && offset < end {
@@ -493,11 +503,18 @@ impl VirtioPciDevice {
         if !self.lock_transport_mode(TransportMode::Modern, offset, data) {
             return;
         }
-        if offset >= self.bar0_common_offset && offset < self.bar0_common_offset + 0x100 {
+        if offset >= self.bar0_common_offset
+            && offset < self.bar0_common_offset + u64::from(profile::VIRTIO_COMMON_CFG_BAR0_SIZE)
+        {
             self.common_cfg_write(offset - self.bar0_common_offset, data);
-        } else if offset >= self.bar0_notify_offset && offset < self.bar0_notify_offset + 0x100 {
+        } else if offset >= self.bar0_notify_offset
+            && offset < self.bar0_notify_offset + u64::from(profile::VIRTIO_NOTIFY_CFG_BAR0_SIZE)
+        {
             self.notify_cfg_write(offset - self.bar0_notify_offset, data);
-        } else if offset >= self.bar0_device_offset && offset < self.bar0_device_offset + 0x100 {
+        } else if offset >= self.bar0_device_offset
+            && offset
+                < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
+        {
             self.device_cfg_write(offset - self.bar0_device_offset, data);
         } else {
             // ignore
@@ -840,9 +857,9 @@ impl VirtioPciDevice {
         cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
         cfg.set_interrupt_line(0xFF);
 
-        // BAR0 (modern virtio-pci): 64-bit MMIO, 0x4000 bytes.
+        // BAR0 (modern virtio-pci): 64-bit MMIO.
         cfg.set_bar_definition(
-            0,
+            profile::VIRTIO_BAR0_INDEX,
             PciBarDefinition::Mmio64 {
                 size: self.bar0_size,
                 prefetchable: false,

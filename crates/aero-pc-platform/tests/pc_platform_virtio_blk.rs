@@ -1,6 +1,8 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{
-    VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
+    VIRTIO_BAR0_SIZE, VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR,
+    VIRTIO_CAP_NOTIFY, VIRTIO_COMMON_CFG_BAR0_OFFSET, VIRTIO_DEVICE_CFG_BAR0_OFFSET,
+    VIRTIO_ISR_CFG_BAR0_OFFSET, VIRTIO_NOTIFY_CFG_BAR0_OFFSET,
 };
 use aero_devices::pci::{
     msix::PCI_CAP_ID_MSIX,
@@ -187,7 +189,7 @@ fn pc_platform_gates_virtio_blk_mmio_on_pci_command_register() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
 
     // device_status starts cleared.
     assert_eq!(pc.memory.read_u8(bar0_base + COMMON + 0x14), 0);
@@ -216,7 +218,7 @@ fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
 
     // Touch device state at the original BAR0 base.
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1);
@@ -225,7 +227,7 @@ fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
     // Move BAR0 within the platform's PCI MMIO window.
     let alloc_cfg = PciResourceAllocatorConfig::default();
     let new_base = alloc_cfg.mmio_base + 0x00A0_0000;
-    assert_eq!(new_base % 0x4000, 0);
+    assert_eq!(new_base % VIRTIO_BAR0_SIZE, 0);
     write_cfg_u32(
         &mut pc,
         bdf.bus,
@@ -253,7 +255,7 @@ fn pc_platform_reset_resets_virtio_blk_transport_state() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
     const DEVICE_STATUS: u64 = COMMON + 0x14;
 
     // Mutate virtio transport state so we can verify platform reset clears it.
@@ -307,7 +309,7 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
 
     // BAR0 layout for Aero's virtio-pci contract:
     // - device cfg @ 0x3000 (virtio-blk capacity, segment limits, block size, ...)
-    const DEVICE_CFG: u64 = 0x3000;
+    const DEVICE_CFG: u64 = VIRTIO_DEVICE_CFG_BAR0_OFFSET as u64;
 
     let capacity = pc.memory.read_u64(bar0_base + DEVICE_CFG);
     let size_max = pc.memory.read_u32(bar0_base + DEVICE_CFG + 8);
@@ -334,7 +336,7 @@ fn pc_platform_new_with_virtio_blk_disk_reflects_backend_capacity_in_device_cfg(
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const DEVICE_CFG: u64 = 0x3000;
+    const DEVICE_CFG: u64 = VIRTIO_DEVICE_CFG_BAR0_OFFSET as u64;
     let capacity = pc.memory.read_u64(bar0_base + DEVICE_CFG);
     let blk_size = pc.memory.read_u32(bar0_base + DEVICE_CFG + 20);
     assert_eq!(capacity, DISK_SECTORS);
@@ -361,9 +363,9 @@ fn pc_platform_virtio_blk_uses_injected_disk_for_reads_and_writes() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const ISR: u64 = 0x2000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -585,9 +587,9 @@ fn pc_platform_virtio_blk_multi_descriptor_read_write_roundtrip() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const ISR: u64 = 0x2000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -789,9 +791,9 @@ fn pc_platform_virtio_blk_indirect_descriptor_read_write_roundtrip() {
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const ISR: u64 = 0x2000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1010,8 +1012,8 @@ fn pc_platform_virtio_blk_dma_writes_mark_dirty_pages_when_enabled() {
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1191,7 +1193,11 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
-    assert_eq!(bar0_base % 0x4000, 0, "BAR0 should be 0x4000-aligned");
+    assert_eq!(
+        bar0_base % VIRTIO_BAR0_SIZE,
+        0,
+        "BAR0 should be aligned to its size"
+    );
 
     let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
 
@@ -1213,8 +1219,8 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1371,8 +1377,8 @@ fn pc_platform_routes_virtio_blk_intx_via_ioapic_in_apic_mode() {
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1545,8 +1551,8 @@ fn pc_platform_routes_virtio_blk_msix_to_lapic_in_apic_mode() {
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1623,13 +1629,13 @@ fn pc_platform_virtio_blk_snapshot_restore_preserves_virtqueue_progress() {
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
 
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1780,13 +1786,13 @@ fn pc_platform_virtio_blk_snapshot_restore_processes_pending_request_without_ren
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
 
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -1890,13 +1896,13 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
 
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
     // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -2029,10 +2035,10 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
 
     let bar0_base = read_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0);
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE

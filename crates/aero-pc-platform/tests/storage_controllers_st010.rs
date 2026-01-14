@@ -189,7 +189,7 @@ fn st010_nvme_admin_identify_and_intx_routing() {
     let bar0 = pci_read_bar(&mut pc, bdf, 0);
     assert_eq!(bar0.kind, BarKind::Mem64);
     assert_ne!(bar0.base, 0);
-    assert_eq!(bar0.base % 0x4000, 0);
+    assert_eq!(bar0.base % profile::NVME_BAR0_SIZE, 0);
 
     // Interrupt Line should match router-selected GSI.
     assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
@@ -273,7 +273,7 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
     let bar0 = pci_read_bar(&mut pc, bdf, 0);
     assert_eq!(bar0.kind, BarKind::Mem64);
     assert_ne!(bar0.base, 0);
-    assert_eq!(bar0.base % 0x4000, 0);
+    assert_eq!(bar0.base % profile::VIRTIO_BAR0_SIZE, 0);
 
     // Interrupt Line should match router-selected GSI.
     assert_eq!(pci_cfg_read_u8(&mut pc, bdf, 0x3C), expected_irq);
@@ -297,9 +297,9 @@ fn st010_virtio_blk_read_write_and_intx_routing() {
     let status_buf = alloc.alloc_bytes(1, 1);
 
     // Modern virtio-pci common config lives at BAR0 + 0x0000.
-    const COMMON_BASE: u64 = 0x0000;
-    const NOTIFY_BASE: u64 = 0x1000;
-    const ISR_BASE: u64 = 0x2000;
+    const COMMON_BASE: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_BASE: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR_BASE: u64 = profile::VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     // Negotiate a minimal feature set (VERSION_1 only).
     const VIRTIO_F_VERSION_1: u64 = aero_virtio::pci::VIRTIO_F_VERSION_1;
