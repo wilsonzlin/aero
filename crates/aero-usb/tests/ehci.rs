@@ -246,6 +246,59 @@ fn ehci_hchalted_tracks_usbcmd_run_stop() {
 }
 
 #[test]
+fn ehci_hcreset_resets_operational_regs_but_preserves_port_connection() {
+    let mut c = EhciController::new_with_port_count(1);
+    c.hub_mut().attach(0, Box::new(TestDevice));
+
+    let mut mem = TestMemory::new(0x1000);
+
+    // Clear connect status change (CSC) so USBSTS.PCD can be cleared deterministically.
+    write_portsc_w1c(&mut c, 0, regs::PORTSC_CSC);
+    c.mmio_write(regs::REG_USBSTS, 4, regs::USBSTS_PCD); // W1C
+    assert_eq!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_PCD, 0);
+
+    // Program some operational state.
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, 0x1000);
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, 0x2000);
+    c.mmio_write(regs::REG_FRINDEX, 4, 0x1234);
+    c.mmio_write(
+        regs::REG_USBINTR,
+        4,
+        regs::USBINTR_USBINT | regs::USBINTR_USBERRINT | regs::USBINTR_PCD,
+    );
+    c.mmio_write(regs::REG_CONFIGFLAG, 4, regs::CONFIGFLAG_CF);
+    c.mmio_write(
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RS | regs::USBCMD_ASE | regs::USBCMD_PSE,
+    );
+    assert_eq!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED, 0);
+
+    // Host Controller Reset should clear controller-local operational registers but not implicitly
+    // detach devices from the root hub.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_HCRESET);
+    c.tick_1ms(&mut mem);
+
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4), 0);
+    assert_eq!(c.mmio_read(regs::REG_USBINTR, 4), 0);
+    assert_eq!(c.mmio_read(regs::REG_FRINDEX, 4), 0);
+    assert_eq!(c.mmio_read(regs::REG_PERIODICLISTBASE, 4), 0);
+    assert_eq!(c.mmio_read(regs::REG_ASYNCLISTADDR, 4), 0);
+    assert_eq!(c.mmio_read(regs::REG_CONFIGFLAG, 4), 0);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(
+        sts & regs::USBSTS_W1C_MASK,
+        0,
+        "reset should clear all W1C status bits"
+    );
+
+    let portsc = c.mmio_read(regs::reg_portsc(0), 4);
+    assert_ne!(portsc & regs::PORTSC_CCS, 0, "device should remain connected");
+}
+
+#[test]
 fn ehci_async_advance_doorbell_sets_iaa_and_clears_iaad() {
     let mut c = EhciController::new();
     let mut mem = TestMemory::new(0x1000);
