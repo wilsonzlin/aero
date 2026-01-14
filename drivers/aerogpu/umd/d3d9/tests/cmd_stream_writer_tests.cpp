@@ -26832,7 +26832,12 @@ bool TestDrawRectPatchTex1ValidatesStrideAndPreservesTexcoords() {
   }
 
   // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  //
+  // Include TEXCOORDSIZE bits for an *unused* texcoord set to validate we mask
+  // out the per-set D3DFVF_TEXCOORDSIZE* bits for fixed-function patch paths.
+  //
+  // 0x40000 = D3DFVF_TEXCOORDSIZE3(1) (2-bit encoding at bits 18..19).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x40144u);
   if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
     return false;
   }
@@ -28080,7 +28085,12 @@ bool TestDrawTriPatchTex1ValidatesStrideAndPreservesTexcoords() {
   }
 
   // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  //
+  // Include TEXCOORDSIZE bits for an *unused* texcoord set to validate we mask
+  // out the per-set D3DFVF_TEXCOORDSIZE* bits for fixed-function patch paths.
+  //
+  // 0x40000 = D3DFVF_TEXCOORDSIZE3(1) (2-bit encoding at bits 18..19).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x40144u);
   if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
     return false;
   }

@@ -2896,7 +2896,15 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
   // Fixed-function bring-up paths which require a known internal FVF-driven
   // vertex declaration (e.g. patch emulation) are limited to pre-transformed
   // XYZRHW + DIFFUSE variants (optionally TEX1).
-  return fvf == kSupportedFvfXyzrhwDiffuse || fvf == kSupportedFvfXyzrhwDiffuseTex1;
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  // Fixed-function TEX1 assumes float2 texcoords; reject other encodings.
+  if ((base & kD3dFvfTex1) != 0) {
+    // Texcoord-0 size bits (two bits at offset 16): 0 -> float2.
+    if ((fvf & (0x3u << 16u)) != 0) {
+      return false;
+    }
+  }
+  return (base == kSupportedFvfXyzrhwDiffuse) || (base == kSupportedFvfXyzrhwDiffuseTex1);
 }
 
 constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
@@ -3017,7 +3025,8 @@ constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
 constexpr uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
-  switch (fvf) {
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  switch (base) {
     case kSupportedFvfXyzrhwDiffuse:
       return 20u;
     case kSupportedFvfXyzrhwDiffuseTex1:
@@ -20700,8 +20709,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   }
 
   DeviceStateStream& ss = dev->streams[0];
-  const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
-  if (!ss.vb || ss.stride_bytes < min_stride) {
+  const uint32_t min_stride = fixedfunc_min_stride_bytes(dev->fvf);
+  if (!ss.vb || min_stride == 0 || ss.stride_bytes < min_stride) {
     return trace.ret(E_FAIL);
   }
 
@@ -20797,7 +20806,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   }
 
   HRESULT hr = S_OK;
-  const bool has_tex0 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const bool has_tex0 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
   bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
   if (hit) {
     dev->patch_cache_hit_count++;
@@ -20977,8 +20987,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   }
 
   DeviceStateStream& ss = dev->streams[0];
-  const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
-  if (!ss.vb || ss.stride_bytes < min_stride) {
+  const uint32_t min_stride = fixedfunc_min_stride_bytes(dev->fvf);
+  if (!ss.vb || min_stride == 0 || ss.stride_bytes < min_stride) {
     return trace.ret(E_FAIL);
   }
 
@@ -21070,7 +21080,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   }
 
   HRESULT hr = S_OK;
-  const bool has_tex0 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const bool has_tex0 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
   const bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
   if (hit) {
     dev->patch_cache_hit_count++;
