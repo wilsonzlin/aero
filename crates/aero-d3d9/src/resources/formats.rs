@@ -697,6 +697,13 @@ mod tests {
     }
 
     #[test]
+    fn bc_dimension_compatibility_rejects_pathological_mip_level_counts() {
+        // Should fast-fail extremely large values without looping.
+        assert!(!wgpu_bc_texture_dimensions_compatible(4, 4, u32::MAX));
+        assert!(!wgpu_bc_texture_dimensions_compatible(1, 1, u32::MAX));
+    }
+
+    #[test]
     fn dxt_format_selection_uses_bc_only_when_supported_and_dimensions_compatible() {
         let bc_features = wgpu::Features::TEXTURE_COMPRESSION_BC;
         let no_bc = wgpu::Features::empty();
