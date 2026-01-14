@@ -58,6 +58,7 @@ Assert-ValidJson -ExpectedCommand "watch-ring" -Args @("--watch-ring", "--ring-i
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--cmd-out", "last_cmd_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--count", "2", "--cmd-out", "last_cmd_test_multi.bin")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-submit", "--cmd-out", "last_cmd_submit_test.bin")
+Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-submit", "--out", "last_cmd_submit_out_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--out", "last_cmd_out_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-createalloc" -Args @("--dump-createalloc")
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
@@ -107,6 +108,9 @@ $artifacts = @(
   "last_cmd_submit_test.bin",
   "last_cmd_submit_test.bin.txt",
   "last_cmd_submit_test.bin.alloc_table.bin",
+  "last_cmd_submit_out_test.bin",
+  "last_cmd_submit_out_test.bin.txt",
+  "last_cmd_submit_out_test.bin.alloc_table.bin",
   "last_cmd_out_test.bin",
   "last_cmd_out_test.bin.txt",
   "last_cmd_out_test.bin.alloc_table.bin",
