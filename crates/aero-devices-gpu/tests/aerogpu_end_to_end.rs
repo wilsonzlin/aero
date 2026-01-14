@@ -4,57 +4,27 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use aero_devices_gpu::executor::{
-    AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
-};
+use aero_devices_gpu::cmd::{CMD_HDR_SIZE_BYTES_OFFSET, CMD_STREAM_SIZE_BYTES_OFFSET};
+use aero_devices_gpu::executor::{AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use aero_devices_gpu::regs::{irq_bits, ring_control, AeroGpuRegs};
 use aero_devices_gpu::ring::{
-    AeroGpuSubmitDesc, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, RING_HEAD_OFFSET,
-    RING_TAIL_OFFSET,
+    AeroGpuSubmitDesc, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, RING_ABI_VERSION_OFFSET,
+    RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET,
+    RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
+    SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, SUBMIT_DESC_CMD_GPA_OFFSET,
+    SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, SUBMIT_DESC_CONTEXT_ID_OFFSET, SUBMIT_DESC_ENGINE_ID_OFFSET,
+    SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::AerogpuWgpuBackend;
 use aero_gpu::AerogpuD3d9Error;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
-use aero_protocol::aerogpu::aerogpu_ring::{
-    AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
-};
 use memory::Bus;
 use memory::MemoryBus;
-
-const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
-const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
-const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
-const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
-const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
-
-const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
-const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
-const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
-const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
-const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
-const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
-
-const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
-const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -73,8 +43,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert!(size_bytes.is_multiple_of(4));
-    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
-        .copy_from_slice(&size_bytes.to_le_bytes());
+    let hdr_size_off = CMD_HDR_SIZE_BYTES_OFFSET as usize;
+    out[start + hdr_size_off..start + hdr_size_off + 4].copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8> {
@@ -91,8 +61,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
-        .copy_from_slice(&size_bytes.to_le_bytes());
+    let stream_size_off = CMD_STREAM_SIZE_BYTES_OFFSET as usize;
+    out[stream_size_off..stream_size_off + 4].copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 

@@ -21,6 +21,7 @@
 //! (intended for native tests).
 
 pub mod backend;
+pub mod cmd;
 pub mod device;
 pub mod executor;
 pub mod pci;

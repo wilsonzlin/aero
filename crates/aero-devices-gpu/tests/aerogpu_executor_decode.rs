@@ -2,6 +2,12 @@ use aero_devices_gpu::backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
     AeroGpuCommandBackend, NullAeroGpuBackend,
 };
+use aero_devices_gpu::cmd::{
+    CMD_HDR_OPCODE_OFFSET, CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_FLAGS_OFFSET,
+    CMD_PRESENT_SCANOUT_ID_OFFSET, CMD_PRESENT_SIZE_BYTES, CMD_STREAM_ABI_VERSION_OFFSET,
+    CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_HEADER_SIZE_BYTES, CMD_STREAM_MAGIC_OFFSET,
+    CMD_STREAM_RESERVED0_OFFSET, CMD_STREAM_RESERVED1_OFFSET, CMD_STREAM_SIZE_BYTES_OFFSET,
+};
 use aero_devices_gpu::executor::{
     AeroGpuAllocTableDecodeError, AeroGpuCmdStreamDecodeError, AeroGpuExecutor,
     AeroGpuExecutorConfig, AeroGpuFenceCompletionMode, AeroGpuSubmissionDecodeError,
@@ -27,22 +33,9 @@ use aero_devices_gpu::ring::{
 };
 use aero_devices_gpu::scanout::AeroGpuFormat;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent as ProtocolCmdPresent,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use memory::MemoryBus;
-
-const CMD_STREAM_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
-const CMD_STREAM_ABI_VERSION_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, abi_version) as u64;
-const CMD_STREAM_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes) as u64;
-const CMD_STREAM_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, flags) as u64;
-const CMD_STREAM_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, reserved0) as u64;
-const CMD_STREAM_RESERVED1_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolCmdStreamHeader, reserved1) as u64;
 
 #[derive(Clone, Debug)]
 struct VecMemory {
@@ -181,11 +174,11 @@ fn write_cmd_stream_header(
     mem.write_u32(gpa + CMD_STREAM_FLAGS_OFFSET, 0);
     mem.write_u32(gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
     mem.write_u32(gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
-    ProtocolCmdStreamHeader::SIZE_BYTES as u32
+    CMD_STREAM_HEADER_SIZE_BYTES
 }
 
 fn write_vsync_present_cmd_stream(mem: &mut VecMemory, gpa: u64, abi_version: u32) -> u32 {
-    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
+    let stream_size = CMD_STREAM_HEADER_SIZE_BYTES + CMD_PRESENT_SIZE_BYTES;
 
     mem.write_u32(gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
     mem.write_u32(gpa + CMD_STREAM_ABI_VERSION_OFFSET, abi_version);
@@ -194,21 +187,21 @@ fn write_vsync_present_cmd_stream(mem: &mut VecMemory, gpa: u64, abi_version: u3
     mem.write_u32(gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
     mem.write_u32(gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
-    let present_gpa = gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
+    let present_gpa = gpa + u64::from(CMD_STREAM_HEADER_SIZE_BYTES);
     mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
+        present_gpa + CMD_HDR_OPCODE_OFFSET,
         AerogpuCmdOpcode::Present as u32,
     );
     mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
-        ProtocolCmdPresent::SIZE_BYTES as u32,
+        present_gpa + CMD_HDR_SIZE_BYTES_OFFSET,
+        CMD_PRESENT_SIZE_BYTES,
     );
     mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
+        present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET,
         0,
     );
     mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
+        present_gpa + CMD_PRESENT_FLAGS_OFFSET,
         AEROGPU_PRESENT_FLAG_VSYNC,
     );
 
@@ -353,7 +346,7 @@ fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
         &mut mem,
         cmd_gpa,
         regs.abi_version,
-        ProtocolCmdStreamHeader::SIZE_BYTES as u32,
+        CMD_STREAM_HEADER_SIZE_BYTES,
         AEROGPU_CMD_STREAM_MAGIC,
     );
     let cmd_buffer_size_bytes = 4096u32;
@@ -389,13 +382,10 @@ fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
         .cmd_stream_header
         .as_ref()
         .expect("missing cmd stream header");
-    assert_eq!(
-        header.size_bytes,
-        ProtocolCmdStreamHeader::SIZE_BYTES as u32
-    );
+    assert_eq!(header.size_bytes, CMD_STREAM_HEADER_SIZE_BYTES);
     assert_eq!(
         record.submission.cmd_stream.len(),
-        ProtocolCmdStreamHeader::SIZE_BYTES
+        CMD_STREAM_HEADER_SIZE_BYTES as usize
     );
 }
 
