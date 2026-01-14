@@ -21,7 +21,7 @@ use aero_jit_x86::{
     TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
 };
 use aero_types::{Gpr, Width};
-use tier1_common::{write_cpu_to_wasm_bytes, CpuSnapshot, SimpleBus};
+use tier1_common::{pick_invalid_opcode, write_cpu_to_wasm_bytes, CpuSnapshot, SimpleBus};
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
@@ -4258,12 +4258,13 @@ fn tier1_inline_tlb_mmio_exit_reports_precise_rip_mid_block() {
     // x86:
     //   0x1000: mov ecx, 0x12345678
     //   0x1005: mov eax, dword ptr [rax]   (MMIO -> runtime exit)
-    //   0x1007: int3                      (unreached)
+    //   0x1007: <invalid>                 (unreached)
     let entry = 0x1000u64;
+    let invalid = pick_invalid_opcode(64);
     let code = [
         0xb9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
         0x8b, 0x00, // mov eax, dword ptr [rax]
-        0xcc, // int3
+        invalid, // <invalid>
     ];
 
     let mut bus = SimpleBus::new(0x2000);
