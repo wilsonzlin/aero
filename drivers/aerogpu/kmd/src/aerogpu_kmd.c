@@ -3298,7 +3298,20 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
                 return;
             }
 
-            head = ringHeader->head;
+            const uint32_t head32 = ringHeader->head;
+            const uint32_t pending = (uint32_t)(ringHeader->tail - head32);
+            if (pending > ringEntryCount) {
+                /*
+                 * Defensive: if head/tail are corrupted (e.g. device reset or guest memory clobber),
+                 * avoid retiring internal submissions based on an invalid head value. Prematurely
+                 * freeing internal submission buffers can lead to use-after-free when the device
+                 * DMA-reads command buffers that are still referenced by the ring.
+                 */
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
+
+            head = head32;
         } else {
             if (!Adapter->Bar0 || Adapter->RingEntryCount == 0) {
                 KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
