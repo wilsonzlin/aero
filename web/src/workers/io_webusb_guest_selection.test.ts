@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { applyUsbSelectedToWebUsbGuestBridge, chooseWebUsbGuestBridge } from "./io_webusb_guest_selection";
 
-describe("webusb xhci selection (io worker)", () => {
+describe("xhci_webusb guest selection (io worker)", () => {
   it("prefers xHCI when both UHCI and xHCI passthrough bridges are present", () => {
     const uhci = {
       set_connected: vi.fn(),
