@@ -35,12 +35,14 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
 
     def test_skip_reason_is_parsed_from_marker(self) -> None:
         # Ensure we parse `reason=` from the guest marker so CI logs surface *why* it was skipped.
-        self.assertIn(r"virtio-blk-reset\|SKIP\|reason=", self.text)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|"', self.text)
+        self.assertIn('reason=([^|\\r\\n]+)', self.text)
 
     def test_fail_reason_and_err_are_parsed_from_marker(self) -> None:
         # Ensure we surface fail reason/err in the deterministic failure token.
-        self.assertIn(r"virtio-blk-reset\|FAIL\|reason=", self.text)
-        self.assertIn(r"\|err=", self.text)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|"', self.text)
+        self.assertIn('reason=([^|\\r\\n]+)', self.text)
+        self.assertIn('err=([^|\\r\\n]+)', self.text)
 
     def test_host_marker_is_emitted(self) -> None:
         # The PowerShell harness should mirror the guest marker into a stable host marker

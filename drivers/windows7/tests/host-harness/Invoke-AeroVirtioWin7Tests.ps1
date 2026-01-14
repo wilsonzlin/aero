@@ -7170,8 +7170,12 @@ try {
     }
     "VIRTIO_BLK_RESET_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|SKIP\|reason=([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -7183,11 +7187,13 @@ try {
     "VIRTIO_BLK_RESET_FAILED" {
       $reason = "unknown"
       $err = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL\|reason=([^|\r\n]+)") {
-        $reason = $Matches[1]
-      }
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL\|[^\r\n]*\|err=([^|\r\n]+)") {
-        $err = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled (reason=$reason err=$err)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
