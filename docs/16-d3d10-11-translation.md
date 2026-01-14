@@ -505,18 +505,27 @@ bring up correctness incrementally:
   - Initial P1b limitations (explicit):
     - no stream-out / transform feedback (SO targets are unsupported),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
-    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported
-      for real GS bytecode execution; the runtime MUST NOT silently treat them as non-adjacency
-      primitives. Until adjacency emulation is implemented, route through scaffolding emulation
-      (if present) or reject with a clear error.
-      - When adjacency is implemented, the required IA primitive assembly ordering is specified in
-        section 2.1.1b.
-    - **primitive restart** for indexed strip topologies:
+    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`):
+      - The required IA primitive assembly ordering is specified in section 2.1.1b.
+      - The in-tree translated-GS execution path is currently wired for list topologies:
+        - non-adj: `POINTLIST`, `LINELIST`, `TRIANGLELIST`
+        - adj (list): `LINELIST_ADJ`, `TRIANGLELIST_ADJ`
+      - Adjacency strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported
+        end-to-end; the runtime MUST NOT silently reinterpret them as non-adjacency primitives.
+    - **IA primitive restart** (indexed strip topologies) is supported in the direct draw path:
       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
       - Indexed `LINESTRIP`/`TRIANGLESTRIP` draws are supported (native WebGPU primitive restart where
-        available; CPU fallback on wgpu-GL).
-      - Compute-side primitive assembly for strip topologies (including adjacency-strip) is future
-        work.
+        available).
+      - On backends where native primitive restart is unreliable (notably wgpu GL), the executor
+        emulates restart by converting the strip into a list index buffer (see
+        `crates/aero-d3d11/src/runtime/strip_to_list.rs` and
+        `exec_draw_indexed_strip_restart_emulated` in
+        `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+      - This keeps restart handling within a single draw call and preserves `SV_PrimitiveID` in the
+        pixel shader (see
+        `crates/aero-d3d11/tests/aerogpu_cmd_primitive_restart_primitive_id.rs`).
+      - Compute-side primitive assembly for strip input topologies (including adjacency strips) is
+        future work.
     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
     - output ordering:
@@ -848,17 +857,27 @@ Rules:
   - and flatten `(instance_id, primitive_id_in_instance)` into a single `prim_id` in
     `0..input_prim_count_total` for compute expansion (see GS pass sequence and `gs_inputs` packing).
 - `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
-  `lineadj`/`triadj`). Until adjacency emulation is implemented, the runtime MUST NOT reinterpret
-  them as non-adjacency topologies; it should either route through emulation-path scaffolding or
-  reject the draw with a clear error.
+  `lineadj`/`triadj`). The in-tree translated-GS prepass supports adjacency **list** topologies
+  (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`); strip-adjacency (`*_STRIP_ADJ`) remains future work. The
+  runtime MUST NOT reinterpret adjacency topologies as non-adjacency; it should either route through
+  an adjacency-aware path or reject the draw with a clear error.
 - **Primitive restart (indexed strip topologies):** for indexed `LINESTRIP`/`TRIANGLESTRIP` (and
   their adjacency variants `LINESTRIP_ADJ`/`TRIANGLESTRIP_ADJ`), D3D11 uses a special index value to
-  restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices). The simple formulas
-  above assume there are no restart indices.
-  - Indexed `LINESTRIP`/`TRIANGLESTRIP` draws support primitive restart in the native render-pass
-    path (native WebGPU primitive restart where available; CPU fallback on wgpu-GL).
-  - Compute-side primitive assembly that needs to interpret strip indices still needs a
-    restart-aware strip assembly path.
+  restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices).
+  - Primitive restart affects both the effective primitive count and the `primitive_id → vertices`
+    mapping (the simple formulas above assume a single uninterrupted strip).
+  - In the direct draw path, the in-tree executors handle restart outside the shader stage:
+    - `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` emulates restart on wgpu GL by
+      converting strip indices into a list index buffer (`exec_draw_indexed_strip_restart_emulated`,
+      using `crates/aero-d3d11/src/runtime/strip_to_list.rs`). Other backends rely on native
+      primitive restart.
+    - `crates/aero-d3d11/src/runtime/execute.rs` (`D3D11Runtime`) emulates restart on wgpu GL by
+      splitting the draw into restart-free segments (`draw_indexed_strip_restart_emulated`). Other
+      backends rely on native primitive restart.
+  - For compute-expansion passes that need to *consume* strip topologies (GS/HS/DS), implementations
+    either need a restart-aware assembly stage or must preprocess strips into list form before
+    packing `gs_inputs`. This becomes especially important for `*_ADJ` strip topologies, which are
+    not yet supported end-to-end.
 
 For patchlist topologies:
 
@@ -994,10 +1013,14 @@ Let `base = 2p`.
 This yields triangle vertices at indices 0/2/4 in the correct strip-winding order for both even and
 odd primitives, while preserving the `triadj` adjacency-edge mapping described above.
 
-Bring-up note: adjacency primitive assembly is specified here for implementability, but initial
-bring-up may still reject `*_ADJ` topologies (see limitations above) until the GS emulation path can
-consume `lineadj`/`triadj` inputs correctly. Supporting strip-adjacency (`*_STRIP_ADJ`) and its
-interaction with primitive restart can be staged later if needed.
+Implementation note: adjacency primitive assembly is specified here for implementability. The in-tree
+AeroGPU command-stream executor executes translated GS DXBC over adjacency **list** input topologies
+(`LINELIST_ADJ`, `TRIANGLELIST_ADJ`) end-to-end today (see
+`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs` and
+`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`). Adjacency
+strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported end-to-end and currently
+route through scaffolding/synthetic expansion (or are rejected when a GS that truly requires strip
+adjacency is bound).
 
 #### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
 
@@ -1038,8 +1061,8 @@ them in the executor’s shared internal/emulation bind group:
 
 When wiring that translator into the executor, either adapt its declarations to the baseline
 internal scheme, or bind a separate internal group(0) for the GS pass (the current translated-GS
- prepass paths for `PointList`, `LineList`, and `TriangleList` draws use the separate group(0) approach; see
- section 2.2.1).
+prepass paths for `PointList`, `LineList`, `TriangleList`, `LineListAdj`, and `TriangleListAdj` draws
+use the separate group(0) approach; see section 2.2.1).
 
 Example declaration:
 
@@ -1088,13 +1111,17 @@ To populate `gs_inputs`, the runtime must:
 2. for each vertex in the assembled primitive, populate the required `v#[]` input registers:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
-   - Current in-tree implementation note: the point-list, line-list, and triangle-list translated-GS prepass
-      paths in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS
-      outputs** via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with
-      a guarded IA-fill fallback:
+   - Current in-tree implementation note: the point-list, line-list, triangle-list, and adjacency-list
+     (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`) translated-GS prepass paths in
+     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS outputs**
+     via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with a guarded
+     IA-fill fallback:
      - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
        VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
        IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
+     - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency)
+       requires the input-fill pass to implement the primitive assembly rules in section 2.1.1b,
+       including primitive restart for indexed strips.
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
@@ -1901,7 +1928,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Optionally, implementations may pack upstream stage output registers into a dense `gs_inputs`
         buffer (see “GS input register payload layout”) and have the translated GS read from that.
       - Note (current in-tree translated-GS prepass):
-        - Point-list, line-list, and triangle-list draws populate `gs_inputs` from **VS outputs** via a separate
+        - Point-list, line-list, triangle-list, and adjacency-list (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
+          draws populate `gs_inputs` from **VS outputs** via a separate
           VS-as-compute input-fill pass (vertex pulling + a minimal SM4 VS subset). If VS-as-compute
           translation fails, the executor only falls back to IA-fill when the VS is a strict
           passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for
@@ -2038,12 +2066,13 @@ resources** in `@group(3)`:
 
 - Synthetic-expansion prepass (`GEOMETRY_PREPASS_CS_WGSL` in the executor): expansion outputs +
   params in `@group(0)`, GS `cb#[]` in `@group(3)`.
-- Translated GS DXBC prepass (`runtime/gs_translate.rs`): expansion outputs + counters/indirect args +
+  - Translated GS DXBC prepass (`runtime/gs_translate.rs`): expansion outputs + counters/indirect args +
   params + `gs_inputs` in `@group(0)`, and referenced GS resources (`cb#`/`t#`/`s#`) in `@group(3)`.
   - The in-tree translated-GS prepass builds `gs_inputs` via a separate **input fill** compute pass:
     - IA vertex pulling bindings live in `@group(3)` (internal range), and the input-fill kernel
       writes the packed register payload into a `@group(0)` storage buffer (`gs_inputs`).
-    - Point-list, line-list, and triangle-list draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
+    - Point-list, line-list, triangle-list, and adjacency-list (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
+      draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
       so the GS observes VS output registers. If VS-as-compute translation fails, the executor only
       falls back to IA-fill when the VS is a strict passthrough (or
       `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender).
@@ -2401,7 +2430,14 @@ Add new `aero-d3d11` executor tests that render to an offscreen RT and compare r
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_*.rs`
   - Example (strip cut/restart semantics): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+  - Example (DrawIndexed GS prepass): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
+  - Example (adjacency-list GS inputs): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`,
+    `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`
   - Example (compute-prepass plumbing smoke): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
+- Primitive restart (indexed strip topologies):
+  - `crates/aero-d3d11/tests/aerogpu_cmd_primitive_restart.rs` (render coverage)
+  - `crates/aero-d3d11/tests/aerogpu_cmd_primitive_restart_primitive_id.rs` (`SV_PrimitiveID` preservation)
+  - `crates/aero-d3d11/tests/d3d11_runtime_strip_restart.rs` (`D3D11Runtime` coverage)
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
 
 Each test should:
@@ -2411,7 +2447,8 @@ Each test should:
 3. Issue a draw that exercises the expansion path.
 4. Read back the render target and compare to a tiny reference image (or a simple expected pattern).
 
-Now that a minimal point-list, line-list, and triangle-list translated GS DXBC execution path exists, keep the existing
+Now that a minimal point-list, line-list, triangle-list, and adjacency-list (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
+translated GS DXBC execution path exists, keep the existing
 “ignore GS payloads” robustness test
 (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) using a GS DXBC payload that is
 intentionally **outside** the translator/execution subset. This test is meant to be a cheap
