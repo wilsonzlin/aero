@@ -2955,6 +2955,20 @@ impl XhciController {
             if !matches!(state, context::EndpointState::Running) {
                 return EndpointOutcome::idle();
             }
+        } else {
+            // If the guest Device Context is unavailable (e.g. DCBAAP=0 in a harness), we still want
+            // to respect controller-local halt/stop state to avoid processing rings that we have
+            // already faulted. This also ensures snapshot restore cannot "resurrect" a halted
+            // endpoint by leaving it queued in `active_endpoints` without any guest contexts.
+            const EP_STATE_HALTED: u8 = 2;
+            const EP_STATE_STOPPED: u8 = 3;
+            let idx = usize::from(endpoint_id.saturating_sub(1));
+            if let Some(ctx) = slot.endpoint_contexts.get(idx) {
+                let state = ctx.endpoint_state();
+                if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
+                    return EndpointOutcome::idle();
+                }
+            }
         }
 
         // Bulk/interrupt endpoints are delegated to `transfer::XhciTransferExecutor` and execute at
