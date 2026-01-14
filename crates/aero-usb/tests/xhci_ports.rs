@@ -74,7 +74,7 @@ fn xhci_ports_attach_reset_and_events() {
     // Attach should generate a Port Status Change Event TRB.
     let ev = xhci.pop_pending_event().expect("expected event after attach");
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> 24) & 0xff) as u8;
+    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Clear CSC via write-1-to-clear.
@@ -102,7 +102,7 @@ fn xhci_ports_attach_reset_and_events() {
         .pop_pending_event()
         .expect("expected event after reset completion");
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> 24) & 0xff) as u8;
+    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Clear PEC/PRC so we can observe a second reset completion while the port is already enabled.
@@ -116,7 +116,7 @@ fn xhci_ports_attach_reset_and_events() {
         .pop_pending_event()
         .expect("expected event after reset begin (enabled port)");
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> 24) & 0xff) as u8;
+    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Wait for reset completion. PEC is already set, so PRC must drive the PSC event.
@@ -133,7 +133,7 @@ fn xhci_ports_attach_reset_and_events() {
         .pop_pending_event()
         .expect("expected event after reset completion (enabled port)");
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> 24) & 0xff) as u8;
+    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // No extra events.

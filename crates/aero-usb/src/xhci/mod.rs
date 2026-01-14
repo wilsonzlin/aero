@@ -43,7 +43,7 @@ pub mod trb;
 
 mod port;
 
-pub use port::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC_PRC};
+pub use regs::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC_PRC};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -1235,7 +1235,7 @@ fn make_port_status_change_event_trb(port_id: u8) -> Trb {
     // - Status bits 24..=31: Completion Code (Success)
     // - Control bits 10..=15: TRB Type
     let mut trb = Trb::new(
-        (port_id as u64) << 24,
+        (port_id as u64) << regs::PSC_EVENT_PORT_ID_SHIFT,
         (u32::from(COMPLETION_CODE_SUCCESS)) << Trb::STATUS_COMPLETION_CODE_SHIFT,
         0,
     );

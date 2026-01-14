@@ -1,25 +1,11 @@
 use alloc::boxed::Box;
 
+use super::regs::{
+    PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PLS_MASK, PORTSC_PLS_SHIFT, PORTSC_PP,
+    PORTSC_PR, PORTSC_PRC, PORTSC_PS_MASK, PORTSC_PS_SHIFT,
+};
 use crate::device::AttachedUsbDevice;
 use crate::{UsbDeviceModel, UsbSpeed};
-
-// xHCI PORTSC (Port Status and Control) bit definitions.
-//
-// Only a small subset is modelled for now; bits are chosen to satisfy typical USB2 root hub
-// enumeration flows and unit tests.
-pub const PORTSC_CCS: u32 = 1 << 0;
-pub const PORTSC_PED: u32 = 1 << 1;
-pub const PORTSC_PR: u32 = 1 << 4;
-
-pub const PORTSC_PLS_SHIFT: u32 = 5;
-pub const PORTSC_PLS_MASK: u32 = 0x0f << PORTSC_PLS_SHIFT;
-pub const PORTSC_PP: u32 = 1 << 9;
-pub const PORTSC_PS_SHIFT: u32 = 10;
-pub const PORTSC_PS_MASK: u32 = 0x0f << PORTSC_PS_SHIFT;
-
-pub const PORTSC_CSC: u32 = 1 << 17;
-pub const PORTSC_PEC: u32 = 1 << 18;
-pub const PORTSC_PRC: u32 = 1 << 21;
 
 // Reset signalling for USB2 ports is ~50ms (similar to the UHCI root hub model).
 const RESET_DURATION_MS: u16 = 50;

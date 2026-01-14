@@ -218,3 +218,35 @@ pub mod port {
         super::REG_USBCMD + PORTREGS_BASE + (port as u64) * PORTREGS_STRIDE + PORTSC
     }
 }
+
+// ---- PORTSC bit definitions (subset) ----
+
+/// Current Connect Status (CCS), bit 0.
+pub const PORTSC_CCS: u32 = 1 << 0;
+/// Port Enabled/Disabled (PED), bit 1.
+pub const PORTSC_PED: u32 = 1 << 1;
+/// Port Reset (PR), bit 4.
+pub const PORTSC_PR: u32 = 1 << 4;
+
+/// Port Link State (PLS), bits 5..=8.
+pub const PORTSC_PLS_SHIFT: u32 = 5;
+pub const PORTSC_PLS_MASK: u32 = 0x0f << PORTSC_PLS_SHIFT;
+
+/// Port Power (PP), bit 9.
+pub const PORTSC_PP: u32 = 1 << 9;
+
+/// Port Speed ID (PS), bits 10..=13.
+pub const PORTSC_PS_SHIFT: u32 = 10;
+pub const PORTSC_PS_MASK: u32 = 0x0f << PORTSC_PS_SHIFT;
+
+/// Connect Status Change (CSC), bit 17 (RW1C).
+pub const PORTSC_CSC: u32 = 1 << 17;
+/// Port Enabled/Disabled Change (PEC), bit 18 (RW1C).
+pub const PORTSC_PEC: u32 = 1 << 18;
+/// Port Reset Change (PRC), bit 21 (RW1C).
+pub const PORTSC_PRC: u32 = 1 << 21;
+
+// ---- Port Status Change Event TRB encoding helpers ----
+
+/// In a Port Status Change Event TRB, the Port ID lives in bits 31:24 of the parameter dword.
+pub const PSC_EVENT_PORT_ID_SHIFT: u32 = 24;
