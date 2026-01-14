@@ -922,11 +922,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         if delivery_mode != 0b110 {
             return;
         }
-        // Only model STARTUP "assert".
-        let level_assert = ((icr_low >> 14) & 1) != 0;
-        if !level_assert {
-            return;
-        }
+        // STARTUP IPI is edge-triggered; ignore the level bit and treat any write as a delivery.
 
         let vector = (icr_low & 0xFF) as u8;
         let shorthand = (icr_low >> 18) & 0b11;
