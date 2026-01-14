@@ -5696,30 +5696,70 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!dev) {
     return;
   }
-  if (!phBuffers || !pStrides || !pOffsets || NumBuffers == 0) {
-    return;
-  }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (StartSlot == 0 && NumBuffers >= 1) {
-    dev->current_vb =
-        phBuffers[0].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0]) : nullptr;
-    dev->current_vb_stride_bytes = pStrides[0];
-    dev->current_vb_offset_bytes = pOffsets[0];
+
+  // Like D3D10, some runtime paths use NumBuffers==0 as shorthand for unbinding
+  // vertex buffers from StartSlot..end of the slot range.
+  UINT bind_count = NumBuffers;
+  if (bind_count != 0) {
+    if (!phBuffers || !pStrides || !pOffsets) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    if (StartSlot >= D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    if (bind_count > (D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+  } else {
+    if (StartSlot > D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    if (StartSlot == D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+      return;
+    }
+    bind_count = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot;
   }
-  std::vector<aerogpu_vertex_buffer_binding> bindings;
-  bindings.resize(NumBuffers);
-  for (UINT i = 0; i < NumBuffers; i++) {
-    bindings[i].buffer = phBuffers[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[i])->handle : 0;
-    bindings[i].stride_bytes = pStrides[i];
-    bindings[i].offset_bytes = pOffsets[i];
-    bindings[i].reserved0 = 0;
+
+  std::array<aerogpu_vertex_buffer_binding, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> bindings{};
+  for (UINT i = 0; i < bind_count; ++i) {
+    const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
+
+    aerogpu_vertex_buffer_binding b{};
+    Resource* vb_res = nullptr;
+    if (NumBuffers != 0) {
+      vb_res = phBuffers[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[i]) : nullptr;
+      b.buffer = vb_res ? vb_res->handle : 0;
+      b.stride_bytes = pStrides[i];
+      b.offset_bytes = pOffsets[i];
+    } else {
+      b.buffer = 0;
+      b.stride_bytes = 0;
+      b.offset_bytes = 0;
+    }
+    b.reserved0 = 0;
+    bindings[i] = b;
+
+    if (slot == 0) {
+      dev->current_vb = vb_res;
+      dev->current_vb_stride_bytes = b.stride_bytes;
+      dev->current_vb_offset_bytes = b.offset_bytes;
+    }
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
-      AEROGPU_CMD_SET_VERTEX_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_VERTEX_BUFFERS, bindings.data(), static_cast<size_t>(bind_count) * sizeof(bindings[0]));
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->start_slot = StartSlot;
-  cmd->buffer_count = NumBuffers;
+  cmd->buffer_count = bind_count;
 }
 
 void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hBuffer, DXGI_FORMAT format, UINT offset) {
