@@ -7,6 +7,8 @@ use std::time::Duration;
 // Required by the included `tile_diff` module (`use crate::Rect;`).
 #[cfg(not(target_arch = "wasm32"))]
 use aero_gpu::Rect;
+#[cfg(not(target_arch = "wasm32"))]
+use aero_shared::shared_framebuffer::{dirty_tiles_to_rects, SharedFramebufferLayout};
 
 // We keep the benchmark compiled even when the `diff-engine` feature is disabled by including the
 // implementation directly. This ensures `cargo bench -p aero-gpu` always exercises the current
@@ -136,10 +138,81 @@ fn bench_tile_diff(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_dirty_tiles_to_rects(c: &mut Criterion) {
+    let sizes = [
+        FrameSize {
+            width: 800,
+            height: 600,
+        },
+        FrameSize {
+            width: 1024,
+            height: 768,
+        },
+        FrameSize {
+            width: 1280,
+            height: 720,
+        },
+    ];
+    let tile_sizes = [16u32, 32u32, 64u32];
+
+    let mut group = c.benchmark_group("dirty_tiles_to_rects");
+
+    for &tile_size in &tile_sizes {
+        for size in sizes {
+            let layout = SharedFramebufferLayout::new_rgba8(size.width, size.height, tile_size)
+                .expect("valid layout");
+            let tile_count = layout.tile_count();
+            group.throughput(Throughput::Elements(tile_count as u64));
+
+            let word_len = layout.dirty_words_per_buffer as usize;
+
+            // Fast-path: full dirty bitset should collapse to a single full-frame rect.
+            let all_dirty_words = vec![u32::MAX; word_len];
+            group.bench_function(
+                BenchmarkId::new(
+                    "all_dirty",
+                    format!("{}x{}_tile{}", size.width, size.height, tile_size),
+                ),
+                move |b| {
+                    b.iter(|| {
+                        let rects = dirty_tiles_to_rects(layout, black_box(&all_dirty_words));
+                        black_box(rects.len());
+                    })
+                },
+            );
+
+            // Stress-path: alternating bits produces many small rects (one per dirty tile per row).
+            let mut checkerboard_words = vec![0u32; word_len];
+            for tile_index in 0..tile_count {
+                if (tile_index & 1) == 0 {
+                    let word = tile_index / 32;
+                    let bit = tile_index % 32;
+                    checkerboard_words[word] |= 1u32 << bit;
+                }
+            }
+            group.bench_function(
+                BenchmarkId::new(
+                    "checkerboard",
+                    format!("{}x{}_tile{}", size.width, size.height, tile_size),
+                ),
+                move |b| {
+                    b.iter(|| {
+                        let rects = dirty_tiles_to_rects(layout, black_box(&checkerboard_words));
+                        black_box(rects.len());
+                    })
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_tile_diff
+    targets = bench_tile_diff, bench_dirty_tiles_to_rects
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
