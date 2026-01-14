@@ -3202,14 +3202,13 @@ impl IdePort {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut ide = self.ide.borrow_mut();
         ide.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             ide.config_mut().set_bar_base(4, bar4_base);
         }
     }
@@ -3247,14 +3246,13 @@ impl IdeBusMasterBar {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut ide = self.ide.borrow_mut();
         ide.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             ide.config_mut().set_bar_base(4, bar4_base);
         }
     }
@@ -3291,14 +3289,13 @@ impl UhciIoBar {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut uhci = self.uhci.borrow_mut();
         uhci.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             uhci.config_mut()
                 .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
         }
@@ -4778,11 +4775,10 @@ impl Machine {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar0_base = cfg
                 .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar0_base)
         } else {
-            (0, 0)
+            (0, None)
         };
 
         // Ensure the device model's internal PCI config view is coherent with the canonical PCI
@@ -4790,7 +4786,7 @@ impl Machine {
         {
             let mut dev = virtio_blk.borrow_mut();
             dev.set_pci_command(command);
-            if bar0_base != 0 {
+            if let Some(bar0_base) = bar0_base {
                 dev.config_mut().set_bar_base(0, bar0_base);
             }
         }
@@ -4815,7 +4811,7 @@ impl Machine {
         {
             let mut dev = virtio_blk.borrow_mut();
             dev.set_pci_command(command);
-            if bar0_base != 0 {
+            if let Some(bar0_base) = bar0_base {
                 dev.config_mut().set_bar_base(0, bar0_base);
             }
         }
@@ -5109,11 +5105,10 @@ impl Machine {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar0_base = cfg
                 .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar0_base)
         } else {
-            (0, 0)
+            (0, None)
         };
 
         // Ensure the device model's internal PCI config view is coherent with the canonical PCI
@@ -5121,7 +5116,7 @@ impl Machine {
         {
             let mut dev = nvme.borrow_mut();
             dev.config_mut().set_command(command);
-            if bar0_base != 0 {
+            if let Some(bar0_base) = bar0_base {
                 dev.config_mut().set_bar_base(0, bar0_base);
             }
         }
@@ -5146,7 +5141,7 @@ impl Machine {
         {
             let mut dev = nvme.borrow_mut();
             dev.config_mut().set_command(command);
-            if bar0_base != 0 {
+            if let Some(bar0_base) = bar0_base {
                 dev.config_mut().set_bar_base(0, bar0_base);
             }
         }
@@ -5519,17 +5514,16 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar4_base = cfg
                         .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar4_base)
                 })
-                .unwrap_or((0, 0));
+                .unwrap_or((0, None));
 
             // Keep the UHCI model's view of PCI config state in sync so it can apply bus mastering
             // gating when used via `tick_1ms`.
             let mut uhci = uhci.borrow_mut();
             uhci.config_mut().set_command(command);
-            if bar4_base != 0 {
+            if let Some(bar4_base) = bar4_base {
                 uhci.config_mut()
                     .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
             }
@@ -5557,17 +5551,16 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 })
-                .unwrap_or((0, 0));
+                .unwrap_or((0, None));
 
             // Keep the EHCI model's view of PCI config state in sync so it can apply bus mastering
             // gating when used via `tick_1ms`.
             let mut ehci = ehci.borrow_mut();
             ehci.config_mut().set_command(command);
-            if bar0_base != 0 {
+            if let Some(bar0_base) = bar0_base {
                 ehci.config_mut()
                     .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
             }
@@ -5745,8 +5738,7 @@ impl Machine {
                             .and_then(|cfg| {
                                 cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                             })
-                            .map(|range| range.base)
-                            .unwrap_or(0);
+                            .map(|range| range.base);
                         let msi_state = cfg.as_mut().and_then(|cfg| {
                             cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
                                 .map(|off| {
@@ -5763,11 +5755,11 @@ impl Machine {
                         });
                         (command, bar5_base, msi_state)
                     })
-                    .unwrap_or((0, 0, None));
+                    .unwrap_or((0, None, None));
 
                 let mut ahci_dev = ahci.borrow_mut();
                 ahci_dev.config_mut().set_command(command);
-                if bar5_base != 0 {
+                if let Some(bar5_base) = bar5_base {
                     ahci_dev
                         .config_mut()
                         .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
@@ -6014,15 +6006,14 @@ impl Machine {
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar4_base = cfg
                             .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
+                            .map(|range| range.base);
                         (command, bar4_base)
                     })
-                    .unwrap_or((0, 0));
+                    .unwrap_or((0, None));
 
                 let mut uhci_dev = uhci.borrow_mut();
                 uhci_dev.config_mut().set_command(command);
-                if bar4_base != 0 {
+                if let Some(bar4_base) = bar4_base {
                     uhci_dev
                         .config_mut()
                         .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
@@ -6054,15 +6045,14 @@ impl Machine {
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar0_base = cfg
                             .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
+                            .map(|range| range.base);
                         (command, bar0_base)
                     })
-                    .unwrap_or((0, 0));
+                    .unwrap_or((0, None));
 
                 let mut ehci_dev = ehci.borrow_mut();
                 ehci_dev.config_mut().set_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     ehci_dev
                         .config_mut()
                         .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
@@ -7378,13 +7368,12 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 };
                 let mut dev = virtio_input_keyboard.borrow_mut();
                 dev.set_pci_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     dev.config_mut().set_bar_base(0, bar0_base);
                 }
             }
@@ -7397,13 +7386,12 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 };
                 let mut dev = virtio_input_mouse.borrow_mut();
                 dev.set_pci_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     dev.config_mut().set_bar_base(0, bar0_base);
                 }
             }
@@ -7435,14 +7423,13 @@ impl Machine {
                         .and_then(|cfg| {
                             cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                         })
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar5_base)
                 };
 
                 let mut ahci = ahci.borrow_mut();
                 ahci.config_mut().set_command(command);
-                if bar5_base != 0 {
+                if let Some(bar5_base) = bar5_base {
                     ahci.config_mut()
                         .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
                 }
@@ -7455,14 +7442,13 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 };
 
                 let mut nvme = nvme.borrow_mut();
                 nvme.config_mut().set_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     nvme.config_mut().set_bar_base(0, bar0_base);
                 }
             }
@@ -7474,14 +7460,13 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar4_base = cfg
                         .and_then(|cfg| cfg.bar_range(4))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar4_base)
                 };
 
                 let mut ide = ide.borrow_mut();
                 ide.config_mut().set_command(command);
-                if bar4_base != 0 {
+                if let Some(bar4_base) = bar4_base {
                     ide.config_mut().set_bar_base(4, bar4_base);
                 }
             }
@@ -7493,14 +7478,13 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 };
 
                 let mut virtio_blk = virtio_blk.borrow_mut();
                 virtio_blk.set_pci_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     virtio_blk.config_mut().set_bar_base(0, bar0_base);
                 }
             }
@@ -8023,8 +8007,7 @@ impl Machine {
             let bar5_base = cfg
                 .as_ref()
                 .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             let msi_state = cfg.as_mut().and_then(|cfg| {
                 cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
                     .map(|off| {
@@ -8046,7 +8029,7 @@ impl Machine {
 
         let mut dev = ahci.borrow_mut();
         dev.config_mut().set_command(command);
-        if bar5_base != 0 {
+        if let Some(bar5_base) = bar5_base {
             dev.config_mut()
                 .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
         }
@@ -8085,14 +8068,13 @@ impl Machine {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut dev = ide.borrow_mut();
         dev.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             dev.config_mut().set_bar_base(4, bar4_base);
         }
 
@@ -9577,14 +9559,13 @@ impl snapshot::SnapshotSource for Machine {
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar4_base = cfg
                             .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
+                            .map(|range| range.base);
                         (command, bar4_base)
                     };
 
                     let mut uhci = uhci.borrow_mut();
                     uhci.config_mut().set_command(command);
-                    if bar4_base != 0 {
+                    if let Some(bar4_base) = bar4_base {
                         uhci.config_mut()
                             .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
                     }
@@ -9603,14 +9584,13 @@ impl snapshot::SnapshotSource for Machine {
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar0_base = cfg
                             .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
-                            .map(|range| range.base)
-                            .unwrap_or(0);
+                            .map(|range| range.base);
                         (command, bar0_base)
                     };
 
                     let mut ehci = ehci.borrow_mut();
                     ehci.config_mut().set_command(command);
-                    if bar0_base != 0 {
+                    if let Some(bar0_base) = bar0_base {
                         ehci.config_mut()
                             .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
                     }
@@ -9665,13 +9645,12 @@ impl snapshot::SnapshotSource for Machine {
                         .and_then(|cfg| {
                             cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                         })
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar5_base)
                 };
                 let mut ahci = ahci.borrow_mut();
                 ahci.config_mut().set_command(command);
-                if bar5_base != 0 {
+                if let Some(bar5_base) = bar5_base {
                     ahci.config_mut()
                         .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
                 }
@@ -9684,11 +9663,11 @@ impl snapshot::SnapshotSource for Machine {
                 let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut command = 0;
-                    let mut bar0_base = 0;
+                    let mut bar0_base = None;
                     let mut msix_ctrl_bits = None;
                     if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
                         command = cfg.command();
-                        bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
                             let ctrl = cfg
                                 .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
@@ -9700,7 +9679,7 @@ impl snapshot::SnapshotSource for Machine {
                 };
                 let mut nvme = nvme.borrow_mut();
                 nvme.config_mut().set_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     nvme.config_mut().set_bar_base(0, bar0_base);
                 }
                 if let Some(msix_ctrl_bits) = msix_ctrl_bits {
@@ -9724,13 +9703,12 @@ impl snapshot::SnapshotSource for Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar4_base = cfg
                         .and_then(|cfg| cfg.bar_range(4))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar4_base)
                 };
                 let mut ide = ide.borrow_mut();
                 ide.config_mut().set_command(command);
-                if bar4_base != 0 {
+                if let Some(bar4_base) = bar4_base {
                     ide.config_mut().set_bar_base(4, bar4_base);
                 }
             }
@@ -9742,11 +9720,11 @@ impl snapshot::SnapshotSource for Machine {
                 let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut command = 0;
-                    let mut bar0_base = 0;
+                    let mut bar0_base = None;
                     let mut msix_ctrl_bits = None;
                     if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
                         command = cfg.command();
-                        bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
                             let ctrl = cfg
                                 .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
@@ -9759,7 +9737,7 @@ impl snapshot::SnapshotSource for Machine {
 
                 let mut virtio_blk = virtio_blk.borrow_mut();
                 virtio_blk.set_pci_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     virtio_blk.config_mut().set_bar_base(0, bar0_base);
                 }
                 if let Some(msix_ctrl_bits) = msix_ctrl_bits {
