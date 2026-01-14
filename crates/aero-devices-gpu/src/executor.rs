@@ -989,7 +989,27 @@ fn write_scanout0_rgba8(
     Ok(())
 }
 
+// -----------------------------------------------------------------------------
+// Defensive caps (guest-driven allocations)
+// -----------------------------------------------------------------------------
+//
+// The ring submission format allows the guest to provide pointers to:
+// - an optional allocation table (list of referenced GPU resources), and
+// - a command stream.
+//
+// Device-side decoding will copy these buffers into host-owned `Vec<u8>` values. Since those sizes
+// are guest-controlled, cap them defensively to avoid unbounded allocations.
+//
+// Keep tighter limits on wasm32: browser/test environments can have smaller heaps, and very large
+// command streams are not expected in that configuration.
+#[cfg(target_arch = "wasm32")]
+const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 4 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
+
+#[cfg(target_arch = "wasm32")]
+const MAX_CMD_STREAM_SIZE_BYTES: u32 = 16 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 
 fn decode_alloc_table(
