@@ -50,6 +50,15 @@ struct VertexXyzTex1 {
   float v;
 };
 
+struct VertexXyzTex1f3 {
+  float x;
+  float y;
+  float z;
+  float u;
+  float v;
+  float w;
+};
+
 struct VertexXyzrhwTex1 {
   float x;
   float y;
@@ -57,6 +66,17 @@ struct VertexXyzrhwTex1 {
   float rhw;
   float u;
   float v;
+};
+
+struct VertexXyzrhwDiffuseTex1f3 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+  float u;
+  float v;
+  float w;
 };
 
 struct VertexXyzrhwDiffuseTex1 {
@@ -1052,6 +1072,111 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
       if (!white_bytes_match) {
         return reporter.Fail("ProcessVertices XYZ|TEX1 missing-diffuse case did not match expected output");
+      }
+    }
+
+    // Validate XYZ|TEX1 with TEXCOORDSIZE3(0) (float3 texcoords).
+    {
+      const VertexXyzTex1f3 src_white = {0.0f, 0.0f, 0.0f, 0.25f, 0.75f, 0.125f};
+
+      ComPtr<IDirect3DVertexBuffer9> src_white_vb;
+      hr = dev->CreateVertexBuffer(sizeof(src_white),
+                                   0,
+                                   D3DFVF_XYZ | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE3(0),
+                                   D3DPOOL_DEFAULT,
+                                   src_white_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !src_white_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(src_white_f3)", hr);
+      }
+
+      void* src_white_ptr = NULL;
+      hr = src_white_vb->Lock(0, sizeof(src_white), &src_white_ptr, 0);
+      if (FAILED(hr) || !src_white_ptr) {
+        return reporter.FailHresult("src_white_f3->Lock", hr);
+      }
+      memcpy(src_white_ptr, &src_white, sizeof(src_white));
+      hr = src_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("src_white_f3->Unlock", hr);
+      }
+
+      ComPtr<IDirect3DVertexBuffer9> dst_white_vb;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1f3),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE3(0),
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_white_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_white_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_white_f3)", hr);
+      }
+
+      void* dst_white_init_ptr = NULL;
+      hr = dst_white_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1f3), &dst_white_init_ptr, 0);
+      if (FAILED(hr) || !dst_white_init_ptr) {
+        return reporter.FailHresult("dst_white_f3->Lock (init)", hr);
+      }
+      memset(dst_white_init_ptr, 0xCD, sizeof(VertexXyzrhwDiffuseTex1f3));
+      hr = dst_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_white_f3->Unlock (init)", hr);
+      }
+
+      const D3DVERTEXELEMENT9 decl_tex_f3_elems[] = {
+          {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITIONT, 0},
+          {0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+          {0, 20, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+          D3DDECL_END(),
+      };
+      ComPtr<IDirect3DVertexDeclaration9> decl_tex_f3;
+      hr = dev->CreateVertexDeclaration(decl_tex_f3_elems, decl_tex_f3.put());
+      if (FAILED(hr) || !decl_tex_f3) {
+        return reporter.FailHresult("CreateVertexDeclaration(tex_f3)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE3(0));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZ|TEX1|F3)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_white_vb.get(), 0, sizeof(VertexXyzTex1f3));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_white_f3)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_white_vb.get(),
+                                decl_tex_f3.get(),
+                                /*Flags=*/0);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz|tex1 f3)", hr);
+      }
+
+      void* dst_white_ptr = NULL;
+      hr = dst_white_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1f3), &dst_white_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_white_ptr) {
+        return reporter.FailHresult("dst_white_f3->Lock (read)", hr);
+      }
+
+      const VertexXyzrhwDiffuseTex1f3 expected_white = {0.5f,
+                                                        0.5f,
+                                                        0.0f,
+                                                        1.0f,
+                                                        D3DCOLOR_XRGB(255, 255, 255),
+                                                        src_white.u,
+                                                        src_white.v,
+                                                        src_white.w};
+      const bool white_bytes_match = (memcmp(dst_white_ptr, &expected_white, sizeof(expected_white)) == 0);
+
+      hr = dst_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_white_f3->Unlock (read)", hr);
+      }
+
+      if (!white_bytes_match) {
+        return reporter.Fail("ProcessVertices XYZ|TEX1(TEXCOORDSIZE3) missing-diffuse case did not match expected output");
       }
     }
 

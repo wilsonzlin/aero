@@ -6268,6 +6268,7 @@ struct ProcessVerticesDeclInfo {
   uint32_t diffuse_offset = 0;
   bool has_diffuse = false;
   uint32_t tex0_offset = 0;
+  uint32_t tex0_size_bytes = 0;
   bool has_tex0 = false;
 };
 
@@ -6361,9 +6362,12 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
       out->has_diffuse = true;
       out->diffuse_offset = e.Offset;
     }
-    if (e.Usage == kD3dDeclUsageTexcoord && e.Type == kD3dDeclTypeFloat2 && e.UsageIndex == 0) {
+    if (e.Usage == kD3dDeclUsageTexcoord && e.UsageIndex == 0 &&
+        (e.Type == kD3dDeclTypeFloat1 || e.Type == kD3dDeclTypeFloat2 || e.Type == kD3dDeclTypeFloat3 ||
+         e.Type == kD3dDeclTypeFloat4)) {
       out->has_tex0 = true;
       out->tex0_offset = e.Offset;
+      out->tex0_size_bytes = elem_size;
     }
   }
 
@@ -6414,14 +6418,19 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // the output, so treat the call as fixed-function as long as no user vertex
   // shader is bound (even if a pixel shader is set for later draws).
   const bool fixedfunc = (!dev->user_vs);
-  const bool src_xyz_plain = (dev->fvf == kD3dFvfXyz);
-  const bool src_xyzrhw_plain = (dev->fvf == kD3dFvfXyzRhw);
-  const bool src_xyz_diffuse = (dev->fvf == kSupportedFvfXyzDiffuse);
-  const bool src_xyz_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-  const bool src_xyz_tex1 = (dev->fvf == kSupportedFvfXyzTex1);
-  const bool src_xyzrhw_diffuse = (dev->fvf == kSupportedFvfXyzrhwDiffuse);
-  const bool src_xyzrhw_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
-  const bool src_xyzrhw_tex1 = (dev->fvf == kSupportedFvfXyzrhwTex1);
+  // D3DFVF_TEXCOORDSIZE* bits affect vertex layout but not the "kind" of FVF.
+  // Mask them out for supported-FVF detection and then decode texcoord sizes
+  // explicitly when copying TEX0.
+  const uint32_t fvf = dev->fvf;
+  const uint32_t fvf_base = fvf & ~kD3dFvfTexCoordSizeMask;
+  const bool src_xyz_plain = (fvf_base == kD3dFvfXyz);
+  const bool src_xyzrhw_plain = (fvf_base == kD3dFvfXyzRhw);
+  const bool src_xyz_diffuse = (fvf_base == kSupportedFvfXyzDiffuse);
+  const bool src_xyz_diffuse_tex1 = (fvf_base == kSupportedFvfXyzDiffuseTex1);
+  const bool src_xyz_tex1 = (fvf_base == kSupportedFvfXyzTex1);
+  const bool src_xyzrhw_diffuse = (fvf_base == kSupportedFvfXyzrhwDiffuse);
+  const bool src_xyzrhw_diffuse_tex1 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
+  const bool src_xyzrhw_tex1 = (fvf_base == kSupportedFvfXyzrhwTex1);
   const bool src_xyzrhw = (src_xyzrhw_plain || src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
   // Note: XYZRHW inputs are already pre-transformed. We still handle a minimal
   // subset here to support fixed-function default values (e.g. diffuse=white
@@ -6648,6 +6657,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     uint32_t src_diffuse_offset = 0;
     bool src_has_tex0 = false;
     uint32_t src_tex0_offset = 0;
+    uint32_t src_tex0_size_bytes = 0;
     bool src_is_xyzrhw = false;
     if (src_xyz_plain) {
       src_min_stride = 12u;
@@ -6656,13 +6666,23 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_has_diffuse = true;
       src_diffuse_offset = 12u;
     } else if (src_xyz_diffuse_tex1) {
-      src_min_stride = 24u;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 16u + src_tex0_size_bytes;
       src_has_diffuse = true;
       src_diffuse_offset = 12u;
       src_has_tex0 = true;
       src_tex0_offset = 16u;
     } else if (src_xyz_tex1) {
-      src_min_stride = 20u;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 12u + src_tex0_size_bytes;
       src_has_tex0 = true;
       src_tex0_offset = 12u;
     } else if (src_xyzrhw_plain) {
@@ -6675,18 +6695,32 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_diffuse_offset = 16u;
     } else if (src_xyzrhw_diffuse_tex1) {
       src_is_xyzrhw = true;
-      src_min_stride = 28u;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 20u + src_tex0_size_bytes;
       src_has_diffuse = true;
       src_diffuse_offset = 16u;
       src_has_tex0 = true;
       src_tex0_offset = 20u;
     } else if (src_xyzrhw_tex1) {
       src_is_xyzrhw = true;
-      src_min_stride = 24u;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 16u + src_tex0_size_bytes;
       src_has_tex0 = true;
       src_tex0_offset = 16u;
     } else {
       // Unexpected: the early supported-FVF check should have rejected this.
+      return E_FAIL;
+    }
+
+    if (src_has_tex0 && src_tex0_size_bytes == 0) {
       return E_FAIL;
     }
 
@@ -6726,7 +6760,8 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 #endif
       return kD3DErrInvalidCall;
     }
-    if (src_has_tex0 && dst_layout.has_tex0 && dst_layout.tex0_offset + 8u > dst_stride) {
+    if (src_has_tex0 && dst_layout.has_tex0 &&
+        (dst_layout.tex0_size_bytes == 0 || dst_layout.tex0_offset + dst_layout.tex0_size_bytes > dst_stride)) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (dst_locked) {
         (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst_res->wddm_hAllocation, dev->wddm_context.hContext);
@@ -6846,7 +6881,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
           }
         }
         if (src_has_tex0 && dst_layout.has_tex0) {
-          std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, 8);
+          const uint32_t copy_bytes = std::min(src_tex0_size_bytes, dst_layout.tex0_size_bytes);
+          if (copy_bytes) {
+            std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, copy_bytes);
+          }
         }
       }
     }

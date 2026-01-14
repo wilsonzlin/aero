@@ -74,7 +74,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
       (deterministic output for extra decl fields).
     - When not set and the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present,
       otherwise fills it with opaque white (matching fixed-function behavior). `TEXCOORD0` is copied only when present in
-      both the source and destination layouts.
+      both the source and destination layouts (supports `FLOAT1/2/3/4`; source texcoord size is derived from
+      `D3DFVF_TEXCOORDSIZE*` when set).
 
 ## Code anchors
 
