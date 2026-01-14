@@ -1557,7 +1557,9 @@ mod wasm {
                 )));
             }
 
-            let expected_len = stride_bytes as usize * height as usize;
+            let expected_len_u64 = u64::from(stride_bytes).saturating_mul(u64::from(height));
+            let expected_len = usize::try_from(expected_len_u64)
+                .map_err(|_| JsValue::from_str("Framebuffer byte size overflow"))?;
             if rgba8.len() < expected_len {
                 return Err(JsValue::from_str(&format!(
                     "Frame data too small: got {}, expected at least {}",
@@ -1582,7 +1584,9 @@ mod wasm {
             } else if upload_bpr == stride_bytes {
                 data = &rgba8[..expected_len];
             } else {
-                let total = upload_bpr as usize * height as usize;
+                let total_u64 = u64::from(upload_bpr).saturating_mul(u64::from(height));
+                let total = usize::try_from(total_u64)
+                    .map_err(|_| JsValue::from_str("Framebuffer upload scratch size overflow"))?;
                 if self.upload_scratch.len() != total
                     || self.upload_scratch_bytes_per_row != upload_bpr
                 {
@@ -1657,7 +1661,9 @@ mod wasm {
                 )));
             }
 
-            let expected_len = stride_bytes as usize * height as usize;
+            let expected_len_u64 = u64::from(stride_bytes).saturating_mul(u64::from(height));
+            let expected_len = usize::try_from(expected_len_u64)
+                .map_err(|_| JsValue::from_str("Framebuffer byte size overflow"))?;
             if rgba8.len() < expected_len {
                 return Err(JsValue::from_str(&format!(
                     "Frame data too small: got {}, expected at least {}",
@@ -1762,7 +1768,9 @@ mod wasm {
                 } else {
                     // Slow path: pack the rect into an aligned staging buffer.
                     let upload_bpr = padded_bytes_per_row(row_bytes);
-                    let total = upload_bpr as usize * h as usize;
+                    let total_u64 = u64::from(upload_bpr).saturating_mul(u64::from(h));
+                    let total = usize::try_from(total_u64)
+                        .map_err(|_| JsValue::from_str("Dirty rect upload scratch size overflow"))?;
 
                     if self.upload_scratch_bytes_per_row != upload_bpr {
                         self.upload_scratch_bytes_per_row = upload_bpr;
@@ -3039,10 +3047,15 @@ mod wasm {
         ((css as f64) * ratio).round().max(1.0) as u32
     }
 
-    fn make_test_pattern(width: u32, height: u32) -> Vec<u8> {
+    fn make_test_pattern(width: u32, height: u32) -> Result<Vec<u8>, JsValue> {
         let half_w = width / 2;
         let half_h = height / 2;
-        let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        let len_u64 = u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|v| v.checked_mul(4))
+            .ok_or_else(|| JsValue::from_str("Test pattern size overflow (width*height*4)"))?;
+        let len = usize::try_from(len_u64).map_err(|_| JsValue::from_str("Test pattern too large"))?;
+        let mut rgba = vec![0u8; len];
 
         for y in 0..height {
             for x in 0..width {
@@ -3068,7 +3081,7 @@ mod wasm {
                 rgba[i + 3] = 255;
             }
         }
-        rgba
+        Ok(rgba)
     }
 
     fn timings_to_js(report: &FrameTimingsReport) -> JsValue {
@@ -3479,7 +3492,7 @@ mod wasm {
     pub fn present_test_pattern() -> Result<(), JsValue> {
         with_state_mut(|state| {
             let (w, h) = state.presenter.src_size;
-            let rgba = make_test_pattern(w, h);
+            let rgba = make_test_pattern(w, h)?;
             state.presenter.upload_rgba8_strided(&rgba, w * 4)?;
             state.presenter.present()
         })
