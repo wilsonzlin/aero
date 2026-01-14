@@ -78,11 +78,16 @@ boot sector / El Torito boot image:
 | First fixed disk (HDD0) | `DL=0x80` | Boot from the OS disk after install. |
 | First ATAPI CD-ROM (CDROM0) | `DL=0xE0` | Boot from install/recovery ISO via El Torito. |
 
-In the canonical machine, both drives are present simultaneously and BIOS INT 13h routes requests
-to the correct backend based on `DL`:
+In the canonical machine topology, both an AHCI disk (HDD0) and an IDE/ATAPI CD-ROM (CD0) may be
+attached simultaneously.
 
-- `DL=0x80` (HDD0): 512-byte sectors.
-- `DL=0xE0` (CD0): 2048-byte logical blocks via INT 13h Extensions (EDD).
+For BIOS INT 13h, sector units differ by drive number:
+
+- HDD (`DL=0x80..=0xDF`): 512-byte sectors.
+- CD-ROM (`DL=0xE0..=0xEF`): 2048-byte logical blocks via INT 13h Extensions (EDD).
+
+Note: Aero BIOS currently exposes only the selected boot drive (`BiosConfig::boot_drive` / `DL`) as
+present to INT 13h; other drive numbers are treated as not present.
 
 ### 1) Windows 7 install / recovery flow
 
@@ -95,8 +100,9 @@ to the correct backend based on `DL`:
    expectations).
 4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), the boot
    attempt will fail; the host should fall back by selecting HDD0 as the boot drive (**`DL=0x80`**)
-   and resetting (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, or in
-   `aero_machine` call `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
+   and resetting (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, set
+   `aero_machine::MachineConfig::boot_drive = 0x80` at construction time, or in `aero_machine` call
+   `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
    - Note: Aero’s BIOS does **not** currently probe a list of devices; `boot_drive` is an explicit
      selection.
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
