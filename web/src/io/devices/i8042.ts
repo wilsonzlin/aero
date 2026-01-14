@@ -480,9 +480,10 @@ class Ps2Keyboard {
     // InputCapture produces Set-2 sequences. If the guest switched the device to
     // a different set, we currently drop injected bytes (matching the Rust model).
     if (this.scancodeSet !== 2) return;
-    for (const b of bytes) {
+    // Use index iteration to avoid allocating a TypedArray iterator (hot path under key-repeat).
+    for (let i = 0; i < bytes.byteLength; i += 1) {
       if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
-      this.outQueue.push(b & 0xff);
+      this.outQueue.push(bytes[i]! & 0xff);
     }
   }
 
