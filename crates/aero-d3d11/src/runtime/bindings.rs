@@ -66,8 +66,11 @@ impl ShaderStage {
         match self {
             Self::Vertex => 0,
             Self::Pixel => 1,
-            // Keep the original ABI ordering (VS=0 PS=1 CS=2). Extended stages share group 3 so we
-            // never exceed WebGPU's max bind group count (4 groups).
+            // Keep the original ABI ordering (VS=0 PS=1 CS=2). Extended stages share group 3 so the
+            // user (D3D) binding model stays within the baseline 4 bind groups (0..=3).
+            //
+            // Internal/emulation-only pipelines use an additional bind group (e.g.
+            // `BIND_GROUP_INTERNAL_EMULATION`, currently `@group(4)`) as needed.
             Self::Compute => 2,
             Self::Geometry | Self::Hull | Self::Domain => 3,
         }

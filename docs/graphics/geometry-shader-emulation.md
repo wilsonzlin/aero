@@ -177,19 +177,19 @@ Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (
 - `@group(1)`: PS resources
 - `@group(2)`: CS resources
 - `@group(3)`: GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
+- `@group(4)`: internal emulation pipelines (vertex pulling, expansion scratch, counters, indirect args)
 
 GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resource bindings** are
 tracked independently and are expected to be provided to the emulation pipelines via a reserved
-internal bind group:
+bind group:
 
 - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
 - Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
-  also internal to the emulation path. The design places these in `@group(3)` using a reserved high
+  also internal to the emulation path. The design places these in `@group(4)` using a reserved high
   binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
   `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
-  - Vertex pulling already uses this reserved range so it can coexist with `stage_ex` GS/HS/DS
-    bindings.
+  - Vertex pulling already uses this reserved range so it can be shared across emulation kernels.
 
 ### Binding number ranges within a stage group
 
@@ -210,7 +210,7 @@ Constants (current defaults):
 - `BINDING_BASE_UAV = 176` (`160 + 16`)
 - `MAX_UAV_SLOTS = 8` (`u0..u7`)
 
-### Vertex pulling + expansion internal bindings (`@group(3)`)
+### Vertex pulling + expansion internal bindings (`@group(4)`)
 
 When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA vertex buffers manually
 (“vertex pulling”), and intermediate outputs must be written to scratch buffers.
@@ -218,8 +218,8 @@ When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA ve
 Vertex pulling uses a dedicated bind group (`VERTEX_PULLING_GROUP` in
 `crates/aero-d3d11/src/runtime/vertex_pulling.rs`):
 
-- `@group(3) @binding(BINDING_BASE_INTERNAL)`: a small uniform containing per-slot `base_offset` + `stride` (+ draw params)
-- `@group(3) @binding(BINDING_BASE_INTERNAL + 1 + i)`: vertex buffer slot `i` as a storage buffer (read-only)
+- `@group(4) @binding(BINDING_BASE_INTERNAL)`: a small uniform containing per-slot `base_offset` + `stride` (+ draw params)
+- `@group(4) @binding(BINDING_BASE_INTERNAL + 1 + i)`: vertex buffer slot `i` as a storage buffer (read-only)
 
 These bindings are **internal** to the emulation path; they are not part of the D3D register binding model.
 The broader compute-expansion pipeline also defines additional internal scratch bindings; see
@@ -227,7 +227,8 @@ The broader compute-expansion pipeline also defines additional internal scratch 
 binding-number range).
 
 Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout that accommodates
-both “stage_ex” bindings and vertex pulling; the current executor prepass is still a placeholder.
+both “stage_ex” bindings (`@group(3)`) and vertex pulling (`@group(4)`); the current executor prepass
+is still a placeholder.
 
 ### AeroGPU command stream note: `stage_ex`
 

@@ -130,16 +130,17 @@ fn cb0_load_vec4_f32(reg: u32) -> vec4<f32> {
 
 This mirrors how SM4/5 actually addresses constants and removes the need to precisely reproduce HLSL packing rules in WGSL structs.
 
-Note: the `@group(N)` index is **stage-scoped** in Aero. The stable stage→group mapping is:
+Note: the `@group(N)` index is **stage-scoped** in Aero for user (D3D) resources. The stable
+stage→group mapping is:
 
 - `@group(0)`: vertex shader (VS)
 - `@group(1)`: pixel/fragment shader (PS)
 - `@group(2)`: compute shader (CS)
-- `@group(3)`: reserved internal / emulation group (GS/HS/DS resources + compute-expansion scratch)
-- `@group(4)`: optional internal-only group used by some helper pipelines (e.g. vertex pulling)
-  - This requires a device limit `maxBindGroups >= 5`. The baseline design aims to fit into the
-    WebGPU minimum (`maxBindGroups == 4`) by merging internal-only bindings into `@group(3)` using the
-    reserved `@binding >= 256` range.
+- `@group(3)`: geometry/hull/domain (“stage_ex”) resources (executed via compute emulation)
+- `@group(4)`: internal emulation pipelines (`BIND_GROUP_INTERNAL_EMULATION` in
+  `crates/aero-d3d11/src/binding_model.rs`)
+  - This requires a device limit `maxBindGroups >= 5`. The baseline WebGPU design can instead merge
+    internal-only bindings into `@group(3)` using the reserved `@binding >= 256` range.
 
 The example above shows the vertex shader group; a pixel shader cbuffer declaration would use
 `@group(1)` instead (see “Resource binding mapping”).
@@ -329,7 +330,8 @@ Bind groups are stage-scoped and mostly map 1:1 to D3D11 shader stages:
 - `@group(0)`: vertex shader (VS) resources
 - `@group(1)`: pixel/fragment shader (PS) resources
 - `@group(2)`: compute shader (CS) resources
-- `@group(3)`: reserved internal group for emulated D3D11 stages (GS/HS/DS) and other helper bindings
+- `@group(3)`: geometry/hull/domain (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
+- `@group(4)`: internal emulation pipelines (vertex pulling, expansion scratch, counters, indirect args)
 
 Why stage-scoped?
 
@@ -339,7 +341,9 @@ Why stage-scoped?
 - It also keeps pipeline layout assembly straightforward:
   - Render pipelines use the VS + PS group layouts (0 and 1).
   - Compute pipelines use the CS layout (2).
-  - Emulation pipelines (GS/HS/DS expansion) may additionally use the reserved internal group (3).
+  - Emulation pipelines (GS/HS/DS expansion) may additionally use:
+    - `@group(3)` for GS/HS/DS D3D resources, and
+    - `@group(4)` for internal emulation buffers (vertex pulling, scratch, counters, indirect args).
 
 #### Binding numbers use disjoint offset ranges
 
@@ -378,33 +382,30 @@ Examples:
 This keeps bindings stable (derived directly from D3D slot indices) without requiring per-shader
 rebinding logic.
 
-#### Stage extensions (GS/HS/DS) use the reserved internal bind group (`@group(3)`)
+#### Stage extensions (GS/HS/DS) use the reserved extended-stage bind group (`@group(3)`)
 
 WebGPU does not expose native **geometry/hull/domain** stages. Aero emulates these stages by
 compiling them to **compute** entry points and inserting compute passes before the final render.
 
-To keep the model within WebGPU’s max bind group count (4), and to ensure GS/HS/DS binds never
-trample compute-shader state, Aero reserves a fourth bind group:
+To keep the user (D3D) binding model within WebGPU’s baseline bind group count (4), and to ensure
+GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-scoped bind group:
 
 - D3D resources referenced by GS/HS/DS (`b#`, `t#`, `s#`, and optionally `u#`) are declared in WGSL at
   `@group(3)` using the same `@binding` number scheme (`BINDING_BASE_* + slot`) as other stages.
 - The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
   extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
-   args) are internal to the compute-expansion pipeline. The **target** design places these in
-   `@group(3)` in a reserved binding-number range that does not overlap the D3D register mappings (see
-   “Internal bindings” below).
-   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
-     for its output buffers, but vertex pulling has adopted the reserved internal binding range
-     (starting at `@binding(BINDING_BASE_INTERNAL)` where `BINDING_BASE_INTERNAL = 256`) so it can
-     coexist with D3D register bindings.
-     - Implementation detail: the in-tree vertex pulling WGSL currently uses a dedicated internal
-       bind group index (`@group(4)`, see `VERTEX_PULLING_GROUP` in
-       `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline layouts with empty groups
-       so indices line up. Because the binding numbers are already in the reserved `>= 256` range, it
-       can be merged into `@group(3)` later if we need to run on devices where `maxBindGroups == 4`
-       (the WebGPU minimum is `>= 4`, so some devices may expose only 4 bind groups).
-     See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+  args) are internal to the compute-expansion pipeline. The **target** design places these in a
+  dedicated internal bind group (`@group(4)`, `BIND_GROUP_INTERNAL_EMULATION`) using a reserved
+  binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
+  - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
+    for some output buffers, but vertex pulling already uses the reserved internal binding range.
+  - Implementation detail: the in-tree vertex pulling WGSL currently uses `@group(4)` (see
+    `VERTEX_PULLING_GROUP` in `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline
+    layouts with empty groups so indices line up. Because the binding numbers are already in the
+    reserved `>= 256` range, it can be merged into `@group(3)` later if we need to run on devices
+    where `maxBindGroups == 4` (the WebGPU minimum).
+  See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -533,8 +534,8 @@ used to represent HS/DS creation without extending the legacy stage enum.
 
 For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
 model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
-as “compute-like” stages but route their bindings into a reserved internal bind group (`@group(3)`),
-using a small `stage_ex` tag carried in the trailing reserved field.
+as “compute-like” stages but route their bindings into a reserved extended-stage bind group
+(`@group(3)`), using a small `stage_ex` tag carried in the trailing reserved field.
 
 This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
 `encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
@@ -1071,7 +1072,7 @@ This preserves D3D semantics but increases render pass count and can affect perf
 
 GS/HS/DS are compiled as compute entry points but keep the normal D3D binding model:
 
-- D3D resources live in `@group(3)` (the reserved internal group) and use the same binding number
+- D3D resources live in `@group(3)` (the reserved `stage_ex` group) and use the same binding number
   scheme as other stages:
   - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
   - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
@@ -1095,7 +1096,7 @@ internal layout (ideally `@group(3)` so we stay within the baseline 4 bind group
 These are not part of the D3D binding model, so they use a reserved binding-number range starting at
 `BINDING_BASE_INTERNAL = 256`. In the baseline design they live in the same bind group as GS/HS/DS
 resources (`@group(3)`), but implementations may temporarily place them in a dedicated internal group
-(`@group(4)`) as long as the device supports at least 5 bind groups.
+(`@group(4)`, `BIND_GROUP_INTERNAL_EMULATION`) as long as the device supports at least 5 bind groups.
 
 Let:
 
@@ -1169,7 +1170,8 @@ WGSL-side, this is typically declared as:
 
 ```wgsl
 struct ExpandParams { /* same fields */ }
-// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources).
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
+// using a dedicated internal group instead use `@group(4)`.
 @group(3) @binding(256) var<uniform> params: ExpandParams;
 ```
 
@@ -1184,7 +1186,7 @@ struct ExpandCounters {
   overflow: atomic<u32>; // 0/1 (set when any pass exceeds out_*_max)
   _pad0: u32;
 }
-@group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
+@group(4) @binding(272) var<storage, read_write> counters: ExpandCounters;
 ```
 
 **Initialization requirements**

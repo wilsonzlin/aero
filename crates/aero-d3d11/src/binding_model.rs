@@ -1,11 +1,14 @@
 //! Shared binding model between SM4/SM5→WGSL translation and the AeroGPU D3D11
 //! command-stream executor.
 //!
-//! The executor uses stage-scoped bind groups:
+//! The executor uses stage-scoped bind groups for user (D3D) shader resources:
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
-//! - `@group(3)` = D3D11 extended stage resources (GS/HS/DS) + internal emulation helpers
+//! - `@group(3)` = D3D11 extended stage resources (GS/HS/DS)
+//!
+//! Internal/emulation-only pipelines use a dedicated bind group:
+//! - `@group(4)` = internal emulation buffers (see [`BIND_GROUP_INTERNAL_EMULATION`])
 //!
 //! D3D11 extended stages (GS/HS/DS) do not exist in WebGPU, but the guest can still update their
 //! per-stage binding tables (textures/samplers/constant buffers). To keep the bind-group count
@@ -13,10 +16,9 @@
 //! mapped to `@group(3)` (see `runtime::bindings::ShaderStage::as_bind_group_index`). This group is
 //! used by the compute-emulated GS/HS/DS paths.
 //!
-//! Internal translation/emulation helpers may also need to bind resources alongside those
-//! extended-stage tables (e.g. compute-side vertex pulling). Such helpers must use `@binding`
-//! numbers at or above [`BINDING_BASE_INTERNAL`] to avoid collisions with the D3D11 register-space
-//! ranges (`b#`/`t#`/`s#`/`u#`).
+//! Internal translation/emulation helpers bind resources in [`BIND_GROUP_INTERNAL_EMULATION`] and use
+//! `@binding` numbers at or above [`BINDING_BASE_INTERNAL`] so their bindings stay disjoint from the
+//! D3D11 register-space ranges (`b#`/`t#`/`s#`/`u#`).
 //!
 //! Within each group, D3D register spaces are mapped into disjoint `@binding`
 //! ranges so `b#`, `t#`, `s#`, and SM5 `u#` can coexist.
@@ -45,9 +47,10 @@ pub const BINDING_BASE_UAV: u32 = BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS;
 
 /// Base `@binding` offset reserved for internal emulation/translation resources.
 ///
-/// Internal passes sometimes need to share a bind group with D3D11 stage resources (notably the
-/// `@group(3)` slot used for GS/HS/DS tables). To make that possible without collisions, all
-/// internal-only bindings must use `@binding >= BINDING_BASE_INTERNAL`.
+/// Internal pipelines (such as vertex pulling / geometry expansion) use bindings at or above this
+/// base (typically in [`BIND_GROUP_INTERNAL_EMULATION`]). The range is also kept disjoint from the
+/// D3D11 register-space ranges so internal resources can share a bind group with stage-scoped
+/// bindings when needed.
 ///
 /// This constant must remain strictly above the D3D register-space ranges covered by
 /// [`BINDING_BASE_CBUFFER`], [`BINDING_BASE_TEXTURE`], [`BINDING_BASE_SAMPLER`], and
