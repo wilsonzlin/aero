@@ -25,8 +25,12 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("machine_uhci"))
         .stdout(predicate::str::contains("machine_uhci_synthetic_usb_hid"))
         .stdout(predicate::str::contains(
-            "machine_uhci_synthetic_usb_hid_reports",
+            "machine_uhci_synthetic_usb_hid_mouse_buttons",
         ))
+        .stdout(predicate::str::contains(
+            "machine_uhci_synthetic_usb_hid_gamepad",
+        ))
+        .stdout(predicate::str::contains("machine_uhci_synthetic_usb_hid_reports"))
         .stdout(predicate::str::contains("machine_xhci"))
         .stdout(predicate::str::contains("xhci_snapshot"))
         .stdout(predicate::str::contains("machine_xhci_usb_attach_at_path"))
