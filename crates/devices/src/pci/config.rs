@@ -1020,7 +1020,10 @@ mod tests {
 
         let pin_after = config.read(PciConfigSpace::INTERRUPT_PIN_OFFSET, 1) as u8;
         assert_eq!(pin_after, pin_before);
-        assert_eq!(config.read(PciConfigSpace::INTERRUPT_LINE_OFFSET, 1) as u8, 0x0A);
+        assert_eq!(
+            config.read(PciConfigSpace::INTERRUPT_LINE_OFFSET, 1) as u8,
+            0x0A
+        );
     }
 
     #[test]

@@ -149,4 +149,3 @@ fn virtio_snd_pci_bridge_load_state_restores_pci_command_for_dma_gating() {
     guest.read_into(buf, &mut got_evt);
     assert_eq!(&got_evt, &expected_connected);
 }
-
