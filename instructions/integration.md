@@ -132,6 +132,12 @@ Most `BI-*` / `AC-*` / `DM-*` items from the original project plan are now **imp
 by tests** in the canonical stack. The tables below reflect current reality and point at the
 relevant crates/tests.
 
+Status legend:
+
+- **Implemented**: in-tree + covered by unit/integration tests.
+- **Partial**: implemented, but with a known limitation called out in the Notes/Pointers.
+- **Open**: not implemented yet (or implemented in one integration layer but not the other).
+
 ### BIOS Tasks
 
 > Note: The canonical Windows 7 storage + boot-media topology (including the El Torito install
@@ -147,7 +153,7 @@ relevant crates/tests.
 | BI-003 | Interrupt vector table setup | Implemented | P0 | BI-001 | Low | `crates/firmware/src/bios/ivt.rs` |
 | BI-004 | BIOS data area setup | Implemented | P0 | BI-001 | Low | `crates/firmware/src/bios/ivt.rs::init_bda` |
 | BI-005 | INT 10h (video) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/int10.rs`, `int10_vbe.rs` |
-| BI-006 | INT 13h (disk + EDD + CD-ROM + El Torito services) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int13`, `crates/firmware/src/bios/eltorito.rs` |
+| BI-006 | INT 13h (disk + EDD + CD-ROM + El Torito services) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int13`, `crates/firmware/src/bios/eltorito.rs` (note: BIOS disk backend is currently read-only; write ops report write-protected) |
 | BI-007 | INT 15h (system) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int15` |
 | BI-008 | INT 16h (keyboard) | Implemented | P0 | None | Low | `crates/firmware/src/bios/interrupts.rs::handle_int16` |
 | BI-009 | Boot device selection (host-configured via `BiosConfig::boot_drive`) | Implemented | P0 | BI-006 | Low | `firmware::bios::BiosConfig::boot_drive`, `crates/firmware/src/bios/post.rs::boot` |
