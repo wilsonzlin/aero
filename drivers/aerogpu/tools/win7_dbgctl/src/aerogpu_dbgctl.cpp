@@ -7563,7 +7563,11 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   if (outFile && *outFile && sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
     const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outFile, NULL);
     if (dumpRc != 0) {
-      JsonWriteTopLevelError(out, "read-gpa", f, "Failed to dump GPA range to --out file", STATUS_UNSUCCESSFUL);
+      NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
+      if (dumpRc == 3) {
+        dumpStatus = STATUS_PARTIAL_COPY;
+      }
+      JsonWriteTopLevelError(out, "read-gpa", f, "Failed to dump GPA range to --out file", dumpStatus);
       return dumpRc;
     }
 
@@ -10294,7 +10298,7 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
         w.Key("message");
         w.String("Failed to dump cmd stream bytes");
         w.Key("status");
-        JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+        JsonWriteNtStatusError(w, f, (dumpRc == 3) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL);
         w.EndObject();
         w.EndObject();
         out->push_back('\n');
@@ -10459,7 +10463,7 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
           w.Key("message");
           w.String("Failed to dump alloc table bytes");
           w.Key("status");
-          JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+          JsonWriteNtStatusError(w, f, (dumpAllocRc == 3) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL);
           w.EndObject();
           w.EndObject();
           out->push_back('\n');
