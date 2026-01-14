@@ -21,6 +21,21 @@ x-relay-env-base: &relay-env-base
   # WebRTC session connect timeout (optional; defaults apply when unset).
   WEBRTC_SESSION_CONNECT_TIMEOUT: "${WEBRTC_SESSION_CONNECT_TIMEOUT:-}"
 
+  # WebSocket signaling (/webrtc/signal) + WebSocket UDP relay fallback (/udp)
+  # hardening.
+  #
+  # - SIGNALING_AUTH_TIMEOUT controls how long unauthenticated WebSocket
+  #   connections are allowed to remain open before being closed.
+  # - *_WS_IDLE_TIMEOUT / *_WS_PING_INTERVAL implement keepalive + idle timeouts
+  #   after authentication.
+  SIGNALING_AUTH_TIMEOUT: "${SIGNALING_AUTH_TIMEOUT:-}"
+  SIGNALING_WS_IDLE_TIMEOUT: "${SIGNALING_WS_IDLE_TIMEOUT:-}"
+  SIGNALING_WS_PING_INTERVAL: "${SIGNALING_WS_PING_INTERVAL:-}"
+  MAX_SIGNALING_MESSAGE_BYTES: "${MAX_SIGNALING_MESSAGE_BYTES:-}"
+  MAX_SIGNALING_MESSAGES_PER_SECOND: "${MAX_SIGNALING_MESSAGES_PER_SECOND:-}"
+  UDP_WS_IDLE_TIMEOUT: "${UDP_WS_IDLE_TIMEOUT:-}"
+  UDP_WS_PING_INTERVAL: "${UDP_WS_PING_INTERVAL:-}"
+
   # Optional: bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
   # endpoint (typically `aero-l2-proxy`).
   #
