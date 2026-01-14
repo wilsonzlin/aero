@@ -1,40 +1,53 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
-function collectSourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) {
-      out.push(...collectSourceFiles(full));
-      continue;
+function gitGrepFiles(pattern: string): string[] {
+  try {
+    const out = execFileSync("git", ["grep", "-l", pattern], { encoding: "utf8" });
+    return out.split(/\r?\n/).filter(Boolean);
+  } catch (err) {
+    // `git grep` returns exit code 1 when there are no matches.
+    if (typeof err === "object" && err !== null && "status" in err && (err as { status?: unknown }).status === 1) {
+      return [];
     }
-    if (!ent.isFile()) continue;
-    if (full.endsWith(".d.ts")) continue;
-    if (!/\.(ts|tsx|mts|cts)$/.test(full)) continue;
-    out.push(full);
+    throw err;
   }
-  return out;
 }
 
-test("web/src does not import the legacy repo-root WebUSB demo stack (src/platform/webusb_* or src/platform/legacy/webusb_*)", () => {
-  const webSrcDir = fileURLToPath(new URL("../src", import.meta.url));
-  const files = collectSourceFiles(webSrcDir);
+function isSourceFile(file: string): boolean {
+  if (file.endsWith(".d.ts")) return false;
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(file);
+}
+
+test("no non-legacy code imports the legacy repo-root WebUSB demo modules (src/platform/legacy/webusb_*)", () => {
+  // Only scan files that even mention the legacy modules; keeps the check cheap.
+  const candidates = gitGrepFiles("legacy/webusb_").filter(isSourceFile);
 
   const offenders: string[] = [];
-  const forbidden =
-    /(?:from\s+|import\s*\()\s*["'][^"']*src\/platform\/(?:legacy\/)?webusb_(?:broker|client|protocol)(?:\.ts)?["']/;
+  const forbiddenImport =
+    /\b(?:from\s+|import\s*\(\s*|import\s+|require\s*\(\s*)["'][^"']*legacy\/webusb_(?:broker|client|protocol)(?:\.ts)?["']/g;
 
-  for (const file of files) {
+  for (const file of candidates) {
+    // Imports *within* the quarantined legacy dir are OK.
+    if (file.startsWith("src/platform/legacy/")) continue;
+
     const contents = fs.readFileSync(file, "utf8");
-    const lines = contents.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (!forbidden.test(line)) continue;
-      offenders.push(`${path.relative(process.cwd(), file)}:${i + 1}: ${line.trim()}`);
+    forbiddenImport.lastIndex = 0;
+    for (;;) {
+      const match = forbiddenImport.exec(contents);
+      if (!match) break;
+
+      const idx = match.index;
+      const before = contents.slice(0, idx);
+      const lineNo = before.split(/\r?\n/).length;
+      const lineStart = Math.max(0, before.lastIndexOf("\n") + 1);
+      const lineEnd = contents.indexOf("\n", idx);
+      const line = contents.slice(lineStart, lineEnd === -1 ? contents.length : lineEnd).trim();
+
+      offenders.push(`${file}:${lineNo}: ${line}`);
     }
   }
 
@@ -45,8 +58,9 @@ test("web/src does not import the legacy repo-root WebUSB demo stack (src/platfo
       "Found forbidden imports from the legacy repo-root WebUSB demo stack.",
       "",
       "The canonical WebUSB passthrough implementation lives in `web/src/usb/*` + `crates/aero-usb` (ADR 0015).",
-      "The legacy demo RPC stack is quarantined under `src/platform/legacy/*` and must not be used by `web/src/**`.",
-      "Do NOT grow a second wire contract under `src/platform/webusb_*`.",
+      "The legacy demo modules are quarantined under `src/platform/legacy/webusb_*.ts` and are a deletion target.",
+      "",
+      "If you need WebUSB guest USB passthrough: use `web/src/usb/*` (UsbHostAction/UsbHostCompletion).",
       "",
       ...offenders,
     ].join("\n"),

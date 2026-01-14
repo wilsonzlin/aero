@@ -1,3 +1,9 @@
+/**
+ * @deprecated Legacy demo-only WebUSB demo RPC protocol (repo-root Vite harness).
+ *
+ * Do not depend on this for production guest USB passthrough. The canonical browser USB passthrough
+ * stack lives under `web/src/usb/*` (ADR 0015).
+ */
 // NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
 // (Quarantined under `src/platform/legacy/`; not used by the canonical runtime.)
 //

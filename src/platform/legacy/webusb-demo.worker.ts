@@ -1,7 +1,13 @@
 /// <reference lib="webworker" />
 
-import { WEBUSB_BROKER_PORT_MESSAGE_TYPE } from '../platform/legacy/webusb_protocol';
-import { installWebUsbClientInWorker } from '../platform/legacy/webusb_client';
+/**
+ * @deprecated Legacy demo-only WebUSB demo worker (repo-root Vite harness).
+ *
+ * Do not depend on this for production guest USB passthrough. The canonical browser USB passthrough
+ * stack lives under `web/src/usb/*` (ADR 0015).
+ */
+import { WEBUSB_BROKER_PORT_MESSAGE_TYPE } from './webusb_protocol';
+import { installWebUsbClientInWorker } from './webusb_client';
 
 type MainToWorkerMessage = { type: 'WebUsbDemoRun'; deviceId: number };
 
