@@ -98,7 +98,7 @@ try {
   Write-Host "       DISM /Get-Drivers output did not contain 'aero_virtio_input'."
   Write-Host ""
   Write-Host "Next steps:"
-  Write-Host "  - Run Inject-VirtioInputDriver.ps1 against this image using the correct package directory:"
+  Write-Host "  - Run inject-driver.ps1 against this image using the correct package directory:"
   Write-Host "      out\\packages\\windows7\\virtio-input\\x86\\   (Win7 x86 images)"
   Write-Host "      out\\packages\\windows7\\virtio-input\\x64\\   (Win7 x64 images)"
   Write-Host "  - Then re-run this verifier:"

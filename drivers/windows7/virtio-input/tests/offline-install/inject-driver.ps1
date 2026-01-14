@@ -71,6 +71,7 @@ param(
 
   [bool]$Commit = $true,
 
+  [Alias('?')]
   [switch]$Help
 )
 

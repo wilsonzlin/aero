@@ -44,64 +44,23 @@ Notes:
 
 ---
 
-## Quick start (recommended): use the helper script
-
-This directory includes [`Inject-VirtioInputDriver.ps1`](./Inject-VirtioInputDriver.ps1), which automates the mount → `Add-Driver` → optional verification → unmount steps and provides clearer error messages when DISM fails.
-
-From an **elevated PowerShell** prompt:
-
-```powershell
-# Example: inject into install.wim index 1
-.\Inject-VirtioInputDriver.ps1 `
-  -WimPath C:\win7\sources\install.wim `
-  -Index 1 `
-  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
-```
-
-If you need `/ForceUnsigned` (test-only), add `-ForceUnsigned`.
-
-To inject into Windows Setup / WinPE (boot.wim index 2):
-
-```powershell
-.\Inject-VirtioInputDriver.ps1 `
-  -WimPath C:\win7\sources\boot.wim `
-  -Index 2 `
-  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
-```
-
-By default the script **commits** changes on unmount. To discard (for debugging), run with `-Commit:$false`.
-
----
-
-## Choose the correct driver (x86 vs x64)
-
-You must inject a driver matching the target Windows 7 architecture:
-
-- **Win7 x86 (32-bit)** → use the x86 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x86\\`)
-- **Win7 x64 (64-bit)** → use the x64 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x64\\`)
-
-In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) that contains the correct `.inf` for the image you’re servicing.
-
----
-
 ## Quick start (scripted)
 
 This directory includes a hardened DISM wrapper script:
 
-- `inject-driver.ps1` (PowerShell; preferred)
+- `inject-driver.ps1` (PowerShell; canonical entrypoint)
 - `inject-driver.cmd` (thin CMD wrapper that forwards args to the PowerShell script)
 
 The script supports both:
 
-- **WIM mode**: mount one selected `install.wim` index, inject the driver, verify, then unmount (commit by default)
+- **WIM mode**: mount one selected WIM index, inject the driver, verify, then unmount (commit by default)
 - **Offline directory mode**: inject + verify directly into a mounted/offline Windows directory (e.g. a VHD attached as a drive letter)
 
 Run from an **elevated** prompt.
 
-### Slipstream into `install.wim` (one index)
+### WIM mode: slipstream into `install.wim` (one index)
 
 ```powershell
-# Example
 powershell -ExecutionPolicy Bypass -File inject-driver.ps1 `
   -WimPath C:\win7\sources\install.wim `
   -Index 1 `
@@ -113,7 +72,7 @@ Notes:
 - Use `-Commit:$false` to mount/inject/verify but **discard** changes at the end (dry run).
 - Use `-ForceUnsigned` only for test images. See [Driver signing / test signing warnings](#driver-signing--test-signing-warnings).
 
-### Inject into an offline Windows directory (mounted VHD/VHDX)
+### Offline directory mode: inject into an offline Windows directory (mounted VHD/VHDX)
 
 ```powershell
 # Example: W:\ is the offline Windows root and contains W:\Windows\
@@ -128,6 +87,30 @@ If the script fails and DISM reports a stale mount, try:
 dism /Get-MountedWimInfo
 dism /Cleanup-Wim
 ```
+
+### Verification-only (CI-friendly)
+
+To verify an offline image (mounted WIM dir or offline Windows dir) contains the staged virtio-input driver:
+
+```bat
+powershell -ExecutionPolicy Bypass -File Verify-VirtioInputStaged.ps1 -ImagePath W:\
+echo %ERRORLEVEL%
+```
+
+### Legacy / deprecated script name
+
+`Inject-VirtioInputDriver.ps1` is kept for backward compatibility but is **deprecated**.
+It is now a thin wrapper around `inject-driver.ps1` and maps the old `-DriverPackageDir`
+parameter name to the new `-DriverDir`. Prefer `inject-driver.ps1` / `inject-driver.cmd`.
+
+## Choose the correct driver (x86 vs x64)
+
+You must inject a driver matching the target Windows 7 architecture:
+
+- **Win7 x86 (32-bit)** → use the x86 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x86\\`)
+- **Win7 x64 (64-bit)** → use the x64 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x64\\`)
+
+In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) that contains the correct `.inf` for the image you’re servicing.
 
 ---
 
