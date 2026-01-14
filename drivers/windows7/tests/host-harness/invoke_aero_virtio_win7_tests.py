@@ -7826,12 +7826,54 @@ _VIRTIO_BLK_RECOVERY_KEYS = (
     "ioctl_reset",
 )
 
+_VIRTIO_BLK_COUNTERS_KEYS = (
+    "abort",
+    "reset_device",
+    "reset_bus",
+    "pnp",
+    "ioctl_reset",
+)
+
 
 def _try_parse_int_base0(s: str) -> Optional[int]:
     try:
         return int(s, 0)
     except Exception:
         return None
+
+
+def _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(tail: bytes) -> Optional[dict[str, int]]:
+    """
+    Best-effort: extract virtio-blk recovery counters from the dedicated `virtio-blk-counters` guest marker.
+
+    Guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|")
+    if marker_line is None:
+        return None
+
+    fields = _parse_marker_kv_fields(marker_line)
+    if not any(k in fields for k in _VIRTIO_BLK_COUNTERS_KEYS):
+        return None
+
+    mapped: dict[str, int] = {}
+    mapping = {
+        "abort": "abort_srb",
+        "reset_device": "reset_device_srb",
+        "reset_bus": "reset_bus_srb",
+        "pnp": "pnp_srb",
+        "ioctl_reset": "ioctl_reset",
+    }
+
+    for src, dst in mapping.items():
+        if src not in fields:
+            return None
+        v = _try_parse_int_base0(fields[src])
+        if v is None:
+            return None
+        mapped[dst] = v
+    return mapped
 
 
 def _try_parse_virtio_blk_recovery_counters(
@@ -7852,18 +7894,21 @@ def _try_parse_virtio_blk_recovery_counters(
         return None
 
     fields = _parse_marker_kv_fields(blk_test_line)
-    if not any(k in fields for k in _VIRTIO_BLK_RECOVERY_KEYS):
-        return None
+    if any(k in fields for k in _VIRTIO_BLK_RECOVERY_KEYS):
+        counters: dict[str, int] = {}
+        for k in _VIRTIO_BLK_RECOVERY_KEYS:
+            if k not in fields:
+                break
+            v = _try_parse_int_base0(fields[k])
+            if v is None:
+                break
+            counters[k] = v
+        else:
+            return counters
 
-    counters: dict[str, int] = {}
-    for k in _VIRTIO_BLK_RECOVERY_KEYS:
-        if k not in fields:
-            return None
-        v = _try_parse_int_base0(fields[k])
-        if v is None:
-            return None
-        counters[k] = v
-    return counters
+    # Backward/robustness: if the virtio-blk per-test marker does not include the counters fields (or is truncated),
+    # fall back to the dedicated virtio-blk-counters marker.
+    return _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(tail)
 
 
 def _virtio_blk_recovery_is_nonzero(counters: dict[str, int], *, threshold: int = 0) -> bool:

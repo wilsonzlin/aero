@@ -2274,34 +2274,14 @@ function Get-AeroVirtioBlkRecoveryCounters {
     [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
-  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
-  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
-  if ($null -eq $line) { return $null }
-  $fields = @{}
-  foreach ($tok in $line.Split("|")) {
-    $idx = $tok.IndexOf("=")
-    if ($idx -le 0) { continue }
-    $k = $tok.Substring(0, $idx)
-    $v = $tok.Substring($idx + 1)
-    if (-not [string]::IsNullOrEmpty($k)) {
-      $fields[$k] = $v
-    }
-  }
-
-  $keys = @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")
-  foreach ($k in $keys) {
-    if (-not $fields.ContainsKey($k)) { return $null }
-  }
-
-  $out = @{}
-  foreach ($k in $keys) {
-    $raw = [string]$fields[$k]
+  $parseInt = {
+    param([string]$Raw)
     $v = 0L
-    $ok = [int64]::TryParse($raw, [ref]$v)
+    $ok = [int64]::TryParse($Raw, [ref]$v)
     if (-not $ok) {
-      if ($raw -match "^0x[0-9a-fA-F]+$") {
+      if ($Raw -match "^0x[0-9a-fA-F]+$") {
         try {
-          $v = [Convert]::ToInt64($raw.Substring(2), 16)
+          $v = [Convert]::ToInt64($Raw.Substring(2), 16)
           $ok = $true
         } catch {
           $ok = $false
@@ -2309,9 +2289,75 @@ function Get-AeroVirtioBlkRecoveryCounters {
       }
     }
     if (-not $ok) { return $null }
-    $out[$k] = $v
+    return $v
   }
-  return $out
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  $fields = @{}
+  if ($null -ne $line) {
+    foreach ($tok in $line.Split("|")) {
+      $idx = $tok.IndexOf("=")
+      if ($idx -le 0) { continue }
+      $k = $tok.Substring(0, $idx)
+      $v = $tok.Substring($idx + 1)
+      if (-not [string]::IsNullOrEmpty($k)) {
+        $fields[$k] = $v
+      }
+    }
+  }
+
+  $keys = @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")
+  $haveAll = $true
+  foreach ($k in $keys) {
+    if (-not $fields.ContainsKey($k)) { $haveAll = $false; break }
+  }
+
+  if ($haveAll) {
+    $out = @{}
+    foreach ($k in $keys) {
+      $raw = [string]$fields[$k]
+      $v = & $parseInt $raw
+      if ($null -eq $v) { return $null }
+      $out[$k] = $v
+    }
+    return $out
+  }
+
+  # Backward/robustness: if the virtio-blk per-test marker does not include the counters fields (or is missing),
+  # fall back to the dedicated virtio-blk-counters marker (abort/reset_device/reset_bus/pnp/ioctl_reset).
+  $countersPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
+  $countersLine = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $countersPrefix -SerialLogPath $SerialLogPath
+  if ($null -eq $countersLine) { return $null }
+
+  $cfields = @{}
+  foreach ($tok in $countersLine.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $cfields[$k] = $v
+    }
+  }
+
+  $mapping = @{
+    abort        = "abort_srb"
+    reset_device = "reset_device_srb"
+    reset_bus    = "reset_bus_srb"
+    pnp          = "pnp_srb"
+    ioctl_reset  = "ioctl_reset"
+  }
+
+  $out2 = @{}
+  foreach ($src in $mapping.Keys) {
+    $dst = [string]$mapping[$src]
+    if (-not $cfields.ContainsKey($src)) { return $null }
+    $v = & $parseInt ([string]$cfields[$src])
+    if ($null -eq $v) { return $null }
+    $out2[$dst] = $v
+  }
+  return $out2
 }
 
 function Try-EmitAeroVirtioBlkRecoveryMarker {

@@ -50,6 +50,19 @@ class VirtioBlkRecoveryMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "")
 
+    def test_emits_info_from_blk_counters_marker(self) -> None:
+        # If the virtio-blk per-test marker does not carry the counter fields (older/truncated marker),
+        # fall back to the dedicated virtio-blk-counters marker.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=1|reset_bus=2|pnp=3|ioctl_reset=4|capacity_change_events=not_supported\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=0|reset_device_srb=1|reset_bus_srb=2|pnp_srb=3|ioctl_reset=4",
+        )
+
     def test_gate_passes_on_all_zero(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=0|"
@@ -65,6 +78,16 @@ class VirtioBlkRecoveryMarkerTests(unittest.TestCase):
         )
         msg = self.harness._check_no_blk_recovery_requirement(tail)
         self.assertIsNotNone(msg)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
+
+    def test_gate_falls_back_to_blk_counters_marker(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|ioctl_reset=1|capacity_change_events=0\n"
+        )
+        msg = self.harness._check_no_blk_recovery_requirement(tail)
+        self.assertIsNotNone(msg)
+        assert msg is not None
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
 
     def test_cli_flag_parses(self) -> None:
