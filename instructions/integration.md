@@ -411,6 +411,7 @@ yet; for the authoritative “what can the canonical machine expose today”, se
 00:0a.0  - virtio-input keyboard (multi-function)
 00:0a.1  - virtio-input mouse
 00:0b.0  - virtio-snd
+00:0c.0  - VGA (stub) Bochs/QEMU “Standard VGA” (`1234:1111`; legacy VGA mode only)
 00:0d.0  - xHCI (USB 3.x) controller (optional/experimental; Win7 has no in-box xHCI driver; see `docs/usb-xhci.md`)
 00:12.0  - EHCI (USB 2.0) controller (optional; Win7 in-box `usbehci.sys`; see `docs/usb-ehci.md`)
 ```
@@ -424,8 +425,13 @@ With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), the canonica
 * VBE ports: `0x01CE/0x01CF`
 * Legacy VRAM window: `0xA0000..0xBFFFF`
 * SVGA linear framebuffer (LFB): base is **configurable** (historically defaulting to `0xE000_0000`
-  via `aero_gpu_vga::SVGA_LFB_BASE`). When the PC platform is enabled, this LFB base must live
-  inside the ACPI-reported PCI MMIO window so the platform MMIO mapping can route it.
+  via `aero_gpu_vga::SVGA_LFB_BASE`).
+  - When `MachineConfig::enable_pc_platform=true`, the canonical machine also exposes a
+    Bochs/QEMU-compatible “Standard VGA” PCI stub at `00:0c.0` (`1234:1111`) and routes the LFB
+    through BAR0 inside the ACPI-reported PCI MMIO window. The BAR base is assigned by BIOS POST /
+    the PCI resource allocator unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`.
+  - When `MachineConfig::enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly
+    at the configured base.
 
 This legacy VGA/VBE boot-display path intentionally does *not* occupy `00:07.0`: that BDF is
 reserved for the long-term AeroGPU WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
