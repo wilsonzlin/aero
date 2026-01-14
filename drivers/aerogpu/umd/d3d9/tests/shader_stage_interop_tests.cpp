@@ -40,6 +40,9 @@ constexpr uint32_t kD3dTopDisable = 1u;
 // Intentionally unsupported by the fixed-function stage0 subset.
 constexpr uint32_t kD3dTopAddSigned2x = 9u; // D3DTOP_ADDSIGNED2X
 
+// D3DRS_* render state IDs (from d3d9types.h).
+constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
+
 // Trivial vs_2_0 token stream (no declaration):
 //   mov oPos, v0
 //   mov oD0, v1
@@ -1337,6 +1340,133 @@ bool TestPsOnlyBindsFixedfuncVsXyzTex1() {
   return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
 }
 
+bool TestPsOnlyXyzTex1LightingEnabledStillDraws() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  // Bind a user PS (VS stays NULL).
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            kUserPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(kUserPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader(PS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  auto* ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+  const aerogpu_handle_t ps_handle = ps ? ps->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+
+  // Lighting is not implemented under PS-only interop (to avoid clobbering user
+  // VS constants with the large lighting block). It must also not cause
+  // spurious INVALIDCALL errors for FVFs without normals.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only, XYZ|TEX1; lighting=on)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "PS-only: synthesized VS is bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
+               "PS-only: synthesized VS bytecode matches kVsTransformPosWhiteTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only XYZ|TEX1 lighting=on)")) {
+    return false;
+  }
+
+  // Lighting constant uploads must not be emitted under PS-only interop.
+  size_t lighting_uploads = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 208 && sc->vec4_count == 29) {
+        lighting_uploads++;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(lighting_uploads == 0, "PS-only XYZ|TEX1 does not upload lighting constants")) {
+    return false;
+  }
+
+  bool saw_user_ps_bind = false;
+  offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
+        return false;
+      }
+      if (bind->ps == ps_handle) {
+        saw_user_ps_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
+}
+
 bool TestPsOnlyIgnoresUnsupportedStage0State() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1775,6 +1905,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVsXyzTex1()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyXyzTex1LightingEnabledStillDraws()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyIgnoresUnsupportedStage0State()) {
