@@ -227,7 +227,7 @@ The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "i
 # Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 # Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + EHCI +
-# EHCI snapshot roundtrip + HID builtin snapshot + shared HID usage fixtures + xHCI smoke). Use
+# EHCI snapshot roundtrip + USB2 companion routing + HID builtin snapshot + shared HID usage fixtures + xHCI smoke). Use
 # `--usb-all` if you want to run the full `aero-usb` integration suite (all xHCI tests, passthrough, etc).
 cargo xtask input
 
@@ -287,7 +287,7 @@ AERO_WASM_PACKAGES=core npm -w web run wasm:build
 # Rust device-model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
 # Fast focused subset (matches `cargo xtask input` default):
-bash ./scripts/safe-run.sh cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test ehci_snapshot_roundtrip --test hid_builtin_snapshot --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
+bash ./scripts/safe-run.sh cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test ehci_snapshot_roundtrip --test usb2_companion_routing --test hid_builtin_snapshot --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
 # Full USB suite:
 bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
 
