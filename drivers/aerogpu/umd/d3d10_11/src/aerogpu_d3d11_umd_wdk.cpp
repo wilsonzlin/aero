@@ -6487,19 +6487,6 @@ void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
 }
 
-template <typename THandle>
-static bool AnyNonNullHandles(const THandle* handles, UINT count) {
-  if (!handles || count == 0) {
-    return false;
-  }
-  for (UINT i = 0; i < count; ++i) {
-    if (handles[i].pDrvPrivate) {
-      return true;
-    }
-  }
-  return false;
-}
-
 template <typename FnPtr>
 struct SoSetTargetsThunk;
 

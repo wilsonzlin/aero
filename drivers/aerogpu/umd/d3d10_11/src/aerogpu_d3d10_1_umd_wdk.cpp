@@ -160,6 +160,7 @@ using aerogpu::shared_surface::D3d9FormatToDxgi;
 using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 using aerogpu::d3d10_11::ValidateNoNullDdiTable;
+using aerogpu::d3d10_11::AnyNonNullHandles;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -1318,27 +1319,6 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     }
   }
 };
-
-template <typename T, typename = void>
-struct has_member_pDrvPrivate : std::false_type {};
-template <typename T>
-struct has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
-
-template <typename THandle>
-static bool AnyNonNullHandles(const THandle* handles, UINT count) {
-  if (!handles || count == 0) {
-    return false;
-  }
-  if constexpr (!has_member_pDrvPrivate<THandle>::value) {
-    return false;
-  }
-  for (UINT i = 0; i < count; ++i) {
-    if (handles[i].pDrvPrivate) {
-      return true;
-    }
-  }
-  return false;
-}
 
 template <typename FnPtr>
 struct SoSetTargetsImpl;

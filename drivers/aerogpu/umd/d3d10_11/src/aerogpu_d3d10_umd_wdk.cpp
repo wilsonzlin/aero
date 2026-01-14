@@ -73,6 +73,7 @@ using aerogpu::d3d10_11::kD3D10DeviceLiveCookie;
 using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 using aerogpu::d3d10_11::ValidateNoNullDdiTable;
+using aerogpu::d3d10_11::AnyNonNullHandles;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -1556,27 +1557,6 @@ struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     }
   }
 };
-
-template <typename T, typename = void>
-struct has_member_pDrvPrivate : std::false_type {};
-template <typename T>
-struct has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
-
-template <typename THandle>
-static bool AnyNonNullHandles(const THandle* handles, UINT count) {
-  if (!handles || count == 0) {
-    return false;
-  }
-  if constexpr (!has_member_pDrvPrivate<THandle>::value) {
-    return false;
-  }
-  for (UINT i = 0; i < count; ++i) {
-    if (handles[i].pDrvPrivate) {
-      return true;
-    }
-  }
-  return false;
-}
 
 template <typename FnPtr>
 struct SoSetTargetsImpl;

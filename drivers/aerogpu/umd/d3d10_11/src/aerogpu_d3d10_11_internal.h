@@ -193,6 +193,27 @@ inline bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   }
   return true;
 }
+
+template <typename T, typename = void>
+struct has_member_pDrvPrivate : std::false_type {};
+template <typename T>
+struct has_member_pDrvPrivate<T, std::void_t<decltype(((T*)nullptr)->pDrvPrivate)>> : std::true_type {};
+
+template <typename THandle>
+inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
+  if (!handles || count == 0) {
+    return false;
+  }
+  if constexpr (!has_member_pDrvPrivate<THandle>::value) {
+    return false;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (handles[i].pDrvPrivate) {
+      return true;
+    }
+  }
+  return false;
+}
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
