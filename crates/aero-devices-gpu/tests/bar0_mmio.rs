@@ -1,4 +1,8 @@
 use aero_devices::pci::PciDevice;
+use aero_devices_gpu::cmd::{
+    CMD_STREAM_ABI_VERSION_OFFSET, CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_MAGIC_OFFSET,
+    CMD_STREAM_SIZE_BYTES_OFFSET,
+};
 use aero_devices_gpu::ring::{
     AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
     AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
@@ -778,10 +782,10 @@ fn ring_reset_clears_latched_error_payload() {
 
     let cmd_gpa = 0x4000u64;
     // Wrong magic -> CmdDecode error.
-    mem.write_u32(cmd_gpa, 0);
-    mem.write_u32(cmd_gpa + 4, AEROGPU_ABI_VERSION_U32);
-    mem.write_u32(cmd_gpa + 8, 16);
-    mem.write_u32(cmd_gpa + 12, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, 16);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     mem.write_u32(
