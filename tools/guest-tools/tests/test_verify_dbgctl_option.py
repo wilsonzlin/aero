@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,20 @@ class VerifyDbgctlOptionTests(unittest.TestCase):
         self.assertIn(
             r"drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe",
             text,
+        )
+
+        # report.json stable fields should expose the canonical expected path.
+        self.assertRegex(
+            text,
+            re.compile(
+                r"(?ims)\$report\.aerogpu\.dbgctl\s*=\s*@\{[\s\S]*?\bexpected_path_template\b[\s\S]*?\bexpected_path\b",
+            ),
+        )
+        self.assertRegex(
+            text,
+            re.compile(
+                r"(?ims)\$report\.aerogpu\.dbgctl_selftest\s*=\s*@\{[\s\S]*?\bexpected_path_template\b[\s\S]*?\bexpected_path\b",
+            ),
         )
 
         # Selftest invocation is referenced.
