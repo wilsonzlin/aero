@@ -112,7 +112,7 @@ In the production worker runtime, input is typically translated into USB HID rep
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 - Consumer Control (media keys, Usage Page 0x0C): `UsbHidBridge.consumer_event(usage, pressed)`
 
-See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible UHCI external hub topology + reserved ports.
+See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible external hub topology + reserved ports.
 
 Note: The legacy 3-byte PS/2 packet format only carries left/right/middle in the first status byte.
 Back/forward are only emitted to the guest in PS/2 stream packets if the guest enables the
@@ -873,17 +873,18 @@ root hub ports, async/periodic schedules, IRQ and snapshot requirements), see
 
 For xHCI (USB 3.x) host controller scaffolding, PCI identity, and current limitations, see
 [`docs/usb-xhci.md`](./usb-xhci.md).
-### UHCI external hub topology (reserved ports)
+### External hub topology (reserved ports)
 
 When USB input is enabled, Aero uses a **fixed, guest-visible topology** so synthetic devices and
 passthrough devices can coexist without fighting over port numbers:
 
-- **UHCI root ports (PIIX3 UHCI):**
+- **Root ports (guest-visible USB controller, 0-based):**
   - root port **0**: external USB hub (synthetic HID devices + WebHID passthrough)
   - root port **1**: reserved for **WebUSB passthrough**
-- The EHCI/xHCI WASM controller bridges follow the same root-port convention (root port 0 reserved for
-  the external hub; root port 1 reserved for WebUSB) so high-speed WebUSB passthrough can coexist with
-  WebHID/synthetic devices even in WASM builds that omit UHCI.
+  - UHCI exposes exactly two root ports (0–1). EHCI/xHCI expose more root ports by default, but the
+    browser/WASM integration convention reserves ports 0–1 for these roles so WebUSB passthrough can
+    coexist with the external hub / WebHID / synthetic HID devices (including in WASM builds that
+    omit UHCI).
 - **External hub on root port 0**:
   - default downstream port count: **16**
   - reserved synthetic devices:
