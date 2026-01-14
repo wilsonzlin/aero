@@ -4354,15 +4354,15 @@ bool emit_set_render_targets_locked(Device* dev) {
 }
 
 bool emit_bind_shaders_locked(Device* dev) {
-  auto* cmd = append_fixed_locked<aerogpu_cmd_bind_shaders>(dev, AEROGPU_CMD_BIND_SHADERS);
-  if (!cmd) {
+  const size_t needed = align_up(sizeof(aerogpu_cmd_bind_shaders), 4);
+  if (!ensure_cmd_space(dev, needed)) {
     return false;
   }
-  cmd->vs = dev->vs ? dev->vs->handle : 0;
-  cmd->ps = dev->ps ? dev->ps->handle : 0;
-  cmd->cs = 0;
-  cmd->reserved0 = 0;
-  return true;
+  auto* cmd = dev->cmd.bind_shaders(
+      /*vs=*/dev->vs ? dev->vs->handle : 0,
+      /*ps=*/dev->ps ? dev->ps->handle : 0,
+      /*cs=*/0);
+  return cmd != nullptr;
 }
 
 bool emit_set_topology_locked(Device* dev, uint32_t topology) {
