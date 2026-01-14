@@ -80,7 +80,7 @@ int main() {
   }
   if (output.find("dump reason=") != std::string::npos) {
     std::fprintf(stdout,
-                 "FAIL: did not expect dump-on-stub to trigger for a no-op DDI (log=%s)\n",
+                 "FAIL: did not expect dump-on-stub to trigger for a non-stub DDI (log=%s)\n",
                  out_path.c_str());
     return 1;
   }

@@ -507,8 +507,8 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0**, applies a CPU-side **World/View/Projection + viewport** transform, and writes
-  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`, copying `DIFFUSE` and
-  `TEXCOORD0` when present in both the source and destination layouts.
+  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`. When present in both the
+  source and destination layouts, it also copies `DIFFUSE` and `TEXCOORD0`.
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
@@ -526,8 +526,9 @@ Limitations:
 - No shader execution: neither the fixed-function CPU transform path nor the memcpy fallback executes user vertex shaders
   (or fixed-function lighting/material). When outside the supported fixed-function subset, the implementation is a
   byte-copy, not vertex processing.
-- The fixed-function CPU transform path is limited to the `XYZ|DIFFUSE` (+ optional `TEX1`) subset and requires that the
-  destination declaration contain a writable float4 position (`POSITIONT`/`POSITION`) for the `XYZRHW` output.
+- The fixed-function CPU transform path is limited to the `XYZ` (+ optional `DIFFUSE`, + optional `TEX1`) subset and
+  requires that the destination declaration contain a writable float4 position (`POSITIONT`/`POSITION`) for the `XYZRHW`
+  output.
 
 ### Bring-up no-op DDIs
 
