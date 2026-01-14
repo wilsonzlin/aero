@@ -46,10 +46,8 @@ impl ErstEntry {
         // ERST entry segment base pointers must be 16-byte aligned. Treat reserved low bits as
         // invalid rather than masking them away so a malformed guest configuration cannot alias a
         // different segment.
-        if size != 0 {
-            if base_raw == 0 || (base_raw & 0x0f) != 0 {
-                return None;
-            }
+        if size != 0 && (base_raw == 0 || (base_raw & 0x0f) != 0) {
+            return None;
         }
         Some(Self {
             base: base_raw & !0x0f,
