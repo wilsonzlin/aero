@@ -732,6 +732,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     if (cachedBytes < 0) cachedBytes = 0;
     if (cachedBytes > totalSize) cachedBytes = totalSize;
+    if (this.persistentCacheWritesDisabled) cachedBytes = 0;
     return {
       url: this.sourceId,
       totalSize,
@@ -1022,6 +1023,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    const startedWithPersistentCacheDisabled = this.persistentCacheWritesDisabled;
     const generation = this.cacheGeneration;
     this.ensureOpen();
     assertSectorAligned(buffer.byteLength, this.sectorSize);
@@ -1075,15 +1077,22 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       return await this.readSectors(lba, buffer);
     }
 
-    await this.ensureOpen().readSectors(lba, buffer);
-    // Overlay any chunks that were downloaded but not persisted due to quota pressure. The sparse
-    // cache returns zero-filled blocks for unallocated ranges; patching ensures correctness.
-    if (this.inMemoryChunks.size > 0) {
+    // If quota pressure disabled persistence during this read, restart in "memory/network" mode to
+    // avoid relying on a potentially partially-written persistent sparse file.
+    if (this.persistentCacheWritesDisabled && !startedWithPersistentCacheDisabled) {
+      return await this.readSectors(lba, buffer);
+    }
+
+    if (this.persistentCacheWritesDisabled) {
+      // Fill directly from in-memory chunks. `ensureChunkCached()` is responsible for downloading
+      // any missing chunks once persistence is disabled.
       const readStart = offset;
       const readEnd = offset + buffer.byteLength;
       for (let chunkIndex = startChunk; chunkIndex <= endChunk; chunkIndex += 1) {
         const bytes = this.inMemoryChunks.get(chunkIndex);
-        if (!bytes) continue;
+        if (!bytes) {
+          throw new Error(`missing in-memory chunk ${chunkIndex} after quota-disable read`);
+        }
         const chunkStart = chunkIndex * this.opts.chunkSize;
         const chunkEnd = chunkStart + bytes.byteLength;
         const copyStart = Math.max(readStart, chunkStart);
@@ -1094,6 +1103,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         const len = copyEnd - copyStart;
         buffer.set(bytes.subarray(srcStart, srcStart + len), dstStart);
       }
+    } else {
+      await this.ensureOpen().readSectors(lba, buffer);
     }
     this.scheduleReadAhead(offset, buffer.byteLength, endChunk);
   }
@@ -1236,6 +1247,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private scheduleReadAhead(offset: number, length: number, endChunk: number): void {
+    if (this.persistentCacheWritesDisabled) return;
     const sequential = this.lastReadEnd !== null && this.lastReadEnd === offset;
     this.lastReadEnd = offset + length;
     if (!sequential) return;
@@ -1270,7 +1282,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
 
     this.blockRequests += 1;
-    if (cache.isBlockAllocated(chunkIndex) || this.inMemoryChunks.has(chunkIndex)) {
+    if (this.inMemoryChunks.has(chunkIndex)) {
+      this.telemetry.cacheHitChunks += 1;
+      return;
+    }
+    if (!this.persistentCacheWritesDisabled && cache.isBlockAllocated(chunkIndex)) {
       this.telemetry.cacheHitChunks += 1;
       return;
     }
@@ -1308,7 +1324,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       }
 
       const cache = this.ensureOpen();
-      if (cache.isBlockAllocated(chunkIndex)) return;
+      if (this.persistentCacheWritesDisabled) {
+        if (this.inMemoryChunks.has(chunkIndex)) return;
+      } else {
+        if (cache.isBlockAllocated(chunkIndex)) return;
+      }
 
       try {
         const start = performance.now();
