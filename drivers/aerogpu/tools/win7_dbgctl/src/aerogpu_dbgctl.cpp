@@ -7299,7 +7299,9 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     copied = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
   }
 
-  const bool shortRead = (NT_SUCCESS(op) && copied != jsonPrefixBytes);
+  // Short read: KMD reported STATUS_SUCCESS (0) but did not return the full requested bytes.
+  // Do not treat STATUS_PARTIAL_COPY as a short read; it is reported separately via `partial_copy`.
+  const bool shortRead = (op == 0 && copied != jsonPrefixBytes);
   const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY && !shortRead);
 
   bool wroteFile = false;
