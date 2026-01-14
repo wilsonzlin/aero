@@ -981,6 +981,63 @@ fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
 }
 
 #[test]
+fn wgsl_predicated_texld_avoids_non_uniform_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   setp_gt p0, v0.x, c0.x
+    //   texld (p0) r0, v0, s0
+    //   mov oC0, r0
+    //   end
+    //
+    // In WGSL/WebGPU, `textureSample()` uses implicit derivatives and must be executed in uniform
+    // control flow. A naive predication lowering of `texld (p0)` as `if (p0) { r0 = textureSample(...) }`
+    // is rejected by naga when `p0` depends on a varying input (here, `v0`).
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
+        opcode_token(78, 3) | (0u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // texld (p0) r0, v0, s0
+        opcode_token(66, 4) | 0x1000_0000, // predicated
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),  // v0
+        src_token(10, 0, 0xE4, 0), // s0
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if (p0.x)"),
+        "predicated texld should not lower to an if; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texkill_is_conditional() {
     // ps_3_0:
     //   texkill r0

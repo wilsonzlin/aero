@@ -1547,6 +1547,41 @@ fn emit_stmt(
                         let line = emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
                         let _ = writeln!(wgsl, "{pad}{line}");
                     }
+                    IrOp::TexSample {
+                        kind: crate::sm3::ir::TexSampleKind::ImplicitLod { project },
+                        dst,
+                        coord,
+                        sampler,
+                        modifiers,
+                        ..
+                    } if stage == ShaderStage::Pixel => {
+                        let pred_cond = predicate_expr(pred)?;
+                        let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
+                        if coord_ty != ScalarTy::F32 {
+                            return Err(err("texsample coordinate must be float"));
+                        }
+
+                        let dst_ty = reg_scalar_ty(dst.reg.file)
+                            .ok_or_else(|| err("unsupported dst file"))?;
+                        if dst_ty != ScalarTy::F32 {
+                            return Err(err("texsample destination must be float"));
+                        }
+
+                        let tex = format!("tex{sampler}");
+                        let samp = format!("samp{sampler}");
+                        let uv = if *project {
+                            format!("(({coord_e}).xy / ({coord_e}).w)")
+                        } else {
+                            format!("({coord_e}).xy")
+                        };
+                        let sample = format!("textureSample({tex}, {samp}, {uv})");
+                        let sample = apply_float_result_modifiers(sample, modifiers)?;
+
+                        let dst_name = reg_var_name(&dst.reg)?;
+                        let line =
+                            emit_assign(dst, format!("select({dst_name}, {sample}, {pred_cond})"))?;
+                        let _ = writeln!(wgsl, "{pad}{line}");
+                    }
                     _ => {
                         let pred_cond = predicate_expr(pred)?;
                         let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
