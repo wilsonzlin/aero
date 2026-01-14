@@ -9414,87 +9414,87 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     let max_storage_buffers =
                         self.device.limits().max_storage_buffers_per_shader_stage;
                     let required_storage_buffers = 2u32.saturating_add(pulling.slot_count());
-                    if required_storage_buffers > max_storage_buffers {
-                        bail!(
-                            "GS/HS/DS emulation placeholder prepass: vertex pulling requires {required_storage_buffers} storage buffers per compute stage ({} vertex buffers + 2 internal), but this device reports max_storage_buffers_per_shader_stage={max_storage_buffers}",
-                            pulling.slot_count(),
-                        );
-                    }
 
-                    // Build per-slot uniform data + bind group entries.
-                    let mut slots: Vec<VertexPullingSlot> =
-                        Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
-                    let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
-                        Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len() + 3);
-                    for (pulling_slot, &d3d_slot) in
-                        pulling.pulling_slot_to_d3d_slot.iter().enumerate()
-                    {
-                        let vb = self
-                            .state
-                            .vertex_buffers
-                            .get(d3d_slot as usize)
-                            .and_then(|v| *v)
-                            .ok_or_else(|| {
-                                anyhow!("missing vertex buffer binding for slot {d3d_slot}")
-                            })?;
+                    // If enabling vertex pulling would exceed the per-stage storage-buffer limit,
+                    // fall back to the reduced-binding placeholder prepass (no pulling). This keeps
+                    // the placeholder path robust on downlevel devices, while still exercising the
+                    // pulling binding scheme when the device can support it.
+                    if required_storage_buffers <= max_storage_buffers {
+                        // Build per-slot uniform data + bind group entries.
+                        let mut slots: Vec<VertexPullingSlot> =
+                            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+                        let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+                            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len() + 3);
+                        for (pulling_slot, &d3d_slot) in
+                            pulling.pulling_slot_to_d3d_slot.iter().enumerate()
+                        {
+                            let vb = self
+                                .state
+                                .vertex_buffers
+                                .get(d3d_slot as usize)
+                                .and_then(|v| *v)
+                                .ok_or_else(|| {
+                                    anyhow!("missing vertex buffer binding for slot {d3d_slot}")
+                                })?;
 
-                        let required_stride = pulling
-                            .required_strides
-                            .get(pulling_slot)
-                            .copied()
-                            .unwrap_or(0);
-                        if vb.stride_bytes < required_stride {
-                            bail!(
-                                "vertex buffer slot {d3d_slot} stride {} is smaller than required stride {required_stride}",
-                                vb.stride_bytes
-                            );
+                            let required_stride = pulling
+                                .required_strides
+                                .get(pulling_slot)
+                                .copied()
+                                .unwrap_or(0);
+                            if vb.stride_bytes < required_stride {
+                                bail!(
+                                    "vertex buffer slot {d3d_slot} stride {} is smaller than required stride {required_stride}",
+                                    vb.stride_bytes
+                                );
+                            }
+
+                            let base_offset_bytes: u32 =
+                                vb.offset_bytes.try_into().map_err(|_| {
+                                    anyhow!(
+                                        "vertex buffer slot {d3d_slot} offset {} out of range",
+                                        vb.offset_bytes
+                                    )
+                                })?;
+
+                            let buf =
+                                self.resources.buffers.get(&vb.buffer).ok_or_else(|| {
+                                    anyhow!("unknown vertex buffer {}", vb.buffer)
+                                })?;
+
+                            slots.push(VertexPullingSlot {
+                                base_offset_bytes,
+                                stride_bytes: vb.stride_bytes,
+                            });
+                            vp_bg_entries.push(wgpu::BindGroupEntry {
+                                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE
+                                    + pulling_slot as u32,
+                                resource: buf.buffer.as_entire_binding(),
+                            });
                         }
 
-                        let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
-                            anyhow!(
-                                "vertex buffer slot {d3d_slot} offset {} out of range",
-                                vb.offset_bytes
-                            )
-                        })?;
+                        let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+                        let (vp_uniform, vp_uniform_size) = create_uniform_buffer(
+                            &self.device,
+                            &self.queue,
+                            "aerogpu_cmd geometry prepass vertex pulling uniform",
+                            &uniform_bytes,
+                        );
+                        let vp_uniform = vp_uniform_buffer.insert(vp_uniform);
 
-                        let buf = self
-                            .resources
-                            .buffers
-                            .get(&vb.buffer)
-                            .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
-
-                        slots.push(VertexPullingSlot {
-                            base_offset_bytes,
-                            stride_bytes: vb.stride_bytes,
-                        });
                         vp_bg_entries.push(wgpu::BindGroupEntry {
-                            binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE
-                                + pulling_slot as u32,
-                            resource: buf.buffer.as_entire_binding(),
+                            binding: VERTEX_PULLING_UNIFORM_BINDING,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: vp_uniform,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(vp_uniform_size),
+                            }),
                         });
+
+                        prepass_group3_extra_bgl_entries = cached.bgl_entries.clone();
+                        prepass_group3_extra_bg_entries = vp_bg_entries;
+                        prepass_cs_wgsl = Some(cached.wgsl.clone());
                     }
-
-                    let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
-                    let (vp_uniform, vp_uniform_size) = create_uniform_buffer(
-                        &self.device,
-                        &self.queue,
-                        "aerogpu_cmd geometry prepass vertex pulling uniform",
-                        &uniform_bytes,
-                    );
-                    let vp_uniform = vp_uniform_buffer.insert(vp_uniform);
-
-                    vp_bg_entries.push(wgpu::BindGroupEntry {
-                        binding: VERTEX_PULLING_UNIFORM_BINDING,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: vp_uniform,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(vp_uniform_size),
-                        }),
-                    });
-
-                    prepass_group3_extra_bgl_entries = cached.bgl_entries.clone();
-                    prepass_group3_extra_bg_entries = vp_bg_entries;
-                    prepass_cs_wgsl = Some(cached.wgsl.clone());
                 }
             }
 
@@ -9610,9 +9610,19 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             let storage_bindings_total = group0_storage + group3_storage;
             let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
             if storage_bindings_total > max_storage {
-                bail!(
-                    "geometry placeholder prepass requires {storage_bindings_total} storage buffers in compute pipeline layout (group0={group0_storage}, group3={group3_storage}), but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
-                );
+                // Fallback to the reduced-binding placeholder variant by disabling group3 pulling
+                // resources. This keeps the placeholder prepass usable on downlevel devices while
+                // still surfacing an actionable error if even the group0 outputs exceed the
+                // per-stage storage-buffer budget.
+                if group0_storage <= max_storage {
+                    prepass_group3_bgl_entries.truncate(1);
+                    prepass_group3_extra_bg_entries.clear();
+                    prepass_cs_wgsl = None;
+                } else {
+                    bail!(
+                        "geometry placeholder prepass requires {storage_bindings_total} storage buffers in compute pipeline layout (group0={group0_storage}, group3={group3_storage}), but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+                    );
+                }
             }
 
             let prepass_output_bgl = self
