@@ -51,8 +51,9 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::fmt;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
@@ -2099,6 +2100,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
+        const TAG_PORTS: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -2112,6 +2114,11 @@ impl IoSnapshot for XhciController {
         w.field_u32(TAG_INTR0_ERSTSZ, self.interrupter0.erstsz_raw());
         w.field_u64(TAG_INTR0_ERSTBA, self.interrupter0.erstba_raw());
         w.field_u64(TAG_INTR0_ERDP, self.interrupter0.erdp_raw());
+
+        let port_records: Vec<Vec<u8>> =
+            self.ports.iter().map(|p| p.save_snapshot_record()).collect();
+        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
         w.finish()
     }
 
@@ -2127,12 +2134,24 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
+        const TAG_PORTS: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
         let port_count = r.u8(TAG_PORT_COUNT)?.unwrap_or(DEFAULT_PORT_COUNT).max(1);
+        let preserved_ports = if port_count == self.port_count {
+            Some(core::mem::take(&mut self.ports))
+        } else {
+            None
+        };
+
         *self = Self::with_port_count(port_count);
+        if let Some(ports) = preserved_ports {
+            if ports.len() == self.ports.len() {
+                self.ports = ports;
+            }
+        }
 
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
         self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
@@ -2155,6 +2174,20 @@ impl IoSnapshot for XhciController {
         }
         if let Some(v) = r.u64(TAG_INTR0_ERDP)? {
             self.interrupter0.restore_erdp(v);
+        }
+
+        if let Some(buf) = r.bytes(TAG_PORTS) {
+            let mut d = Decoder::new(buf);
+            let port_records = d.vec_bytes()?;
+            d.finish()?;
+
+            if port_records.len() != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("xhci ports"));
+            }
+
+            for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
+                port.load_snapshot_record(&rec)?;
+            }
         }
 
         Ok(())

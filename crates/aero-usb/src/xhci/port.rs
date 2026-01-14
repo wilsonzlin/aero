@@ -1,5 +1,8 @@
 use alloc::boxed::Box;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
+
 use super::regs::{
     PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PLS_MASK, PORTSC_PLS_SHIFT, PORTSC_PP,
     PORTSC_PR, PORTSC_PRC, PORTSC_PS_MASK, PORTSC_PS_SHIFT,
@@ -9,6 +12,8 @@ use crate::{UsbDeviceModel, UsbSpeed};
 
 // Reset signalling for USB2 ports is ~50ms (similar to the UHCI root hub model).
 const RESET_DURATION_MS: u16 = 50;
+
+const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum XhciUsb2LinkState {
@@ -25,6 +30,24 @@ impl XhciUsb2LinkState {
             XhciUsb2LinkState::U0 => 0,
             XhciUsb2LinkState::U3 => 3,
         }
+    }
+}
+
+fn link_state_from_pls_bits(bits: u8) -> SnapshotResult<XhciUsb2LinkState> {
+    match bits {
+        0 => Ok(XhciUsb2LinkState::U0),
+        3 => Ok(XhciUsb2LinkState::U3),
+        _ => Err(SnapshotError::InvalidFieldEncoding("xhci port link state")),
+    }
+}
+
+fn usb_speed_from_port_speed_id(psiv: u8) -> SnapshotResult<UsbSpeed> {
+    // Keep in sync with `port_speed_id` / Supported Protocol PSI IDs (USB2 only).
+    match psiv {
+        1 => Ok(UsbSpeed::Full),
+        2 => Ok(UsbSpeed::Low),
+        3 => Ok(UsbSpeed::High),
+        _ => Err(SnapshotError::InvalidFieldEncoding("xhci port speed")),
     }
 }
 
@@ -103,6 +126,83 @@ impl XhciPort {
 
     pub(crate) fn device_mut(&mut self) -> Option<&mut AttachedUsbDevice> {
         self.device.as_mut()
+    }
+
+    pub(crate) fn save_snapshot_record(&self) -> Vec<u8> {
+        let mut rec = Encoder::new()
+            .bool(self.connected)
+            .bool(self.connect_status_change)
+            .bool(self.enabled)
+            .bool(self.port_enabled_change)
+            .bool(self.reset)
+            .u16(self.reset_timer_ms)
+            .bool(self.port_reset_change)
+            .u8(self.link_state.pls_bits() as u8)
+            .bool(self.speed.is_some());
+
+        if let Some(speed) = self.speed {
+            rec = rec.u8(port_speed_id(speed));
+        }
+
+        rec = rec.bool(self.device.is_some());
+        if let Some(dev) = self.device.as_ref() {
+            let dev_state = dev.save_state();
+            rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
+        }
+
+        rec.finish()
+    }
+
+    pub(crate) fn load_snapshot_record(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let mut d = Decoder::new(bytes);
+
+        self.connected = d.bool()?;
+        self.connect_status_change = d.bool()?;
+        self.enabled = d.bool()?;
+        self.port_enabled_change = d.bool()?;
+        self.reset = d.bool()?;
+        self.reset_timer_ms = d.u16()?;
+        self.port_reset_change = d.bool()?;
+
+        let pls_bits = d.u8()?;
+        self.link_state = link_state_from_pls_bits(pls_bits)?;
+
+        let has_speed = d.bool()?;
+        self.speed = if has_speed {
+            Some(usb_speed_from_port_speed_id(d.u8()?)?)
+        } else {
+            None
+        };
+
+        let has_device_state = d.bool()?;
+        let device_state = if has_device_state {
+            let len = d.u32()? as usize;
+            if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "usb device snapshot too large",
+                ));
+            }
+            Some(d.bytes(len)?.to_vec())
+        } else {
+            None
+        };
+        d.finish()?;
+
+        if let Some(device_state) = device_state {
+            if self.device.is_none() {
+                if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&device_state)? {
+                    self.device = Some(dev);
+                }
+            }
+            if let Some(dev) = self.device.as_mut() {
+                dev.load_state(&device_state)?;
+            }
+        } else {
+            // Snapshot indicates no device attached.
+            self.device = None;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn attach(&mut self, model: Box<dyn UsbDeviceModel>) -> bool {
