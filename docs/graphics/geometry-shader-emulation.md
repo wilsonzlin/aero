@@ -96,8 +96,8 @@ Note: there is an in-tree GS→WGSL compute translator at `crates/aero-d3d11/src
 It supports `pointlist`, `linestrip`, and `trianglestrip` GS output topologies. Strip topologies are
 lowered to indexed list topologies (`linestrip` → **line list**, `trianglestrip` → **triangle list**)
 suitable for `draw_indexed_indirect`.
-It is partially wired into the command executor via the translated-GS prepass paths (`PointList` draws
-(`Draw` and `DrawIndexed`) and `TriangleList` draws); other topologies still fall back to synthetic
+It is partially wired into the command executor via the translated-GS prepass paths (`PointList` and
+`TriangleList` draws (`Draw` and `DrawIndexed`)); other topologies still fall back to synthetic
 expansion.
 
 ---
@@ -147,9 +147,8 @@ Implemented today:
 Current limitations (high-level):
 
 - Only a small “real GS” path is implemented today:
-  - `PointList` draws (`Draw` and `DrawIndexed`) and `TriangleList` draws (indexed or non-indexed)
-    can execute translated SM4 GS DXBC as the compute prepass when the shader is within the supported
-    translator subset.
+  - `PointList` and `TriangleList` draws (`Draw` and `DrawIndexed`) can execute translated SM4 GS
+    DXBC as the compute prepass when the shader is within the supported translator subset.
   - Other input topologies (line, strip, adjacency) still use the built-in synthetic expansion WGSL
     prepass.
 - VS-as-compute feeding for GS inputs is still incomplete:
