@@ -1384,6 +1384,115 @@ if ($resolvedGuestToolsProfile -eq "full" -and $OmitOptionalDrivers) {
       throw "Did not expect amd64-only partial driver pack manifest to list '$notWant' as included. Included: $($partialAmd64IncludedDrivers -join ', ')"
     }
   }
+
+  # Mixed optional-driver scenario: ensure we still include optional drivers that are available
+  # for both arches when another optional driver is partial.
+  #
+  # Example:
+  # - viosnd present for both x86 + amd64 -> should be included
+  # - vioinput present only for x86 -> should be omitted entirely (normalized to missing on both)
+  Write-Host "Running mixed optional-driver normalization smoke test (viosnd both, vioinput x86-only)..."
+
+  $syntheticMixedRoot = Join-Path $OutRoot "virtio-win-mixed-optional"
+  Ensure-EmptyDirectory -Path $syntheticMixedRoot
+
+  "license placeholder" | Out-File -FilePath (Join-Path $syntheticMixedRoot "license.txt") -Encoding ascii
+  "notice placeholder" | Out-File -FilePath (Join-Path $syntheticMixedRoot "notice.txt") -Encoding ascii
+  $fakeVirtioWinVersionMixed = "0.0.0-synthetic-mixed-optional"
+  $fakeVirtioWinVersionMixed | Out-File -FilePath (Join-Path $syntheticMixedRoot "VERSION") -Encoding ascii
+
+  $fakeIsoPathMixed = "synthetic-virtio-win-mixed.iso"
+  $fakeIsoShaMixed = ("0011223344556677" * 4)
+  $fakeIsoVolumeIdMixed = "SYNTH_VIRTIO_MIXED"
+  @{
+    schema_version = 1
+    virtio_win_iso = @{
+      path = $fakeIsoPathMixed
+      sha256 = $fakeIsoShaMixed
+      volume_id = $fakeIsoVolumeIdMixed
+    }
+  } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticMixedRoot "virtio-win-provenance.json") -Encoding UTF8
+
+  # Required drivers.
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+
+  # Optional drivers.
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticMixedRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+
+  $mixedPackOutDir = Join-Path $OutRoot "driver-pack-mixed-optional"
+  Ensure-EmptyDirectory -Path $mixedPackOutDir
+  $mixedPackLog = Join-Path $logsDir "make-driver-pack-mixed-optional.log"
+
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinRoot $syntheticMixedRoot `
+    -OutDir $mixedPackOutDir `
+    -NoZip *>&1 | Tee-Object -FilePath $mixedPackLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-driver-pack.ps1 failed for mixed optional-driver smoke test (exit $LASTEXITCODE). See $mixedPackLog"
+  }
+
+  $mixedPackRoot = Join-Path $mixedPackOutDir "aero-win7-driver-pack"
+  if (-not (Test-Path -LiteralPath $mixedPackRoot -PathType Container)) {
+    throw "Expected driver pack staging directory not found for mixed optional-driver smoke test: $mixedPackRoot"
+  }
+
+  # viosnd should still be present for both arches.
+  foreach ($p in @(
+    (Join-Path $mixedPackRoot "win7\\x86\\viosnd\\viosnd.inf"),
+    (Join-Path $mixedPackRoot "win7\\amd64\\viosnd\\viosnd.inf")
+  )) {
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+      throw "Expected mixed optional-driver smoke test to include viosnd INF: $p"
+    }
+  }
+
+  # vioinput should be omitted entirely.
+  foreach ($p in @(
+    (Join-Path $mixedPackRoot "win7\\x86\\vioinput"),
+    (Join-Path $mixedPackRoot "win7\\amd64\\vioinput")
+  )) {
+    if (Test-Path -LiteralPath $p -PathType Container) {
+      throw "Did not expect vioinput directory to be present after normalization (mixed scenario): $p"
+    }
+  }
+
+  $mixedManifestPath = Join-Path $mixedPackRoot "manifest.json"
+  $mixedManifest = Get-Content -LiteralPath $mixedManifestPath -Raw | ConvertFrom-Json
+
+  $mixedIncludedDrivers = @($mixedManifest.drivers | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  if (-not ($mixedIncludedDrivers -contains "viosnd")) {
+    throw "Expected mixed optional-driver manifest to include viosnd as an included driver. Included: $($mixedIncludedDrivers -join ', ')"
+  }
+  if ($mixedIncludedDrivers -contains "vioinput") {
+    throw "Did not expect mixed optional-driver manifest to include vioinput as an included driver. Included: $($mixedIncludedDrivers -join ', ')"
+  }
+  if (-not $mixedManifest.optional_drivers_missing_any) {
+    throw "Expected mixed optional-driver manifest to report missing optional drivers (optional_drivers_missing_any=false)."
+  }
+
+  $mixedWarnings = @($mixedManifest.warnings | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  $mixedMissing = @($mixedManifest.optional_drivers_missing)
+  $vioinputEntry = $mixedMissing | Where-Object { $_.name -and (($_.name).ToLowerInvariant() -eq "vioinput") } | Select-Object -First 1
+  if (-not $vioinputEntry) {
+    throw "Expected mixed optional-driver manifest to report vioinput as missing."
+  }
+  $targets = @($vioinputEntry.missing_targets | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($t in @("win7-x86", "win7-amd64")) {
+    if (-not ($targets -contains $t)) {
+      throw "Expected mixed optional-driver manifest vioinput missing_targets to include '$t'. Got: $($targets -join ', ')"
+    }
+  }
+  $warnHit = $mixedWarnings |
+    Where-Object { $_.Contains("optional driver 'vioinput'") -and $_.Contains("present only") -and $_.Contains("omitting it from all targets") } |
+    Select-Object -First 1
+  if (-not $warnHit) {
+    throw "Expected mixed optional-driver manifest warnings to include a partial-driver omission warning for vioinput."
+  }
 }
 
 # When optional drivers are both present in the synthetic virtio-win tree and declared in the
