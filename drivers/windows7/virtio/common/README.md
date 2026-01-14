@@ -97,9 +97,10 @@ is retained only for compatibility/testing with transitional/QEMU devices.
 - `include/virtio_pci_msix_wdm.h` + `src/virtio_pci_msix_wdm.c`
     - Shared WDM MSI/MSI-X interrupt helper for virtio-pci modern devices (message-based interrupts via `IoConnectInterruptEx`).
     - Provides a reusable ISR + per-vector DPC dispatch layer with a virtio-friendly vector/queue mapping policy.
-- `include/virtio_pci_interrupts_wdm.h` + `src/virtio_pci_interrupts_wdm.c`
-   - Shared WDM helper that combines INTx (`virtio_pci_intx_wdm`) and message-signaled interrupts (`IoConnectInterruptEx`) under a single connect/disconnect API.
-   - Provides a caller-controlled MessageId→(IsConfig/QueueIndex) routing table for MSI/MSI-X.
+ - `include/virtio_pci_interrupts_wdm.h` + `src/virtio_pci_interrupts_wdm.c`
+    - Shared WDM helper that combines INTx (`virtio_pci_intx_wdm`) and message-signaled interrupts (`IoConnectInterruptEx`) under a single connect/disconnect API.
+    - Message interrupts require callers to provide the device's PDO (as required by `IoConnectInterruptEx(CONNECT_MESSAGE_BASED)`).
+    - Provides a caller-controlled MessageId→(IsConfig/QueueIndex) routing table for MSI/MSI-X.
 - `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c`
    - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
 - `include/virtio_pci_legacy.h` + `src/virtio_pci_legacy.c`
