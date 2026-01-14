@@ -1443,6 +1443,10 @@ All TCP egress uses the **Aero Gateway** backend (see `backend/aero-gateway`):
 The WebRTC UDP relay wire protocol (signaling + DataChannel framing) is
 specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
+Server-side inbound filtering note: `proxy/webrtc-udp-relay` defaults to `UDP_INBOUND_FILTER_MODE=address_and_port`
+(only accept inbound UDP from remote address+port tuples the guest previously sent to). If you need full-cone
+behavior (accept inbound UDP from any remote), set `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
+
 ```javascript
 async function setupUdpProxy(signalingUrl) {
     const pc = new RTCPeerConnection({
