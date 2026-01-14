@@ -45,7 +45,8 @@ It:
       - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
     - mouse wheel: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
       (requires QMP `input-send-event`)
-    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys` (requires QMP `input-send-event`)
+    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys`
+      - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
     - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events` (requires QMP `input-send-event`)
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
@@ -2813,7 +2814,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Inject deterministic keyboard/mouse events via QMP (prefers input-send-event, with backcompat fallbacks when unavailable) "
             "and require the guest "
             "virtio-input-events selftest marker to PASS. Also emits a host marker: "
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|kbd_mode=device/broadcast|mouse_mode=device/broadcast "
             "(may appear multiple times due to retries). "
             "This requires a guest image provisioned with --test-input-events (or env var)."
         ),
@@ -2826,9 +2827,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="with_input_media_keys",
         action="store_true",
         help=(
-            "Inject deterministic Consumer Control (media key) events via QMP (input-send-event) and require the guest "
+            "Inject deterministic Consumer Control (media key) events via QMP (prefers input-send-event, with backcompat fallbacks when unavailable) and require the guest "
             "virtio-input-media-keys selftest marker to PASS. Also emits a host marker: "
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS/FAIL|attempt=<n>|kbd_mode=device/broadcast "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS/FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|kbd_mode=device/broadcast "
             "(may appear multiple times due to retries). "
             "This requires a guest image provisioned with --test-input-media-keys (or env var)."
         ),
@@ -2885,7 +2886,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Attach a virtio-tablet-pci device and inject deterministic absolute-pointer (tablet) events via "
             "QMP input-send-event. Require the guest virtio-input-tablet-events selftest marker to PASS. "
             "Also emits a host marker: "
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|backend=<qmp_input_send_event|unknown>|tablet_mode=device/broadcast "
             "(may appear multiple times due to retries). "
             "This requires a guest image provisioned with --test-input-tablet-events/--test-tablet-events "
             "(or env var: AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)."
@@ -7565,8 +7566,9 @@ def _emit_virtio_input_events_inject_host_marker(
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")
+    backend_tok = _sanitize_marker_value(backend or "unknown")
     print(
-        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt={attempt}|backend={backend_tok}|reason={reason_tok}",
         file=sys.stderr,
     )
 
@@ -7586,8 +7588,9 @@ def _emit_virtio_input_media_keys_inject_host_marker(
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")
+    backend_tok = _sanitize_marker_value(backend or "unknown")
     print(
-        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt={attempt}|backend={backend_tok}|reason={reason_tok}",
         file=sys.stderr,
     )
 
@@ -7607,8 +7610,9 @@ def _emit_virtio_input_tablet_events_inject_host_marker(
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")
+    backend_tok = _sanitize_marker_value(backend or "unknown")
     print(
-        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt={attempt}|backend={backend_tok}|reason={reason_tok}",
         file=sys.stderr,
     )
 

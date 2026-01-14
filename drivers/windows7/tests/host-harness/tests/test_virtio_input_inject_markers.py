@@ -51,7 +51,7 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
             h._emit_virtio_input_events_inject_host_marker(ok=False, attempt=1, reason="bad|value\n")
         self.assertEqual(
             buf.getvalue().strip(),
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=1|reason=bad/value",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=1|backend=unknown|reason=bad/value",
         )
 
     def test_media_keys_inject_pass_marker_format(self) -> None:
@@ -78,7 +78,7 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
             h._emit_virtio_input_media_keys_inject_host_marker(ok=False, attempt=9, reason="oops")
         self.assertEqual(
             buf.getvalue().strip(),
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=9|reason=oops",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=9|backend=unknown|reason=oops",
         )
 
     def test_tablet_events_inject_pass_marker_format(self) -> None:
@@ -105,7 +105,7 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
             )
         self.assertEqual(
             buf.getvalue().strip(),
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=5|reason=bad/tablet",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=5|backend=unknown|reason=bad/tablet",
         )
 
 

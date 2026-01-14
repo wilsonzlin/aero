@@ -469,12 +469,12 @@ When enabled, the harness:
 The harness also emits a host-side marker for the injection step itself (useful for debugging flaky setups and for log
 scraping in CI):
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|reason=...`
 
 Note: The harness may retry input injection a few times after the guest reports `virtio-input-events|READY` to reduce
 timing flakiness (input reports can be dropped if no user-mode read is pending). In that case you may see multiple
-`VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
+`VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>` and `backend=...`).
 
 #### QEMU feature requirements / fallback behavior
 
@@ -591,14 +591,14 @@ Guest image requirement:
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`
-2. Injects a deterministic media-key sequence via QMP `input-send-event`:
+2. Injects a deterministic media-key sequence via QMP (prefers `input-send-event`, with backcompat fallbacks when unavailable):
    - `qcode=volumeup` press + release
 3. Requires the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...`
 
 The harness also emits a host-side marker for the injection step (useful for debugging/log scraping):
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|reason=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|reason=...`
 
 If QMP injection fails (for example the QEMU build does not support multimedia qcodes), the harness fails with a clear token:
 
@@ -693,8 +693,8 @@ The injected sequence is:
 
 The harness also emits a host-side marker for each injection attempt:
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event>|tablet_mode=device/broadcast`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|unknown>|reason=...`
 
 Note: Unlike the keyboard/mouse path above, **tablet (absolute) injection requires QMP `input-send-event`**. There is
 no widely-supported legacy fallback for absolute pointer injection; if `input-send-event` is missing the harness will
