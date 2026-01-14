@@ -45,8 +45,8 @@ const TAG_DNCTRL: u16 = 25;
 const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
 // New in snapshot v0.7.
-const TAG_TIME_MS: u16 = 26;
-const TAG_LAST_TICK_DMA_DWORD: u16 = 27;
+const TAG_TIME_MS: u16 = 27;
+const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
 
 const SLOT_CONTEXT_DWORDS: usize = 8;
 const ENDPOINT_CONTEXT_DWORDS: usize = 8;
