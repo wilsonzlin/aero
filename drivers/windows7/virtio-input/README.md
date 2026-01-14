@@ -511,7 +511,7 @@ extensions that are implemented in-tree (consumer/media keys).
 | Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Mapped to HID **Consumer / AC Pan** (signed 8-bit). |
 | Mouse buttons (`EV_KEY`: `BTN_*`) | **Supported** | 8-button HID bitmask (ReportID `2`, buttons 1–8). See mapping table below. |
 | Keyboard LED output (Windows → driver → device) | **Supported** | HID output report (ReportID `1`) is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
-| Tablet / absolute pointer (`EV_ABS` → HID absolute pointer, ReportID `4`) | **Supported** | Absolute X/Y are emitted as 16-bit values and are scaled using `ABS_INFO` min/max into the HID logical range (`0..32767`). Installed via `inf/aero_virtio_tablet.inf`. Buttons/touch are supported when the device advertises `EV_KEY` button codes. |
+| Tablet / absolute pointer (`EV_ABS` → HID absolute pointer, ReportID `4`) | **Supported** | Absolute X/Y are emitted as 16-bit values and are scaled using `ABS_INFO` min/max into the HID logical range (`0..32767`). Installed via `inf/aero_virtio_tablet.inf` (Aero contract tablet HWID `SUBSYS_00121AF4`). Buttons/touch are supported when the device advertises `EV_KEY` button codes. |
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |

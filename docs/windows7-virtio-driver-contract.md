@@ -666,12 +666,14 @@ Receive behavior (device):
 > for `10 + frame_len`. If no RX chains are available, the device may queue frames until buffers
 > arrive.
 
-### 3.3 virtio-input (keyboard/mouse)
+### 3.3 virtio-input (keyboard/mouse/tablet)
 
-Contract v1 exposes virtio-input as a **single multi-function PCI device** with **two PCI functions**:
+Contract v1 exposes virtio-input as a **single multi-function PCI device** with **two required PCI functions** and an
+optional third function:
 
 - Function 0: one keyboard virtio-input device (**must** advertise multi-function via `header_type = 0x80`)
 - Function 1: one mouse virtio-input device
+- (Optional) Function 2: one tablet (absolute pointer / `EV_ABS`) virtio-input device
 
 Both share the same Vendor/Device ID (`0x1AF4:0x1052`) and are distinguished by subsystem ID and config strings.
 
@@ -691,6 +693,14 @@ Mouse:
 - Device ID: `0x1052`
 - Subsystem Vendor ID: `0x1AF4`
 - Subsystem Device ID: `0x0011`
+- Revision ID: `0x01`
+
+Tablet (optional):
+
+- Vendor ID: `0x1AF4`
+- Device ID: `0x1052`
+- Subsystem Vendor ID: `0x1AF4`
+- Subsystem Device ID: `0x0012`
 - Revision ID: `0x01`
 
 #### 3.3.2 Virtqueues
@@ -733,12 +743,13 @@ Required `ID_NAME` strings:
 
 - keyboard: `"Aero Virtio Keyboard"`
 - mouse: `"Aero Virtio Mouse"`
+- tablet: `"Aero Virtio Tablet"`
 
 Required `ID_DEVIDS` values:
 
 - `bustype = 0x0006` (BUS_VIRTUAL)
 - `vendor = 0x1AF4`
-- `product = 0x0001` (keyboard) / `0x0002` (mouse)
+- `product = 0x0001` (keyboard) / `0x0002` (mouse) / `0x0003` (tablet)
 - `version = 0x0001`
 
 #### 3.3.5 Event format
@@ -802,6 +813,23 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
   - `BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`, `BTN_SIDE`, `BTN_EXTRA`
 - Optional supported button codes (mouse, advertised via `EV_BITS` with `subsel = EV_KEY`):
   - `BTN_FORWARD`, `BTN_BACK`, `BTN_TASK`
+
+##### Tablet event requirements (absolute pointer)
+
+- Absolute position:
+  - `type = EV_ABS`, `code = ABS_X` and `ABS_Y`
+  - `value` is an absolute coordinate in the device's own range
+- Absolute axis ranges (required so the driver can scale into the HID logical range):
+  - The device MUST expose `ABS_INFO` for `ABS_X` and `ABS_Y` (via `VIRTIO_INPUT_CFG_ABS_INFO`)
+  - The driver uses `ABS_INFO.Min/Max` to scale into HID logical range `[0, 32767]`
+- Buttons (optional):
+  - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE / BTN_SIDE / BTN_EXTRA / ...`
+  - `value = 1` press, `0` release
+  - `BTN_TOUCH` may be used to represent touch contact (driver maps it to HID Button 1)
+- Minimum required advertised event types (device MUST advertise them via `EV_BITS` with `subsel = 0`):
+  - `EV_SYN`, `EV_ABS`
+- Minimum required supported ABS codes (tablet, advertised via `EV_BITS` with `subsel = EV_ABS`):
+  - `ABS_X`, `ABS_Y`
 
 ##### Status queue (`statusq`) behavior
 
