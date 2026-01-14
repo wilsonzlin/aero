@@ -1054,6 +1054,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "aerogpu_umd_files",
         "aerogpu_d3d10_umd_files",
         "aerogpu_dbgctl",
+        "aerogpu_dbgctl_selftest",
         "device_binding_audio",
         "device_binding_input",
         "virtio_blk_service",
@@ -1194,7 +1195,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.6"
+         version = "2.5.7"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
