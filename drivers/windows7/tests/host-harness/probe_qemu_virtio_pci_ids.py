@@ -390,7 +390,7 @@ def main() -> int:
             for d in sorted(filtered, key=lambda x: (x.vendor_id, x.device_id, x.subsystem_id or -1)):
                 print(
                     f"  {_fmt_hex(4, d.vendor_id)}:{_fmt_hex(4, d.device_id)}"
-                    f"  subsys={_fmt_hex(4, d.subsystem_id)}:{_fmt_hex(4, d.subsystem_vendor_id)}"
+                    f"  subsys={_fmt_hex(4, d.subsystem_vendor_id)}:{_fmt_hex(4, d.subsystem_id)}"
                     f"  rev={_fmt_hex(2, d.revision)}"
                 )
             if not filtered:
