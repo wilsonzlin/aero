@@ -103,7 +103,15 @@ console.log(result);
 >
 > Alternatively, you can enable CORS on `net-proxy`’s DoH endpoints directly by setting
 > `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` (see config table below). This should generally be limited to your local dev
-> origin(s) (e.g. `http://localhost:5173`), not `*`.
+> origin(s) (e.g. `http://localhost:5173`), not `*`:
+>
+> ```bash
+> AERO_PROXY_DOH_CORS_ALLOW_ORIGINS='http://localhost:5173' npm -w net-proxy run dev
+> ```
+>
+> Note: some browsers enforce **Private Network Access (PNA)** when a secure context (`https://...`) fetches a
+> `http://127.0.0.1/...` endpoint. When the CORS allowlist is enabled, `net-proxy` responds to PNA preflight requests
+> by returning `Access-Control-Allow-Private-Network: true`.
 
 #### Security caveats (open mode vs allowlist)
 
@@ -175,7 +183,7 @@ Environment variables:
 | `AERO_PROXY_DOH_ANSWER_TTL_SECONDS` | `60` | TTL seconds used for DoH answers (clamped to `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS`) |
 | `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS` | `300` | Max TTL seconds allowed for DoH answers |
 | `AERO_PROXY_DOH_MAX_ANSWERS` | `16` | Max number of A/AAAA answers returned per DoH query |
-| `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` | (empty) | Comma-separated CORS origin allowlist for `/dns-query` and `/dns-json` (e.g. `http://localhost:5173`). Use `*` only in trusted local dev. |
+| `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` | (empty) | Comma-separated CORS origin allowlist for `/dns-query` and `/dns-json` (e.g. `http://localhost:5173`). Use `*` only in trusted local dev. Includes basic Private Network Access (PNA) preflight support (`Access-Control-Allow-Private-Network`). |
 | `AERO_PROXY_WS_MAX_PAYLOAD_BYTES` | `1048576` | Maximum incoming WebSocket message size |
 | `AERO_PROXY_WS_STREAM_HWM_BYTES` | `65536` | Backpressure tuning for the TCP WebSocket stream bridge |
 | `AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES` | `1048576` | Drop inbound UDP packets when WebSocket bufferedAmount exceeds this limit |
