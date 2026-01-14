@@ -2466,7 +2466,8 @@ fn emit_speculative_call_with_rollback(
     if info.may_discard {
         let saved = format!("_aero_saved_call_guard_{call_id}");
         let _ = writeln!(wgsl, "{pad}let {saved}: bool = _aero_call_guard;");
-        let _ = writeln!(wgsl, "{pad}_aero_call_guard = {taken_var};");
+        // Combine with any outer guard (e.g. nested speculative calls).
+        let _ = writeln!(wgsl, "{pad}_aero_call_guard = ({saved} && {taken_var});");
         saved_guard_var = Some(saved);
     }
 

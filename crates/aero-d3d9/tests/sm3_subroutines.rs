@@ -320,8 +320,13 @@ fn sm3_nonuniform_conditional_call_to_derivative_texkill_subroutine_is_naga_vali
     );
     assert!(wgsl.contains("_aero_call_taken_"), "{wgsl}");
     assert!(
-        wgsl.contains("_aero_call_guard = _aero_call_taken_"),
-        "expected speculative call to set _aero_call_guard; got:\n{wgsl}"
+        wgsl.contains("_aero_saved_call_guard_"),
+        "expected speculative call to save _aero_call_guard; got:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("_aero_call_guard = (_aero_saved_call_guard_")
+            && wgsl.contains("&& _aero_call_taken_"),
+        "expected speculative call to combine _aero_call_guard with call taken; got:\n{wgsl}"
     );
     assert!(
         wgsl.contains("_aero_call_guard && any("),
