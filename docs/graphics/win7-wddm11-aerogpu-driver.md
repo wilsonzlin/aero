@@ -674,6 +674,8 @@ struct aerogpu_alloc_entry {
   uint64_t reserved0; /* must be 0 */
 };
 ```
+
+`flags` are per-submission access metadata. On Win7/WDDM 1.1, the KMD derives `AEROGPU_ALLOC_FLAG_READONLY` from the submission’s `DXGK_ALLOCATIONLIST` write-intent bit (`WriteOperation`; `Flags.Value & 0x1`): allocations not written by the submission are marked READONLY so the host can reject guest-memory writeback into them.
   
 This yields:
   

@@ -54,15 +54,20 @@ time. That is both fragile and easy to get wrong in DWM / multi-frame apps.
      `alloc_id` values (monotonic counter is recommended).
 
 5. **`CREATE_*` for an existing `resource_handle`**
-    - The host treats this as a **rebind/update** of the backing memory *only if*
-      all immutable resource properties match the existing resource:
+     - The host treats this as a **rebind/update** of the backing memory *only if*
+       all immutable resource properties match the existing resource:
         - Buffers: `size_bytes`, `usage_flags`
         - Textures: `format`, `width`, `height`, `mip_levels`, `array_layers`,
           `row_pitch_bytes`, `usage_flags`
-    - If immutable properties differ, the host must treat the command as a
-      validation error (the guest should `DESTROY_RESOURCE` and create a new
-      handle instead).
+     - If immutable properties differ, the host must treat the command as a
+       validation error (the guest should `DESTROY_RESOURCE` and create a new
+       handle instead).
 
+6. **Submission-time write intent / READONLY**
+   - The per-submit `aerogpu_alloc_table` also carries `flags` (notably `AEROGPU_ALLOC_FLAG_READONLY`) so the host can reject guest-memory writeback into allocations that are not declared writable for that submission.
+   - On Win7/WDDM 1.1, the KMD derives READONLY from the submission’s `DXGK_ALLOCATIONLIST` write-intent bit (`WriteOperation`; `Flags.Value & 0x1`).
+   - See `drivers/aerogpu/protocol/allocation-table.md` for the normative READONLY contract.
+ 
 ## Guest-side requirement (Win7): referenced `alloc_id` must be present in the submit’s allocation table
 
 Host-side validation requires that any packet that needs `alloc_id` resolution can be resolved through the submission’s `aerogpu_alloc_table`. This includes:
