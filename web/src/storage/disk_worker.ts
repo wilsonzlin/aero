@@ -34,6 +34,7 @@ import {
   opfsCreateBlankDisk,
   opfsDeleteDisk,
   opfsExportToPort,
+  opfsGetDiskFileHandle,
   opfsGetDiskSizeBytes,
   opfsImportFile,
   opfsResizeDisk,
@@ -260,6 +261,24 @@ function idbOverlayBindingKey(overlayDiskId: string): string {
   return `overlay-binding:${overlayDiskId}`;
 }
 
+async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof getStore>, meta: DiskImageMetadata): Promise<void> {
+  if (meta.source !== "local" || meta.backend !== "opfs" || meta.format !== "aerospar") return;
+  try {
+    const handle = await opfsGetDiskFileHandle(meta.fileName, { create: false, dirPath: meta.opfsDirectory });
+    const file = await handle.getFile();
+    const diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
+    if (diskSizeBytes === null) return;
+    if (diskSizeBytes === meta.sizeBytes) return;
+    meta.sizeBytes = diskSizeBytes;
+    // Defensive: aerosparse disks are always HDD images; older imports may have inferred `kind`
+    // incorrectly based on file name.
+    meta.kind = "hdd";
+    await store.putDisk(meta);
+  } catch {
+    // best-effort only (missing file, corrupt header, unsupported environment, etc.)
+  }
+}
+
 async function idbDeleteRemoteChunkCache(db: IDBDatabase, cacheKey: string): Promise<void> {
   const tx = db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
   const chunksStore = tx.objectStore("remote_chunks");
@@ -459,8 +478,15 @@ function getStore(backend: DiskBackend) {
  * @returns {Promise<DiskImageMetadata>}
  */
 async function requireDisk(backend: DiskBackend, id: string): Promise<DiskImageMetadata> {
-  const meta = await getStore(backend).getDisk(id);
+  const store = getStore(backend);
+  const meta = await store.getDisk(id);
   if (!meta) throw new Error(`Disk not found: ${id}`);
+  if (backend === "opfs") {
+    // Best-effort migration: early versions of `import_file` stored `sizeBytes=file.size` for
+    // aerosparse images, which is the *physical* file length (header+table+allocated blocks),
+    // not the logical disk capacity. Repair these records lazily so future opens succeed.
+    await bestEffortRepairOpfsAerosparMetadata(store, meta);
+  }
   return meta;
 }
 
@@ -601,6 +627,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
     case "list_disks": {
       const disks = await store.listDisks();
+      if (backend === "opfs") {
+        // Best-effort metadata repair for aerosparse images imported by older clients.
+        for (const meta of disks) {
+          await bestEffortRepairOpfsAerosparMetadata(store, meta).catch(() => {});
+        }
+      }
       postOk(requestId, disks);
       return;
     }
