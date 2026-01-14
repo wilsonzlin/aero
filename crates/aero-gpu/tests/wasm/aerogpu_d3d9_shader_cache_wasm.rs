@@ -310,6 +310,21 @@ fn assemble_ps_texld_cube_s0() -> Vec<u8> {
     to_bytes(&out)
 }
 
+fn assemble_ps_unknown_opcode_fallback() -> Vec<u8> {
+    // ps_2_0 with an unknown opcode to force SM3->legacy fallback:
+    //   <unknown>
+    //   mov oC0, c0
+    //   end
+    let mut out = vec![0xFFFF0200];
+    out.extend(enc_inst(0x1234, &[]));
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)], // oC0 = c0
+    ));
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
 #[wasm_bindgen_test(async)]
 async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
     // Install a minimal stub `AeroPersistentGpuCache` so the Rust wasm persistent cache wrapper
@@ -353,6 +368,47 @@ async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
     assert_eq!(put_calls, 1);
     // The cache wrapper is recreated on reset, so it should reopen the persistent cache.
     assert_eq!(open_calls, 2);
+}
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_uses_persistent_shader_cache_for_legacy_fallback_shaders() {
+    // Some shaders still use the SM3->legacy fallback translation path. Ensure the persistent cache
+    // hit validation accepts the legacy WGSL (i.e. does not thrash by invalidating every hit).
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let ps_bytes = assemble_ps_unknown_opcode_fallback();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    // First run: persistent get -> miss, translate (legacy fallback), then persistent put.
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    // Reset executor (clears in-memory caches) and run again: should hit persistent cache without
+    // invalidation.
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+
+    assert_eq!(get_calls, 2, "expected one miss + one persistent hit");
+    assert_eq!(put_calls, 1, "expected only the first run to persist");
+    assert_eq!(delete_calls, 0, "expected no invalidation on persistent hit");
 }
 
 #[wasm_bindgen_test(async)]
