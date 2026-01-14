@@ -1654,10 +1654,17 @@ impl UsbDeviceModel for UsbHubDevice {
             if !(port.enabled && port.powered) {
                 continue;
             }
-            if let Some(dev) = port.device.as_mut() {
-                if dev.model_mut().poll_remote_wakeup() {
-                    return true;
+            let wake = match port.device.as_mut() {
+                Some(dev) => dev.model_mut().poll_remote_wakeup(),
+                None => false,
+            };
+            if wake {
+                // If the downstream port was selectively suspended, remote wake should resume it
+                // so that the device is active once the upstream link resumes.
+                if port.suspended {
+                    port.set_suspended(false);
                 }
+                return true;
             }
         }
 
