@@ -81,10 +81,25 @@ impl EhciRegs {
     }
 
     fn update_halted(&mut self) {
-        if self.usbcmd & USBCMD_RS != 0 {
+        let running = (self.usbcmd & USBCMD_RS) != 0;
+        if running {
             self.usbsts &= !USBSTS_HCHALTED;
         } else {
             self.usbsts |= USBSTS_HCHALTED;
+        }
+
+        // EHCI schedule status bits reflect whether each schedule is enabled and the controller is
+        // running. Many OS drivers (including Windows/Linux) poll these bits after toggling
+        // USBCMD.PSE/ASE.
+        if running && (self.usbcmd & USBCMD_PSE) != 0 {
+            self.usbsts |= USBSTS_PSS;
+        } else {
+            self.usbsts &= !USBSTS_PSS;
+        }
+        if running && (self.usbcmd & USBCMD_ASE) != 0 {
+            self.usbsts |= USBSTS_ASS;
+        } else {
+            self.usbsts &= !USBSTS_ASS;
         }
     }
 

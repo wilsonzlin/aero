@@ -246,6 +246,46 @@ fn ehci_hchalted_tracks_usbcmd_run_stop() {
 }
 
 #[test]
+fn ehci_schedule_status_bits_track_usbcmd() {
+    let mut c = EhciController::new();
+    let mut mem = TestMemory::new(0x1000);
+
+    // Schedules should not report running while the controller is halted.
+    let st0 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st0 & (regs::USBSTS_ASS | regs::USBSTS_PSS), 0);
+
+    // Run without enabling schedules.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS);
+    let st1 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st1 & (regs::USBSTS_ASS | regs::USBSTS_PSS), 0);
+
+    // Enable the async schedule.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+    c.tick_1ms(&mut mem);
+    let st2 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st2 & regs::USBSTS_ASS, 0);
+    assert_eq!(st2 & regs::USBSTS_PSS, 0);
+
+    // Enable periodic schedule as well.
+    c.mmio_write(
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RS | regs::USBCMD_ASE | regs::USBCMD_PSE,
+    );
+    c.tick_1ms(&mut mem);
+    let st3 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st3 & regs::USBSTS_ASS, 0);
+    assert_ne!(st3 & regs::USBSTS_PSS, 0);
+
+    // Stop the controller: schedule status bits should clear.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_ASE | regs::USBCMD_PSE);
+    c.tick_1ms(&mut mem);
+    let st4 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st4 & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(st4 & (regs::USBSTS_ASS | regs::USBSTS_PSS), 0);
+}
+
+#[test]
 fn ehci_hcreset_resets_operational_regs_but_preserves_port_connection() {
     let mut c = EhciController::new_with_port_count(1);
     c.hub_mut().attach(0, Box::new(TestDevice));
