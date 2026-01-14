@@ -437,7 +437,7 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if sess != nil {
 		go func() {
-			<-sess.Done()
+			<-sess.doneCh()
 			closeConn(websocket.ClosePolicyViolation, "session closed")
 		}()
 	}
@@ -513,7 +513,7 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if sess != nil {
 			destKey := netip.AddrPortFrom(frame.RemoteIP, frame.RemotePort).String()
-			allowed, quotaExceeded := sess.AllowClientDatagramWithReason(destKey, frame.Payload)
+			allowed, quotaExceeded := sess.allowClientDatagramWithReason(destKey, frame.Payload)
 			if !allowed {
 				if metricsSink != nil {
 					metricsSink.Inc(metrics.UDPWSDropped)

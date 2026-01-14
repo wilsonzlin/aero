@@ -291,7 +291,7 @@ func (s *sessionRelay) HandleDataChannelMessage(msg []byte) {
 
 	if s.session != nil {
 		destKey := netip.AddrPortFrom(f.RemoteIP, f.RemotePort).String()
-		allowed, quotaExceeded := s.session.AllowClientDatagramWithReason(destKey, f.Payload)
+		allowed, quotaExceeded := s.session.allowClientDatagramWithReason(destKey, f.Payload)
 		if !allowed {
 			if metricsSink != nil {
 				metricsSink.Inc(metrics.WebRTCUDPDropped)

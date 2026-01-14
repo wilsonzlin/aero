@@ -73,16 +73,16 @@ func (s *Session) ID() string { return s.id }
 // concurrency-safe counter methods (Inc/Add/Get/Snapshot).
 func (s *Session) Metrics() *metrics.Metrics { return s.metrics }
 
-// Done is closed when the session is closed (either explicitly or due to hard
+// doneCh is closed when the session is closed (either explicitly or due to hard
 // enforcement mode).
-func (s *Session) Done() <-chan struct{} {
+func (s *Session) doneCh() <-chan struct{} {
 	s.mu.Lock()
 	ch := s.done
 	s.mu.Unlock()
 	return ch
 }
 
-func (s *Session) Closed() bool {
+func (s *Session) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closed
@@ -161,13 +161,13 @@ func (s *Session) closeLocked() func() {
 	return onClose
 }
 
-// AllowClientDatagramWithReason enforces the outbound UDP quotas/rate limits for
+// allowClientDatagramWithReason enforces the outbound UDP quotas/rate limits for
 // a client datagram.
 //
 // If allowed is false, quotaExceeded is true only when the datagram was rejected
 // due to the unique destination quota (MaxUniqueDestinationsPerSession).
-func (s *Session) AllowClientDatagramWithReason(destKey string, payload []byte) (allowed bool, quotaExceeded bool) {
-	if s.Closed() {
+func (s *Session) allowClientDatagramWithReason(destKey string, payload []byte) (allowed bool, quotaExceeded bool) {
+	if s.isClosed() {
 		return false, false
 	}
 
@@ -190,7 +190,7 @@ func (s *Session) AllowClientDatagramWithReason(destKey string, payload []byte) 
 // HandleInboundToClient enforces the DataChannel (relay -> client) bytes/sec
 // limit before enqueueing the frame for send.
 func (s *Session) HandleInboundToClient(payload []byte) bool {
-	if s.Closed() {
+	if s.isClosed() {
 		return false
 	}
 

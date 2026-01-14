@@ -24,7 +24,7 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 
 	var forwarded int
 	for i := 0; i < 5; i++ {
-		allowed, _ := s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+		allowed, _ := s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 		if allowed {
 			forwarded++
 		}
@@ -35,7 +35,7 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 	if m.Get(metrics.DropReasonRateLimited) == 0 {
 		t.Fatalf("expected rate_limited drops to be recorded")
 	}
-	if s.Closed() {
+	if s.isClosed() {
 		t.Fatalf("expected session to remain open in soft mode")
 	}
 }
@@ -56,16 +56,16 @@ func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 	}
 
 	// First packet allowed.
-	allowed, _ := s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	allowed, _ := s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 	if !allowed {
 		t.Fatalf("expected first packet allowed")
 	}
 
 	// Next packets violate rate limit; after 2 violations, session closes.
-	_, _ = s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
-	_, _ = s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	_, _ = s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	_, _ = s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 
-	if !s.Closed() {
+	if !s.isClosed() {
 		t.Fatalf("expected session to close in hard mode")
 	}
 	if m.Get(metrics.SessionHardClosed) == 0 {
@@ -85,11 +85,11 @@ func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	allowed, _ := s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	allowed, _ := s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 	if !allowed {
 		t.Fatalf("expected first destination to be allowed")
 	}
-	allowed, _ = s.AllowClientDatagramWithReason("8.8.8.8:53", []byte("hi"))
+	allowed, _ = s.allowClientDatagramWithReason("8.8.8.8:53", []byte("hi"))
 	if allowed {
 		t.Fatalf("expected second unique destination to be rejected")
 	}
@@ -133,11 +133,11 @@ func TestSession_EnforcesUDPBpsPerSession(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	allowed, _ := s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("1234"))
+	allowed, _ := s.allowClientDatagramWithReason("1.1.1.1:53", []byte("1234"))
 	if !allowed {
 		t.Fatalf("expected first packet to be accepted")
 	}
-	allowed, _ = s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("x"))
+	allowed, _ = s.allowClientDatagramWithReason("1.1.1.1:53", []byte("x"))
 	if allowed {
 		t.Fatalf("expected second packet to be dropped due to byte limit")
 	}
@@ -159,11 +159,11 @@ func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	allowed, _ := s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	allowed, _ := s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 	if !allowed {
 		t.Fatalf("expected first packet to be accepted")
 	}
-	allowed, _ = s.AllowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
+	allowed, _ = s.allowClientDatagramWithReason("1.1.1.1:53", []byte("hi"))
 	if allowed {
 		t.Fatalf("expected second packet to be dropped due to per-dest rate limit")
 	}
@@ -186,7 +186,7 @@ func TestSession_UDPDestBucketEvictionsMetric(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		allowed, _ := s.AllowClientDatagramWithReason(fmt.Sprintf("dest-%d", i), []byte("hi"))
+		allowed, _ := s.allowClientDatagramWithReason(fmt.Sprintf("dest-%d", i), []byte("hi"))
 		if !allowed {
 			t.Fatalf("expected packet to be accepted")
 		}
