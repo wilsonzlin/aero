@@ -317,6 +317,26 @@ fn aerogpu_submission_bridge_queue_overflow_does_not_deadlock_fences() {
     );
     assert_eq!(completed_fence, 1);
 
+    // Queue overflow is treated as a backend error for the dropped fence so a stuck host cannot
+    // silently deadlock the guest.
+    assert_eq!(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_CODE)),
+        pci::AerogpuErrorCode::Backend as u32
+    );
+    let error_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI,
+    );
+    assert_eq!(error_fence, 1);
+    assert_eq!(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_COUNT)),
+        1
+    );
+    let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_ne!(irq_status & pci::AEROGPU_IRQ_ERROR, 0);
+
     let subs = m.aerogpu_drain_submissions();
     assert_eq!(subs.len(), 256);
     assert_eq!(subs[0].signal_fence, 2);
