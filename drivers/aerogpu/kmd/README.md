@@ -400,10 +400,16 @@ DXGI swapchain backbuffers are often non-shared, single-allocation resources, so
 CreateAllocation debug logging.
 
 For bring-up/debugging, the KMD maintains a small ring buffer of recent `DxgkDdiCreateAllocation` events and exposes it
-via the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `drivers/aerogpu/tools/win7_dbgctl`):
+via the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `drivers/aerogpu/tools/win7_dbgctl`).
+
+On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip under:
+
+- `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
+- `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
 
 ```cmd
-aerogpu_dbgctl --dump-createalloc
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+aerogpu_dbgctl.exe --dump-createalloc
 ```
 
 This includes `flags_in` (the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime) and `flags_out` (after the
@@ -433,11 +439,11 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
      - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
        (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
        `[head, tail)` region is drained quickly.
- - `AEROGPU_ESCAPE_OP_READ_GPA` (see `aerogpu_dbgctl_escape.h`)
-     - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
-      (used by `aerogpu_dbgctl --read-gpa`, `--dump-scanout-bmp`/`--dump-scanout-png`, `--dump-cursor-bmp`/`--dump-cursor-png`, and `--dump-last-cmd`)
-     - safety: the KMD enforces a hard maximum payload per call and restricts reads to driver-tracked GPU-related regions
-       (e.g. pending submission buffers, ring/fence, scanout/cursor framebuffers). It is not intended to be a generic
+  - `AEROGPU_ESCAPE_OP_READ_GPA` (see `aerogpu_dbgctl_escape.h`)
+      - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
+       (used by `aerogpu_dbgctl.exe --read-gpa`, `--dump-scanout-bmp`/`--dump-scanout-png`, `--dump-cursor-bmp`/`--dump-cursor-png`, and `--dump-last-cmd`)
+      - safety: the KMD enforces a hard maximum payload per call and restricts reads to driver-tracked GPU-related regions
+        (e.g. pending submission buffers, ring/fence, scanout/cursor framebuffers). It is not intended to be a generic
        physical-memory read primitive.
   - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `aerogpu_dbgctl_escape.h`)
   - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)

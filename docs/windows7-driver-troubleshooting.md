@@ -550,32 +550,39 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
   - x86: `X:\\drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
 - CI-staged packages (host-side): `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
 
-Run it in-place from those directories (or copy it somewhere on `PATH`). In the commands below, `aerogpu_dbgctl` assumes the tool is on `PATH` (otherwise replace it with the full path above).
+Example (Guest Tools ISO/zip often mounted as `X:`; replace `X:` with your actual drive letter):
 
-- `aerogpu_dbgctl --status`
+```bat
+cd /d X:\drivers\amd64\aerogpu\tools
+aerogpu_dbgctl.exe --status
+```
+
+In the commands below, `aerogpu_dbgctl.exe` assumes you are running from the directory containing dbgctl (otherwise replace it with a full path).
+
+- `aerogpu_dbgctl.exe --status`
   - Captures a combined snapshot (device/ABI + fences + ring0 + scanout0 + cursor + vblank + CreateAllocation trace summary).
 
-- `aerogpu_dbgctl --query-scanout`
+- `aerogpu_dbgctl.exe --query-scanout`
   - Confirms whether scanout is enabled, the current mode (`width/height/pitch`), and whether a framebuffer GPA is programmed.
   - Useful for diagnosing blank output caused by mode/pitch mismatches or a missing scanout surface address.
 
-- `aerogpu_dbgctl --dump-scanout-bmp C:\\scanout.bmp`
+- `aerogpu_dbgctl.exe --dump-scanout-bmp C:\\scanout.bmp`
   - Dumps the scanout framebuffer to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
   - Useful when the guest “seems alive” but the screen is blank/corrupted and you need a pixel artifact without relying on host-side capture.
 
-- `aerogpu_dbgctl --dump-scanout-png C:\\scanout.png`
+- `aerogpu_dbgctl.exe --dump-scanout-png C:\\scanout.png`
   - Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8).
   - Note: dbgctl’s built-in PNG encoder uses stored (uncompressed) deflate blocks for simplicity, so the PNG may be slightly **larger** than the BMP.
 
-- `aerogpu_dbgctl --query-cursor`
+- `aerogpu_dbgctl.exe --query-cursor`
   - Dumps the hardware cursor MMIO state (`CURSOR_*` registers): enable, position/hotspot, size/format/pitch, and the cursor framebuffer GPA.
   - Useful when the desktop is running but the cursor is missing/stuck/off-screen.
 
-- `aerogpu_dbgctl --dump-cursor-bmp C:\\cursor.bmp`
+- `aerogpu_dbgctl.exe --dump-cursor-bmp C:\\cursor.bmp`
   - Dumps the current cursor image to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
   - Useful for debugging cursor image/pitch/fb_gpa issues without relying on host-side capture.
 
-- `aerogpu_dbgctl --dump-cursor-png C:\\cursor.png`
+- `aerogpu_dbgctl.exe --dump-cursor-png C:\\cursor.png`
   - Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8; preserves alpha).
 
 If you have the Win7 guest-side validation suite available, you can also run:

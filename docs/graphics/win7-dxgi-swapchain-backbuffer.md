@@ -97,7 +97,7 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 2. Match those handles to the immediately preceding `CreateResource => created tex2d handle=...` lines.
 
 For WDK-backed UMD builds, the `=> created` lines also include `alloc_id=<u32>`, which should match the
-`alloc_id` field in `aerogpu_dbgctl --dump-createalloc` output (useful for direct UMD↔KMD correlation without
+`alloc_id` field in `aerogpu_dbgctl.exe --dump-createalloc` output (useful for direct UMD↔KMD correlation without
 relying on size matching).
 
 > Note: some swapchains (notably single-buffer `DXGI_SWAP_EFFECT_DISCARD`) may not call
@@ -124,12 +124,12 @@ python scripts/parse_win7_dxgi_swapchain_trace.py aerogpu_d3d10_11_umd.log
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json aerogpu_d3d10_11_umd.log
 ```
 
-If you also captured `aerogpu_dbgctl --dump-createalloc` output, you can pass it to the parser to
+If you also captured `aerogpu_dbgctl.exe --dump-createalloc` output, you can pass it to the parser to
 correlate swapchain backbuffer handles to recent `DxgkDdiCreateAllocation` flag values (matched by
 allocation size):
 
 ```cmd
-aerogpu_dbgctl --dump-createalloc > createalloc.txt
+aerogpu_dbgctl.exe --dump-createalloc > createalloc.txt
 ```
 
 ```bash
@@ -141,9 +141,10 @@ If the CreateAllocation ring buffer contains a lot of unrelated noise (e.g. DWM 
 running the probe and then filter to only the newly-written entries:
 
 ```cmd
-aerogpu_dbgctl --dump-createalloc > createalloc_before.txt
+:: (Run from the directory containing aerogpu_dbgctl.exe, or use a full path; see dbgctl note below.)
+aerogpu_dbgctl.exe --dump-createalloc > createalloc_before.txt
 bin\dxgi_swapchain_probe.exe ...
-aerogpu_dbgctl --dump-createalloc > createalloc_after.txt
+aerogpu_dbgctl.exe --dump-createalloc > createalloc_after.txt
 ```
 
 ```bash
@@ -168,10 +169,15 @@ dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
    The KMD maintains a small ring buffer of recent `DxgkDdiCreateAllocation` events and exposes it via
    the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`.
 
-   Build and run the Win7 dbgctl tool (`drivers/aerogpu/tools/win7_dbgctl`) and use:
+   On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip under:
+   - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
+   - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
+
+   Example (Win7 x64; replace `<GuestToolsDrive>` with your mounted ISO/zip drive letter, e.g. `D`):
 
    ```cmd
-   aerogpu_dbgctl --dump-createalloc
+   cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+   aerogpu_dbgctl.exe --dump-createalloc
    ```
 
    The dump includes:

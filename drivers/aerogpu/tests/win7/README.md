@@ -283,7 +283,13 @@ the quickest view of “what did the guest last submit?”.
 Guest (Win7):
 
 ```cmd
-aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
+:: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).
+:: Win7 x64:
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+:: Win7 x86:
+:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools
+
+aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
 ```
 
 Copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host.
