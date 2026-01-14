@@ -29,6 +29,7 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
 /// creating/dropping `wgpu::Device`s across many `#[test]` cases in a single process. Integration
 /// tests often instantiate a new headless executor per test, so we centralize executor creation
 /// here and reuse it across tests.
+#[allow(dead_code)]
 pub fn d3d9_executor(
     test_name: &str,
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::AerogpuD3d9Executor>> {
@@ -47,6 +48,70 @@ pub fn d3d9_executor(
 
     let Some(exec) = exec.as_ref() else {
         skip_or_panic(test_name, "wgpu adapter not found");
+        return None;
+    };
+
+    let mut exec = exec.lock().unwrap();
+    exec.reset();
+    Some(exec)
+}
+
+/// Return a shared, leaked stable-protocol (`AeroGpuExecutor`) for this integration-test binary.
+///
+/// Like [`d3d9_executor`], this avoids wgpu backend/driver instability (including crashes or LLVM
+/// OOMs in some software adapters) caused by repeatedly creating/dropping `wgpu::Device`s across
+/// many `#[test]` cases in a single process.
+#[allow(dead_code)]
+pub fn aerogpu_executor(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    use std::sync::{Mutex, OnceLock};
+
+    static EXEC: OnceLock<Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
+        OnceLock::new();
+
+    let exec = EXEC.get_or_init(|| {
+        ensure_xdg_runtime_dir();
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::PRIMARY
+            } else {
+                wgpu::Backends::all()
+            },
+            ..Default::default()
+        });
+
+        let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })) {
+            Some(adapter) => Some(adapter),
+            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })),
+        }?;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-gpu AeroGpuExecutor (tests)"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        ))
+        .ok()?;
+
+        let exec = aero_gpu::aerogpu_executor::AeroGpuExecutor::new(device, queue)
+            .expect("create AeroGpuExecutor");
+        Some(Box::leak(Box::new(Mutex::new(exec))))
+    });
+
+    let Some(exec) = exec.as_ref() else {
+        skip_or_panic(test_name, "no wgpu adapter available");
         return None;
     };
 

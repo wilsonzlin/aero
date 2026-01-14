@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::{AeroGpuExecutor, ExecutorEvent};
+use aero_gpu::aerogpu_executor::ExecutorEvent;
 use aero_gpu::{readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -71,87 +71,13 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
         .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
-async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir = std::env::temp_dir().join(format!(
-                "aero-gpu-guest-backing-xdg-runtime-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
-        } else {
-            wgpu::Backends::all()
-        },
-        dx12_shader_compiler: Default::default(),
-        flags: wgpu::InstanceFlags::default(),
-        gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-gpu guest backing test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()?;
-
-    Some((device, queue))
-}
-
 #[test]
 fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
         let mut guest = VecGuestMemory::new(0x20_000);
@@ -354,21 +280,10 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
 #[test]
 fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(
-                    concat!(
-                        module_path!(),
-                        "::alloc_table_is_resolved_per_submission_instead_of_caching_gpa"
-                    ),
-                    "no wgpu adapter available",
-                );
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory containing two potential backing locations for the same alloc_id.
         let mut guest = VecGuestMemory::new(0x20_000);
@@ -667,15 +582,10 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
 #[test]
 fn copy_buffer_writeback_roundtrips_bytes() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
@@ -799,15 +709,10 @@ fn copy_buffer_writeback_roundtrips_bytes() {
 #[test]
 fn copy_texture2d_writeback_roundtrips_bytes() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
@@ -976,15 +881,10 @@ fn copy_texture2d_writeback_roundtrips_bytes() {
 #[test]
 fn copy_buffer_executes_before_draw() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Host-owned buffers are updated through UPLOAD_RESOURCE, so no alloc table is needed.
         let mut guest = VecGuestMemory::new(0x20_000);
@@ -1177,15 +1077,10 @@ fn copy_buffer_executes_before_draw() {
 #[test]
 fn copy_texture2d_executes_before_draw() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -1380,14 +1275,10 @@ fn copy_texture2d_executes_before_draw() {
 #[test]
 fn copy_buffer_writeback_writes_guest_backing() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -1493,14 +1384,10 @@ fn copy_buffer_writeback_writes_guest_backing() {
 #[test]
 fn copy_buffer_writeback_requires_alloc_table_each_submit() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -1676,14 +1563,10 @@ fn copy_buffer_writeback_requires_alloc_table_each_submit() {
 #[test]
 fn copy_buffer_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -1798,14 +1681,10 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
 #[test]
 fn copy_texture2d_writeback_writes_guest_backing() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -1933,14 +1812,10 @@ fn copy_texture2d_writeback_writes_guest_backing() {
 #[test]
 fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -2090,14 +1965,10 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
 #[test]
 fn copy_texture2d_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         let mut guest = VecGuestMemory::new(0x20_000);
 
@@ -2230,15 +2101,10 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
 #[test]
 fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
         let mut guest = VecGuestMemory::new(0x30_000);
@@ -2480,15 +2346,10 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
 #[test]
 fn upload_resource_updates_host_owned_resources() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -2647,15 +2508,10 @@ fn upload_resource_updates_host_owned_resources() {
 #[test]
 fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x10_000);
 
         // Minimal valid command stream (header only).
@@ -2704,14 +2560,10 @@ fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
 #[test]
 fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x10_000);
 
         // cmd_gpa set but cmd_size_bytes=0 must be rejected.
@@ -2753,15 +2605,10 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
 #[test]
 fn resource_dirty_range_texture_row_pitch_is_respected() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
         let mut guest = VecGuestMemory::new(0x40_000);
@@ -2958,15 +2805,10 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
 #[test]
 fn draw_to_bgra_render_target_is_supported() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -3125,15 +2967,10 @@ fn draw_to_bgra_render_target_is_supported() {
 #[test]
 fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x40_000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -3457,15 +3294,10 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
 #[test]
 fn copy_texture2d_writeback_packs_16bit_formats_b5g6r5_and_b5g5r5a1() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x40_000);
 
         const ALLOC_DST: u32 = 1;
