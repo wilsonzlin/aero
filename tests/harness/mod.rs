@@ -341,6 +341,8 @@ struct ScreenshotMismatchArtifacts {
     actual_path: PathBuf,
     expected_path: PathBuf,
     diff_path: PathBuf,
+    serial_log_path: PathBuf,
+    qemu_log_path: PathBuf,
     meta_path: PathBuf,
     warnings: Vec<String>,
 }
@@ -352,6 +354,8 @@ fn write_screenshot_mismatch_artifacts(
     expected: &RgbaImage,
     diff: &ImageDiff,
     qemu_cmdline: &[String],
+    serial_log_src: &Path,
+    qemu_log: &str,
     nonce: u64,
 ) -> ScreenshotMismatchArtifacts {
     let label = screenshot_artifact_label(golden, cfg);
@@ -367,6 +371,8 @@ fn write_screenshot_mismatch_artifacts(
     let actual_path = dir.join("actual.png");
     let expected_path = dir.join("expected.png");
     let diff_path = dir.join("diff.png");
+    let serial_log_path = dir.join("serial.log");
+    let qemu_log_path = dir.join("qemu.log");
     let meta_path = dir.join("mismatch.json");
 
     let mut warnings: Vec<String> = Vec::new();
@@ -381,19 +387,24 @@ fn write_screenshot_mismatch_artifacts(
             actual_path,
             expected_path,
             diff_path,
+            serial_log_path,
+            qemu_log_path,
             meta_path,
             warnings,
         };
     }
 
-    let (actual_norm, expected_norm, normalized_ok) =
+    let (actual_norm, expected_norm, normalized_ok, normalized_dimensions) =
         match normalize_images_for_comparison(actual, expected, cfg) {
-            Ok((a, e)) => (a, e, true),
+            Ok((a, e)) => {
+                let dims = (a.width(), a.height());
+                (a, e, true, Some(dims))
+            }
             Err(err) => {
                 warnings.push(format!(
                     "failed to normalize images for artifact output: {err}"
                 ));
-                (actual.clone(), expected.clone(), false)
+                (actual.clone(), expected.clone(), false, None)
             }
         };
 
@@ -422,6 +433,28 @@ fn write_screenshot_mismatch_artifacts(
         ));
     }
 
+    match std::fs::read(serial_log_src) {
+        Ok(bytes) => {
+            if let Err(err) = std::fs::write(&serial_log_path, bytes) {
+                warnings.push(format!(
+                    "failed to write serial log artifact {}: {err}",
+                    serial_log_path.display()
+                ));
+            }
+        }
+        Err(err) => warnings.push(format!(
+            "failed to read serial log {}: {err}",
+            serial_log_src.display()
+        )),
+    }
+
+    if let Err(err) = std::fs::write(&qemu_log_path, qemu_log) {
+        warnings.push(format!(
+            "failed to write QEMU log artifact {}: {err}",
+            qemu_log_path.display()
+        ));
+    }
+
     let meta = json!({
         "type": "aero_screenshot_mismatch",
         "label": label,
@@ -437,6 +470,11 @@ fn write_screenshot_mismatch_artifacts(
             "mismatched_pixels": diff.mismatched_pixels,
             "total_pixels": diff.total_pixels,
             "max_channel_diff": diff.max_channel_diff,
+        },
+        "dimensions": {
+            "actual": { "width": actual.width(), "height": actual.height() },
+            "expected": { "width": expected.width(), "height": expected.height() },
+            "normalized": normalized_dimensions.map(|(w, h)| json!({ "width": w, "height": h })),
         },
         "config": {
             "tolerance": cfg.tolerance,
@@ -459,6 +497,8 @@ fn write_screenshot_mismatch_artifacts(
             "actual_png": actual_path.display().to_string(),
             "expected_png": expected_path.display().to_string(),
             "diff_png": diff_path.display().to_string(),
+            "serial_log": serial_log_path.display().to_string(),
+            "qemu_log": qemu_log_path.display().to_string(),
             "meta_json": meta_path.display().to_string(),
         },
     });
@@ -479,6 +519,8 @@ fn write_screenshot_mismatch_artifacts(
         actual_path,
         expected_path,
         diff_path,
+        serial_log_path,
+        qemu_log_path,
         meta_path,
         warnings,
     }
@@ -704,6 +746,7 @@ impl QemuVm {
 
                 if cfg.artifacts.enabled {
                     let nonce = self.qmp.next_nonce();
+                    let qemu_log = self.stderr.snapshot_lossy();
                     let artifacts = write_screenshot_mismatch_artifacts(
                         golden,
                         cfg,
@@ -711,14 +754,18 @@ impl QemuVm {
                         &expected,
                         &diff,
                         &self.qemu_cmdline,
+                        &self.serial_path,
+                        &qemu_log,
                         nonce,
                     );
                     msg.push_str(&format!(
-                        "\nartifacts:\n  dir: {}\n  actual:   {}\n  expected: {}\n  diff:     {}\n  meta:     {}",
+                        "\nartifacts:\n  dir:      {}\n  actual:   {}\n  expected: {}\n  diff:     {}\n  serial:   {}\n  qemu_log: {}\n  meta:     {}",
                         artifacts.dir.display(),
                         artifacts.actual_path.display(),
                         artifacts.expected_path.display(),
                         artifacts.diff_path.display(),
+                        artifacts.serial_log_path.display(),
+                        artifacts.qemu_log_path.display(),
                         artifacts.meta_path.display(),
                     ));
                     if !artifacts.warnings.is_empty() {
