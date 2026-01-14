@@ -2156,24 +2156,54 @@ static void SetShaderResourceSlotLocked(AeroGpuDevice* dev, uint32_t shader_stag
   SetTextureLocked(dev, shader_stage, slot, texture);
 }
 
-static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
-  if (!dev || !resource) {
+static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
+  if (!a || !b) {
+    return false;
+  }
+  if (a == b) {
+    return true;
+  }
+  // Shared resources can be opened multiple times (distinct AeroGpuResource
+  // objects) yet refer to the same underlying allocation. Treat those as
+  // aliasing for D3D SRV/RTV hazard mitigation.
+  if (a->share_token != 0 && a->share_token == b->share_token) {
+    return true;
+  }
+  if (a->backing_alloc_id != 0 &&
+      a->backing_alloc_id == b->backing_alloc_id &&
+      a->backing_offset_bytes == b->backing_offset_bytes) {
+    return true;
+  }
+  return false;
+}
+
+static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, const AeroGpuResource* res) {
+  if (!dev || (handle == 0 && !res)) {
     return;
   }
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
-    if (dev->vs_srvs[slot] == resource) {
+    if ((handle != 0 && dev->vs_srvs[slot] == handle) ||
+        (res && ResourcesAlias(dev->current_vs_srv_resources[slot], res))) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
       if (dev->vs_srvs[slot] == 0) {
         dev->current_vs_srv_resources[slot] = nullptr;
       }
     }
-    if (dev->ps_srvs[slot] == resource) {
+    if ((handle != 0 && dev->ps_srvs[slot] == handle) ||
+        (res && ResourcesAlias(dev->current_ps_srv_resources[slot], res))) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
       if (dev->ps_srvs[slot] == 0) {
         dev->current_ps_srv_resources[slot] = nullptr;
       }
     }
   }
+}
+
+static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
+  if (!dev || !resource) {
+    return;
+  }
+  UnbindResourceFromSrvsLocked(dev, resource, nullptr);
 }
 
 static void NormalizeRenderTargetsLocked(AeroGpuDevice* dev) {
@@ -2210,19 +2240,21 @@ static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   }
 }
 
-static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
-  if (!dev || !resource) {
+static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, const AeroGpuResource* res) {
+  if (!dev || (handle == 0 && !res)) {
     return;
   }
   bool changed = false;
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if (dev->current_rtvs[i] == resource) {
+    if ((handle != 0 && dev->current_rtvs[i] == handle) ||
+        (res && ResourcesAlias(dev->current_rtv_resources[i], res))) {
       dev->current_rtvs[i] = 0;
       dev->current_rtv_resources[i] = nullptr;
       changed = true;
     }
   }
-  if (dev->current_dsv == resource) {
+  if ((handle != 0 && dev->current_dsv == handle) ||
+      (res && ResourcesAlias(dev->current_dsv_res, res))) {
     dev->current_dsv = 0;
     dev->current_dsv_res = nullptr;
     changed = true;
@@ -2230,6 +2262,10 @@ static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
   if (changed) {
     EmitSetRenderTargetsLocked(dev);
   }
+}
+
+static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
+  UnbindResourceFromOutputsLocked(dev, resource, nullptr);
 }
 
 
@@ -6467,8 +6503,8 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
       srv_res = view ? view->resource : nullptr;
       tex = srv_res ? srv_res->handle : (view ? view->texture : 0);
     }
-    if (tex) {
-      UnbindResourceFromOutputsLocked(dev, tex);
+    if (tex != 0 || srv_res) {
+      UnbindResourceFromOutputsLocked(dev, tex, srv_res);
     }
     SetShaderResourceSlotLocked(dev, shader_stage, slot, tex);
     if (shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
@@ -7215,33 +7251,9 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   // D3D10/11 hazard rule: outputs cannot be simultaneously bound as SRVs.
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    const aerogpu_handle_t handle = dev->current_rtvs[i];
-    if (!handle) {
-      continue;
-    }
-    bool seen = false;
-    for (uint32_t j = 0; j < i; ++j) {
-      if (dev->current_rtvs[j] == handle) {
-        seen = true;
-        break;
-      }
-    }
-    if (!seen) {
-      UnbindResourceFromSrvsLocked(dev, handle);
-    }
+    UnbindResourceFromSrvsLocked(dev, dev->current_rtvs[i], dev->current_rtv_resources[i]);
   }
-  if (dev->current_dsv) {
-    bool dsv_seen = false;
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      if (dev->current_rtvs[i] == dev->current_dsv) {
-        dsv_seen = true;
-        break;
-      }
-    }
-    if (!dsv_seen) {
-      UnbindResourceFromSrvsLocked(dev, dev->current_dsv);
-    }
-  }
+  UnbindResourceFromSrvsLocked(dev, dev->current_dsv, dev->current_dsv_res);
   EmitSetRenderTargetsLocked(dev);
 }
 
