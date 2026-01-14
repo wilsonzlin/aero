@@ -1200,6 +1200,44 @@ mod tests {
     }
 
     #[test]
+    fn resolve_publish_destination_rejects_versioned_prefix_mismatch_with_computed_version() {
+        let inferred_version = sha256_version_from_digest([0u8; 32]);
+        let computed_version = sha256_version_from_digest([1u8; 32]);
+
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: format!("images/win7/{inferred_version}/"),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::Sha256,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+        let prefix = normalize_prefix(&args.prefix);
+        let err = resolve_publish_destination(&args, &prefix, Some(&computed_version))
+            .expect_err("expected prefix/computed version mismatch");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("prefix appears to end with sha256 version")
+                && msg.contains(&inferred_version)
+                && msg.contains(&computed_version),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn sha256_version_matches_expected() {
         let mut hasher = Sha256::new();
         hasher.update(b"hello ");
