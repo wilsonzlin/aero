@@ -5507,9 +5507,16 @@ fn emit_instructions(
                 let index_u32 = emit_src_scalar_u32_addr(index, inst_index, "ld_structured", ctx)?;
                 let offset_u32 =
                     emit_src_scalar_u32_addr(offset, inst_index, "ld_structured", ctx)?;
+                // Keep index/offset in locals before multiplying by `stride`. Some address operands
+                // are constant immediates (often from float-literal bit patterns), and constant
+                // folding of overflowing `u32` multiplications can fail WGSL parsing.
+                let index_name = format!("ld_struct_index{inst_index}");
+                let offset_name = format!("ld_struct_offset{inst_index}");
+                w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
                 let base_name = format!("ld_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                    "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
                 ));
 
                 let mask_bits = dst.mask.0 & 0xF;
@@ -5559,9 +5566,13 @@ fn emit_instructions(
                 let index_u32 = emit_src_scalar_u32_addr(index, inst_index, "ld_structured", ctx)?;
                 let offset_u32 =
                     emit_src_scalar_u32_addr(offset, inst_index, "ld_structured", ctx)?;
+                let index_name = format!("ld_uav_struct_index{inst_index}");
+                let offset_name = format!("ld_uav_struct_offset{inst_index}");
+                w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
                 let base_name = format!("ld_uav_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                    "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
                 ));
 
                 let mask_bits = dst.mask.0 & 0xF;
@@ -5621,9 +5632,13 @@ fn emit_instructions(
                     emit_src_scalar_u32_addr(index, inst_index, "store_structured", ctx)?;
                 let offset_u32 =
                     emit_src_scalar_u32_addr(offset, inst_index, "store_structured", ctx)?;
+                let index_name = format!("store_struct_index{inst_index}");
+                let offset_name = format!("store_struct_offset{inst_index}");
+                w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
                 let base_name = format!("store_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                    "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
                 ));
 
                 // Store raw bits (see `store_raw` rationale above).

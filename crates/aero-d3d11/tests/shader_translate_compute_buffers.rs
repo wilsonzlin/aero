@@ -531,6 +531,14 @@ fn translates_compute_buffer_uav_load_structured() {
         swizzle: Swizzle::XXXX,
         modifier: aero_d3d11::OperandModifier::None,
     };
+    let one_f32 = SrcOperand {
+        // Use a float immediate (`1.0`). In DXBC this is a raw 32-bit lane value (0x3f800000), not
+        // an integer `1`. The translator must not apply float→int heuristics when computing the
+        // structured word address.
+        kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: aero_d3d11::OperandModifier::None,
+    };
 
     let module = Sm4Module {
         stage: ShaderStage::Compute,
@@ -554,7 +562,22 @@ fn translates_compute_buffer_uav_load_structured() {
                     saturate: false,
                 },
                 index: one_u32,
-                offset: zero,
+                offset: zero.clone(),
+                uav: aero_d3d11::UavRef { slot: 0 },
+            },
+            // Same load but with a float immediate index. This must still translate and produce
+            // valid WGSL, even though the raw-bit multiplication can overflow.
+            Sm4Inst::LdStructuredUav {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                index: one_f32,
+                offset: zero.clone(),
                 uav: aero_d3d11::UavRef { slot: 0 },
             },
             Sm4Inst::Ret,
@@ -565,6 +588,11 @@ fn translates_compute_buffer_uav_load_structured() {
     assert_wgsl_validates(&translated.wgsl);
 
     assert!(
+        !translated.wgsl.contains("floor("),
+        "expected strict raw-bit address handling (no float->u32 heuristics) in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
         translated.wgsl.contains("* 16u"),
         "expected structured stride (16 bytes) to appear in WGSL:\n{}",
         translated.wgsl
@@ -572,6 +600,18 @@ fn translates_compute_buffer_uav_load_structured() {
     assert!(
         translated.wgsl.contains("0x00000001u"),
         "expected raw integer bits 0x00000001 to be used for structured index:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("0x3f800000u"),
+        "expected float immediate index bits to be preserved (0x3f800000):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("let ld_uav_struct_base1: u32 = ((ld_uav_struct_index1) * 16u + (ld_uav_struct_offset1)) / 4u;"),
+        "expected raw-bit structured address computation to use locals (avoids constant overflow):\n{}",
         translated.wgsl
     );
     assert!(
