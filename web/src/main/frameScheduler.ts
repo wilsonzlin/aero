@@ -10,6 +10,7 @@ import {
   type GpuRuntimeOutMessage,
 } from '../ipc/gpu-protocol';
 import {
+  SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
   SCANOUT_STATE_GENERATION_BUSY_BIT,
   ScanoutStateIndex,
@@ -159,7 +160,7 @@ export const startFrameScheduler = ({
       const gen = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
       if ((gen & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) return true;
       const source = Atomics.load(scanoutWords, ScanoutStateIndex.SOURCE) >>> 0;
-      if (source === SCANOUT_SOURCE_WDDM) return true;
+      if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) return true;
       const stableGen = gen & ~SCANOUT_STATE_GENERATION_BUSY_BIT;
       if (stableGen !== lastScanoutGeneration) {
         lastScanoutGeneration = stableGen;

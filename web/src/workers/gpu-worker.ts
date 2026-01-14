@@ -63,6 +63,7 @@ import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
   ScanoutStateIndex,
   snapshotScanoutState,
@@ -1166,10 +1167,10 @@ const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
 
 // -----------------------------------------------------------------------------
-// WDDM scanout readback (guest RAM/VRAM -> RGBA8 presenter frame)
+// Scanout readback (guest RAM/VRAM -> RGBA8 presenter frame)
 // -----------------------------------------------------------------------------
 
-type WddmScanoutReadback = { width: number; height: number; strideBytes: number; rgba8: Uint8Array };
+type ScanoutReadback = { width: number; height: number; strideBytes: number; rgba8: Uint8Array };
 
 // Per-tick safety limit to avoid pathological allocations/copies on corrupt scanout descriptors.
 //
@@ -1179,14 +1180,14 @@ type WddmScanoutReadback = { width: number; height: number; strideBytes: number;
 let wddmScanoutRgbaCapacity = 0;
 let wddmScanoutRgbaU32: Uint32Array | null = null;
 
-let lastWddmScanoutErrorGeneration: number | null = null;
-let lastWddmScanoutErrorReason: string | null = null;
+let lastScanoutReadbackErrorGeneration: number | null = null;
+let lastScanoutReadbackErrorReason: string | null = null;
 
-const emitWddmScanoutInvalid = (snap: ScanoutStateSnapshot, reason: string, details?: Record<string, unknown>): void => {
+const emitScanoutReadbackInvalid = (snap: ScanoutStateSnapshot, reason: string, details?: Record<string, unknown>): void => {
   // Avoid spamming: only emit once per (generation, reason) pair.
-  if (lastWddmScanoutErrorGeneration === snap.generation && lastWddmScanoutErrorReason === reason) return;
-  lastWddmScanoutErrorGeneration = snap.generation;
-  lastWddmScanoutErrorReason = reason;
+  if (lastScanoutReadbackErrorGeneration === snap.generation && lastScanoutReadbackErrorReason === reason) return;
+  lastScanoutReadbackErrorGeneration = snap.generation;
+  lastScanoutReadbackErrorReason = reason;
 
   emitGpuEvent({
     time_ms: performance.now(),
@@ -1209,7 +1210,20 @@ const emitWddmScanoutInvalid = (snap: ScanoutStateSnapshot, reason: string, deta
   });
 };
 
-const ensureWddmScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null => {
+const fillRgba8Solid = (dst: Uint8Array, r: number, g: number, b: number, a: number): void => {
+  const rr = r & 0xff;
+  const gg = g & 0xff;
+  const bb = b & 0xff;
+  const aa = a & 0xff;
+  for (let i = 0; i + 3 < dst.length; i += 4) {
+    dst[i + 0] = rr;
+    dst[i + 1] = gg;
+    dst[i + 2] = bb;
+    dst[i + 3] = aa;
+  }
+};
+
+const ensureScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null => {
   if (requiredBytes <= 0) return null;
   if (wddmScanoutRgba && wddmScanoutRgbaCapacity >= requiredBytes) {
     if (!wddmScanoutRgbaU32 || wddmScanoutRgbaU32.buffer !== wddmScanoutRgba.buffer) {
@@ -1239,8 +1253,10 @@ const ensureWddmScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null
   return wddmScanoutRgba;
 };
 
-const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadback | null => {
-  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
+const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null => {
+  const source = snap.source >>> 0;
+  const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+  if (!wantsScanout) return null;
 
   const fmt = snap.format >>> 0;
   // Supported scanout formats:
@@ -1253,7 +1269,7 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
     fmt !== SCANOUT_FORMAT_B8G8R8X8_SRGB &&
     fmt !== SCANOUT_FORMAT_B8G8R8A8_SRGB
   ) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: unsupported format", {
+    emitScanoutReadbackInvalid(snap, "Scanout: unsupported format", {
       expected: [
         SCANOUT_FORMAT_B8G8R8X8,
         SCANOUT_FORMAT_B8G8R8A8,
@@ -1272,28 +1288,28 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   const height = snap.height >>> 0;
   const pitchBytes = snap.pitchBytes >>> 0;
   if (width === 0 || height === 0) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: width/height must be non-zero");
+    emitScanoutReadbackInvalid(snap, "Scanout: width/height must be non-zero");
     return null;
   }
 
   const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
   if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: invalid rowBytes", { rowBytes, width });
+    emitScanoutReadbackInvalid(snap, "Scanout: invalid rowBytes", { rowBytes, width });
     return null;
   }
   if (pitchBytes < rowBytes) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: pitchBytes < rowBytes", { rowBytes, pitchBytes });
+    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes < rowBytes", { rowBytes, pitchBytes });
     return null;
   }
   if ((pitchBytes & 3) !== 0) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: pitchBytes must be 4-byte aligned", { pitchBytes });
+    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes must be 4-byte aligned", { pitchBytes });
     return null;
   }
 
   const outputBytesU64 = BigInt(width) * BigInt(height) * BigInt(BYTES_PER_PIXEL_RGBA8);
   const outputBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
   if (outputBytes === null) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: framebuffer exceeds size budget", {
+    emitScanoutReadbackInvalid(snap, "Scanout: framebuffer exceeds size budget", {
       budgetBytes: MAX_SCANOUT_RGBA8_BYTES,
       outputBytes: outputBytesU64.toString(),
     });
@@ -1301,16 +1317,23 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   }
 
   const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
-  if (basePaddr === 0n) return null;
+  if (basePaddr === 0n) {
+    // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
+    // Legacy VBE scanout should always point at a real framebuffer.
+    if (source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
+      emitScanoutReadbackInvalid(snap, "Scanout: base_paddr is 0");
+    }
+    return null;
+  }
   if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr exceeds JS safe integer range");
+    emitScanoutReadbackInvalid(snap, "Scanout: base_paddr exceeds JS safe integer range");
     return null;
   }
   const basePaddrNum = Number(basePaddr);
 
   const requiredReadBytesU64 = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(rowBytes);
   if (requiredReadBytesU64 > BigInt(Number.MAX_SAFE_INTEGER)) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: framebuffer byte range exceeds JS safe integer range", {
+    emitScanoutReadbackInvalid(snap, "Scanout: framebuffer byte range exceeds JS safe integer range", {
       requiredReadBytes: requiredReadBytesU64.toString(),
     });
     return null;
@@ -1329,7 +1352,7 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   if (vramSize > 0 && basePaddrNum >= vramBase && basePaddrNum < vramEnd) {
     const vram = vramU8;
     if (!vram) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr points into VRAM but VRAM is unavailable", {
+      emitScanoutReadbackInvalid(snap, "Scanout: base_paddr points into VRAM but VRAM is unavailable", {
         backing: "vram",
         vramBasePaddr: `0x${vramBase.toString(16)}`,
         vramSizeBytes: vramSize,
@@ -1338,11 +1361,11 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
     }
     const offset = basePaddrNum - vramBase;
     if (!Number.isSafeInteger(offset) || offset < 0) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: invalid VRAM offset", { backing: "vram", offset });
+      emitScanoutReadbackInvalid(snap, "Scanout: invalid VRAM offset", { backing: "vram", offset });
       return null;
     }
     if (!Number.isSafeInteger(baseEnd) || baseEnd > vramEnd) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: scanout range exceeds VRAM aperture", {
+      emitScanoutReadbackInvalid(snap, "Scanout: scanout range exceeds VRAM aperture", {
         backing: "vram",
         requiredReadBytes,
         vramSizeBytes: vramSize,
@@ -1350,7 +1373,7 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
       return null;
     }
     if (offset + requiredReadBytes > vram.byteLength) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: scanout range exceeds VRAM buffer length", {
+      emitScanoutReadbackInvalid(snap, "Scanout: scanout range exceeds VRAM buffer length", {
         backing: "vram",
         offset,
         requiredReadBytes,
@@ -1364,31 +1387,31 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   } else {
     const guest = guestU8;
     if (!guest) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: guest memory is not available");
+      emitScanoutReadbackInvalid(snap, "Scanout: guest memory is not available");
       return null;
     }
 
     const ramBytes = guest.byteLength;
     try {
       if (!guestRangeInBoundsRaw(ramBytes, basePaddrNum, requiredReadBytes)) {
-        emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr range is outside guest RAM (or crosses an MMIO hole)", {
+        emitScanoutReadbackInvalid(snap, "Scanout: base_paddr range is outside guest RAM (or crosses an MMIO hole)", {
           requiredReadBytes,
           guestLen: ramBytes,
         });
         return null;
       }
     } catch (err) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: failed to validate guest range", { error: err });
+      emitScanoutReadbackInvalid(snap, "Scanout: failed to validate guest range", { error: err });
       return null;
     }
 
     const ramOffset = guestPaddrToRamOffsetRaw(ramBytes, basePaddrNum);
     if (ramOffset === null) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr is not backed by RAM");
+      emitScanoutReadbackInvalid(snap, "Scanout: base_paddr is not backed by RAM");
       return null;
     }
     if (ramOffset + requiredReadBytes > ramBytes) {
-      emitWddmScanoutInvalid(snap, "WDDM scanout: translated RAM range is out of bounds", {
+      emitScanoutReadbackInvalid(snap, "Scanout: translated RAM range is out of bounds", {
         ramOffset,
         requiredReadBytes,
         guestLen: ramBytes,
@@ -1400,7 +1423,7 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
     srcOffset = ramOffset;
   }
 
-  const out = ensureWddmScanoutRgbaCapacity(outputBytes);
+  const out = ensureScanoutRgbaCapacity(outputBytes);
   const outU32 = wddmScanoutRgbaU32;
   if (!out) return null;
 
@@ -2349,18 +2372,47 @@ type CurrentFrameInfo = {
   dirtyRects?: DirtyRect[] | null;
 };
 
-type WddmScanoutFrameInfo = {
+type ScanoutFrameInfo = {
   width: number;
   height: number;
   strideBytes: number;
   pixels: Uint8Array;
 };
 
-const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameInfo | null => {
-  const shot = tryReadWddmScanoutRgba8(snap);
-  if (!shot) return null;
-  return { width: shot.width, height: shot.height, strideBytes: shot.strideBytes, pixels: shot.rgba8 };
+const tryReadScanoutFrame = (snap: ScanoutStateSnapshot): ScanoutFrameInfo | null => {
+  const source = snap.source >>> 0;
+  const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+  if (!wantsScanout) return null;
+
+  const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+  // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
+  if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr) return null;
+
+  const shot = tryReadScanoutRgba8(snap);
+  if (shot) {
+    return { width: shot.width, height: shot.height, strideBytes: shot.strideBytes, pixels: shot.rgba8 };
+  }
+
+  // Scanout owns output but we failed to read/convert it. Present a black fallback instead of
+  // falling back to the legacy shared framebuffer.
+  let width = snap.width >>> 0;
+  let height = snap.height >>> 0;
+  let outputBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
+  if (width === 0 || height === 0 || outputBytes === null) {
+    width = 1;
+    height = 1;
+    outputBytes = BYTES_PER_PIXEL_RGBA8;
+  }
+
+  const out = ensureScanoutRgbaCapacity(outputBytes);
+  if (!out) return null;
+  fillRgba8Solid(out, 0, 0, 0, 0xff);
+
+  wddmScanoutWidth = width;
+  wddmScanoutHeight = height;
+  return { width, height, strideBytes: width * BYTES_PER_PIXEL_RGBA8, pixels: out };
 };
+
 const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   refreshFramebufferViews();
 
@@ -2368,33 +2420,52 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
     const words = scanoutState;
     try {
       const snap = snapshotScanoutState(words);
-      const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
-      if (snap.source === SCANOUT_SOURCE_WDDM && hasBasePaddr) {
-        const wddm = tryReadWddmScanoutFrame(snap);
-        if (wddm) {
-          // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
-          // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
-          // presenter backends can consume it directly.
-          const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
-          return { ...wddm, frameSeq: seq, outputSource: "wddm_scanout" };
-        }
+      const source = snap.source >>> 0;
+      const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+      if (wantsScanout) {
+        const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+        // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
+        if (source !== SCANOUT_SOURCE_WDDM || hasBasePaddr) {
+          const frame = tryReadScanoutFrame(snap);
+          if (frame) {
+            // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
+            // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
+            // presenter backends can consume it directly.
+            const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
+            return { ...frame, frameSeq: seq, outputSource: "wddm_scanout" };
+          }
 
-        // WDDM owns scanout with a real base_paddr, but we failed to read/convert it. Do not fall
-        // back to the legacy shared framebuffer, which would cause output to "flash back" over the
-        // WDDM-owned scanout.
-        return null;
+          // Scanout owns output (WDDM with a real base_paddr, or legacy VBE), but we failed to
+          // read/convert it. Do not fall back to the legacy shared framebuffer, which would cause
+          // output to "flash back" over the scanout-owned output.
+          return null;
+        }
       }
     } catch {
-      // If the scanout descriptor is unreadable but appears to be WDDM-owned and points at a real
-      // guest surface (base_paddr != 0), avoid falling back to the legacy framebuffer.
+      // If the scanout descriptor is unreadable but appears to be scanout-owned, avoid falling
+      // back to the legacy framebuffer.
       try {
         const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
-        if (source === SCANOUT_SOURCE_WDDM) {
+        if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
           const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
           const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
-          if (((lo | hi) >>> 0) !== 0) {
-            return null;
-          }
+          const hasBasePaddr = ((lo | hi) >>> 0) !== 0;
+          if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr) return null;
+
+          const out = ensureScanoutRgbaCapacity(BYTES_PER_PIXEL_RGBA8);
+          if (!out) return null;
+          fillRgba8Solid(out, 0, 0, 0, 0xff);
+          wddmScanoutWidth = 1;
+          wddmScanoutHeight = 1;
+          const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
+          return {
+            width: 1,
+            height: 1,
+            strideBytes: BYTES_PER_PIXEL_RGBA8,
+            pixels: out,
+            frameSeq: seq,
+            outputSource: "wddm_scanout",
+          };
         }
       } catch {
         // Ignore and fall back to the legacy framebuffer sources.
@@ -2502,6 +2573,8 @@ const presentOnce = async (): Promise<boolean> => {
 
     const wddmOwnsScanout =
       scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
+    const scanoutOwnsOutput =
+      wddmOwnsScanout || scanoutSnap?.source === SCANOUT_SOURCE_LEGACY_VBE_LFB || frame?.outputSource === "wddm_scanout";
 
     const clearSharedFramebufferDirty = () => {
       if (!sharedFramebufferViews) return;
@@ -2514,7 +2587,7 @@ const presentOnce = async (): Promise<boolean> => {
         // Normal legacy shared-framebuffer present: avoid clearing a newer frame.
         const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
         if (seqNow !== frame.frameSeq) return;
-      } else if (!wddmOwnsScanout) {
+      } else if (!scanoutOwnsOutput) {
         return;
       }
       Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
@@ -2547,23 +2620,18 @@ const presentOnce = async (): Promise<boolean> => {
           ? await (maybeResult as Promise<void | boolean>)
           : (maybeResult as void | boolean);
       const didPresent = didPresenterPresent(result);
-        if (didPresent) {
-          lastPresentUploadKind = predictedKind;
-          lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
-          const hasBasePaddr =
-            !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
-          // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
-          // does not clobber the active scanout with a stale shared framebuffer upload.
-          aerogpuLastOutputSource = wddmOwnsScanout
-            ? hasBasePaddr
-              ? "wddm_scanout"
-              : "aerogpu"
-            : (frame?.outputSource ?? "framebuffer");
-        }
-        // Even when a frame is intentionally dropped (e.g. surface timeout/outdated), clear the
-        // shared framebuffer dirty flag: the frame was consumed by the worker and retrying
-        // immediately can cause tick storms / stall producers. Drops are still accounted for via
-      // the returned boolean and worker metrics.
+      if (didPresent) {
+        lastPresentUploadKind = predictedKind;
+        lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
+        const hasBasePaddr = !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+        // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
+        // does not clobber the active scanout with a stale shared framebuffer upload.
+        aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr ? "wddm_scanout" : "aerogpu") : (frame?.outputSource ?? "framebuffer");
+      }
+      // Even when a frame is intentionally dropped (e.g. surface timeout/outdated), clear the shared
+      // framebuffer dirty flag: the frame was consumed by the worker and retrying immediately can cause
+      // tick storms / stall producers. Drops are still accounted for via the returned boolean and worker
+      // metrics.
       clearSharedFramebufferDirty();
       return didPresent;
     }
@@ -2926,14 +2994,16 @@ const handleTick = async () => {
 
   syncHardwareCursorFromState();
 
-  // When scanout is WDDM-owned the frame scheduler continues ticking even if the legacy shared
-  // framebuffer is idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we
-  // should run a present pass even when `frameState` isn't DIRTY.
-  const scanoutIsWddm = (() => {
+  // When scanout is owned by a ScanoutState-programmed framebuffer (e.g. WDDM scanout or legacy
+  // VBE LFB), the frame scheduler may continue ticking even if the legacy shared framebuffer is
+  // idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we should run a
+  // present pass even when `frameState` isn't DIRTY.
+  const scanoutWantsPresentWhenIdle = (() => {
     const words = scanoutState;
     if (!words) return wddmOwnsScanoutFallback;
     try {
-      return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+      const src = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+      return src === SCANOUT_SOURCE_WDDM || src === SCANOUT_SOURCE_LEGACY_VBE_LFB;
     } catch {
       return wddmOwnsScanoutFallback;
     }
@@ -2941,7 +3011,7 @@ const handleTick = async () => {
 
   if (frameState) {
     const shouldPresentShared = shouldPresentWithSharedState();
-    if (!shouldPresentShared && !scanoutIsWddm) {
+    if (!shouldPresentShared && !scanoutWantsPresentWhenIdle) {
       maybePostMetrics();
       return;
     }
@@ -2952,8 +3022,8 @@ const handleTick = async () => {
         return;
       }
       computeDroppedFromSeqForPresent();
-    } else if (scanoutIsWddm) {
-      // No shared framebuffer work is pending, but scanout is WDDM-owned. Execute a present
+    } else if (scanoutWantsPresentWhenIdle) {
+      // No shared framebuffer work is pending, but scanout is ScanoutState-owned. Execute a present
       // pass anyway so the active scanout can be polled/presented and any legacy dirty flags
       // can be cleared. Use a best-effort PRESENTED->PRESENTING transition to avoid overlapping
       // presents / tick spam, but do not disturb DIRTY pacing if a shared frame arrives.
@@ -3584,8 +3654,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         wddmScanoutHeight = 0;
         wddmScanoutRgbaCapacity = 0;
         wddmScanoutRgbaU32 = null;
-        lastWddmScanoutErrorGeneration = null;
-        lastWddmScanoutErrorReason = null;
+        lastScanoutReadbackErrorGeneration = null;
+        lastScanoutReadbackErrorReason = null;
         // Reset wasm-backed executor state (if it was used previously).
         aerogpuWasmD3d9InitPromise = null;
         aerogpuWasmD3d9InitBackend = null;
@@ -3793,15 +3863,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           // consumed. The shared framebuffer producer can advance `frameSeq` before the presenter
           // runs, so relying on the header sequence alone can lead to mismatched (seq, pixels)
           // pairs in smoke tests and automation.
-          const scanoutIsWddm = (() => {
+          const scanoutSource = (() => {
             const words = scanoutState;
-            if (!words) return false;
+            if (!words) return wddmOwnsScanoutFallback ? SCANOUT_SOURCE_WDDM : null;
             try {
-              return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+              return Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
             } catch {
-              return false;
+              return null;
             }
           })();
+          const scanoutWantsTickForScreenshot =
+            scanoutSource === SCANOUT_SOURCE_WDDM || scanoutSource === SCANOUT_SOURCE_LEGACY_VBE_LFB;
           if (frameState) {
             if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
@@ -3814,7 +3886,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               // actually visible (last uploaded to the presenter), especially when scanout is WDDM-owned
               // and the legacy shared framebuffer is idle.
               const shouldForceTick =
-                scanoutIsWddm || (aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState());
+                scanoutWantsTickForScreenshot ||
+                (aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState());
               if (shouldForceTick) {
                 await handleTick();
               }
@@ -3837,12 +3910,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             try {
               snap = snapshotScanoutState(words);
             } catch {
-              // If scanout is WDDM-owned and base_paddr is non-zero, but the scanout
+              // If scanout is WDDM-owned / VBE-owned and base_paddr is non-zero, but the scanout
               // descriptor cannot be snapshotted, treat it as unreadable and return the
               // stub rather than falling back to legacy framebuffer paths.
               try {
                 const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
-                if (source === SCANOUT_SOURCE_WDDM) {
+                if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
                   const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
                   const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
                   if (((lo | hi) >>> 0) !== 0) {
@@ -3856,8 +3929,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               return false;
             }
 
-            if (snap.source !== SCANOUT_SOURCE_WDDM) return false;
-            if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return false;
+            const source = snap.source >>> 0;
+            const scanoutIsWddm = source === SCANOUT_SOURCE_WDDM;
+            const scanoutIsVbe = source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+            if (!scanoutIsWddm && !scanoutIsVbe) return false;
+            const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+            // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
+            if (scanoutIsWddm && !hasBasePaddr) return false;
+            if (scanoutIsVbe && !hasBasePaddr) {
+              postStub(typeof seq === "number" ? seq : undefined);
+              return true;
+            }
 
             const guest = guestU8;
             if (!guest) {
@@ -3888,7 +3970,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              // Supported WDDM scanout formats (AeroGPU formats).
+              // Supported scanout formats (AeroGPU formats).
               if (
                 format !== SCANOUT_FORMAT_B8G8R8X8 &&
                 format !== SCANOUT_FORMAT_B8G8R8A8 &&
@@ -4007,7 +4089,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               ) {
                 out = cached.subarray(0, outBytes).slice();
               } else {
-                const frame = tryReadWddmScanoutFrame(snap);
+                const frame = tryReadScanoutFrame(snap);
                 if (!frame || frame.width !== width || frame.height !== height || frame.pixels.byteLength < outBytes) {
                   postStub(typeof seq === "number" ? seq : undefined);
                   return true;
@@ -4189,7 +4271,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
 
                 if (snap?.source === SCANOUT_SOURCE_WDDM && (snap.basePaddrLo | snap.basePaddrHi) !== 0) {
-                  const shot = tryReadWddmScanoutRgba8(snap);
+                  const shot = tryReadScanoutRgba8(snap);
                   if (shot) {
                     if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
                       presenterSrcWidth = shot.width;
@@ -4367,7 +4449,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 snap = null;
               }
               if (snap?.source === SCANOUT_SOURCE_WDDM && (snap.basePaddrLo | snap.basePaddrHi) !== 0) {
-                const shot = tryReadWddmScanoutRgba8(snap);
+                const shot = tryReadScanoutRgba8(snap);
                 if (shot) {
                   const expectedBytes = shot.strideBytes * shot.height;
                   const outView = shot.rgba8.slice(0, expectedBytes);
@@ -4682,8 +4764,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       wddmScanoutHeight = 0;
       wddmScanoutRgbaCapacity = 0;
       wddmScanoutRgbaU32 = null;
-      lastWddmScanoutErrorGeneration = null;
-      lastWddmScanoutErrorReason = null;
+      lastScanoutReadbackErrorGeneration = null;
+      lastScanoutReadbackErrorReason = null;
       aerogpuWasmD3d9InitPromise = null;
       aerogpuWasmD3d9InitBackend = null;
       aerogpuWasmD3d9Backend = null;
