@@ -966,8 +966,11 @@ async fn download_http_bytes_with_retry(
                         .map(|b| b.to_vec());
                 }
 
-                let err = anyhow!(HttpStatusFailure { url: url.clone(), status })
-                    .context(format!("GET {url}"));
+                let err = anyhow!(HttpStatusFailure {
+                    url: url.clone(),
+                    status
+                })
+                .context(format!("GET {url}"));
                 if attempt < retries && is_retryable_http_status(status) {
                     let sleep_for = retry_backoff(attempt);
                     eprintln!(
@@ -1044,11 +1047,18 @@ async fn verify_http_chunk(
             manifest_url,
             client,
         } => {
-            let url = manifest_url
-                .join(&chunk_key)
-                .with_context(|| format!("resolve chunk url {chunk_key:?} relative to {manifest_url}"))?;
-            verify_chunk_http_with_retry(index, client, url, expected_size, expected_sha256, retries)
-                .await
+            let url = manifest_url.join(&chunk_key).with_context(|| {
+                format!("resolve chunk url {chunk_key:?} relative to {manifest_url}")
+            })?;
+            verify_chunk_http_with_retry(
+                index,
+                client,
+                url,
+                expected_size,
+                expected_sha256,
+                retries,
+            )
+            .await
         }
     }
 }
@@ -1480,6 +1490,7 @@ fn resolve_verify_manifest_key(args: &VerifyArgs) -> Result<String> {
 }
 
 fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
+    let sector = SECTOR_SIZE as u64;
     if manifest.schema != MANIFEST_SCHEMA {
         bail!(
             "manifest schema mismatch: expected '{MANIFEST_SCHEMA}', got '{}'",
@@ -1498,10 +1509,16 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
     if manifest.chunk_size == 0 {
         bail!("manifest chunkSize must be > 0");
     }
-    if !manifest.chunk_size.is_multiple_of(512) {
+    if !manifest.chunk_size.is_multiple_of(sector) {
         bail!(
-            "manifest chunkSize must be a multiple of 512 bytes, got {}",
+            "manifest chunkSize must be a multiple of {sector} bytes, got {}",
             manifest.chunk_size
+        );
+    }
+    if !manifest.total_size.is_multiple_of(sector) {
+        bail!(
+            "manifest totalSize must be a multiple of {sector} bytes, got {}",
+            manifest.total_size
         );
     }
     let expected_chunk_count = chunk_count(manifest.total_size, manifest.chunk_size);
@@ -2817,14 +2834,16 @@ fn retry_backoff(attempt: usize) -> Duration {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+    mod tests {
+        use super::*;
 
-    async fn start_test_http_server(
-        responder: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static>,
-    ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
+        async fn start_test_http_server(
+            responder: Arc<
+                dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            >,
+        ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            use tokio::net::TcpListener;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -3116,6 +3135,31 @@ mod tests {
             .expect_err("expected schema validation failure");
         assert!(
             err.to_string().contains("manifest schema mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_non_sector_aligned_total_size() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: 1,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![ManifestChunkV1 {
+                size: 1,
+                sha256: None,
+            }]),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected totalSize alignment validation failure");
+        assert!(
+            err.to_string()
+                .contains("manifest totalSize must be a multiple"),
             "unexpected error: {err}"
         );
     }
@@ -3424,10 +3468,7 @@ mod tests {
         let chunk1 = vec![b'b'; 512];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
-        let sha256_by_index = vec![
-            Some(sha256_hex(&chunk0)),
-            Some(sha256_hex(&chunk1)),
-        ];
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
@@ -3481,10 +3522,7 @@ mod tests {
         let chunk1 = vec![b'b'; 512];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
-        let sha256_by_index = vec![
-            Some(sha256_hex(&chunk0)),
-            Some(sha256_hex(&chunk1)),
-        ];
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
