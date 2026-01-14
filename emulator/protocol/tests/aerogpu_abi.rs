@@ -4632,6 +4632,11 @@ fn rust_layout_matches_c_headers() {
         "AEROGPU_SHADER_STAGE_EX_COMPUTE",
         AerogpuShaderStageEx::Compute as u64,
     );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_STAGE_EX_MIN_ABI_MINOR",
+        AEROGPU_STAGE_EX_MIN_ABI_MINOR as u64,
+    );
 
     check_const(
         &mut cmd_consts_seen,
