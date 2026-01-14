@@ -875,6 +875,8 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     while let Some(failure) = failure_rx.recv().await {
         samples.push(failure);
     }
+    // Make output deterministic/stable in the presence of concurrency.
+    samples.sort_by_key(|f| f.index);
 
     if checked != total_chunks_to_verify {
         bail!("internal error: only checked {checked}/{total_chunks_to_verify} chunks");

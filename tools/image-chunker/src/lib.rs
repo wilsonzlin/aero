@@ -1166,7 +1166,8 @@ mod tests {
 
         let err = publish(args).await.expect_err("expected publish failure");
         assert!(
-            err.to_string().contains("exceeds the current compatibility limit"),
+            err.to_string()
+                .contains("exceeds the current compatibility limit"),
             "unexpected error: {err:?}"
         );
         Ok(())
