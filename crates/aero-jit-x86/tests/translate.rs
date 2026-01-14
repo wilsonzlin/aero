@@ -507,31 +507,33 @@ fn mov_add_cmp_sete_ret() {
 
     let expected = "\
 block 0x1000:
-  v0 = const.i32 0x5
-  write.eax v0
-  v1 = const.i64 0x1005
-  write.rip v1
-  v2 = read.eax
-  v3 = const.i32 0x7
-  v4 = add.i32 v2, v3 ; flags=CF|PF|AF|ZF|SF|OF
-  write.eax v4
-  v5 = const.i64 0x1008
-  write.rip v5
-  v6 = read.eax
-  v7 = const.i32 0xc
-  cmpflags.i32 v6, v7 ; flags=CF|PF|AF|ZF|SF|OF
-  v8 = const.i64 0x100b
-  write.rip v8
-  v9 = evalcond.e
-  write.al v9
-  v10 = const.i64 0x100e
-  write.rip v10
-  v11 = read.rsp
-  v12 = load.i64 [v11]
-  v13 = const.i64 0x8
-  v14 = add.i64 v11, v13
-  write.rsp v14
-  term jmp [v12]
+  v0 = const.i64 0x1000
+  write.rip v0
+  v1 = const.i32 0x5
+  write.eax v1
+  v2 = const.i64 0x1005
+  write.rip v2
+  v3 = read.eax
+  v4 = const.i32 0x7
+  v5 = add.i32 v3, v4 ; flags=CF|PF|AF|ZF|SF|OF
+  write.eax v5
+  v6 = const.i64 0x1008
+  write.rip v6
+  v7 = read.eax
+  v8 = const.i32 0xc
+  cmpflags.i32 v7, v8 ; flags=CF|PF|AF|ZF|SF|OF
+  v9 = const.i64 0x100b
+  write.rip v9
+  v10 = evalcond.e
+  write.al v10
+  v11 = const.i64 0x100e
+  write.rip v11
+  v12 = read.rsp
+  v13 = load.i64 [v12]
+  v14 = const.i64 0x8
+  v15 = add.i64 v12, v14
+  write.rsp v15
+  term jmp [v13]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -555,12 +557,14 @@ fn call_rel32() {
 
     let expected = "\
 block 0x1000:
-  v0 = read.rsp
-  v1 = const.i64 0x8
-  v2 = sub.i64 v0, v1
-  write.rsp v2
-  v3 = const.i64 0x1005
-  store.i64 [v2], v3
+  v0 = const.i64 0x1000
+  write.rip v0
+  v1 = read.rsp
+  v2 = const.i64 0x8
+  v3 = sub.i64 v1, v2
+  write.rsp v3
+  v4 = const.i64 0x1005
+  store.i64 [v3], v4
   term jmp 0x1010
 ";
 
@@ -588,17 +592,19 @@ fn cmp_jne_not_taken() {
 
     let expected = "\
 block 0x3000:
-  v0 = const.i32 0x0
-  write.eax v0
-  v1 = const.i64 0x3005
-  write.rip v1
-  v2 = read.eax
-  v3 = const.i32 0x0
-  cmpflags.i32 v2, v3 ; flags=CF|PF|AF|ZF|SF|OF
-  v4 = const.i64 0x3008
-  write.rip v4
-  v5 = evalcond.ne
-  term jcc v5, 0x300f, 0x300a
+  v0 = const.i64 0x3000
+  write.rip v0
+  v1 = const.i32 0x0
+  write.eax v1
+  v2 = const.i64 0x3005
+  write.rip v2
+  v3 = read.eax
+  v4 = const.i32 0x0
+  cmpflags.i32 v3, v4 ; flags=CF|PF|AF|ZF|SF|OF
+  v5 = const.i64 0x3008
+  write.rip v5
+  v6 = evalcond.ne
+  term jcc v6, 0x300f, 0x300a
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -627,22 +633,24 @@ fn lea_sib_ret() {
 
     let expected = "\
 block 0x4000:
-  v0 = read.rcx
-  v1 = read.rdx
-  v2 = const.i64 0x2
-  v3 = shl.i64 v1, v2
-  v4 = add.i64 v0, v3
-  v5 = const.i64 0x10
-  v6 = add.i64 v4, v5
-  write.rax v6
-  v7 = const.i64 0x4005
-  write.rip v7
-  v8 = read.rsp
-  v9 = load.i64 [v8]
-  v10 = const.i64 0x8
-  v11 = add.i64 v8, v10
-  write.rsp v11
-  term jmp [v9]
+  v0 = const.i64 0x4000
+  write.rip v0
+  v1 = read.rcx
+  v2 = read.rdx
+  v3 = const.i64 0x2
+  v4 = shl.i64 v2, v3
+  v5 = add.i64 v1, v4
+  v6 = const.i64 0x10
+  v7 = add.i64 v5, v6
+  write.rax v7
+  v8 = const.i64 0x4005
+  write.rip v8
+  v9 = read.rsp
+  v10 = load.i64 [v9]
+  v11 = const.i64 0x8
+  v12 = add.i64 v9, v11
+  write.rsp v12
+  term jmp [v10]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -674,28 +682,30 @@ fn group2_shr_shl_imm1_and_imm8() {
 
     let expected = "\
 block 0x6000:
-  v0 = const.i64 0x10000
-  write.rbx v0
-  v1 = const.i64 0x600a
-  write.rip v1
-  v2 = read.rbx
-  v3 = const.i64 0xd
-  v4 = shr.i64 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.rbx v4
-  v5 = const.i64 0x600e
-  write.rip v5
-  v6 = read.rbx
-  v7 = const.i64 0x1
-  v8 = shl.i64 v6, v7 ; flags=CF|PF|ZF|SF|OF
-  write.rbx v8
-  v9 = const.i64 0x6011
-  write.rip v9
-  v10 = read.rsp
-  v11 = load.i64 [v10]
-  v12 = const.i64 0x8
-  v13 = add.i64 v10, v12
-  write.rsp v13
-  term jmp [v11]
+  v0 = const.i64 0x6000
+  write.rip v0
+  v1 = const.i64 0x10000
+  write.rbx v1
+  v2 = const.i64 0x600a
+  write.rip v2
+  v3 = read.rbx
+  v4 = const.i64 0xd
+  v5 = shr.i64 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.rbx v5
+  v6 = const.i64 0x600e
+  write.rip v6
+  v7 = read.rbx
+  v8 = const.i64 0x1
+  v9 = shl.i64 v7, v8 ; flags=CF|PF|ZF|SF|OF
+  write.rbx v9
+  v10 = const.i64 0x6011
+  write.rip v10
+  v11 = read.rsp
+  v12 = load.i64 [v11]
+  v13 = const.i64 0x8
+  v14 = add.i64 v11, v13
+  write.rsp v14
+  term jmp [v12]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -728,22 +738,24 @@ fn group2_shl_ax_imm8_masks_count_like_x86() {
 
     let expected = "\
 block 0x6100:
-  v0 = const.i16 0x1
-  write.ax v0
-  v1 = const.i64 0x6104
-  write.rip v1
-  v2 = read.ax
-  v3 = const.i16 0x11
-  v4 = shl.i16 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.ax v4
-  v5 = const.i64 0x6108
-  write.rip v5
-  v6 = read.rsp
-  v7 = load.i64 [v6]
-  v8 = const.i64 0x8
-  v9 = add.i64 v6, v8
-  write.rsp v9
-  term jmp [v7]
+  v0 = const.i64 0x6100
+  write.rip v0
+  v1 = const.i16 0x1
+  write.ax v1
+  v2 = const.i64 0x6104
+  write.rip v2
+  v3 = read.ax
+  v4 = const.i16 0x11
+  v5 = shl.i16 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.ax v5
+  v6 = const.i64 0x6108
+  write.rip v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -775,22 +787,24 @@ fn group2_shl_al_imm8_masks_count_like_x86() {
 
     let expected = "\
 block 0x6200:
-  v0 = const.i8 0x1
-  write.al v0
-  v1 = const.i64 0x6202
-  write.rip v1
-  v2 = read.al
-  v3 = const.i8 0x9
-  v4 = shl.i8 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.al v4
-  v5 = const.i64 0x6205
-  write.rip v5
-  v6 = read.rsp
-  v7 = load.i64 [v6]
-  v8 = const.i64 0x8
-  v9 = add.i64 v6, v8
-  write.rsp v9
-  term jmp [v7]
+  v0 = const.i64 0x6200
+  write.rip v0
+  v1 = const.i8 0x1
+  write.al v1
+  v2 = const.i64 0x6202
+  write.rip v2
+  v3 = read.al
+  v4 = const.i8 0x9
+  v5 = shl.i8 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.al v5
+  v6 = const.i64 0x6205
+  write.rip v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -821,22 +835,24 @@ fn group2_shl_eax_imm1_zero_extends_to_64() {
 
     let expected = "\
 block 0x6300:
-  v0 = const.i64 0xffffffff00000001
-  write.rax v0
-  v1 = const.i64 0x630a
-  write.rip v1
-  v2 = read.eax
-  v3 = const.i32 0x1
-  v4 = shl.i32 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.eax v4
-  v5 = const.i64 0x630c
-  write.rip v5
-  v6 = read.rsp
-  v7 = load.i64 [v6]
-  v8 = const.i64 0x8
-  v9 = add.i64 v6, v8
-  write.rsp v9
-  term jmp [v7]
+  v0 = const.i64 0x6300
+  write.rip v0
+  v1 = const.i64 0xffffffff00000001
+  write.rax v1
+  v2 = const.i64 0x630a
+  write.rip v2
+  v3 = read.eax
+  v4 = const.i32 0x1
+  v5 = shl.i32 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.eax v5
+  v6 = const.i64 0x630c
+  write.rip v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -868,22 +884,24 @@ fn group2_sar_al_imm1_decodes_d0() {
 
     let expected = "\
 block 0x6400:
-  v0 = const.i8 0x80
-  write.al v0
-  v1 = const.i64 0x6402
-  write.rip v1
-  v2 = read.al
-  v3 = const.i8 0x1
-  v4 = sar.i8 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.al v4
-  v5 = const.i64 0x6404
-  write.rip v5
-  v6 = read.rsp
-  v7 = load.i64 [v6]
-  v8 = const.i64 0x8
-  v9 = add.i64 v6, v8
-  write.rsp v9
-  term jmp [v7]
+  v0 = const.i64 0x6400
+  write.rip v0
+  v1 = const.i8 0x80
+  write.al v1
+  v2 = const.i64 0x6402
+  write.rip v2
+  v3 = read.al
+  v4 = const.i8 0x1
+  v5 = sar.i8 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.al v5
+  v6 = const.i64 0x6404
+  write.rip v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -913,22 +931,24 @@ fn group2_shl_ah_imm1_decodes_high8_reg() {
 
     let expected = "\
 block 0x6500:
-  v0 = const.i16 0x100
-  write.ax v0
-  v1 = const.i64 0x6504
-  write.rip v1
-  v2 = read.ah
-  v3 = const.i8 0x1
-  v4 = shl.i8 v2, v3 ; flags=CF|PF|ZF|SF|OF
-  write.ah v4
-  v5 = const.i64 0x6506
-  write.rip v5
-  v6 = read.rsp
-  v7 = load.i64 [v6]
-  v8 = const.i64 0x8
-  v9 = add.i64 v6, v8
-  write.rsp v9
-  term jmp [v7]
+  v0 = const.i64 0x6500
+  write.rip v0
+  v1 = const.i16 0x100
+  write.ax v1
+  v2 = const.i64 0x6504
+  write.rip v2
+  v3 = read.ah
+  v4 = const.i8 0x1
+  v5 = shl.i8 v3, v4 ; flags=CF|PF|ZF|SF|OF
+  write.ah v5
+  v6 = const.i64 0x6506
+  write.rip v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
@@ -1171,23 +1191,25 @@ fn shl_sets_cf_for_jc() {
 
     let expected = "\
 block 0x6b00:
-  v0 = const.i8 0x80
-  write.al v0
-  v1 = const.i64 0x6b02
-  write.rip v1
-  v2 = read.eax
+  v0 = const.i64 0x6b00
+  write.rip v0
+  v1 = const.i8 0x80
+  write.al v1
+  v2 = const.i64 0x6b02
+  write.rip v2
   v3 = read.eax
-  cmpflags.i32 v2, v3 ; flags=CF|PF|AF|ZF|SF|OF
-  v4 = const.i64 0x6b04
-  write.rip v4
-  v5 = read.al
-  v6 = const.i8 0x1
-  v7 = shl.i8 v5, v6 ; flags=CF|PF|ZF|SF|OF
-  write.al v7
-  v8 = const.i64 0x6b06
-  write.rip v8
-  v9 = evalcond.b
-  term jcc v9, 0x6b0c, 0x6b08
+  v4 = read.eax
+  cmpflags.i32 v3, v4 ; flags=CF|PF|AF|ZF|SF|OF
+  v5 = const.i64 0x6b04
+  write.rip v5
+  v6 = read.al
+  v7 = const.i8 0x1
+  v8 = shl.i8 v6, v7 ; flags=CF|PF|ZF|SF|OF
+  write.al v8
+  v9 = const.i64 0x6b06
+  write.rip v9
+  v10 = evalcond.b
+  term jcc v10, 0x6b0c, 0x6b08
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
