@@ -392,6 +392,11 @@ The D3D9 implementation is split into:
   - `texld`/`texldp`/`texldb`/`texldd`/`texldl` lower to WGSL `textureSample*` variants, with texture/sampler binding emission and bind-layout mapping.
   - `texkill` lowers to `discard` when any component of the operand is `< 0`, preserving predication nesting.
   - Details + tests: [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md)
+- [x] Shader constant updates include int/bool registers (`SetShaderConstantsI` / `SetShaderConstantsB`)
+  - Protocol: new D3D9 command stream opcodes in `drivers/aerogpu/protocol/aerogpu_cmd.h` (mirrored by `aero-protocol`).
+  - Translation: shaders use stable `@group(0)` bindings for float/int/bool constant registers (bool regs are represented as `vec4<u32>` with `0/1` replicated across all lanes).
+  - Execution: the D3D9 executor uploads float/int/bool constant data alongside other state.
+  - Tests: `crates/aero-gpu/tests/aerogpu_d3d9_int_bool_constants.rs`, `aerogpu_d3d9_bool_constants.rs`, `aerogpu_d3d9_int_constants_dynamic.rs`, `aerogpu_d3d9_bool_constants_stage_isolation.rs`.
 - [x] SM3 pixel shader `MISCTYPE` builtins: `misc0` (vPos) + `misc1` (vFace) (✅ Task 439 closed)
   - `misc0` (vPos) maps to WGSL `@builtin(position)` in [`FsIn.frag_pos`](../../crates/aero-d3d9/src/sm3/wgsl.rs), exposed to the shader body as `misc0: vec4<f32>`.
   - `misc1` (vFace) maps to WGSL `@builtin(front_facing)`, exposed as a D3D-style `misc1: vec4<f32>` where `face` is `+1` or `-1` replicated across all lanes.
