@@ -1265,9 +1265,9 @@ This avoids atomics and makes output ordering deterministic (useful for debuggin
 system-value expectations). One simple, deterministic implementation is:
 
 - dispatch a single thread (`@workgroup_size(1)` and `global_invocation_id.x == 0`),
-- loop over `patch_id_total` in ascending order,
+- loop over `patch_instance_id` in ascending order (`0..(patch_count * instance_count)`),
 - maintain running totals `{total_vertices, total_indices}`,
-- write `tess_patch_state[patch_id_total] = {tess_level_u/v, base_*, *_count}` and increment totals.
+- write `tess_patch_state[patch_instance_id] = {tess_level_u/v, base_*, *_count}` and increment totals.
 
 **Capacity/overflow policy (required)**
 
