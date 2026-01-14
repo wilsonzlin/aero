@@ -374,6 +374,76 @@ fn result_target_temp_emits_temp_when_read_later() {
 }
 
 #[test]
+fn dead_temp_writes_after_last_temp_read_are_ignored() {
+    // Stage0 writes TEMP, Stage1 reads TEMP into CURRENT, Stage2 writes TEMP again but nobody reads
+    // it. Stage2 should be skipped entirely (no tex2 sampling and no hash impact).
+    let mut stages_a = [TextureStageState::default(); 8];
+    stages_a[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        result_target: TextureResultTarget::Temp,
+        ..Default::default()
+    };
+    stages_a[1] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Temp,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Temp,
+        alpha_arg2: TextureArg::Current,
+        result_target: TextureResultTarget::Current,
+        ..Default::default()
+    };
+    stages_a[2] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        result_target: TextureResultTarget::Temp,
+        ..Default::default()
+    };
+
+    let mut stages_b = stages_a;
+    stages_b[2].color_op = TextureOp::Subtract;
+
+    let desc_a = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (1 << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_a,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_b = FixedFunctionShaderDesc {
+        stages: stages_b,
+        ..desc_a.clone()
+    };
+
+    assert_eq!(desc_a.state_hash(), desc_b.state_hash());
+
+    let wgsl = generate_fixed_function_shaders(&desc_a).fragment_wgsl;
+    assert!(
+        !wgsl.contains("let tex2_color"),
+        "expected stage2 to be skipped:\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("textureSample(tex2"),
+        "expected stage2 not to sample tex2:\n{wgsl}"
+    );
+}
+
+#[test]
 fn blendtexturealpha_op_implicitly_samples_texture() {
     // BLENDTEXTUREALPHA uses the current stage texture alpha as its interpolant, even if none of
     // the args explicitly reference `D3DTA_TEXTURE`. Ensure we still emit a textureSample and

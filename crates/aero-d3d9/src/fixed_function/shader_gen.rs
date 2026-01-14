@@ -180,18 +180,16 @@ impl FixedFunctionShaderDesc {
             write_u8(hash, stage.result_target as u8);
         }
 
-        // `TEMP` is only meaningful when later stages actually *read* it. If nothing reads TEMP,
-        // then writes to TEMP are dead and don't affect shader generation (we can omit them).
-        let temp_is_ever_read = shader_reads_temp(self);
+        let temp_analysis = analyze_temp_usage(self);
 
         // D3D9 fixed-function stage disabling is keyed off COLOROP: if stage N has
         // `D3DTSS_COLOROP = D3DTOP_DISABLE`, that stage and all subsequent stages are disabled.
         // Hash only stages that can affect output.
-        for stage in &self.stages {
+        for (stage_index, stage) in self.stages.iter().enumerate() {
             if stage.color_op == TextureOp::Disable {
                 break;
             }
-            if !temp_is_ever_read && stage.result_target == TextureResultTarget::Temp {
+            if !temp_analysis.emit_stage[stage_index] {
                 continue;
             }
             write_stage(&mut hash, stage);
@@ -239,6 +237,69 @@ impl GeneratedFixedFunctionShaders {
 
 const FNV1A_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A_PRIME: u64 = 0x00000100000001B3;
+
+#[derive(Clone, Copy, Debug)]
+struct TempAnalysis {
+    emit_stage: [bool; MAX_TEXTURE_STAGES],
+    temp_var_needed: bool,
+}
+
+fn analyze_temp_usage(desc: &FixedFunctionShaderDesc) -> TempAnalysis {
+    let mut emit_stage = [true; MAX_TEXTURE_STAGES];
+
+    // Respect D3D9 stage disabling semantics (COLOROP disables the stage and all subsequent ones).
+    let mut active_end = MAX_TEXTURE_STAGES;
+    for (idx, stage) in desc.stages.iter().enumerate() {
+        if stage.color_op == TextureOp::Disable {
+            active_end = idx;
+            break;
+        }
+    }
+    for slot in emit_stage
+        .iter_mut()
+        .take(MAX_TEXTURE_STAGES)
+        .skip(active_end)
+    {
+        *slot = false;
+    }
+
+    // Scan backwards to compute whether each TEMP write is actually needed by a later stage read.
+    let mut temp_needed_out = false;
+    let mut temp_var_needed = false;
+
+    for idx in (0..active_end).rev() {
+        let stage = &desc.stages[idx];
+        let writes_temp = stage.result_target == TextureResultTarget::Temp;
+
+        // If no later stage reads TEMP, then a write-only-to-TEMP stage has no observable effect
+        // and can be skipped (avoids unnecessary texture sampling and cache misses).
+        if writes_temp && !temp_needed_out {
+            emit_stage[idx] = false;
+            continue;
+        }
+
+        emit_stage[idx] = true;
+
+        let reads_temp = stage_reads_temp(stage);
+        if reads_temp {
+            temp_var_needed = true;
+        }
+
+        // Propagate TEMP liveness to earlier stages:
+        // - If this stage overwrites TEMP, earlier stages only need TEMP if this stage reads it.
+        // - Otherwise, TEMP stays live if it was already needed later, or if this stage reads it.
+        if writes_temp {
+            temp_needed_out = reads_temp;
+        } else {
+            temp_needed_out |= reads_temp;
+        }
+    }
+
+    TempAnalysis {
+        emit_stage,
+        temp_var_needed,
+    }
+}
 
 pub fn generate_fixed_function_shaders(
     desc: &FixedFunctionShaderDesc,
@@ -444,10 +505,10 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
 
     wgsl.push_str("@fragment\nfn fs_main(input: FragmentIn) -> @location(0) vec4<f32> {\n");
 
-    let temp_is_ever_read = shader_reads_temp(desc);
+    let temp_analysis = analyze_temp_usage(desc);
 
     wgsl.push_str("  var current = input.diffuse;\n");
-    if temp_is_ever_read {
+    if temp_analysis.temp_var_needed {
         wgsl.push_str("  var temp = current;\n");
     }
     // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
@@ -457,7 +518,7 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
         if stage.color_op == TextureOp::Disable {
             break;
         }
-        if !temp_is_ever_read && stage.result_target == TextureResultTarget::Temp {
+        if !temp_analysis.emit_stage[stage_index] {
             continue;
         }
         emit_tss_stage(&mut wgsl, desc, layout, stage_index, stage);
@@ -656,19 +717,6 @@ fn stage_reads_temp(stage: &TextureStageState) -> bool {
         return true;
     }
 
-    false
-}
-
-fn shader_reads_temp(desc: &FixedFunctionShaderDesc) -> bool {
-    // Respect D3D9 stage disabling semantics (COLOROP disables the stage and all subsequent ones).
-    for stage in &desc.stages {
-        if stage.color_op == TextureOp::Disable {
-            break;
-        }
-        if stage_reads_temp(stage) {
-            return true;
-        }
-    }
     false
 }
 
