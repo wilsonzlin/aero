@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::passthrough::{UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut};
-use aero_usb::{SetupPacket as BusSetupPacket, UsbWebUsbPassthroughDevice};
+use aero_usb::{SetupPacket as BusSetupPacket, UsbSpeed, UsbWebUsbPassthroughDevice};
 
 // -------------------------------------------------------------------------------------------------
 // Extremely small EHCI-like harness
@@ -316,7 +316,9 @@ impl WebUsbEhciPassthroughHarness {
         if self.device.is_some() {
             return Ok(());
         }
-        let webusb = UsbWebUsbPassthroughDevice::new();
+        // EHCI presents attached devices as high-speed. Ensure the passthrough device model
+        // advertises a high-speed view so the guest sees unmodified high-speed descriptors.
+        let webusb = UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High);
         let attached = AttachedUsbDevice::new(Box::new(webusb.clone()));
         self.webusb = Some(webusb);
         self.device = Some(attached);

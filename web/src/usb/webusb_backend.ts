@@ -7,6 +7,7 @@ import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { isWebUsbProtectedInterfaceClass } from "../platform/webusb";
 
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
+import type { UsbProxyActionOptions } from "./usb_proxy_protocol";
 import { hex16, hex8 } from "./usb_hex";
 
 export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
@@ -381,7 +382,7 @@ export class WebUsbBackend {
     }
   }
 
-  async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
+  async execute(action: UsbHostAction, options?: UsbProxyActionOptions): Promise<UsbHostCompletion> {
     assertWebUsbSupported();
 
     // Bulk transfers use USB endpoint *addresses*, while WebUSB wants the endpoint number.
@@ -477,7 +478,10 @@ export class WebUsbBackend {
             return { kind: "controlIn", id: action.id, status: "error", message: directionCheck.message };
           }
 
-          const result = await executeWebUsbControlIn(this.device, action.setup, this.options);
+          const result = await executeWebUsbControlIn(this.device, action.setup, {
+            translateOtherSpeedConfigurationDescriptor:
+              options?.translateOtherSpeedConfigurationDescriptor ?? this.options.translateOtherSpeedConfigurationDescriptor,
+          });
           if (result.status === "ok") {
             return { kind: "controlIn", id: action.id, status: "success", data: result.data };
           }

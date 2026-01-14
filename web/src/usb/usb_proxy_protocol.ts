@@ -4,7 +4,23 @@ export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passth
 
 export const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
 
-export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
+export type UsbProxyActionOptions = {
+  /**
+   * When true (default), attempt to fetch `OTHER_SPEED_CONFIGURATION` (0x07) and rewrite it into a
+   * `CONFIGURATION` (0x02) descriptor blob when the guest requests
+   * `GET_DESCRIPTOR(CONFIGURATION)`.
+   *
+   * This is a UHCI/full-speed compatibility hack for WebUSB passthrough:
+   * high-speed devices often return a configuration descriptor with high-speed max packet sizes,
+   * which a USB 1.1 guest cannot use.
+   *
+   * When a passthrough device is attached to an EHCI/xHCI controller (high-speed view), this must
+   * be disabled so the guest sees the device's high-speed descriptors unmodified.
+   */
+  translateOtherSpeedConfigurationDescriptor?: boolean;
+};
+
+export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction; options?: UsbProxyActionOptions };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
 export type UsbRingAttachMessage = {
   type: "usb.ringAttach";

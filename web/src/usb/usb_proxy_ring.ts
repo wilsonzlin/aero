@@ -1,4 +1,5 @@
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
+import type { UsbProxyActionOptions } from "./usb_proxy_protocol";
 
 // SharedArrayBuffer-backed SPSC ring buffer for variable-length USB proxy records.
 //
@@ -25,10 +26,13 @@ export const USB_PROXY_RING_ALIGN = 4;
 
 // Action records share an 8-byte header:
 //   kind: u8
-//   reserved: u8
+//   flags: u8
 //   reserved: u16
 //   id: u32 (LE)
 export const USB_PROXY_ACTION_HEADER_BYTES = 8;
+
+// Action header flags (byte 1).
+const USB_PROXY_ACTION_FLAG_DISABLE_OTHER_SPEED_CONFIG_TRANSLATION = 1 << 0;
 
 // Completion records share an 8-byte header:
 //   kind: u8
@@ -159,7 +163,7 @@ export class UsbProxyRing {
     return u32(Atomics.load(this.#ctrl, CtrlIndex.Dropped));
   }
 
-  pushAction(action: UsbHostAction): boolean {
+  pushAction(action: UsbHostAction, options?: UsbProxyActionOptions): boolean {
     // Producer-side validation: keep the ring robust by refusing to encode records that the
     // consumer would later treat as corruption (and detach the SAB fast-path).
     let recordSize = 0;
@@ -210,10 +214,14 @@ export class UsbProxyRing {
     if (startIndex === null) return false;
 
     const kindTag = this.#actionKindToTag(action.kind);
+    const flags =
+      options?.translateOtherSpeedConfigurationDescriptor === false
+        ? USB_PROXY_ACTION_FLAG_DISABLE_OTHER_SPEED_CONFIG_TRANSLATION
+        : 0;
 
     // Header
     this.#view.setUint8(startIndex + 0, kindTag & 0xff);
-    this.#view.setUint8(startIndex + 1, 0);
+    this.#view.setUint8(startIndex + 1, flags & 0xff);
     this.#view.setUint16(startIndex + 2, 0, true);
     this.#view.setUint32(startIndex + 4, u32(action.id), true);
 
@@ -256,7 +264,7 @@ export class UsbProxyRing {
     return true;
   }
 
-  popAction(): UsbHostAction | null {
+  popActionRecord(): { action: UsbHostAction; options?: UsbProxyActionOptions } | null {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
@@ -285,7 +293,13 @@ export class UsbProxyRing {
         throw new Error(`USB proxy ring corrupted (unknown action kind tag: ${kindTag}).`);
       }
 
+      const flags = this.#view.getUint8(headIndex + 1) >>> 0;
       const id = this.#view.getUint32(headIndex + 4, true) >>> 0;
+
+      const options: UsbProxyActionOptions | undefined =
+        (flags & USB_PROXY_ACTION_FLAG_DISABLE_OTHER_SPEED_CONFIG_TRANSLATION) !== 0
+          ? { translateOtherSpeedConfigurationDescriptor: false }
+          : undefined;
 
       switch (kind) {
         case "controlIn": {
@@ -293,7 +307,7 @@ export class UsbProxyRing {
           if (total > remaining) throw new Error("USB proxy ring corrupted (controlIn record straddles wrap boundary).");
           const setup = decodeSetupPacket(this.#view, headIndex + USB_PROXY_ACTION_HEADER_BYTES);
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
-          return { kind: "controlIn", id, setup };
+          return { action: { kind: "controlIn", id, setup }, options };
         }
         case "controlOut": {
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
@@ -313,7 +327,7 @@ export class UsbProxyRing {
           const payloadEnd = payloadStart + dataLen;
           const data = this.#data.slice(payloadStart, payloadEnd);
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
-          return { kind: "controlOut", id, setup, data };
+          return { action: { kind: "controlOut", id, setup, data }, options };
         }
         case "bulkIn": {
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
@@ -323,7 +337,7 @@ export class UsbProxyRing {
           const endpoint = this.#view.getUint8(base + 0) >>> 0;
           const length = this.#view.getUint32(base + 4, true) >>> 0;
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
-          return { kind: "bulkIn", id, endpoint, length };
+          return { action: { kind: "bulkIn", id, endpoint, length }, options };
         }
         case "bulkOut": {
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
@@ -338,10 +352,15 @@ export class UsbProxyRing {
           const payloadEnd = payloadStart + dataLen;
           const data = this.#data.slice(payloadStart, payloadEnd);
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
-          return { kind: "bulkOut", id, endpoint, data };
+          return { action: { kind: "bulkOut", id, endpoint, data }, options };
         }
       }
     }
+  }
+
+  popAction(): UsbHostAction | null {
+    const record = this.popActionRecord();
+    return record ? record.action : null;
   }
 
   pushCompletion(completion: UsbHostCompletion): boolean {

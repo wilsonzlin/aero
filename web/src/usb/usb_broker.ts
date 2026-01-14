@@ -13,6 +13,7 @@ import {
   type UsbGuestWebUsbStatusMessage,
   type UsbHostAction,
   type UsbHostCompletion,
+  type UsbProxyActionOptions,
   type UsbRingAttachMessage,
   type UsbRingDetachMessage,
   type UsbSelectDeviceMessage,
@@ -45,8 +46,17 @@ function extractActionKind(action: unknown): UsbHostAction["kind"] | null {
   return null;
 }
 
+function normalizeUsbProxyActionOptions(options: unknown): UsbProxyActionOptions | undefined {
+  if (!isRecord(options)) return undefined;
+  const raw = options.translateOtherSpeedConfigurationDescriptor;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "boolean") return undefined;
+  return { translateOtherSpeedConfigurationDescriptor: raw };
+}
+
 type QueueItem = {
   action: UsbHostAction;
+  options?: UsbProxyActionOptions;
   resolve: (completion: UsbHostCompletion) => void;
   port: MessagePort | Worker | null;
 };
@@ -329,8 +339,8 @@ export class UsbBroker {
     this.emitDeviceChange();
   }
 
-  async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
-    return await this.executeForPort(null, action);
+  async execute(action: UsbHostAction, options?: UsbProxyActionOptions): Promise<UsbHostCompletion> {
+    return await this.executeForPort(null, action, options);
   }
 
   /**
@@ -363,7 +373,8 @@ export class UsbBroker {
           return;
         }
         if (isUsbActionMessage(data)) {
-          void this.executeForPort(port, data.action).then((completion) => {
+          const execOptions = normalizeUsbProxyActionOptions(data.options);
+          void this.executeForPort(port, data.action, execOptions).then((completion) => {
             const msg: UsbCompletionMessage = { type: "usb.completion", completion };
             this.postToPort(port, msg);
           });
@@ -502,16 +513,17 @@ export class UsbBroker {
     if (!actionRing) return;
 
     while (true) {
-      let action: UsbHostAction | null = null;
+      let record: { action: UsbHostAction; options?: UsbProxyActionOptions } | null = null;
       try {
-        action = actionRing.popAction();
+        record = actionRing.popActionRecord();
       } catch (err) {
         this.disableRingsForPort(port, err);
         break;
       }
-      if (!action) break;
+      if (!record) break;
+      const { action, options } = record;
 
-      void this.executeForPort(port, action).then((completion) => {
+      void this.executeForPort(port, action, options).then((completion) => {
         // The port may have been detached (or rings disabled) while the completion was in-flight.
         const activeCompletionRing = this.completionRings.get(port) ?? null;
         if (activeCompletionRing) {
@@ -606,7 +618,7 @@ export class UsbBroker {
         continue;
       }
 
-      const backendPromise = backend.execute(item.action);
+      const backendPromise = backend.execute(item.action, item.options);
       // If the device disconnects, the race below resolves and we drop the backend promise.
       // Avoid unhandled rejections if the backend rejects after disconnect.
       backendPromise.catch(() => undefined);
@@ -674,12 +686,16 @@ export class UsbBroker {
     return backend;
   }
 
-  private async executeForPort(port: MessagePort | Worker | null, action: UsbHostAction): Promise<UsbHostCompletion> {
+  private async executeForPort(
+    port: MessagePort | Worker | null,
+    action: UsbHostAction,
+    options?: UsbProxyActionOptions,
+  ): Promise<UsbHostCompletion> {
     if (this.disconnectError) return usbErrorCompletion(action.kind, action.id, this.disconnectError);
     if (!this.device) return usbErrorCompletion(action.kind, action.id, "WebUSB device not selected.");
 
     return await new Promise<UsbHostCompletion>((resolve) => {
-      this.queue.push({ action, resolve, port });
+      this.queue.push({ action, options, resolve, port });
       this.kickQueue();
     });
   }

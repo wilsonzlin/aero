@@ -12,6 +12,7 @@ import {
   type UsbActionMessage,
   type UsbHostAction,
   type UsbHostCompletion,
+  type UsbProxyActionOptions,
   type UsbQuerySelectedMessage,
   type UsbRingAttachMessage,
   type UsbRingAttachRequestMessage,
@@ -145,6 +146,10 @@ export type UsbBrokerPortLike = Pick<MessagePort, "addEventListener" | "removeEv
 };
 
 type PendingItem = { action: UsbHostAction };
+
+// EHCI harness presents a high-speed view, so we must not apply the UHCI-only
+// OTHER_SPEED_CONFIGURATION translation hack.
+const EHCI_HARNESS_USB_PROXY_ACTION_OPTIONS: UsbProxyActionOptions = { translateOtherSpeedConfigurationDescriptor: false };
 
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -619,7 +624,7 @@ export class WebUsbEhciHarnessRuntime {
       const actionRing = this.#actionRing;
       if (actionRing) {
         try {
-          if (actionRing.pushAction(brokerAction)) {
+          if (actionRing.pushAction(brokerAction, EHCI_HARNESS_USB_PROXY_ACTION_OPTIONS)) {
             this.#pending.set(brokerId, { action });
             this.#pendingHarnessIds.add(id);
             this.#actionsForwarded += 1;
@@ -633,7 +638,7 @@ export class WebUsbEhciHarnessRuntime {
         }
       }
 
-      const msg: UsbActionMessage = { type: "usb.action", action: brokerAction };
+      const msg: UsbActionMessage = { type: "usb.action", action: brokerAction, options: EHCI_HARNESS_USB_PROXY_ACTION_OPTIONS };
       try {
         this.#port.postMessage(msg);
       } catch (err) {

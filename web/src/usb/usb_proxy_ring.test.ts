@@ -47,6 +47,21 @@ describe("usb/UsbProxyRing", () => {
     expect(Array.from(bulkOut.data)).toEqual(Array.from(expectedBulkOut.data));
   });
 
+  it("round-trips action options via header flags", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    const setup = { bmRequestType: 0x80, bRequest: 6, wValue: 0x0200, wIndex: 0, wLength: 9 };
+    const action: UsbHostAction = { kind: "controlIn", id: 1, setup };
+    expect(ring.pushAction(action, { translateOtherSpeedConfigurationDescriptor: false })).toBe(true);
+
+    const record = ring.popActionRecord();
+    expect(record).toBeTruthy();
+    expect(record?.action).toEqual(action);
+    expect(record?.options).toEqual({ translateOtherSpeedConfigurationDescriptor: false });
+    expect(ring.popAction()).toBeNull();
+  });
+
   it("round-trips all UsbHostCompletion variants", () => {
     const sab = createUsbProxyRingBuffer(1024);
     const ring = new UsbProxyRing(sab);
