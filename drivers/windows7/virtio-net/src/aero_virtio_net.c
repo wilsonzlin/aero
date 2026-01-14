@@ -1210,6 +1210,22 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
 
   OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
+  if (Intent.WantTso && OffRes == AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT && CopyLen < FrameLen) {
+    /*
+     * Large TSO frames may have uncommon-but-valid header layouts (e.g. long IPv6
+     * extension header chains) that exceed our small header buffer. Retry with a
+     * larger copy window (still bounded) before rejecting.
+     */
+    ULONG RetryLen = (FrameLen < sizeof(FullFrameBytes)) ? FrameLen : (ULONG)sizeof(FullFrameBytes);
+    if (RetryLen > CopyLen) {
+      CopyLen = RetryLen;
+      FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FullFrameBytes, 1, 0);
+      if (!FramePtr) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+      OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
+    }
+  }
   if (OffRes != AEROVNET_OFFLOAD_OK) {
     // TSO cannot be emulated in software at this layer; reject.
     if (Intent.WantTso) {
