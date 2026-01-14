@@ -142,6 +142,7 @@ pub fn worst_case_vertices_per_patch(max_tess_factor: u32) -> Result<u64, Tessel
             "max_tess_factor must be > 0",
         ));
     }
+    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR);
     let n = max_tess_factor as u64;
     let np1 = n.checked_add(1).ok_or(TessellationSizingError::Overflow(
         "max_tess_factor + 1 overflows",
@@ -159,6 +160,7 @@ pub fn worst_case_indices_per_patch(max_tess_factor: u32) -> Result<u64, Tessell
             "max_tess_factor must be > 0",
         ));
     }
+    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR);
     let n = max_tess_factor as u64;
     let n2 = checked_mul_u64(n, n, "max_tess_factor^2")?;
     checked_mul_u64(6, n2, "indices per patch")
@@ -287,6 +289,16 @@ mod tests {
 
         assert_eq!(worst_case_vertices_per_patch(64).unwrap(), 4225);
         assert_eq!(worst_case_indices_per_patch(64).unwrap(), 24576);
+
+        // D3D11 clamps tessellation factors to MAX_TESS_FACTOR.
+        assert_eq!(
+            worst_case_vertices_per_patch(65).unwrap(),
+            worst_case_vertices_per_patch(64).unwrap()
+        );
+        assert_eq!(
+            worst_case_indices_per_patch(65).unwrap(),
+            worst_case_indices_per_patch(64).unwrap()
+        );
     }
 
     #[test]

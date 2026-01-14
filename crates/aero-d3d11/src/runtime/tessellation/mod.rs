@@ -8,6 +8,10 @@
 //!
 //! This module currently contains allocation plumbing and worst-case size helpers. Shader logic
 //! (actual expansion compute pipelines) is intentionally out of scope for now.
+//!
+//! Note: low-level tessellator math helpers (currently triangle-domain integer partitioning) live
+//! in [`crate::runtime::tessellator`]. This module owns per-draw scratch allocations and (future)
+//! compute pipeline state for HS/DS emulation.
 
 pub mod buffers;
 pub mod pipeline;
