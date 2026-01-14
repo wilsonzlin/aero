@@ -6,8 +6,8 @@
 //! It remains supported in `crates/emulator` for backward compatibility and offline migration, but
 //! is **not** used by the new controller stack. New images should use `AEROSPAR` instead; see:
 //! `docs/20-storage-trait-consolidation.md`.
-
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::adapters::aero_storage_disk_error_to_emulator;
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SPARSE_MAGIC: [u8; 8] = *b"AEROSPRS";
@@ -239,7 +239,7 @@ pub struct SparseDisk<S> {
     table: Vec<u64>,
 }
 
-impl<S: ByteStorage> SparseDisk<S> {
+impl<S: aero_storage::StorageBackend> SparseDisk<S> {
     pub fn create(
         mut storage: S,
         sector_size: u32,
@@ -289,11 +289,19 @@ impl<S: ByteStorage> SparseDisk<S> {
             data_offset,
         };
 
-        storage.write_at(0, &header.encode())?;
-        storage.write_at(journal_offset, &JournalRecord::empty().encode())?;
+        storage
+            .write_at(0, &header.encode())
+            .map_err(aero_storage_disk_error_to_emulator)?;
+        storage
+            .write_at(journal_offset, &JournalRecord::empty().encode())
+            .map_err(aero_storage_disk_error_to_emulator)?;
         write_zeroes(&mut storage, table_offset, table_bytes)?;
-        storage.set_len(data_offset)?;
-        storage.flush()?;
+        storage
+            .set_len(data_offset)
+            .map_err(aero_storage_disk_error_to_emulator)?;
+        storage
+            .flush()
+            .map_err(aero_storage_disk_error_to_emulator)?;
 
         let table_entries_usize: usize = table_entries
             .try_into()
@@ -312,7 +320,10 @@ impl<S: ByteStorage> SparseDisk<S> {
 
     pub fn open(mut storage: S) -> DiskResult<Self> {
         let mut header_buf = [0u8; HEADER_SIZE as usize];
-        match storage.read_at(0, &mut header_buf) {
+        match storage
+            .read_at(0, &mut header_buf)
+            .map_err(aero_storage_disk_error_to_emulator)
+        {
             Ok(()) => {}
             Err(DiskError::OutOfBounds) => {
                 return Err(DiskError::CorruptImage("sparse header truncated"));
@@ -321,7 +332,7 @@ impl<S: ByteStorage> SparseDisk<S> {
         }
         let header = SparseHeader::decode(&header_buf)?;
 
-        let file_len = storage.len()?;
+        let file_len = storage.len().map_err(aero_storage_disk_error_to_emulator)?;
         if file_len < header.data_offset {
             return Err(DiskError::CorruptImage("sparse image truncated"));
         }
@@ -357,7 +368,10 @@ impl<S: ByteStorage> SparseDisk<S> {
         let mut off = header.table_offset;
         while remaining > 0 {
             let read_len = remaining.min(buf.len());
-            match storage.read_at(off, &mut buf[..read_len]) {
+            match storage
+                .read_at(off, &mut buf[..read_len])
+                .map_err(aero_storage_disk_error_to_emulator)
+            {
                 Ok(()) => {}
                 Err(DiskError::OutOfBounds) => {
                     return Err(DiskError::CorruptImage("allocation table out of bounds"));
@@ -403,7 +417,8 @@ impl<S: ByteStorage> SparseDisk<S> {
     fn recover_journal(&mut self) -> DiskResult<()> {
         let mut jbuf = [0u8; JOURNAL_SIZE as usize];
         self.storage
-            .read_at(self.header.journal_offset, &mut jbuf)?;
+            .read_at(self.header.journal_offset, &mut jbuf)
+            .map_err(aero_storage_disk_error_to_emulator)?;
         let record = JournalRecord::decode(&jbuf)?;
         if record.state == 0 {
             return Ok(());
@@ -443,8 +458,11 @@ impl<S: ByteStorage> SparseDisk<S> {
         // Clearing the journal is idempotent; if we crash before it lands on disk the record will
         // be replayed again on next open.
         self.storage
-            .write_at(self.header.journal_offset, &JournalRecord::empty().encode())?;
-        self.storage.flush()?;
+            .write_at(self.header.journal_offset, &JournalRecord::empty().encode())
+            .map_err(aero_storage_disk_error_to_emulator)?;
+        self.storage
+            .flush()
+            .map_err(aero_storage_disk_error_to_emulator)?;
         Ok(())
     }
 
@@ -458,7 +476,8 @@ impl<S: ByteStorage> SparseDisk<S> {
             .checked_add(logical_block_bytes)
             .ok_or(DiskError::Unsupported("table offset overflow"))?;
         self.storage
-            .write_at(offset, &physical_offset.to_le_bytes())?;
+            .write_at(offset, &physical_offset.to_le_bytes())
+            .map_err(aero_storage_disk_error_to_emulator)?;
         Ok(())
     }
 
@@ -487,7 +506,10 @@ impl<S: ByteStorage> SparseDisk<S> {
 
     fn allocate_block(&mut self) -> DiskResult<u64> {
         let block_size = self.header.block_size as u64;
-        let mut len = self.storage.len()?;
+        let mut len = self
+            .storage
+            .len()
+            .map_err(aero_storage_disk_error_to_emulator)?;
         if len < self.header.data_offset {
             len = self.header.data_offset;
         }
@@ -499,7 +521,7 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for SparseDisk<S> {
     fn sector_size(&self) -> u32 {
         self.header.sector_size
     }
@@ -544,7 +566,9 @@ impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
                 let phys = physical
                     .checked_add(block_off as u64)
                     .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
-                self.storage.read_at(phys, &mut remaining[..to_copy])?;
+                self.storage
+                    .read_at(phys, &mut remaining[..to_copy])
+                    .map_err(aero_storage_disk_error_to_emulator)?;
             }
 
             remaining = &mut remaining[to_copy..];
@@ -596,7 +620,9 @@ impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
                 let phys = new_physical
                     .checked_add(block_off as u64)
                     .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
-                self.storage.write_at(phys, &remaining[..to_copy])?;
+                self.storage
+                    .write_at(phys, &remaining[..to_copy])
+                    .map_err(aero_storage_disk_error_to_emulator)?;
                 // Commit mapping via journal + table update.
                 let rec = JournalRecord {
                     state: 1,
@@ -604,25 +630,35 @@ impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
                     physical_offset: new_physical,
                 };
                 self.storage
-                    .write_at(self.header.journal_offset, &rec.encode())?;
-                self.storage.flush()?;
+                    .write_at(self.header.journal_offset, &rec.encode())
+                    .map_err(aero_storage_disk_error_to_emulator)?;
+                self.storage
+                    .flush()
+                    .map_err(aero_storage_disk_error_to_emulator)?;
 
                 self.table[idx] = new_physical;
                 self.write_table_entry(logical_block, new_physical)?;
-                self.storage.flush()?;
+                self.storage
+                    .flush()
+                    .map_err(aero_storage_disk_error_to_emulator)?;
 
                 self.storage
-                    .write_at(self.header.journal_offset, &JournalRecord::empty().encode())?;
+                    .write_at(self.header.journal_offset, &JournalRecord::empty().encode())
+                    .map_err(aero_storage_disk_error_to_emulator)?;
                 // Clearing the journal doesn't need to be immediately flushed for correctness; the
                 // table entry is the source of truth. We do it anyway to keep opens fast.
-                self.storage.flush()?;
+                self.storage
+                    .flush()
+                    .map_err(aero_storage_disk_error_to_emulator)?;
                 new_physical
             } else {
                 let physical = self.table[idx];
                 let phys = physical
                     .checked_add(block_off as u64)
                     .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
-                self.storage.write_at(phys, &remaining[..to_copy])?;
+                self.storage
+                    .write_at(phys, &remaining[..to_copy])
+                    .map_err(aero_storage_disk_error_to_emulator)?;
                 physical
             };
 
@@ -635,7 +671,9 @@ impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.storage.flush()
+        self.storage
+            .flush()
+            .map_err(aero_storage_disk_error_to_emulator)
     }
 }
 
@@ -653,13 +691,19 @@ fn align_up(value: u64, align: u64) -> DiskResult<u64> {
     }
 }
 
-fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) -> DiskResult<()> {
+fn write_zeroes<S: aero_storage::StorageBackend>(
+    storage: &mut S,
+    mut offset: u64,
+    mut len: u64,
+) -> DiskResult<()> {
     const CHUNK: u64 = 64 * 1024;
     let buf = [0u8; CHUNK as usize];
 
     while len > 0 {
         let to_write = len.min(CHUNK);
-        storage.write_at(offset, &buf[..to_write as usize])?;
+        storage
+            .write_at(offset, &buf[..to_write as usize])
+            .map_err(aero_storage_disk_error_to_emulator)?;
         offset = offset
             .checked_add(to_write)
             .ok_or(DiskError::Unsupported("offset overflow"))?;
@@ -671,7 +715,7 @@ fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::storage::disk::{ByteStorage, DiskBackend};
+    use aero_storage::StorageBackend as _;
 
     const TEST_SECTOR_SIZE: u32 = 512;
     const TEST_TOTAL_SECTORS: u64 = 128;
@@ -682,40 +726,52 @@ mod tests {
         data: Vec<u8>,
     }
 
-    impl ByteStorage for MemStorage {
-        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-            let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
-            let end = offset
-                .checked_add(buf.len())
-                .ok_or(DiskError::OutOfBounds)?;
-            let slice = self.data.get(offset..end).ok_or(DiskError::OutOfBounds)?;
-            buf.copy_from_slice(slice);
-            Ok(())
-        }
-
-        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-            let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
-            let end = offset
-                .checked_add(buf.len())
-                .ok_or(DiskError::OutOfBounds)?;
-            if end > self.data.len() {
-                self.data.resize(end, 0);
-            }
-            self.data[offset..end].copy_from_slice(buf);
-            Ok(())
-        }
-
-        fn flush(&mut self) -> DiskResult<()> {
-            Ok(())
-        }
-
-        fn len(&mut self) -> DiskResult<u64> {
+    impl aero_storage::StorageBackend for MemStorage {
+        fn len(&mut self) -> aero_storage::Result<u64> {
             Ok(self.data.len() as u64)
         }
 
-        fn set_len(&mut self, len: u64) -> DiskResult<()> {
-            let len: usize = len.try_into().map_err(|_| DiskError::OutOfBounds)?;
-            self.data.resize(len, 0);
+        fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+            let len_usize: usize = len
+                .try_into()
+                .map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+            self.data.resize(len_usize, 0);
+            Ok(())
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            let offset_usize: usize = offset
+                .try_into()
+                .map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+            let end = offset_usize
+                .checked_add(buf.len())
+                .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+            if end > self.data.len() {
+                return Err(aero_storage::DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity: self.data.len() as u64,
+                });
+            }
+            buf.copy_from_slice(&self.data[offset_usize..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+            let offset_usize: usize = offset
+                .try_into()
+                .map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+            let end = offset_usize
+                .checked_add(buf.len())
+                .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[offset_usize..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
             Ok(())
         }
     }
@@ -923,10 +979,7 @@ mod tests {
             .set_len(physical_offset + header.block_size as u64)
             .unwrap();
         storage
-            .write_at(
-                physical_offset,
-                &vec![0x5Au8; header.block_size as usize],
-            )
+            .write_at(physical_offset, &vec![0x5Au8; header.block_size as usize])
             .unwrap();
 
         // Confirm the allocation table entry starts empty (we're simulating a crash after writing

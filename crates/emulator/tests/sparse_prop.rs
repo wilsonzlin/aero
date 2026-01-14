@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use emulator::io::storage::disk::ByteStorage;
+use aero_storage::StorageBackend;
 use emulator::io::storage::formats::SparseDisk;
-use emulator::io::storage::{DiskBackend, DiskResult};
+use emulator::io::storage::DiskBackend;
 use proptest::prelude::*;
 
 #[derive(Default, Clone)]
@@ -10,18 +10,31 @@ struct MemStorage {
     data: Vec<u8>,
 }
 
-impl ByteStorage for MemStorage {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+impl StorageBackend for MemStorage {
+    fn len(&mut self) -> aero_storage::Result<u64> {
+        Ok(self.data.len() as u64)
+    }
+
+    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+        self.data.resize(len as usize, 0);
+        Ok(())
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
         let offset = offset as usize;
         let end = offset + buf.len();
         if end > self.data.len() {
-            return Err(emulator::io::storage::DiskError::Io("read past end".into()));
+            return Err(aero_storage::DiskError::OutOfBounds {
+                offset: offset as u64,
+                len: buf.len(),
+                capacity: self.data.len() as u64,
+            });
         }
         buf.copy_from_slice(&self.data[offset..end]);
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
         let offset = offset as usize;
         let end = offset + buf.len();
         if end > self.data.len() {
@@ -31,16 +44,7 @@ impl ByteStorage for MemStorage {
         Ok(())
     }
 
-    fn flush(&mut self) -> DiskResult<()> {
-        Ok(())
-    }
-
-    fn len(&mut self) -> DiskResult<u64> {
-        Ok(self.data.len() as u64)
-    }
-
-    fn set_len(&mut self, len: u64) -> DiskResult<()> {
-        self.data.resize(len as usize, 0);
+    fn flush(&mut self) -> aero_storage::Result<()> {
         Ok(())
     }
 }

@@ -7,9 +7,8 @@ fn main() {
 fn main() {
     use std::env;
 
-    use aero_storage::FileBackend;
-    use emulator::io::storage::adapters::ByteStorageFromStorageBackend;
-    use emulator::io::storage::disk::{ByteStorage, DiskBackend};
+    use aero_storage::{FileBackend, StorageBackend as _};
+    use emulator::io::storage::disk::DiskBackend;
     use emulator::io::storage::formats::{aerosprs, SparseDisk};
 
     fn print_usage() {
@@ -30,14 +29,13 @@ fn main() {
         std::process::exit(2);
     }
 
-    let input_backend = match FileBackend::open_read_only(&input_path) {
+    let mut input = match FileBackend::open_read_only(&input_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to open input: {e}");
             std::process::exit(1);
         }
     };
-    let mut input = ByteStorageFromStorageBackend(input_backend);
 
     let mut magic = [0u8; 8];
     if let Err(e) = input.read_at(0, &mut magic) {
@@ -85,9 +83,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let out_storage = ByteStorageFromStorageBackend(out_backend);
 
-    let mut out = match SparseDisk::create(out_storage, 512, total_sectors_512, output_block_size) {
+    let mut out = match SparseDisk::create(out_backend, 512, total_sectors_512, output_block_size) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("failed to create output disk: {e}");

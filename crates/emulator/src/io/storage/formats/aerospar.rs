@@ -2,20 +2,18 @@ use aero_storage::{
     AeroSparseConfig, AeroSparseDisk as StorageAeroSparseDisk, AeroSparseHeader, VirtualDisk as _,
 };
 
-use crate::io::storage::adapters::{
-    aero_storage_disk_error_to_emulator, StorageBackendFromByteStorage,
-};
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::adapters::aero_storage_disk_error_to_emulator;
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
 
 /// Aero sparse disk format v1 (`AEROSPAR`).
 pub struct AerosparDisk<S> {
-    inner: StorageAeroSparseDisk<StorageBackendFromByteStorage<S>>,
+    inner: StorageAeroSparseDisk<S>,
 }
 
-impl<S: ByteStorage> AerosparDisk<S> {
+impl<S: aero_storage::StorageBackend> AerosparDisk<S> {
     pub fn create(
         storage: S,
         sector_size: u32,
@@ -33,7 +31,7 @@ impl<S: ByteStorage> AerosparDisk<S> {
             .ok_or(DiskError::Unsupported("disk size overflow"))?;
 
         let inner = StorageAeroSparseDisk::create(
-            StorageBackendFromByteStorage::new(storage),
+            storage,
             AeroSparseConfig {
                 disk_size_bytes,
                 block_size_bytes: block_size,
@@ -45,8 +43,8 @@ impl<S: ByteStorage> AerosparDisk<S> {
     }
 
     pub fn open(storage: S) -> DiskResult<Self> {
-        let inner = StorageAeroSparseDisk::open(StorageBackendFromByteStorage::new(storage))
-            .map_err(aero_storage_disk_error_to_emulator)?;
+        let inner =
+            StorageAeroSparseDisk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
 
         if inner.header().disk_size_bytes % SECTOR_SIZE as u64 != 0 {
             return Err(DiskError::CorruptImage(
@@ -66,11 +64,11 @@ impl<S: ByteStorage> AerosparDisk<S> {
     }
 
     pub fn into_storage(self) -> S {
-        self.inner.into_backend().into_inner()
+        self.inner.into_backend()
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for AerosparDisk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for AerosparDisk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

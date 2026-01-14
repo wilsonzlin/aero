@@ -2,34 +2,32 @@ use aero_storage::{Qcow2Disk as StorageQcow2Disk, VirtualDisk as _};
 
 use crate::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
-    StorageBackendFromByteStorage,
 };
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
 
-/// QCOW2 v2/v3 disk image backed by an emulator [`ByteStorage`].
+/// QCOW2 v2/v3 disk image backed by an [`aero_storage::StorageBackend`].
 ///
 /// This is a thin compatibility wrapper around the canonical `aero_storage::Qcow2Disk`
 /// implementation.
 pub struct Qcow2Disk<S> {
-    inner: StorageQcow2Disk<StorageBackendFromByteStorage<S>>,
+    inner: StorageQcow2Disk<S>,
 }
 
-impl<S: ByteStorage> Qcow2Disk<S> {
+impl<S: aero_storage::StorageBackend> Qcow2Disk<S> {
     pub fn open(storage: S) -> DiskResult<Self> {
-        let inner = StorageQcow2Disk::open(StorageBackendFromByteStorage::new(storage))
-            .map_err(aero_storage_disk_error_to_emulator)?;
+        let inner = StorageQcow2Disk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
         Ok(Self { inner })
     }
 
     pub fn into_storage(self) -> S {
-        self.inner.into_backend().into_inner()
+        self.inner.into_backend()
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for Qcow2Disk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for Qcow2Disk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

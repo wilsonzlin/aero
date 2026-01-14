@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use emulator::io::storage::disk::ByteStorage;
+use aero_storage::StorageBackend;
 use emulator::io::storage::formats::detect_format;
 use emulator::io::storage::{DiskBackend, DiskError, DiskFormat, VirtualDrive, WriteCachePolicy};
 use proptest::prelude::*;
@@ -19,42 +19,60 @@ impl MemStorage {
     }
 }
 
-impl ByteStorage for MemStorage {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> emulator::io::storage::DiskResult<()> {
-        let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
-        let end = offset
-            .checked_add(buf.len())
-            .ok_or(DiskError::OutOfBounds)?;
-        if end > self.data.len() {
-            return Err(DiskError::OutOfBounds);
-        }
-        buf.copy_from_slice(&self.data[offset..end]);
-        Ok(())
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> emulator::io::storage::DiskResult<()> {
-        let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
-        let end = offset
-            .checked_add(buf.len())
-            .ok_or(DiskError::OutOfBounds)?;
-        if end > self.data.len() {
-            self.data.resize(end, 0);
-        }
-        self.data[offset..end].copy_from_slice(buf);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> emulator::io::storage::DiskResult<()> {
-        Ok(())
-    }
-
-    fn len(&mut self) -> emulator::io::storage::DiskResult<u64> {
+impl StorageBackend for MemStorage {
+    fn len(&mut self) -> aero_storage::Result<u64> {
         Ok(self.data.len() as u64)
     }
 
-    fn set_len(&mut self, len: u64) -> emulator::io::storage::DiskResult<()> {
-        let len = usize::try_from(len).map_err(|_| DiskError::OutOfBounds)?;
-        self.data.resize(len, 0);
+    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+        let len_usize: usize = len
+            .try_into()
+            .map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        self.data.resize(len_usize, 0);
+        Ok(())
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        let capacity = self.data.len() as u64;
+        let offset_usize: usize = match offset.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(aero_storage::DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity,
+                });
+            }
+        };
+        let end = offset_usize
+            .checked_add(buf.len())
+            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+        if end > self.data.len() {
+            return Err(aero_storage::DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity,
+            });
+        }
+        buf.copy_from_slice(&self.data[offset_usize..end]);
+        Ok(())
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        let offset_usize: usize = offset
+            .try_into()
+            .map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let end = offset_usize
+            .checked_add(buf.len())
+            .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+        if end > self.data.len() {
+            self.data.resize(end, 0);
+        }
+        self.data[offset_usize..end].copy_from_slice(buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
         Ok(())
     }
 }

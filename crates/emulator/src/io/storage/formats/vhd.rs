@@ -2,34 +2,32 @@ use aero_storage::{VhdDisk as StorageVhdDisk, VirtualDisk as _};
 
 use crate::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
-    StorageBackendFromByteStorage,
 };
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
 
-/// VHD (fixed + dynamic) disk image backed by an emulator [`ByteStorage`].
+/// VHD (fixed + dynamic) disk image backed by an [`aero_storage::StorageBackend`].
 ///
 /// This is a thin compatibility wrapper around the canonical `aero_storage::VhdDisk`
 /// implementation.
 pub struct VhdDisk<S> {
-    inner: StorageVhdDisk<StorageBackendFromByteStorage<S>>,
+    inner: StorageVhdDisk<S>,
 }
 
-impl<S: ByteStorage> VhdDisk<S> {
+impl<S: aero_storage::StorageBackend> VhdDisk<S> {
     pub fn open(storage: S) -> DiskResult<Self> {
-        let inner = StorageVhdDisk::open(StorageBackendFromByteStorage::new(storage))
-            .map_err(aero_storage_disk_error_to_emulator)?;
+        let inner = StorageVhdDisk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
         Ok(Self { inner })
     }
 
     pub fn into_storage(self) -> S {
-        self.inner.into_backend().into_inner()
+        self.inner.into_backend()
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for VhdDisk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for VhdDisk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

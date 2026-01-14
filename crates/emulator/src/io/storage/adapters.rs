@@ -1,41 +1,13 @@
-//! Compatibility adapters between the emulator storage traits (`ByteStorage`, `DiskBackend`)
-//! and the canonical `aero_storage` traits (`StorageBackend`, `VirtualDisk`).
+//! Compatibility adapters between the emulator storage layer and the canonical `aero_storage`
+//! traits (`StorageBackend`, `VirtualDisk`).
 //!
 //! These adapters are intentionally lightweight and aim to preserve as much error information
 //! as possible when crossing crate boundaries.
 //!
 //! See `docs/20-storage-trait-consolidation.md`.
 
-use crate::io::storage::disk::{ByteStorage, DiskBackend};
+use crate::io::storage::disk::DiskBackend;
 use crate::io::storage::error::{DiskError, DiskResult};
-
-/// Wrap an emulator [`ByteStorage`] and expose it as an [`aero_storage::StorageBackend`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StorageBackendFromByteStorage<S>(pub S);
-
-impl<S> StorageBackendFromByteStorage<S> {
-    pub fn new(inner: S) -> Self {
-        Self(inner)
-    }
-
-    pub fn into_inner(self) -> S {
-        self.0
-    }
-}
-
-/// Wrap an [`aero_storage::StorageBackend`] and expose it as an emulator [`ByteStorage`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ByteStorageFromStorageBackend<B>(pub B);
-
-impl<B> ByteStorageFromStorageBackend<B> {
-    pub fn new(inner: B) -> Self {
-        Self(inner)
-    }
-
-    pub fn into_inner(self) -> B {
-        self.0
-    }
-}
 
 /// Wrap an [`aero_storage::VirtualDisk`] and expose it as an emulator [`DiskBackend`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -151,88 +123,6 @@ pub fn aero_storage_disk_error_to_emulator_with_sector_context(
     }
 }
 
-impl<S: ByteStorage> aero_storage::StorageBackend for StorageBackendFromByteStorage<S> {
-    fn len(&mut self) -> aero_storage::Result<u64> {
-        self.0
-            .len()
-            .map_err(|e| emulator_disk_error_to_aero_storage(e, None, None, None))
-    }
-
-    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-        self.0
-            .set_len(len)
-            .map_err(|e| emulator_disk_error_to_aero_storage(e, None, None, Some(len)))
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        match self.0.read_at(offset, buf) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                // Best-effort capacity reporting: if the underlying backend supports `len()`,
-                // include it in the aero-storage out-of-bounds error.
-                let capacity = self.0.len().ok();
-                Err(emulator_disk_error_to_aero_storage(
-                    err,
-                    Some(offset),
-                    Some(buf.len()),
-                    capacity,
-                ))
-            }
-        }
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-        match self.0.write_at(offset, buf) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let capacity = self.0.len().ok();
-                Err(emulator_disk_error_to_aero_storage(
-                    err,
-                    Some(offset),
-                    Some(buf.len()),
-                    capacity,
-                ))
-            }
-        }
-    }
-
-    fn flush(&mut self) -> aero_storage::Result<()> {
-        self.0
-            .flush()
-            .map_err(|e| emulator_disk_error_to_aero_storage(e, None, None, None))
-    }
-}
-
-impl<B: aero_storage::StorageBackend> ByteStorage for ByteStorageFromStorageBackend<B> {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-        self.0
-            .read_at(offset, buf)
-            .map_err(aero_storage_disk_error_to_emulator)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-        self.0
-            .write_at(offset, buf)
-            .map_err(aero_storage_disk_error_to_emulator)
-    }
-
-    fn flush(&mut self) -> DiskResult<()> {
-        self.0.flush().map_err(aero_storage_disk_error_to_emulator)
-    }
-
-    fn len(&mut self) -> DiskResult<u64> {
-        self.0.len().map_err(aero_storage_disk_error_to_emulator)
-    }
-
-    fn set_len(&mut self, len: u64) -> DiskResult<()> {
-        self.0
-            .set_len(len)
-            .map_err(aero_storage_disk_error_to_emulator)
-    }
-}
-
-// On non-wasm targets, emulator `DiskBackend` requires `Send`, so `VirtualDisk` adapters must be
-// `Send` as well.
 #[cfg(not(target_arch = "wasm32"))]
 impl<D: aero_storage::VirtualDisk + Send> DiskBackend for EmuDiskBackendFromVirtualDisk<D> {
     fn sector_size(&self) -> u32 {

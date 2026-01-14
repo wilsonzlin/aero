@@ -2,9 +2,8 @@ use aero_storage::{RawDisk as StorageRawDisk, VirtualDisk as _};
 
 use crate::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
-    StorageBackendFromByteStorage,
 };
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 /// Raw disk image backed by a byte-addressed storage primitive.
@@ -12,12 +11,12 @@ use crate::io::storage::error::{DiskError, DiskResult};
 /// This is a thin compatibility wrapper around the canonical `aero_storage::RawDisk`
 /// implementation, preserving the emulator disk stack's configurable sector size.
 pub struct RawDisk<S> {
-    inner: StorageRawDisk<StorageBackendFromByteStorage<S>>,
+    inner: StorageRawDisk<S>,
     sector_size: u32,
     total_sectors: u64,
 }
 
-impl<S: ByteStorage> RawDisk<S> {
+impl<S: aero_storage::StorageBackend> RawDisk<S> {
     pub fn create(storage: S, sector_size: u32, total_sectors: u64) -> DiskResult<Self> {
         if sector_size == 0 {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
@@ -27,9 +26,8 @@ impl<S: ByteStorage> RawDisk<S> {
             .checked_mul(sector_size as u64)
             .ok_or(DiskError::Unsupported("disk size overflow"))?;
 
-        let inner =
-            StorageRawDisk::create(StorageBackendFromByteStorage::new(storage), capacity_bytes)
-                .map_err(aero_storage_disk_error_to_emulator)?;
+        let inner = StorageRawDisk::create(storage, capacity_bytes)
+            .map_err(aero_storage_disk_error_to_emulator)?;
 
         Ok(Self {
             inner,
@@ -43,8 +41,7 @@ impl<S: ByteStorage> RawDisk<S> {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
 
-        let inner = StorageRawDisk::open(StorageBackendFromByteStorage::new(storage))
-            .map_err(aero_storage_disk_error_to_emulator)?;
+        let inner = StorageRawDisk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
 
         let len = inner.capacity_bytes();
         if !len.is_multiple_of(sector_size as u64) {
@@ -61,7 +58,7 @@ impl<S: ByteStorage> RawDisk<S> {
     }
 
     pub fn into_storage(self) -> S {
-        self.inner.into_backend().into_inner()
+        self.inner.into_backend()
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<u64> {
@@ -88,7 +85,7 @@ impl<S: ByteStorage> RawDisk<S> {
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for RawDisk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for RawDisk<S> {
     fn sector_size(&self) -> u32 {
         self.sector_size
     }

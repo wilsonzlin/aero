@@ -24,76 +24,15 @@ pub enum WriteCachePolicy {
     WriteBack,
 }
 
-/// A byte-addressable random-access storage primitive.
+/// Deprecated alias for the canonical synchronous byte-addressed backend trait.
 ///
-/// # Canonical trait note
-///
-/// This trait is **legacy** and exists to support `crates/emulator`'s historical disk stack.
-/// New code should prefer the canonical synchronous byte-backend trait:
-/// [`aero_storage::StorageBackend`].
+/// New code should use [`aero_storage::StorageBackend`] directly.
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
-///
-/// This trait is intentionally minimal so it can be implemented on top of browser APIs
-/// (e.g. OPFS SyncAccessHandle) without pulling in OS-specific file APIs.
-pub trait ByteStorage {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()>;
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()>;
-    fn flush(&mut self) -> DiskResult<()>;
-    fn len(&mut self) -> DiskResult<u64>;
-    fn is_empty(&mut self) -> DiskResult<bool> {
-        Ok(self.len()? == 0)
-    }
-    fn set_len(&mut self, len: u64) -> DiskResult<()>;
-}
-
-impl<T: ByteStorage + ?Sized> ByteStorage for &mut T {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-        (**self).read_at(offset, buf)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-        (**self).write_at(offset, buf)
-    }
-
-    fn flush(&mut self) -> DiskResult<()> {
-        (**self).flush()
-    }
-
-    fn len(&mut self) -> DiskResult<u64> {
-        (**self).len()
-    }
-
-    fn set_len(&mut self, len: u64) -> DiskResult<()> {
-        (**self).set_len(len)
-    }
-}
-
-impl<T: ByteStorage + ?Sized> ByteStorage for Box<T> {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-        (**self).read_at(offset, buf)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-        (**self).write_at(offset, buf)
-    }
-
-    fn flush(&mut self) -> DiskResult<()> {
-        (**self).flush()
-    }
-
-    fn len(&mut self) -> DiskResult<u64> {
-        (**self).len()
-    }
-
-    fn is_empty(&mut self) -> DiskResult<bool> {
-        (**self).is_empty()
-    }
-
-    fn set_len(&mut self, len: u64) -> DiskResult<()> {
-        (**self).set_len(len)
-    }
-}
+#[deprecated(
+    note = "use aero_storage::StorageBackend instead (docs/20-storage-trait-consolidation.md)"
+)]
+pub type ByteStorage = dyn aero_storage::StorageBackend;
 
 /// Synchronous virtual block device interface.
 ///
@@ -435,7 +374,7 @@ impl VirtualDrive {
         })
     }
 
-    fn open_auto_inner<S: ByteStorage + MaybeSend + 'static>(
+    fn open_auto_inner<S: aero_storage::StorageBackend + MaybeSend + 'static>(
         mut storage: S,
         raw_sector_size: u32,
         write_cache: WriteCachePolicy,
@@ -444,7 +383,7 @@ impl VirtualDrive {
         Self::open_with_format_inner(format, storage, raw_sector_size, write_cache)
     }
 
-    fn open_with_format_inner<S: ByteStorage + MaybeSend + 'static>(
+    fn open_with_format_inner<S: aero_storage::StorageBackend + MaybeSend + 'static>(
         format: DiskFormat,
         storage: S,
         raw_sector_size: u32,
@@ -463,7 +402,7 @@ impl VirtualDrive {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open_auto<S: ByteStorage + Send + 'static>(
+    pub fn open_auto<S: aero_storage::StorageBackend + Send + 'static>(
         storage: S,
         raw_sector_size: u32,
         write_cache: WriteCachePolicy,
@@ -472,7 +411,7 @@ impl VirtualDrive {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn open_auto<S: ByteStorage + 'static>(
+    pub fn open_auto<S: aero_storage::StorageBackend + 'static>(
         storage: S,
         raw_sector_size: u32,
         write_cache: WriteCachePolicy,
@@ -481,7 +420,7 @@ impl VirtualDrive {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open_with_format<S: ByteStorage + Send + 'static>(
+    pub fn open_with_format<S: aero_storage::StorageBackend + Send + 'static>(
         format: DiskFormat,
         storage: S,
         raw_sector_size: u32,
@@ -491,7 +430,7 @@ impl VirtualDrive {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn open_with_format<S: ByteStorage + 'static>(
+    pub fn open_with_format<S: aero_storage::StorageBackend + 'static>(
         format: DiskFormat,
         storage: S,
         raw_sector_size: u32,

@@ -1,4 +1,5 @@
-use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
+use crate::io::storage::adapters::aero_storage_disk_error_to_emulator;
+use crate::io::storage::disk::{DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 use super::aerospar::AerosparDisk;
@@ -19,7 +20,7 @@ pub enum SparseDisk<S> {
     Aerosprs(AerosprsDisk<S>),
 }
 
-impl<S: ByteStorage> SparseDisk<S> {
+impl<S: aero_storage::StorageBackend> SparseDisk<S> {
     /// Create a new sparse disk image in the current `AEROSPAR` format.
     ///
     /// Note: this does **not** create legacy `AEROSPRS` images; that format is supported only for
@@ -41,13 +42,15 @@ impl<S: ByteStorage> SparseDisk<S> {
     /// Open a sparse disk image, auto-selecting between `AEROSPAR` and legacy `AEROSPRS` based on
     /// the magic header.
     pub fn open(mut storage: S) -> DiskResult<Self> {
-        let len = storage.len()?;
+        let len = storage.len().map_err(aero_storage_disk_error_to_emulator)?;
         if len < 8 {
             return Err(DiskError::CorruptImage("sparse header truncated"));
         }
 
         let mut magic = [0u8; 8];
-        storage.read_at(0, &mut magic)?;
+        storage
+            .read_at(0, &mut magic)
+            .map_err(aero_storage_disk_error_to_emulator)?;
 
         if magic == AEROSPAR_MAGIC {
             return Ok(Self::Aerospar(AerosparDisk::open(storage)?));
@@ -67,7 +70,7 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 }
 
-impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
+impl<S: aero_storage::StorageBackend + MaybeSend> DiskBackend for SparseDisk<S> {
     fn sector_size(&self) -> u32 {
         match self {
             Self::Aerospar(disk) => disk.sector_size(),
