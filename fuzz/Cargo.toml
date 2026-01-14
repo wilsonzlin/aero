@@ -14,7 +14,7 @@ cargo-fuzz = true
 default = []
 
 # GPU / shader-related fuzz targets (opt-in).
-aerogpu = ["dep:aero-gpu"]
+aerogpu = ["dep:aero-gpu", "dep:aero-shared", "dep:aero-protocol"]
 aerogpu-trace = ["dep:aero-gpu-trace"]
 dxbc = ["dep:aero-dxbc"]
 d3d9 = ["dep:aero-d3d9"]
@@ -92,9 +92,11 @@ optional = true
 
 [dependencies.aero-shared]
 path = "../crates/aero-shared"
+optional = true
 
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
+optional = true
 
 [dependencies.firmware]
 path = "../crates/firmware"
