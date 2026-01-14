@@ -390,6 +390,14 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
   let changed = false;
 
+  // The Aero BIOS does not currently probe multiple devices; it only exposes the selected boot
+  // drive (`DL`). For Windows install flows (HDD + install ISO), we must explicitly select the CD
+  // drive (`0xE0`) before resetting, otherwise the BIOS will try HDD0 (`0x80`) and the install ISO
+  // will never boot.
+  //
+  // Policy: boot from CD when an ISO is present, otherwise boot from HDD.
+  const desiredBootDrive = msg.cd ? 0xe0 : 0x80;
+
   if (msg.hdd) {
     const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
     if (plan.format === "aerospar") {
@@ -436,6 +444,19 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     }
   }
 
+  if (!msg.cd) {
+    // Best-effort: allow detaching install media when the selection removes it.
+    try {
+      const eject = (m as unknown as { eject_install_media?: unknown }).eject_install_media;
+      if (typeof eject === "function") {
+        (eject as () => void).call(m);
+        changed = true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if (msg.cd) {
     const plan = planMachineBootDiskAttachment(msg.cd, "cd");
     const isoPath = plan.opfsPath;
@@ -472,6 +493,22 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   }
 
   if (changed) {
+    try {
+      const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+      if (typeof setBootDrive === "function") {
+        (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
+      } else if (msg.cd) {
+        // Warn when an install ISO is present but we cannot select the CD boot drive.
+        pushEvent({
+          kind: "log",
+          level: "warn",
+          message: "[machine_cpu] CD boot requested but Machine.set_boot_drive is unavailable; BIOS will likely boot from HDD.",
+        });
+      }
+    } catch {
+      // ignore
+    }
+
     try {
       m.reset();
     } catch {
