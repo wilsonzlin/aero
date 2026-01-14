@@ -1830,7 +1830,6 @@ impl AerogpuD3d11Executor {
                     usage: wgpu::TextureUsages::STORAGE_BINDING,
                     view_formats: &[],
                 });
-                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     device.poll(wgpu::Maintain::Poll);
@@ -1838,7 +1837,10 @@ impl AerogpuD3d11Executor {
                         continue;
                     }
                 }
-                dummy_storage_texture_views.insert(format, view);
+                dummy_storage_texture_views.insert(
+                    format,
+                    tex.create_view(&wgpu::TextureViewDescriptor::default()),
+                );
             }
         }
 
