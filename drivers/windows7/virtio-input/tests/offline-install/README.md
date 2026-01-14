@@ -8,18 +8,19 @@ test images where you want input working immediately).
 > Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
-> - Keyboard/mouse (`aero_virtio_input.inf`; **SUBSYS-only**):
+> - Keyboard/mouse (canonical: `aero_virtio_input.inf`; **SUBSYS-only**):
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (subsystem-qualified)
 >   - Note: the canonical keyboard/mouse INF is intentionally **SUBSYS-only** (no generic fallback HWID).
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
-> - Legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
+> - Legacy filename alias (disabled by default): `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
 >   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
->   - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`.
+>   - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` for
+>     environments where the Aero subsystem IDs are not exposed.
 >   - Allowed to diverge from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
 >     fallback entry; outside the models sections it is expected to stay in sync (see
 >     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (install only one of the two
->     filenames at a time).
+>   - Do **not** stage/install it alongside `aero_virtio_input.inf` (install only one of the two filenames at a time):
+>     overlapping INFs can lead to confusing binding/upgrade behavior.
 
 The commands below assume you already have a **built driver package directory** containing:
 
