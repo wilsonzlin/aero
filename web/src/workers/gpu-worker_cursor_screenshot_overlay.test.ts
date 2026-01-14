@@ -692,6 +692,61 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     }
   }, 25_000);
 
+  it("decodes sRGB scanout formats from guest RAM before returning screenshots", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    // Scanout pixel: RGBA with R=0x80 in an sRGB format.
+    // If treated as linear, we'd see R=0x80. When decoded from sRGB -> linear, it becomes ~0x37.
+    views.guestU8.set([0x80, 0x00, 0x00, 0xff], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_R8G8B8A8_SRGB,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, false);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      // sRGB 0x80 -> linear ~0x37, alpha preserved => 0xff000037.
+      expect(firstPixelU32(shot.rgba8)).toBe(0xff000037);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
   it("propagates cursor alpha when the scanout pixel is transparent", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 1 * 1024 * 1024,
