@@ -34,3 +34,13 @@ rand_chacha = "0.3"
 # Enable shared-memory instantiation tests (`wasmtime::SharedMemory` + `Config::wasm_threads`) without
 # forcing the entire crate's normal build to depend on Wasmtime's threads support.
 wasmtime = { version = "40.0.1", default-features = false, features = ["cranelift", "runtime", "std", "threads"] }
+
+[[test]]
+name = "wasm_codegen"
+path = "tests/wasm_codegen.rs"
+required-features = ["legacy-baseline"]
+
+[[test]]
+name = "tier1_inline_tlb"
+path = "tests/tier1_inline_tlb.rs"
+required-features = ["tier1-inline-tlb"]
