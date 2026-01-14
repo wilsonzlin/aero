@@ -2,6 +2,7 @@
 
 use aero_storage::{DiskError, StdFileBackend, StorageBackend};
 
+use std::fs::OpenOptions;
 use std::io::Write as _;
 
 #[cfg(any(unix, windows))]
@@ -172,6 +173,48 @@ fn std_file_backend_create_missing_parent_reports_path_and_size() {
             assert!(msg.contains("failed to create file"));
             assert!(msg.contains(&format!("path={}", path.display())));
             assert!(msg.contains(&format!("size={size}")));
+        }
+        other => panic!("expected DiskError::Io, got {other:?}"),
+    }
+}
+
+#[test]
+fn std_file_backend_from_file_with_path_reports_path_in_io_errors() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(b"0").unwrap();
+    tmp.flush().unwrap();
+
+    let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();
+    let mut backend = StdFileBackend::from_file_with_path(file, tmp.path());
+
+    let err = backend.write_at(0, b"x").unwrap_err();
+    match err {
+        DiskError::Io(msg) => {
+            assert!(msg.contains("write_at failed"));
+            assert!(msg.contains(&format!("path={}", tmp.path().display())));
+            assert!(msg.contains("offset=0"));
+            assert!(msg.contains("len=1"));
+        }
+        other => panic!("expected DiskError::Io, got {other:?}"),
+    }
+}
+
+#[test]
+fn std_file_backend_from_file_reports_unknown_path_in_io_errors() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(b"0").unwrap();
+    tmp.flush().unwrap();
+
+    let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();
+    let mut backend = StdFileBackend::from_file(file);
+
+    let err = backend.write_at(0, b"x").unwrap_err();
+    match err {
+        DiskError::Io(msg) => {
+            assert!(msg.contains("write_at failed"));
+            assert!(msg.contains("path=<unknown>"));
+            assert!(msg.contains("offset=0"));
+            assert!(msg.contains("len=1"));
         }
         other => panic!("expected DiskError::Io, got {other:?}"),
     }
