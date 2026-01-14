@@ -1,7 +1,7 @@
 use crate::error::{Result, XtaskError};
 use std::env;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 pub fn repo_root() -> Result<PathBuf> {
@@ -17,12 +17,32 @@ pub fn display_rel_path(path: &Path) -> String {
     // Prefer repo-relative paths in errors for readability and stable CI output.
     // Fall back to the provided path as-is if the repo root can't be resolved.
     match repo_root() {
-        Ok(repo_root) => path
-            .strip_prefix(&repo_root)
-            .unwrap_or(path)
-            .display()
-            .to_string(),
+        Ok(repo_root) => {
+            let path = clean_path(path);
+            let rel = path.strip_prefix(&repo_root).unwrap_or(&path);
+            if rel.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                rel.display().to_string()
+            }
+        }
         Err(_) => path.display().to_string(),
+    }
+}
+
+pub fn clean_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        if matches!(component, Component::CurDir) {
+            continue;
+        }
+        out.push(component.as_os_str());
+    }
+
+    if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
     }
 }
 
@@ -192,11 +212,12 @@ fn normalize_and_validate_node_dir(repo_root: &Path, dir: &str) -> Result<PathBu
 
 fn normalize_dir(repo_root: &Path, path: &str) -> PathBuf {
     let path = PathBuf::from(path);
-    if path.is_absolute() {
+    let out = if path.is_absolute() {
         path
     } else {
         repo_root.join(path)
-    }
+    };
+    clean_path(&out)
 }
 
 fn env_var_nonempty(key: &str) -> Option<String> {

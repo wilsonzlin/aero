@@ -596,6 +596,7 @@ fn resolve_node_dir_for_input(repo_root: &Path, cli_override: Option<&str>) -> R
         } else {
             repo_root.join(path)
         };
+        let resolved = paths::clean_path(&resolved);
         if resolved.join("package.json").is_file() {
             return Ok(resolved);
         }
