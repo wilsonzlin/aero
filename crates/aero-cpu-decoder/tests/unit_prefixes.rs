@@ -2,7 +2,7 @@ use aero_cpu_decoder::{
     decode_one, decode_prefixes, scan_prefixes, DecodeError, DecodeMode, Segment,
     MAX_INSTRUCTION_LEN,
 };
-use iced_x86::{EncodingKind, MandatoryPrefix, Mnemonic};
+use iced_x86::{Code, Mnemonic};
 
 fn assert_prefix_api_matches_decode_one(mode: DecodeMode, bytes: &[u8]) {
     let decoded = decode_one(mode, 0, bytes).expect("decode_one");
@@ -317,12 +317,8 @@ fn mandatory_f2_f3_prefixes_are_byte_based_for_prefix_metadata() {
     let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
     assert!(decoded.prefixes.rep);
     assert!(!decoded.prefixes.repne);
+    assert_eq!(decoded.instruction.code(), Code::Pause);
     assert!(!decoded.instruction.has_rep_prefix());
-    assert_eq!(
-        decoded.instruction.op_code().mandatory_prefix(),
-        MandatoryPrefix::PF3
-    );
-    assert_eq!(decoded.instruction.op_code().encoding(), EncodingKind::Legacy);
 
     // VEX VMOVSS: mandatory PF3 is encoded in the VEX prefix `pp` field, so there
     // is no F3 prefix byte in the instruction stream and `Prefixes::rep` stays
@@ -331,10 +327,6 @@ fn mandatory_f2_f3_prefixes_are_byte_based_for_prefix_metadata() {
     let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
     assert!(!decoded.prefixes.rep);
     assert!(!decoded.prefixes.repne);
+    assert_eq!(decoded.instruction.code(), Code::VEX_Vmovss_xmm_xmm_xmm);
     assert!(!decoded.instruction.has_rep_prefix());
-    assert_eq!(
-        decoded.instruction.op_code().mandatory_prefix(),
-        MandatoryPrefix::PF3
-    );
-    assert_eq!(decoded.instruction.op_code().encoding(), EncodingKind::VEX);
 }
