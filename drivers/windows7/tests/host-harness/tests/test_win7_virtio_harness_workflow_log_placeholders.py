@@ -25,7 +25,10 @@ class Win7VirtioHarnessWorkflowLogPlaceholdersTests(unittest.TestCase):
         self.assertIn('if [[ ! -s "${http_log}" ]]; then', self.text)
         self.assertIn('(no HTTP requests were logged)', self.text)
 
+        self.assertIn('qemu_stderr_log="${serial_log%.*}.qemu.stderr.log"', self.text)
+        self.assertIn('if [[ ! -f "${qemu_stderr_log}" ]]; then', self.text)
+        self.assertIn('(qemu stderr log was not produced)', self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
-

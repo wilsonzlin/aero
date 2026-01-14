@@ -857,6 +857,10 @@ jobs:
           if [[ ! -s "${http_log}" ]]; then
             echo "(no HTTP requests were logged)" >"${http_log}"
           fi
+          qemu_stderr_log="${serial_log%.*}.qemu.stderr.log"
+          if [[ ! -f "${qemu_stderr_log}" ]]; then
+            echo "(qemu stderr log was not produced)" >"${qemu_stderr_log}"
+          fi
           set -e
           echo "exit_code=${harness_exit}" >>"${GITHUB_OUTPUT}"
           exit "${harness_exit}"
