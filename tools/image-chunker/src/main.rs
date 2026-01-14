@@ -5969,6 +5969,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_local_manifest_respects_chunk_index_width() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; SECTOR_SIZE];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let mut manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        manifest.chunk_index_width = 1;
+
+        let chunk0_path = dir.path().join(chunk_object_key_with_width(0, 1)?);
+        let chunk1_path = dir.path().join(chunk_object_key_with_width(1, 1)?);
+        tokio::fs::write(&chunk0_path, &chunk0)
+            .await
+            .with_context(|| format!("write {}", chunk0_path.display()))?;
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_local_manifest_rejects_meta_mismatch() -> Result<()> {
         let dir = tempfile::tempdir().context("create tempdir")?;
         tokio::fs::create_dir_all(dir.path().join("chunks"))
@@ -6435,6 +6494,66 @@ mod tests {
             region: "us-east-1".to_string(),
             concurrency: 2,
             retries: 2,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_respects_chunk_index_width() -> Result<()> {
+        // Use a minimal chunkIndexWidth to ensure the verifier does not assume fixed-width chunk keys.
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let mut manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        manifest.chunk_index_width = 1;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            "/chunks/0.bin" => (200, Vec::new(), chunk0.clone()),
+            "/chunks/1.bin" => (200, Vec::new(), chunk1.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
             max_chunks: MAX_CHUNKS,
             chunk_sample: None,
             chunk_sample_seed: None,
