@@ -100,8 +100,9 @@ fn fixed_function_shader_generation_supports_8_texcoords() {
             color_arg2: TextureArg::Diffuse,
             alpha_op: TextureOp::SelectArg1,
             alpha_arg1: TextureArg::Texture,
-            alpha_arg2: TextureArg::Current,
+            ..TextureStageState::default()
         },
+        stage1: TextureStageState::default(),
         alpha_test: AlphaTestState::default(),
         fog: FogState { enabled: true },
         lighting: LightingState::default(),

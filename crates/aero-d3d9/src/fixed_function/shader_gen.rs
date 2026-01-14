@@ -2,7 +2,8 @@ use std::fmt::Write;
 
 use super::fvf::{Fvf, FvfLayout, PositionType, TexCoordSize};
 use super::tss::{
-    AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureOp, TextureStageState,
+    AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureArgFlags,
+    TextureArgSource, TextureOp, TextureStageState,
 };
 
 #[repr(C)]
@@ -29,6 +30,10 @@ pub struct FixedFunctionGlobals {
     pub light_color: [f32; 4],
     /// (lighting_enabled, light0_enabled, _, _).
     pub lighting_flags: [u32; 4],
+    /// `D3DRS_TEXTUREFACTOR` converted to linear RGBA floats.
+    pub texture_factor: [f32; 4],
+    /// `D3DTSS_CONSTANT` values for stages 0..1.
+    pub stage_constants: [[f32; 4]; 2],
 }
 
 impl FixedFunctionGlobals {
@@ -49,13 +54,15 @@ impl FixedFunctionGlobals {
             light_dir: [0.0, 0.0, -1.0, 0.0],
             light_color: [1.0, 1.0, 1.0, 1.0],
             lighting_flags: [0, 0, 0, 0],
+            texture_factor: [1.0, 1.0, 1.0, 1.0],
+            stage_constants: [[0.0, 0.0, 0.0, 0.0]; 2],
         }
     }
 
     /// Raw bytes suitable for uploading into a `wgpu` uniform buffer.
     ///
     /// This is safe because `FixedFunctionGlobals` is `#[repr(C)]` and only
-    /// contains plain old data (`f32` arrays).
+    /// contains plain old data (`f32`/`u32` arrays).
     pub fn as_bytes(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
@@ -70,6 +77,7 @@ impl FixedFunctionGlobals {
 pub struct FixedFunctionShaderDesc {
     pub fvf: Fvf,
     pub stage0: TextureStageState,
+    pub stage1: TextureStageState,
     pub alpha_test: AlphaTestState,
     pub fog: FogState,
     pub lighting: LightingState,
@@ -92,12 +100,25 @@ impl FixedFunctionShaderDesc {
 
         write_u32(&mut hash, self.fvf.0);
 
-        write_u8(&mut hash, self.stage0.color_op as u8);
-        write_u8(&mut hash, self.stage0.color_arg1 as u8);
-        write_u8(&mut hash, self.stage0.color_arg2 as u8);
-        write_u8(&mut hash, self.stage0.alpha_op as u8);
-        write_u8(&mut hash, self.stage0.alpha_arg1 as u8);
-        write_u8(&mut hash, self.stage0.alpha_arg2 as u8);
+        fn write_tex_arg(hash: &mut u64, arg: TextureArg) {
+            write_u8(hash, arg.source as u8);
+            write_u8(hash, arg.flags.bits());
+        }
+
+        fn write_stage(hash: &mut u64, stage: &TextureStageState) {
+            write_u8(hash, stage.color_op as u8);
+            write_tex_arg(hash, stage.color_arg0);
+            write_tex_arg(hash, stage.color_arg1);
+            write_tex_arg(hash, stage.color_arg2);
+
+            write_u8(hash, stage.alpha_op as u8);
+            write_tex_arg(hash, stage.alpha_arg0);
+            write_tex_arg(hash, stage.alpha_arg1);
+            write_tex_arg(hash, stage.alpha_arg2);
+        }
+
+        write_stage(&mut hash, &self.stage0);
+        write_stage(&mut hash, &self.stage1);
 
         write_u8(&mut hash, self.alpha_test.enabled as u8);
         write_u8(&mut hash, self.alpha_test.func as u8);
@@ -311,6 +332,8 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
 
     wgsl.push_str("@group(1) @binding(0) var tex0: texture_2d<f32>;\n");
     wgsl.push_str("@group(1) @binding(1) var samp0: sampler;\n\n");
+    wgsl.push_str("@group(1) @binding(2) var tex1: texture_2d<f32>;\n");
+    wgsl.push_str("@group(1) @binding(3) var samp1: sampler;\n\n");
 
     wgsl.push_str("struct FragmentIn {\n  @location(0) diffuse: vec4<f32>,\n  @location(1) specular: vec4<f32>,\n");
     let mut location = 2u32;
@@ -328,33 +351,16 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     wgsl.push_str("@fragment\nfn fs_main(input: FragmentIn) -> @location(0) vec4<f32> {\n");
 
     wgsl.push_str("  var current = input.diffuse;\n");
+    // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
+    // stages. Only process stage1 if stage0 is active.
+    if desc.stage0.color_op != TextureOp::Disable || desc.stage0.alpha_op != TextureOp::Disable {
+        emit_tss_stage(&mut wgsl, desc, layout, 0, &desc.stage0);
 
-    let uses_texture = matches!(desc.stage0.color_arg1, TextureArg::Texture)
-        || matches!(desc.stage0.color_arg2, TextureArg::Texture)
-        || matches!(desc.stage0.alpha_arg1, TextureArg::Texture)
-        || matches!(desc.stage0.alpha_arg2, TextureArg::Texture);
-
-    if uses_texture {
-        if layout.texcoords.is_empty() {
-            wgsl.push_str("  let tex_color = textureSample(tex0, samp0, vec2<f32>(0.0, 0.0));\n");
-        } else {
-            wgsl.push_str("  let tex_color = textureSample(tex0, samp0, input.tex0.xy);\n");
+        if desc.stage1.color_op != TextureOp::Disable || desc.stage1.alpha_op != TextureOp::Disable
+        {
+            emit_tss_stage(&mut wgsl, desc, layout, 1, &desc.stage1);
         }
-    } else {
-        wgsl.push_str("  let tex_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);\n");
     }
-
-    let arg1 = wgsl_tex_arg(&desc.stage0.color_arg1);
-    let arg2 = wgsl_tex_arg(&desc.stage0.color_arg2);
-    let color_expr = wgsl_color_op(desc.stage0.color_op, arg1, arg2, ".rgb");
-    let alpha_arg1 = wgsl_tex_arg(&desc.stage0.alpha_arg1);
-    let alpha_arg2 = wgsl_tex_arg(&desc.stage0.alpha_arg2);
-    let alpha_expr = wgsl_color_op(desc.stage0.alpha_op, alpha_arg1, alpha_arg2, ".a");
-
-    wgsl.push_str("  {\n");
-    let _ = writeln!(wgsl, "    let rgb = {};", color_expr);
-    let _ = writeln!(wgsl, "    let a = {};", alpha_expr);
-    wgsl.push_str("    current = vec4<f32>(rgb, a);\n  }\n");
 
     if desc.alpha_test.enabled {
         let cond = wgsl_compare_func(desc.alpha_test.func, "current.a", "globals.alpha_test.x");
@@ -369,33 +375,156 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     wgsl
 }
 
-fn wgsl_tex_arg(arg: &TextureArg) -> &'static str {
-    match arg {
-        TextureArg::Current => "current",
-        TextureArg::Diffuse => "input.diffuse",
-        TextureArg::Texture => "tex_color",
+fn emit_tss_stage(
+    wgsl: &mut String,
+    desc: &FixedFunctionShaderDesc,
+    layout: &FvfLayout,
+    stage_index: usize,
+    stage: &TextureStageState,
+) {
+    // In D3D9, `D3DTOP_DISABLE` on stage N disables that stage and all subsequent stages.
+    if stage.color_op == TextureOp::Disable && stage.alpha_op == TextureOp::Disable {
+        return;
+    }
+
+    let tex_var = format!("tex{}_color", stage_index);
+    let tex_decl = match stage_index {
+        0 => ("tex0", "samp0"),
+        1 => ("tex1", "samp1"),
+        _ => unreachable!("only stages 0 and 1 are supported"),
+    };
+
+    if stage_uses_texture(stage) {
+        // Default texcoord mapping: TEXCOORDn feeds stage n. If the vertex format provides fewer
+        // sets than stages, fall back to TEXCOORD0 (common for UI that reuses the same UVs).
+        let uv_expr = if layout.texcoords.is_empty() {
+            "vec2<f32>(0.0, 0.0)".to_string()
+        } else if stage_index < layout.texcoords.len() {
+            format!("input.tex{}.xy", stage_index)
+        } else {
+            "input.tex0.xy".to_string()
+        };
+        let _ = writeln!(
+            wgsl,
+            "  let {} = textureSample({}, {}, {});",
+            tex_var, tex_decl.0, tex_decl.1, uv_expr
+        );
+    } else {
+        let _ = writeln!(
+            wgsl,
+            "  let {} = vec4<f32>(1.0, 1.0, 1.0, 1.0);",
+            tex_var
+        );
+    }
+
+    let color_arg0 = wgsl_arg_component(stage.color_arg0, stage_index, Component::Rgb);
+    let color_arg1 = wgsl_arg_component(stage.color_arg1, stage_index, Component::Rgb);
+    let color_arg2 = wgsl_arg_component(stage.color_arg2, stage_index, Component::Rgb);
+    let alpha_arg0 = wgsl_arg_component(stage.alpha_arg0, stage_index, Component::Alpha);
+    let alpha_arg1 = wgsl_arg_component(stage.alpha_arg1, stage_index, Component::Alpha);
+    let alpha_arg2 = wgsl_arg_component(stage.alpha_arg2, stage_index, Component::Alpha);
+
+    let rgb_raw = wgsl_op_expr(stage.color_op, &color_arg0, &color_arg1, &color_arg2, Component::Rgb);
+    let a_raw = wgsl_op_expr(stage.alpha_op, &alpha_arg0, &alpha_arg1, &alpha_arg2, Component::Alpha);
+
+    wgsl.push_str("  {\n");
+    let _ = writeln!(wgsl, "    let rgb_raw = {};", rgb_raw);
+    let _ = writeln!(wgsl, "    let a_raw = {};", a_raw);
+    wgsl.push_str("    let rgb = clamp(rgb_raw, vec3<f32>(0.0), vec3<f32>(1.0));\n");
+    wgsl.push_str("    let a = clamp(a_raw, 0.0, 1.0);\n");
+    wgsl.push_str("    current = vec4<f32>(rgb, a);\n  }\n");
+
+    if desc.fog.enabled {
+        // Fog mixes after the full texture pipeline; handled after all stages.
     }
 }
 
-fn wgsl_color_op(op: TextureOp, arg1: &str, arg2: &str, component: &str) -> String {
-    match op {
-        TextureOp::Disable => format!("current{}", component),
-        TextureOp::SelectArg1 => format!("{}{}", arg1, component),
-        TextureOp::SelectArg2 => format!("{}{}", arg2, component),
-        TextureOp::Modulate => format!("({}{} * {}{})", arg1, component, arg2, component),
-        TextureOp::Add => {
-            if component == ".rgb" {
-                format!(
-                    "clamp({}{} + {}{}, vec3<f32>(0.0), vec3<f32>(1.0))",
-                    arg1, component, arg2, component
-                )
+fn stage_uses_texture(stage: &TextureStageState) -> bool {
+    [
+        stage.color_arg0,
+        stage.color_arg1,
+        stage.color_arg2,
+        stage.alpha_arg0,
+        stage.alpha_arg1,
+        stage.alpha_arg2,
+    ]
+    .into_iter()
+    .any(|arg| matches!(arg.source, TextureArgSource::Texture))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Component {
+    Rgb,
+    Alpha,
+}
+
+fn wgsl_arg_component(arg: TextureArg, stage_index: usize, component: Component) -> String {
+    let base = match arg.source {
+        TextureArgSource::Current => "current".to_string(),
+        TextureArgSource::Diffuse => "input.diffuse".to_string(),
+        TextureArgSource::Specular => "input.specular".to_string(),
+        TextureArgSource::Texture => format!("tex{}_color", stage_index),
+        TextureArgSource::TextureFactor => "globals.texture_factor".to_string(),
+        TextureArgSource::Factor => format!("globals.stage_constants[{}]", stage_index),
+    };
+
+    let mut expr = match component {
+        Component::Rgb => {
+            if arg.flags.contains(TextureArgFlags::ALPHA_REPLICATE) {
+                format!("vec3<f32>({}.a)", base)
             } else {
-                format!(
-                    "clamp({}{} + {}{}, 0.0, 1.0)",
-                    arg1, component, arg2, component
-                )
+                format!("{}.rgb", base)
             }
         }
+        Component::Alpha => format!("{}.a", base),
+    };
+
+    if arg.flags.contains(TextureArgFlags::COMPLEMENT) {
+        expr = match component {
+            Component::Rgb => format!("(vec3<f32>(1.0) - ({}))", expr),
+            Component::Alpha => format!("(1.0 - ({}))", expr),
+        };
+    }
+
+    expr
+}
+
+fn wgsl_op_expr(
+    op: TextureOp,
+    arg0: &str,
+    arg1: &str,
+    arg2: &str,
+    component: Component,
+) -> String {
+    match op {
+        TextureOp::Disable => match component {
+            Component::Rgb => "current.rgb".to_string(),
+            Component::Alpha => "current.a".to_string(),
+        },
+        TextureOp::SelectArg1 => arg1.to_string(),
+        TextureOp::SelectArg2 => arg2.to_string(),
+        TextureOp::Modulate => format!("(({}) * ({}))", arg1, arg2),
+        TextureOp::Modulate2x => format!("(2.0 * ({}) * ({}))", arg1, arg2),
+        TextureOp::Modulate4x => format!("(4.0 * ({}) * ({}))", arg1, arg2),
+        TextureOp::Add => format!("(({}) + ({}))", arg1, arg2),
+        TextureOp::AddSigned => match component {
+            Component::Rgb => format!("(({}) + ({}) - vec3<f32>(0.5))", arg1, arg2),
+            Component::Alpha => format!("(({}) + ({}) - 0.5)", arg1, arg2),
+        },
+        TextureOp::Subtract => format!("(({}) - ({}))", arg1, arg2),
+        TextureOp::Lerp => format!("mix(({}), ({}), ({}))", arg2, arg1, arg0),
+        TextureOp::DotProduct3 => match component {
+            Component::Rgb => {
+                // Treat inputs as signed vectors in [-0.5, 0.5] and scale back into [0, 1].
+                format!(
+                    "vec3<f32>(dot((({}) - vec3<f32>(0.5)), (({}) - vec3<f32>(0.5))) * 4.0)",
+                    arg1, arg2
+                )
+            }
+            // DOTPRODUCT3 is not defined for alpha in D3D9's fixed-function pipeline. Preserve
+            // alpha to avoid surprising changes in content that only uses DP3 for RGB.
+            Component::Alpha => "current.a".to_string(),
+        },
     }
 }
 
@@ -436,6 +565,8 @@ struct Globals {
   light_dir: vec4<f32>,
   light_color: vec4<f32>,
   lighting_flags: vec4<u32>,
+  texture_factor: vec4<f32>,
+  stage_constants: array<vec4<f32>, 2>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
