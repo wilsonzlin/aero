@@ -28,7 +28,6 @@ fn xhci_snapshot_load_accepts_v0_7_last_tick_encoded_under_tag_time_ms() {
     );
     assert_eq!(r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 0);
 }
-
 #[test]
 fn xhci_snapshot_load_accepts_swapped_time_and_tick_tags() {
     // Some early xHCI snapshot builds swapped the tag mapping for time/tick:

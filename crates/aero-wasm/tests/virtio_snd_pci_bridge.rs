@@ -2112,15 +2112,7 @@ fn virtio_snd_pci_bridge_eventq_buffers_are_bounded_by_queue_size() {
     for i in 0..qsz {
         let buf = buf_base + u32::from(i) * 0x10;
         guest.fill(buf, 8, 0xAA);
-        write_desc(
-            &guest,
-            desc_table,
-            i,
-            buf as u64,
-            8,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        );
+        write_desc(&guest, desc_table, i, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
         guest.write_u16(avail + 4 + u32::from(i) * 2, i);
     }
 
