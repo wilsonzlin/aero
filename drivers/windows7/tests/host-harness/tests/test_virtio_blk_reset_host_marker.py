@@ -47,6 +47,10 @@ class VirtioBlkResetHostMarkerTests(unittest.TestCase):
         out = self._emit(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported\n")
         self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|SKIP|reason=not_supported")
 
+    def test_emits_skip_flag_not_set_marker(self) -> None:
+        out = self._emit(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set\n")
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|SKIP|reason=flag_not_set")
+
     def test_emits_fail_marker(self) -> None:
         out = self._emit(
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=post_reset_io_failed|err=123\n"
@@ -77,4 +81,3 @@ class VirtioBlkResetHostMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
