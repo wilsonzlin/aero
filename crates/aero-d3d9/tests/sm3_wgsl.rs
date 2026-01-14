@@ -2726,6 +2726,144 @@ fn wgsl_nonuniform_if_else_predicated_texld_avoids_invalid_control_flow() {
 }
 
 #[test]
+fn wgsl_nonuniform_if_texld_followed_by_mov_hoists_texture_sample() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   if v0.x
+    //     texld r0, v0, s0
+    //     mov r1, r0
+    //   endif
+    //   mov oC0, r1
+    //   end
+    //
+    // Ensure we hoist implicit-derivative texture sampling even when the `if` body contains more
+    // statements than a single `texld`.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // if v0
+        opcode_token(40, 1),
+        src_token(1, 0, 0xE4, 0),
+        // texld r0, v0, s0
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov r1, r0
+        opcode_token(1, 2),
+        dst_token(0, 1, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r1
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 1, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    let sample_pos = wgsl.find("textureSample(").unwrap();
+    let if_pos = wgsl.find("if (").unwrap();
+    assert!(
+        sample_pos < if_pos,
+        "expected textureSample to be hoisted out of the if; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_nonuniform_if_else_texld_followed_by_mov_hoists_texture_sample() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   dcl_texcoord1 v1
+    //   if v0.x
+    //     mov r1, v0
+    //   else
+    //     texld r0, v1, s0
+    //     mov r1, r0
+    //   endif
+    //   mov oC0, r1
+    //   end
+    //
+    // Ensure hoisting also works when the sensitive op is in the `else` branch and the branch
+    // contains additional statements.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // dcl_texcoord1 v1  (usage_index 1 in opcode_token[20..24])
+        opcode_token(31, 1) | (5u32 << 16) | (1u32 << 20),
+        dst_token(1, 1, 0xF),
+        // if v0
+        opcode_token(40, 1),
+        src_token(1, 0, 0xE4, 0),
+        // mov r1, v0
+        opcode_token(1, 2),
+        dst_token(0, 1, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // else
+        opcode_token(42, 0),
+        // texld r0, v1, s0
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(1, 1, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov r1, r0
+        opcode_token(1, 2),
+        dst_token(0, 1, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r1
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 1, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    let sample_pos = wgsl.find("textureSample(").unwrap();
+    let if_pos = wgsl.find("if (").unwrap();
+    assert!(
+        sample_pos < if_pos,
+        "expected textureSample to be hoisted out of the if; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_predicated_texldd_is_valid_with_non_uniform_predicate() {
     // ps_3_0:
     //   dcl_texcoord0 v0
