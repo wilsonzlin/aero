@@ -2705,6 +2705,20 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_INVALIDARG;
     }
 
+    // Validate bind flags against format class.
+    if (AerogpuFormatIsDepth(aer_fmt) && (res->bind_flags & kD3D10BindRenderTarget) != 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting depth Texture2D with BIND_RENDER_TARGET (bind=0x%08X)",
+                           static_cast<unsigned>(res->bind_flags));
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+    if (!AerogpuFormatIsDepth(aer_fmt) && (res->bind_flags & kD3D10BindDepthStencil) != 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting color Texture2D with BIND_DEPTH_STENCIL (bind=0x%08X)",
+                           static_cast<unsigned>(res->bind_flags));
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+
     if (res->sample_count == 0) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0");
       res->~AeroGpuResource();
