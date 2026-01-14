@@ -45,8 +45,12 @@ export interface DeviceManagerOptions {
    * Base address for auto-assigned PCI MMIO BARs.
    *
    * The browser runtime reserves sub-ranges inside the `[PCI_MMIO_BASE, 4GiB)` window for special
-   * purposes (e.g. a VRAM aperture). Callers can override the default allocator base to keep
-   * device BARs from overlapping those reserved ranges.
+   * purposes (e.g. a VRAM aperture).
+   *
+   * Prefer {@link PciBus.reserveMmio} when reserving MMIO space at the front of the window (it
+   * keeps the reservation explicit and deterministic). This option is a lower-level escape hatch
+   * for integrations that want to start BAR allocation at a custom base without modeling the
+   * reserved region itself.
    */
   pciMmioBase?: bigint;
 }
