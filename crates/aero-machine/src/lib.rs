@@ -13139,9 +13139,10 @@ impl snapshot::SnapshotTarget for Machine {
                             if let Some(ahci) = &self.ahci {
                                 let _ = ahci.borrow_mut().load_state(nested);
                                 // Storage controller snapshots intentionally drop attached host
-                                // backends. Ensure helpers like `attach_shared_disk_to_ahci_port0`
-                                // will actually reattach.
-                                self.ahci_port0_auto_attach_shared_disk = false;
+                                // backends (e.g. `AtaDrive`), but `ahci_port0_auto_attach_shared_disk`
+                                // is host configuration state and must be preserved so host calls
+                                // like `set_disk_backend` can reattach the shared disk after
+                                // restore.
                             }
                         } else if packed_bdf
                             == aero_devices::pci::profile::NVME_CONTROLLER.bdf.pack_u16()
@@ -13177,8 +13178,10 @@ impl snapshot::SnapshotTarget for Machine {
                 .is_ok()
                 {
                     restored = true;
-                    // Storage controller snapshots intentionally drop attached host backends.
-                    self.ahci_port0_auto_attach_shared_disk = false;
+                    // Storage controller snapshots intentionally drop attached host backends. Keep
+                    // `ahci_port0_auto_attach_shared_disk` unchanged so host reattachment flows
+                    // (e.g. `set_disk_backend`) can reattach the shared disk if auto-attach was
+                    // enabled.
                 }
             }
             if !restored {
