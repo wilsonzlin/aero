@@ -2602,10 +2602,23 @@ async function initWasmBindgenModule(
         //   desired memory by patching `WebAssembly.instantiate*` to force
         //   `imports.env.memory = memory` before instantiation.
         await withPatchedMemoryImport(memory, async () => {
+            // Modern wasm-bindgen builds prefer a single options object, e.g.
+            // `default({ module_or_path, memory })`. Passing positional args triggers a warning.
+            //
+            // Keep compatibility with older build outputs by trying the object form first, then
+            // falling back to legacy positional overloads.
             try {
-                // Preferred call shape (wasm-bindgen import-memory builds often use
+                await initFn({ module_or_path: input, module: input, memory });
+                return;
+            } catch {
+                // ignore (fall back to legacy call shapes)
+            }
+
+            try {
+                // Legacy call shape (wasm-bindgen import-memory builds often used
                 // `default(input?, memory?)`).
                 await initFn(input, memory);
+                return;
             } catch (err) {
                 // Some wasm-bindgen outputs ignore/validate the extra argument.
                 // Retrying with `default(input)` still uses the patched import object
@@ -2613,6 +2626,7 @@ async function initWasmBindgenModule(
                 // arguments" style failures.
                 try {
                     await initFn(input);
+                    return;
                 } catch {
                     throw err;
                 }
