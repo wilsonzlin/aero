@@ -44,9 +44,11 @@ fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
-    // Use a non-default base to ensure the PCI MMIO router path doesn't have a hidden dependency
-    // on `aero_gpu_vga::SVGA_LFB_BASE`.
-    let lfb_base: u32 = 0xE100_0000;
+    // Use a non-default base *outside the BIOS PCI BAR allocator default window*
+    // (`PciResourceAllocatorConfig::default().mmio_base..+mmio_size`, currently 0xE000_0000..0xF000_0000)
+    // to ensure the PCI MMIO router path doesn't have a hidden dependency on
+    // `aero_gpu_vga::SVGA_LFB_BASE` or the allocator window.
+    let lfb_base: u32 = 0xD000_0000;
     let cfg = MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
