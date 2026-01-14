@@ -4,6 +4,18 @@ Chunks a large **disk image** into fixed-size objects and uploads them to an **S
 
 This enables CDN-friendly delivery without relying on HTTP `Range` requests: clients fetch `manifest.json`, then fetch `chunks/00000000.bin`, `chunks/00000001.bin`, … as needed.
 
+Important: chunks represent the **guest-visible raw byte stream** (what the VM sees), not
+necessarily the container file bytes. For a raw `.img`, those are the same; for sparse/container
+formats (qcow2/vhd/…), the chunker must read the image as a virtual disk and treat unallocated
+regions as zeros.
+
+See also: [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md).
+
+Implementation note (for tooling authors): on native targets, prefer using the `aero-storage`
+stack (`aero_storage::StorageBackend` via a filesystem backend such as `aero_storage::FileBackend`,
+then `aero_storage::DiskImage::open_auto`) so tools reuse the same disk format support as the
+emulator.
+
 ## Build
 
 ```bash

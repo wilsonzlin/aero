@@ -343,11 +343,14 @@ See also: [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation
 **Implementation status (reference implementation):**
 The canonical Rust disk image formats live in `crates/aero-storage/` and currently support:
 
-- **Aero Sparse (`AEROSPAR`, v1)** (Aero-specific sparse format).\
+- **Raw** (`aero_storage::RawDisk`) - direct mapping of bytes to sectors.
+- **Aero Sparse (`AEROSPAR`, v1; `aero_storage::AeroSparseDisk`)** (Aero-specific sparse format for large virtual disks).\
   Implementation: [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs). See also:
   [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 - **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
 - **VHD fixed and dynamic** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap).
+- **Copy-on-write overlays** (`aero_storage::AeroCowDisk`) - writable overlay on top of a base disk.
+- **Write-back block caching** (`aero_storage::BlockCachedDisk`) - performance wrapper for small random I/O.
 
 ### Block cache (`aero_storage::BlockCachedDisk`)
 
@@ -425,6 +428,16 @@ impl DiskBackend for OpfsBackend {
     }
 }
 ```
+
+### Native file backend (non-wasm)
+
+For **host-side tooling** (image conversion, chunk publishing, offline verification) and native
+tests, prefer a native `aero_storage::StorageBackend` implementation backed by the local
+filesystem (e.g. `aero_storage::FileBackend`).
+
+This keeps the layering consistent with [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md):
+tools can reuse `aero-storage` disk formats (`DiskImage::open_auto`) and wrappers without
+re-implementing format parsing against `std::fs::File`.
 
 ### Sector Cache (IndexedDB)
 
@@ -785,6 +798,26 @@ impl CdromDrive {
 
 ## Disk Image Management
 
+### Read-only base images, ISO attachments, and writeback overlays
+
+In production, Aero often combines **immutable base media** with a **local writable overlay**:
+
+- **Base images** (golden OS installs, demo images, CDN-hosted images) should be treated as
+  **read-only**. This is especially important for:
+  - chunked delivery ([18 - Chunked Disk Image Format](./18-chunked-disk-image-format.md)), which is
+    designed for read-only content, and
+  - shared base images that may be mounted by many sessions/users.
+- **ISO attachments** (Windows install media, driver ISOs) are also read-only and should be exposed
+  as such to the guest.
+
+To make this intent explicit (and to avoid accidental mutation), prefer wrapping base media in a
+read-only adapter at the disk layer (e.g. `ReadOnlyDisk` / `ReadOnlyStorageBackend` around the
+canonical `aero_storage::{VirtualDisk, StorageBackend}` traits; see
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md)).
+
+Writes then go to a per-session/per-user overlay such as `aero_storage::AeroCowDisk` or a sparse
+writeback file in OPFS.
+
 ### Image Download and Streaming
 
 Remote disk images can be streamed on-demand using HTTP `Range` requests while opportunistically caching fetched data into a local sparse file (OPFS).
@@ -803,6 +836,10 @@ Useful tooling in this repo:
 
 - Correctness + CORS conformance checks: [`tools/disk-streaming-conformance/`](../tools/disk-streaming-conformance/README.md)
 - Range throughput + CDN cache probing (`X-Cache`): [`tools/range-harness/`](../tools/range-harness/README.md)
+- Chunked disk publisher (no-`Range` delivery): [`tools/image-chunker/`](../tools/image-chunker/README.md)
+  - Can chunk raw images, and (when enabled) chunk from qcow2/vhd-style container formats by reading the **logical**
+    disk bytes.
+  - Includes (when available) a `verify` flow to validate uploaded manifests/chunks.
 
 ```rust
 pub struct DiskAccessLease {

@@ -109,7 +109,8 @@ Examples of implementations:
 
 - `aero_storage::MemBackend` (tests)
 - `aero_storage::FileBackend` / `aero_storage::StdFileBackend` (native filesystem backend; non-wasm32)\
-  Used by host-side tooling such as [`tools/aero-disk-convert`](../tools/aero-disk-convert/src/main.rs).
+  Used by host-side tooling such as [`tools/aero-disk-convert`](../tools/aero-disk-convert/src/main.rs)
+  and CLI/image tests.
 - `aero_opfs::OpfsByteStorage` (browser OPFS SyncAccessHandle; wasm32 only)
 
 ### Layer 3 (disk image formats): canonical = `aero_storage::VirtualDisk` (+ `StorageBackend`)
@@ -123,7 +124,30 @@ Rule of thumb:
   `VirtualDisk` and (if it needs a resizable backing store) be generic over `StorageBackend`.
 - Do **not** introduce new format-specific “disk traits” in other crates.
 
-### Aero sparse formats: `AEROSPAR` vs legacy `AEROSPRS`
+#### Read-only wrappers (when and why)
+
+Aero frequently attaches media that is **semantically immutable**:
+
+- **Base OS images** (golden Windows installs, demo images)
+- **Install/driver ISOs** attached via ATAPI
+- **Remote “chunked” base images** served from object storage/CDNs
+
+For these, prefer to enforce immutability in the **disk layer** with a read-only wrapper (e.g.
+`ReadOnlyStorageBackend` / `ReadOnlyDisk` around the canonical traits), rather than relying on “we
+just won’t call `write_at`”.
+
+This catches accidental write paths early (and makes bugs loud), and it documents intent at the API
+boundary.
+
+Typical composition for a writable VM disk built on a read-only base:
+
+1. **Base (read-only)**: `VirtualDisk` backed by a remote image, a local file, or an unpacked format
+   (qcow2/vhd/…)
+2. **Writeback overlay (writable)**: `aero_storage::AeroCowDisk` or a sparse disk overlay
+3. **Optional cache**: `aero_storage::BlockCachedDisk`
+4. **Device integration**: device/controller consumes `Box<dyn aero_storage::VirtualDisk>`
+
+#### Aero sparse formats: `AEROSPAR` vs legacy `AEROSPRS`
 
 - `AEROSPAR` (“AeroSparse”, magic `AEROSPAR`) is the **current** sparse disk format implemented in
   `crates/aero-storage` as `aero_storage::AeroSparseDisk` in
