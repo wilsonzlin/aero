@@ -14841,6 +14841,498 @@ bool TestApplyStateBlockRecordsShaderConstIBVs() {
       static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX)>();
 }
 
+template <typename DeviceFuncsT, uint32_t CreateType, uint32_t D3dStage, uint32_t ExpectedStage>
+bool TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIBImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value ||
+                !HasPfnCreateStateBlock<DeviceFuncsT>::value ||
+                !HasPfnCaptureStateBlock<DeviceFuncsT>::value) {
+    // Some D3D9 DDI header variants do not expose the I/B constant entrypoints (or Create/CaptureStateBlock)
+    // in the device function table. In those builds we cannot exercise the DDI surface area; treat
+    // the test as a no-op.
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      D3D9DDI_HSTATEBLOCK hStateBlock{};
+      bool has_adapter = false;
+      bool has_device = false;
+      bool has_stateblock = false;
+      ~Cleanup() {
+        if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+          device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+        }
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "CreateStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnCaptureStateBlock != nullptr, "CaptureStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "ApplyStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "DeleteStateBlock must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(128 * 1024, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Set constants to A and create a typed state block.
+    const uint32_t int_start = 5;
+    const uint32_t int_count = 2;
+    const int32_t ints_a[int_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, D3dStage, int_start, ints_a, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI (A)")) {
+      return false;
+    }
+
+    const uint32_t bool_start = 7;
+    const uint32_t bool_count = 2;
+    const BOOL bools_a[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(0)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, D3dStage, bool_start, bools_a, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB (A)")) {
+      return false;
+    }
+
+    hr = CallCreateStateBlock(&cleanup.device_funcs, create_dev.hDevice, CreateType, &cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "CreateStateBlock")) {
+      return false;
+    }
+    if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "CreateStateBlock returns stateblock handle")) {
+      return false;
+    }
+    cleanup.has_stateblock = true;
+
+    // Modify device constants to B and capture into the state block so it stores B.
+    const int32_t ints_b[int_count * 4] = {-1, -2, -3, -4, -5, -6, -7, -8};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, D3dStage, int_start, ints_b, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI (B)")) {
+      return false;
+    }
+    const BOOL bools_b[bool_count] = {static_cast<BOOL>(0), static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, D3dStage, bool_start, bools_b, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB (B)")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnCaptureStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "CaptureStateBlock")) {
+      return false;
+    }
+
+    // Overwrite device constants to C so ApplyStateBlock must restore the captured B values.
+    const int32_t ints_c[int_count * 4] = {9, 10, 11, 12, 13, 14, 15, 16};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, D3dStage, int_start, ints_c, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI (C)")) {
+      return false;
+    }
+    const BOOL bools_c[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, D3dStage, bool_start, bools_c, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB (C)")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "ApplyStateBlock")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I) == 1,
+               "Capture(CreateStateBlock)+Apply emits one SET_SHADER_CONSTANTS_I")) {
+      return false;
+    }
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B) == 1,
+               "Capture(CreateStateBlock)+Apply emits one SET_SHADER_CONSTANTS_B")) {
+      return false;
+    }
+
+    const CmdLoc i_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+    if (!Check(i_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_I emitted")) {
+      return false;
+    }
+    const auto* i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(i_loc.hdr);
+    if (!Check(i_cmd->stage == ExpectedStage, "I stage")) {
+      return false;
+    }
+    if (!Check(i_cmd->start_register == 0, "I start_register == 0 (full file)")) {
+      return false;
+    }
+    if (!Check(i_cmd->vec4_count == 256, "I vec4_count == 256 (full file)")) {
+      return false;
+    }
+    if (!Check(i_cmd->hdr.size_bytes >= sizeof(*i_cmd) + (256u * 4u * sizeof(int32_t)), "I payload present")) {
+      return false;
+    }
+    const auto* i_payload =
+        reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(i_cmd) + sizeof(*i_cmd));
+    const size_t i_base = static_cast<size_t>(int_start) * 4;
+    if (!Check(std::memcmp(i_payload + i_base, ints_b, sizeof(ints_b)) == 0, "I payload matches captured B")) {
+      return false;
+    }
+
+    const CmdLoc b_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+    if (!Check(b_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_B emitted")) {
+      return false;
+    }
+    const auto* b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(b_loc.hdr);
+    if (!Check(b_cmd->stage == ExpectedStage, "B stage")) {
+      return false;
+    }
+    if (!Check(b_cmd->start_register == 0, "B start_register == 0 (full file)")) {
+      return false;
+    }
+    if (!Check(b_cmd->bool_count == 256, "B bool_count == 256 (full file)")) {
+      return false;
+    }
+    if (!Check(b_cmd->hdr.size_bytes >= sizeof(*b_cmd) + (256u * 4u * sizeof(uint32_t)), "B payload present")) {
+      return false;
+    }
+    const auto* b_payload =
+        reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(b_cmd) + sizeof(*b_cmd));
+    const size_t b_base = static_cast<size_t>(bool_start) * 4;
+    const uint32_t expected_b[bool_count * 4] = {0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u};
+    return Check(std::memcmp(b_payload + b_base, expected_b, sizeof(expected_b)) == 0, "B payload matches captured B");
+  }
+}
+
+bool TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIB() {
+  constexpr uint32_t kD3dSbtPixelState = 2u; // D3DSBT_PIXELSTATE
+  return TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIBImpl<
+      D3D9DDI_DEVICEFUNCS,
+      kD3dSbtPixelState,
+      kD3d9ShaderStagePs,
+      static_cast<uint32_t>(AEROGPU_SHADER_STAGE_PIXEL)>();
+}
+
+bool TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIBVs() {
+  constexpr uint32_t kD3dSbtVertexState = 3u; // D3DSBT_VERTEXSTATE
+  return TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIBImpl<
+      D3D9DDI_DEVICEFUNCS,
+      kD3dSbtVertexState,
+      kD3d9ShaderStageVs,
+      static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX)>();
+}
+
+template <typename DeviceFuncsT>
+bool TestCaptureStateBlockUpdatesCreateStateBlockAllShaderConstIBImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value ||
+                !HasPfnCreateStateBlock<DeviceFuncsT>::value ||
+                !HasPfnCaptureStateBlock<DeviceFuncsT>::value) {
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      D3D9DDI_HSTATEBLOCK hStateBlock{};
+      bool has_adapter = false;
+      bool has_device = false;
+      bool has_stateblock = false;
+      ~Cleanup() {
+        if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+          device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+        }
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "CreateStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnCaptureStateBlock != nullptr, "CaptureStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "ApplyStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "DeleteStateBlock must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(128 * 1024, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    const uint32_t int_start = 5;
+    const uint32_t int_count = 2;
+    const uint32_t bool_start = 7;
+    const uint32_t bool_count = 2;
+
+    // Set per-stage constants to A and create D3DSBT_ALL stateblock.
+    const int32_t vs_ints_a[int_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
+    const int32_t ps_ints_a[int_count * 4] = {11, 12, 13, 14, 15, 16, 17, 18};
+    const BOOL vs_bools_a[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(0)};
+    const BOOL ps_bools_a[bool_count] = {static_cast<BOOL>(0), static_cast<BOOL>(1)};
+
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStageVs, int_start, vs_ints_a, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(VS, A)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, int_start, ps_ints_a, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, A)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStageVs, bool_start, vs_bools_a, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(VS, A)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, bool_start, ps_bools_a, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, A)")) {
+      return false;
+    }
+
+    constexpr uint32_t kD3dSbtAll = 1u; // D3DSBT_ALL
+    hr = CallCreateStateBlock(&cleanup.device_funcs, create_dev.hDevice, kD3dSbtAll, &cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "CreateStateBlock(ALL)")) {
+      return false;
+    }
+    if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "CreateStateBlock returns stateblock handle")) {
+      return false;
+    }
+    cleanup.has_stateblock = true;
+
+    // Update device constants to B and capture.
+    const int32_t vs_ints_b[int_count * 4] = {-1, -2, -3, -4, -5, -6, -7, -8};
+    const int32_t ps_ints_b[int_count * 4] = {-11, -12, -13, -14, -15, -16, -17, -18};
+    const BOOL vs_bools_b[bool_count] = {static_cast<BOOL>(0), static_cast<BOOL>(1)};
+    const BOOL ps_bools_b[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(0)};
+
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStageVs, int_start, vs_ints_b, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(VS, B)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, int_start, ps_ints_b, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, B)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStageVs, bool_start, vs_bools_b, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(VS, B)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, bool_start, ps_bools_b, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, B)")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnCaptureStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "CaptureStateBlock(ALL)")) {
+      return false;
+    }
+
+    // Overwrite device constants to C so apply must restore captured B values.
+    const int32_t vs_ints_c[int_count * 4] = {101, 102, 103, 104, 105, 106, 107, 108};
+    const int32_t ps_ints_c[int_count * 4] = {201, 202, 203, 204, 205, 206, 207, 208};
+    const BOOL vs_bools_c[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(1)};
+    const BOOL ps_bools_c[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(1)};
+
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStageVs, int_start, vs_ints_c, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(VS, C)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, int_start, ps_ints_c, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, C)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStageVs, bool_start, vs_bools_c, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(VS, C)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, bool_start, ps_bools_c, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, C)")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "ApplyStateBlock(ALL)")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I) == 2,
+               "Capture(CreateStateBlock ALL)+Apply emits two SET_SHADER_CONSTANTS_I")) {
+      return false;
+    }
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B) == 2,
+               "Capture(CreateStateBlock ALL)+Apply emits two SET_SHADER_CONSTANTS_B")) {
+      return false;
+    }
+
+    // Validate int packets: VS then PS (both full-file, but subrange matches captured B).
+    const CmdLoc ps_i_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+    if (!Check(ps_i_loc.hdr != nullptr, "PS I packet present")) {
+      return false;
+    }
+    const auto* ps_i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(ps_i_loc.hdr);
+    if (!Check(ps_i_cmd->stage == static_cast<uint32_t>(AEROGPU_SHADER_STAGE_PIXEL), "PS I stage")) {
+      return false;
+    }
+    if (!Check(ps_i_cmd->start_register == 0 && ps_i_cmd->vec4_count == 256, "PS I covers full file")) {
+      return false;
+    }
+    const auto* ps_i_payload =
+        reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(ps_i_cmd) + sizeof(*ps_i_cmd));
+    const size_t i_base = static_cast<size_t>(int_start) * 4;
+    if (!Check(std::memcmp(ps_i_payload + i_base, ps_ints_b, sizeof(ps_ints_b)) == 0, "PS I payload matches captured B")) {
+      return false;
+    }
+
+    const CmdLoc vs_i_loc = FindLastOpcodeBefore(buf, len, ps_i_loc.offset, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+    if (!Check(vs_i_loc.hdr != nullptr, "VS I packet present")) {
+      return false;
+    }
+    const auto* vs_i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(vs_i_loc.hdr);
+    if (!Check(vs_i_cmd->stage == static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX), "VS I stage")) {
+      return false;
+    }
+    if (!Check(vs_i_cmd->start_register == 0 && vs_i_cmd->vec4_count == 256, "VS I covers full file")) {
+      return false;
+    }
+    const auto* vs_i_payload =
+        reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(vs_i_cmd) + sizeof(*vs_i_cmd));
+    if (!Check(std::memcmp(vs_i_payload + i_base, vs_ints_b, sizeof(vs_ints_b)) == 0, "VS I payload matches captured B")) {
+      return false;
+    }
+
+    // Validate bool packets: VS then PS.
+    const CmdLoc ps_b_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+    if (!Check(ps_b_loc.hdr != nullptr, "PS B packet present")) {
+      return false;
+    }
+    const auto* ps_b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(ps_b_loc.hdr);
+    if (!Check(ps_b_cmd->stage == static_cast<uint32_t>(AEROGPU_SHADER_STAGE_PIXEL), "PS B stage")) {
+      return false;
+    }
+    if (!Check(ps_b_cmd->start_register == 0 && ps_b_cmd->bool_count == 256, "PS B covers full file")) {
+      return false;
+    }
+    const auto* ps_b_payload =
+        reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(ps_b_cmd) + sizeof(*ps_b_cmd));
+    const size_t b_base = static_cast<size_t>(bool_start) * 4;
+    const uint32_t expected_ps_b[bool_count * 4] = {1u, 1u, 1u, 1u, 0u, 0u, 0u, 0u};
+    if (!Check(std::memcmp(ps_b_payload + b_base, expected_ps_b, sizeof(expected_ps_b)) == 0, "PS B payload matches captured B")) {
+      return false;
+    }
+
+    const CmdLoc vs_b_loc = FindLastOpcodeBefore(buf, len, ps_b_loc.offset, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+    if (!Check(vs_b_loc.hdr != nullptr, "VS B packet present")) {
+      return false;
+    }
+    const auto* vs_b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(vs_b_loc.hdr);
+    if (!Check(vs_b_cmd->stage == static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX), "VS B stage")) {
+      return false;
+    }
+    if (!Check(vs_b_cmd->start_register == 0 && vs_b_cmd->bool_count == 256, "VS B covers full file")) {
+      return false;
+    }
+    const auto* vs_b_payload =
+        reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(vs_b_cmd) + sizeof(*vs_b_cmd));
+    const uint32_t expected_vs_b[bool_count * 4] = {0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u};
+    return Check(std::memcmp(vs_b_payload + b_base, expected_vs_b, sizeof(expected_vs_b)) == 0, "VS B payload matches captured B");
+  }
+}
+
+bool TestCaptureStateBlockUpdatesCreateStateBlockAllShaderConstIB() {
+  return TestCaptureStateBlockUpdatesCreateStateBlockAllShaderConstIBImpl<D3D9DDI_DEVICEFUNCS>();
+}
+
 template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
 bool TestCaptureStateBlockUpdatesShaderConstIBImpl() {
   if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
@@ -39367,6 +39859,9 @@ int main() {
   RUN_TEST(TestApplyStateBlockNormalizesShaderConstIBStage);
   RUN_TEST(TestApplyStateBlockRecordsShaderConstIB);
   RUN_TEST(TestApplyStateBlockRecordsShaderConstIBVs);
+  RUN_TEST(TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIB);
+  RUN_TEST(TestCaptureStateBlockUpdatesCreateStateBlockShaderConstIBVs);
+  RUN_TEST(TestCaptureStateBlockUpdatesCreateStateBlockAllShaderConstIB);
   RUN_TEST(TestCaptureStateBlockUpdatesShaderConstIB);
   RUN_TEST(TestCaptureStateBlockUpdatesShaderConstIBVs);
   RUN_TEST(TestCaptureStateBlockSplitsShaderConstIB);
