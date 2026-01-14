@@ -847,9 +847,9 @@ To enable end-to-end testing:
         the enabled alias INF (drop the `.disabled` suffix) instead of `aero_virtio_input.inf`. The alias is filename-only
         and does not change HWID matching behavior.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-        `-WithTabletEvents`, `-EnableTabletEvents`) /
-        `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-      `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+   `-WithTabletEvents`, `-EnableTabletEvents`) /
+   `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+   `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
     - requires the guest marker to PASS
@@ -1378,11 +1378,11 @@ To attach a virtio-tablet device without enabling the tablet events selftest/inj
 in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed:
 
 - Preferred/contract binding: `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01` (wins when it matches).
-- If the device does not expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not match and the canonical
-  `aero_virtio_input.inf` is also SUBSYS-only. In that case, either:
-  - Emulate the subsystem IDs to the contract values so it binds to `aero_virtio_tablet.inf`, **or**
-  - Opt into the strict revision-gated generic fallback HWID match (`PCI\VEN_1AF4&DEV_1052&REV_01`) via the legacy alias INF
-    under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to enable).
+- If the device does not expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not match. In that case,
+  the canonical `aero_virtio_input.inf` can still bind via its strict revision-gated generic fallback HWID match (no SUBSYS):
+  - `PCI\VEN_1AF4&DEV_1052&REV_01`
+  If you want to validate the contract tablet INF binding specifically, emulate the subsystem IDs to the contract values so it
+  binds to `aero_virtio_tablet.inf`.
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
@@ -1809,10 +1809,9 @@ Canonical in-tree driver packages:
 
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
-- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&SUBSYS_00101AF4&REV_01`
-  (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse); SUBSYS-only)
-  - Optional: strict revision-gated generic fallback (no SUBSYS) via the legacy alias INF under `drivers/windows7/virtio-input/inf/`
-    (the `*.inf.disabled` file; drop the `.disabled` suffix to enable): `PCI\VEN_1AF4&DEV_1052&REV_01`
+- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds
+  `DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard), `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse), plus strict revision-gated generic fallback
+  (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`)
 - virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`; preferred
   binding for contract tablets and wins when it matches)
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
