@@ -119,16 +119,8 @@ fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
 
 #[test]
 fn parses_pcsg_patch_constant_signature_chunk() {
-    let pcsg_bytes = build_signature_chunk_v0_one_entry(
-        "TESSFACTOR",
-        1,
-        7,
-        3,
-        9,
-        0b0011,
-        0b0001,
-        0,
-    );
+    let pcsg_bytes =
+        build_signature_chunk_v0_one_entry("TESSFACTOR", 1, 7, 3, 9, 0b0011, 0b0001, 0);
 
     let dxbc_bytes = build_dxbc(&[(FOURCC_PCSG, &pcsg_bytes)]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
@@ -149,16 +141,8 @@ fn parses_pcsg_patch_constant_signature_chunk() {
 
 #[test]
 fn parses_pcg1_patch_constant_signature_chunk() {
-    let pcg1_bytes = build_signature_chunk_v1_one_entry(
-        "PATCH_CONST",
-        2,
-        11,
-        1,
-        4,
-        0b1111,
-        0b0111,
-        2,
-    );
+    let pcg1_bytes =
+        build_signature_chunk_v1_one_entry("PATCH_CONST", 2, 11, 1, 4, 0b1111, 0b0111, 2);
 
     let dxbc_bytes = build_dxbc(&[(FOURCC_PCG1, &pcg1_bytes)]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
@@ -193,4 +177,3 @@ fn parse_signatures_prefers_pcg1_over_pcsg_when_both_present() {
     assert_eq!(sig.parameters[0].semantic_name, "NEW");
     assert_eq!(sig.parameters[0].register, 1);
 }
-

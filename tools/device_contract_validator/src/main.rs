@@ -2593,9 +2593,7 @@ Kb    = "Keyboard"
 Mouse = "Mouse"
 Input = "Input Device"
 "#;
-        let alias = format!(
-            "; legacy filename alias banner line 1\n; line 2\n\n{canonical}"
-        );
+        let alias = format!("; legacy filename alias banner line 1\n; line 2\n\n{canonical}");
         validate_temp_virtio_input_infs(canonical, Some(&alias))
     }
 

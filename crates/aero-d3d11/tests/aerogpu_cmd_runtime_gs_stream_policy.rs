@@ -93,7 +93,9 @@ fn aerogpu_cmd_runtime_rejects_nonzero_emit_stream_index() {
                 .expect_err("expected create_shader_dxbc to reject non-zero stream index");
             let msg = err.to_string();
             assert!(
-                msg.contains(op_name) && msg.contains("stream index 1") && msg.contains("at dword 3"),
+                msg.contains(op_name)
+                    && msg.contains("stream index 1")
+                    && msg.contains("at dword 3"),
                 "unexpected error: {err:#}"
             );
         }
