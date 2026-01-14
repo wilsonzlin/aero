@@ -12,11 +12,7 @@ use aero_devices_storage::atapi::IsoBackend;
 use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE};
 use firmware::bios::{BlockDevice, CdromDevice, DiskError as BiosDiskError};
 
-#[cfg(target_arch = "wasm32")]
 type SharedIsoDiskBackend = Box<dyn VirtualDisk>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type SharedIsoDiskBackend = Box<dyn VirtualDisk + Send>;
 
 /// Cloneable handle to a read-only ISO (2048-byte sector) disk backend.
 ///

@@ -262,9 +262,6 @@ fn sync_msix_capability_into_config(
     cfg.write(base + 0x02, 2, u32::from(new_ctrl));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-type NvmeDisk = Box<dyn aero_storage::VirtualDisk + Send>;
-#[cfg(target_arch = "wasm32")]
 type NvmeDisk = Box<dyn aero_storage::VirtualDisk>;
 fn set_cpu_apic_base_bsp_bit(cpu: &mut CpuCore, is_bsp: bool) {
     if is_bsp {
@@ -4231,10 +4228,9 @@ impl Machine {
     ///   [`Machine::set_disk_image`].
     /// - This helper resets the machine after attaching the ISO so firmware POST transfers control
     ///   to the ISO boot image immediately.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_win7_install(
         ram_size_bytes: u64,
-        iso: Box<dyn aero_storage::VirtualDisk + Send>,
+        iso: Box<dyn aero_storage::VirtualDisk>,
     ) -> Result<Self, MachineError> {
         let mut m = Self::new(MachineConfig::win7_storage_defaults(ram_size_bytes))?;
         m.configure_win7_install_boot(iso)
@@ -4252,10 +4248,9 @@ impl Machine {
     ///   media is attached, otherwise fall back to the configured HDD boot drive),
     /// - attaches the ISO as an ATAPI CD-ROM on the IDE secondary master (if IDE is enabled),
     /// - then resets the machine.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn configure_win7_install_boot(
         &mut self,
-        iso: Box<dyn aero_storage::VirtualDisk + Send>,
+        iso: Box<dyn aero_storage::VirtualDisk>,
     ) -> std::io::Result<()> {
         // Canonical Win7 install flow prefers the first CD-ROM when install media is present, but
         // keeps the configured HDD boot drive as a fallback (e.g. after ejecting the ISO).
@@ -4600,21 +4595,6 @@ impl Machine {
     ///
     /// Note: if the new backend has a different capacity, this call rebuilds any ATA drives that
     /// were derived from the shared disk so IDENTIFY geometry remains coherent.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_disk_backend(
-        &mut self,
-        backend: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> Result<(), MachineError> {
-        self.disk.set_backend(backend);
-        self.attach_shared_disk_to_storage_controllers()?;
-        Ok(())
-    }
-
-    /// wasm32 variant of [`Machine::set_disk_backend`].
-    ///
-    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
-    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
-    #[cfg(target_arch = "wasm32")]
     pub fn set_disk_backend(
         &mut self,
         backend: Box<dyn aero_storage::VirtualDisk>,
@@ -6036,27 +6016,6 @@ impl Machine {
     /// registers/queues) by snapshotting the current device model state and re-loading it after
     /// swapping the host disk backend. This is intended for host-managed snapshot restore flows
     /// where the disk contents live outside the snapshot blob.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_nvme_disk(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> Result<(), MachineError> {
-        self.attach_nvme_disk_impl(disk)
-    }
-
-    /// Attach a disk backend to the NVMe controller, if present.
-    ///
-    /// On non-`wasm32` targets, the NVMe device model requires a `Send` disk backend for thread
-    /// safety.
-    ///
-    /// On `wasm32`, disk backends do not need to be `Send` (browser disk handles are often
-    /// `!Send`).
-    ///
-    /// This method preserves the NVMe controller's guest-visible state (PCI config + controller
-    /// registers/queues) by snapshotting the current device model state and re-loading it after
-    /// swapping the host disk backend. This is intended for host-managed snapshot restore flows
-    /// where the disk contents live outside the snapshot blob.
-    #[cfg(target_arch = "wasm32")]
     pub fn attach_nvme_disk(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
@@ -6215,21 +6174,6 @@ impl Machine {
     /// snapshot and only the host backend needs re-attaching), use
     /// [`Machine::attach_install_media_iso_for_restore`].
     ///
-    /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so this method has a
-    /// wasm32-specific signature without the `Send` bound.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_install_media_iso(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> io::Result<()> {
-        self.attach_ide_secondary_master_iso(disk)
-    }
-
-    /// wasm32 variant of [`Machine::attach_install_media_iso`].
-    ///
-    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
-    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
-    #[cfg(target_arch = "wasm32")]
     pub fn attach_install_media_iso(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
@@ -6242,16 +6186,6 @@ impl Machine {
     ///
     /// This is intended for snapshot restore flows: snapshot restore keeps the ATAPI device's
     /// internal tray/media state but drops the host-side ISO backend.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_install_media_iso_for_restore(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> io::Result<()> {
-        self.attach_ide_secondary_master_iso_for_restore(disk)
-    }
-
-    /// wasm32 variant of [`Machine::attach_install_media_iso_for_restore`].
-    #[cfg(target_arch = "wasm32")]
     pub fn attach_install_media_iso_for_restore(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
@@ -6278,10 +6212,9 @@ impl Machine {
     ///
     /// On `wasm32`, this intentionally does **not** require `Send` because some browser-backed
     /// disks (OPFS, etc.) may contain JS values and therefore cannot be sent across threads.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+        disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> std::io::Result<()> {
         let shared = SharedIsoDisk::new(disk)?;
         if self.ide.is_some() {
@@ -6317,23 +6250,6 @@ impl Machine {
     /// internal tray/media state but drops the host-side ISO backend.
     ///
     /// If the IDE controller is not present, this is a no-op and returns `Ok(())`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_ide_secondary_master_iso_for_restore(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> std::io::Result<()> {
-        if self.ide.is_none() {
-            return Ok(());
-        }
-        let shared = SharedIsoDisk::new(disk)?;
-        self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
-        let backend: Box<dyn IsoBackend> = Box::new(shared);
-        self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
-        Ok(())
-    }
-
-    /// wasm32 variant of [`Machine::attach_ide_secondary_master_iso_for_restore`].
-    #[cfg(target_arch = "wasm32")]
     pub fn attach_ide_secondary_master_iso_for_restore(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
@@ -6345,25 +6261,6 @@ impl Machine {
         self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
         let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
-        Ok(())
-    }
-
-    /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
-    ///
-    /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so we intentionally
-    /// accept a non-`Send` `VirtualDisk` trait object.
-    #[cfg(target_arch = "wasm32")]
-    pub fn attach_ide_secondary_master_iso(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk>,
-    ) -> std::io::Result<()> {
-        let shared = SharedIsoDisk::new(disk)?;
-        if self.ide.is_some() {
-            self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
-            self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
-        } else {
-            self.install_media = Some(InstallMedia::Strong(shared));
-        }
         Ok(())
     }
 
@@ -6375,20 +6272,6 @@ impl Machine {
     /// Install media is treated as a read-only ISO, so this records:
     /// - `base_image = base_image` (typically the OPFS path, e.g. `/state/win7.iso`)
     /// - `overlay_image = ""` (empty string indicates "no writable overlay")
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_install_media_iso_and_set_overlay_ref(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-        base_image: impl Into<String>,
-    ) -> std::io::Result<()> {
-        self.attach_install_media_iso(disk)?;
-        self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
-        Ok(())
-    }
-
-    /// wasm32 variant of [`Machine::attach_install_media_iso_and_set_overlay_ref`]; does not
-    /// require `Send` on the ISO backend.
-    #[cfg(target_arch = "wasm32")]
     pub fn attach_install_media_iso_and_set_overlay_ref(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,

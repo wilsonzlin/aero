@@ -10,11 +10,7 @@ use firmware::bios::{BlockDevice, DiskError as BiosDiskError};
 
 use crate::MachineError;
 
-#[cfg(target_arch = "wasm32")]
 type SharedDiskBackend = Box<dyn VirtualDisk>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type SharedDiskBackend = Box<dyn VirtualDisk + Send>;
 
 /// Cloneable handle to a single underlying virtual disk backend.
 ///
