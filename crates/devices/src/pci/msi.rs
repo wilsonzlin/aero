@@ -79,6 +79,14 @@ impl MsiCapability {
         self.pending_bits
     }
 
+    /// Clears any latched MSI pending bits.
+    ///
+    /// This is intended for device/platform reset flows. The MSI Pending Bits register is
+    /// device-managed and read-only from the guest's perspective.
+    pub fn clear_pending_bits(&mut self) {
+        self.pending_bits = 0;
+    }
+
     pub fn message(&self) -> MsiMessage {
         MsiMessage {
             address: self.message_address,

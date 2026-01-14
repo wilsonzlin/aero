@@ -498,6 +498,12 @@ impl PciConfigSpace {
         if let Some(cap) = self.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
             let ctrl_off = usize::from(cap).saturating_add(0x02);
             if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
+                if let Some(msi) = self.capability_mut::<crate::pci::MsiCapability>() {
+                    // MSI pending bits are device-managed and read-only to the guest; clear them
+                    // directly rather than via a config-space write.
+                    msi.clear_pending_bits();
+                }
+
                 let off = u16::from(cap).saturating_add(0x02);
                 let ctrl = self.read(off, 2) as u16;
                 self.write(off, 2, u32::from(ctrl & !0x0001));
@@ -510,19 +516,11 @@ impl PciConfigSpace {
                     } else {
                         u16::from(cap).saturating_add(0x0c)
                     };
-                    let pending_off = if is_64bit {
-                        u16::from(cap).saturating_add(0x14)
-                    } else {
-                        u16::from(cap).saturating_add(0x10)
-                    };
 
                     // These registers are present only when `per_vector_masking` is set. They are
                     // expected to reset to 0.
                     if usize::from(mask_off).saturating_add(4) <= PCI_CONFIG_SPACE_SIZE {
                         self.write(mask_off, 4, 0);
-                    }
-                    if usize::from(pending_off).saturating_add(4) <= PCI_CONFIG_SPACE_SIZE {
-                        self.write(pending_off, 4, 0);
                     }
                 }
             }
@@ -648,6 +646,19 @@ impl PciConfigSpace {
             let base = cap.offset() as usize;
             if addr == base || addr == base + 1 {
                 return true;
+            }
+
+            // MSI pending bits are device-managed and read-only from the guest's perspective.
+            //
+            // We enforce this at the config-space write layer rather than inside `MsiCapability` so
+            // snapshot restore can still round-trip pending bits via `PciConfigSpaceState::bytes`.
+            if let Some(msi) = cap.as_any().downcast_ref::<crate::pci::msi::MsiCapability>() {
+                if msi.per_vector_masking() {
+                    let pending_off = base + if msi.is_64bit() { 0x14 } else { 0x10 };
+                    if addr >= pending_off && addr < pending_off + 4 {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -976,6 +987,63 @@ mod tests {
     }
 
     #[test]
+    fn msi_pending_bits_register_is_read_only() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+        let cap_offset = config.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+
+        // Enable MSI.
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        let is_64bit = (ctrl & (1 << 7)) != 0;
+        let per_vector_masking = (ctrl & (1 << 8)) != 0;
+        assert!(
+            per_vector_masking,
+            "test requires per-vector masking support"
+        );
+        let mask_off = if is_64bit {
+            cap_offset + 0x10
+        } else {
+            cap_offset + 0x0c
+        };
+        let pending_off = if is_64bit {
+            cap_offset + 0x14
+        } else {
+            cap_offset + 0x10
+        };
+
+        // Guest writes to Pending Bits must be ignored.
+        config.write(pending_off, 4, 1);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            0
+        );
+
+        // Latch a pending bit via a masked trigger.
+        config.write(mask_off, 4, 1);
+        struct Sink;
+        impl MsiTrigger for Sink {
+            fn trigger_msi(&mut self, _message: MsiMessage) {}
+        }
+        {
+            let msi = config.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut Sink));
+        }
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
+
+        // Guest writes must not be able to clear it either.
+        config.write(pending_off, 4, 0);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
+    }
+
+    #[test]
     fn pci_device_reset_disables_msi_and_msix_but_preserves_bars() {
         struct Dev {
             cfg: PciConfigSpace,
@@ -1018,13 +1086,17 @@ mod tests {
             } else {
                 msi_off + 0x0c
             };
-            let pending_off = if is_64bit {
-                msi_off + 0x14
-            } else {
-                msi_off + 0x10
-            };
             cfg.write(mask_off, 4, 1);
-            cfg.write(pending_off, 4, 1);
+
+            struct Sink;
+            impl MsiTrigger for Sink {
+                fn trigger_msi(&mut self, _message: MsiMessage) {}
+            }
+
+            // Triggering while masked should latch the pending bit (guest cannot write the pending
+            // bits register directly).
+            let msi = cfg.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut Sink));
         }
 
         // Enable MSI-X and set Function Mask.
