@@ -3380,7 +3380,7 @@ try {
             try { $prefixLower = $prefix.ToLower() } catch { $prefixLower = "" }
 
             # Best-effort: correlate tools\ files against manifest.json entries (when present).
-            $manifestPaths = @{}
+            $manifestFileResults = @{}
             $manifestPresent = $null
             $manifestParseOk = $null
             $manifestIncludesTools = $null
@@ -3401,12 +3401,12 @@ try {
                             if ($p.StartsWith("./")) { $p = $p.Substring(2) }
                             while ($p.StartsWith("/")) { $p = $p.Substring(1) }
                             if ($p.Length -eq 0) { continue }
-                            $manifestPaths[$p.ToLower()] = $true
+                            $manifestFileResults[$p.ToLower()] = $r
                         }
                     }
                 }
             } catch { }
-            if (($manifestParseOk -eq $true) -and ($manifestPaths.Count -gt 0)) { $manifestCorrelationAvailable = $true }
+            if (($manifestParseOk -eq $true) -and ($manifestFileResults.Count -gt 0)) { $manifestCorrelationAvailable = $true }
 
             $fileItems = @()
             foreach ($it in @($items)) {
@@ -3432,22 +3432,35 @@ try {
                     }
                 } catch { }
 
+                $relNorm = $rel.Replace("\", "/")
+                if ($relNorm.StartsWith("./")) { $relNorm = $relNorm.Substring(2) }
+                while ($relNorm.StartsWith("/")) { $relNorm = $relNorm.Substring(1) }
+
+                $listed = $null
+                $manifestResult = $null
+                if ($manifestCorrelationAvailable) {
+                    $listed = $false
+                    try {
+                        $k = $relNorm.ToLower()
+                        if ($manifestFileResults.ContainsKey($k)) {
+                            $listed = $true
+                            $manifestResult = $manifestFileResults[$k]
+                        }
+                    } catch { $listed = $false; $manifestResult = $null }
+                }
+
+                $sha = $null
+                try {
+                    if ($manifestResult -and ($manifestResult -is [hashtable]) -and $manifestResult.ContainsKey("actual_sha256") -and $manifestResult["actual_sha256"]) {
+                        $sha = "" + $manifestResult["actual_sha256"]
+                    }
+                } catch { $sha = $null }
+                if (-not $sha -or $sha.Length -eq 0) {
                 $sha = Get-FileSha256Hex $full
                 if (-not $sha) {
                     $toolsStatus = "WARN"
                     $invErrors += ("Failed to compute SHA-256 for: " + $rel)
                 }
-
-                $relNorm = $rel.Replace("\", "/")
-                if ($relNorm.StartsWith("./")) { $relNorm = $relNorm.Substring(2) }
-                while ($relNorm.StartsWith("/")) { $relNorm = $relNorm.Substring(1) }
-                $listed = $null
-                if ($manifestCorrelationAvailable) {
-                    $listed = $false
-                    try {
-                        $k = $relNorm.ToLower()
-                        if ($manifestPaths.ContainsKey($k)) { $listed = $true }
-                    } catch { $listed = $false }
                 }
 
                 $isExe = $false
