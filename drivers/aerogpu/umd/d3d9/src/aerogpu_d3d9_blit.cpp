@@ -274,6 +274,9 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
          res->handle,
          res->backing_alloc_id,
          static_cast<uint32_t>(ref.status));
+    if (ref.status == AllocRefStatus::kOutOfMemory) {
+      return E_OUTOFMEMORY;
+    }
     return E_FAIL;
   }
 

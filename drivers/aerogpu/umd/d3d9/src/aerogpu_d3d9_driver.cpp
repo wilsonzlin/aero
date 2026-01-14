@@ -4071,6 +4071,9 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
          res->handle,
          res->backing_alloc_id,
          static_cast<uint32_t>(ref.status));
+    if (ref.status == AllocRefStatus::kOutOfMemory) {
+      return E_OUTOFMEMORY;
+    }
     return E_FAIL;
   }
 
@@ -9020,6 +9023,10 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
       std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
       if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
         preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
+        if (preserved_allocs.empty()) {
+          logf("aerogpu-d3d9: failed to snapshot tracked allocations (OOM)\n");
+          return false;
+        }
       }
       dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
                                      dev->wddm_context.AllocationListSize,
@@ -9060,6 +9067,10 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
   std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
   if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
     preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
+    if (preserved_allocs.empty()) {
+      logf("aerogpu-d3d9: failed to snapshot tracked allocations (OOM)\n");
+      return false;
+    }
   }
 
   // If AllocateCb handed us buffers but we never emitted anything, return them

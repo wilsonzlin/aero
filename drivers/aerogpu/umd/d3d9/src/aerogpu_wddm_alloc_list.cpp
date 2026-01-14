@@ -138,17 +138,30 @@ AllocationListTracker::AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
   // WDDM 1.1 slot IDs are typically limited to 0..MaxAllocationListSlotId, even
   // if the runtime provides a larger allocation list buffer.
   const UINT effective_cap = list_capacity_effective();
-  handle_to_entry_.reserve(effective_cap);
-  alloc_id_to_handle_.reserve(effective_cap);
-  slot_alloc_handle_.resize(effective_cap);
-  slot_alloc_id_.resize(effective_cap);
-  slot_share_token_.resize(effective_cap);
-  slot_write_.resize(effective_cap);
+  try {
+    handle_to_entry_.reserve(effective_cap);
+    alloc_id_to_handle_.reserve(effective_cap);
+    slot_alloc_handle_.resize(effective_cap);
+    slot_alloc_id_.resize(effective_cap);
+    slot_share_token_.resize(effective_cap);
+    slot_write_.resize(effective_cap);
+    oom_ = false;
+  } catch (...) {
+    // Avoid exceptions escaping UMD code under memory pressure. Mark the tracker
+    // as OOM so track_common returns kOutOfMemory.
+    oom_ = true;
+    handle_to_entry_.clear();
+    alloc_id_to_handle_.clear();
+    slot_alloc_handle_.clear();
+    slot_alloc_id_.clear();
+    slot_share_token_.clear();
+    slot_write_.clear();
+  }
 }
 
 void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
-                                   UINT list_capacity,
-                                   UINT max_allocation_list_slot_id) {
+                                    UINT list_capacity,
+                                    UINT max_allocation_list_slot_id) {
   list_base_ = list_base;
   list_capacity_ = list_capacity;
   max_allocation_list_slot_id_ = max_allocation_list_slot_id;
@@ -156,12 +169,23 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
   reset();
 
   const UINT effective_cap = list_capacity_effective();
-  handle_to_entry_.reserve(effective_cap);
-  alloc_id_to_handle_.reserve(effective_cap);
-  slot_alloc_handle_.resize(effective_cap);
-  slot_alloc_id_.resize(effective_cap);
-  slot_share_token_.resize(effective_cap);
-  slot_write_.resize(effective_cap);
+  try {
+    handle_to_entry_.reserve(effective_cap);
+    alloc_id_to_handle_.reserve(effective_cap);
+    slot_alloc_handle_.resize(effective_cap);
+    slot_alloc_id_.resize(effective_cap);
+    slot_share_token_.resize(effective_cap);
+    slot_write_.resize(effective_cap);
+    oom_ = false;
+  } catch (...) {
+    oom_ = true;
+    handle_to_entry_.clear();
+    alloc_id_to_handle_.clear();
+    slot_alloc_handle_.clear();
+    slot_alloc_id_.clear();
+    slot_share_token_.clear();
+    slot_write_.clear();
+  }
 }
 
 void AllocationListTracker::reset() {
@@ -177,12 +201,23 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_c
   // Preserve the current max slot id; callers can construct a new tracker if
   // they need different semantics.
   const UINT effective_cap = list_capacity_effective();
-  handle_to_entry_.reserve(effective_cap);
-  alloc_id_to_handle_.reserve(effective_cap);
-  slot_alloc_handle_.resize(effective_cap);
-  slot_alloc_id_.resize(effective_cap);
-  slot_share_token_.resize(effective_cap);
-  slot_write_.resize(effective_cap);
+  try {
+    handle_to_entry_.reserve(effective_cap);
+    alloc_id_to_handle_.reserve(effective_cap);
+    slot_alloc_handle_.resize(effective_cap);
+    slot_alloc_id_.resize(effective_cap);
+    slot_share_token_.resize(effective_cap);
+    slot_write_.resize(effective_cap);
+    oom_ = false;
+  } catch (...) {
+    oom_ = true;
+    handle_to_entry_.clear();
+    alloc_id_to_handle_.clear();
+    slot_alloc_handle_.clear();
+    slot_alloc_id_.clear();
+    slot_share_token_.clear();
+    slot_write_.clear();
+  }
 
   reset();
 }
@@ -206,10 +241,14 @@ AllocRef AllocationListTracker::track_render_target_write(WddmAllocationHandle h
 }
 
 AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
-                                             UINT alloc_id,
-                                             uint64_t share_token,
-                                             bool write) {
+                                              UINT alloc_id,
+                                              uint64_t share_token,
+                                              bool write) {
   AllocRef out{};
+  if (oom_) {
+    out.status = AllocRefStatus::kOutOfMemory;
+    return out;
+  }
 
   if (!list_base_ || list_capacity_ == 0) {
     out.status = AllocRefStatus::kInvalidArgument;
@@ -277,7 +316,12 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
       return out;
     }
 
-    handle_to_entry_.emplace(key, existing);
+    try {
+      handle_to_entry_.emplace(key, existing);
+    } catch (...) {
+      out.status = AllocRefStatus::kOutOfMemory;
+      return out;
+    }
 
     out.alloc_id = alloc_id;
     out.list_index = existing.list_index;
@@ -304,7 +348,20 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
     return out;
   }
 
-  const UINT idx = list_len_++;
+  const UINT idx = list_len_;
+  try {
+    handle_to_entry_.emplace(key, Entry{idx, alloc_id, share_token});
+    try {
+      alloc_id_to_handle_.emplace(alloc_id, key);
+    } catch (...) {
+      handle_to_entry_.erase(key);
+      throw;
+    }
+  } catch (...) {
+    out.status = AllocRefStatus::kOutOfMemory;
+    return out;
+  }
+
   D3DDDI_ALLOCATIONLIST& entry = list_base_[idx];
   std::memset(&entry, 0, sizeof(entry));
   entry.hAllocation = hAllocation;
@@ -316,9 +373,7 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
   // slot-id range. Use the list index as the slot id and carry the stable
   // `alloc_id` separately in the allocation's private driver data.
   set_allocation_list_slot_id(entry, idx);
-
-  handle_to_entry_.emplace(key, Entry{idx, alloc_id, share_token});
-  alloc_id_to_handle_.emplace(alloc_id, key);
+  list_len_++;
   if (idx < slot_alloc_handle_.size()) {
     slot_alloc_handle_[idx] = hAllocation;
     slot_alloc_id_[idx] = alloc_id;
@@ -338,16 +393,22 @@ std::vector<AllocationListTracker::TrackedAllocation> AllocationListTracker::sna
     return out;
   }
 
-  out.reserve(list_len_);
-  for (UINT i = 0; i < list_len_; ++i) {
-    TrackedAllocation a{};
-    if (i < slot_alloc_handle_.size()) {
-      a.hAllocation = slot_alloc_handle_[i];
-      a.alloc_id = slot_alloc_id_[i];
-      a.share_token = slot_share_token_[i];
-      a.write = (slot_write_[i] != 0);
+  try {
+    out.reserve(list_len_);
+    for (UINT i = 0; i < list_len_; ++i) {
+      TrackedAllocation a{};
+      if (i < slot_alloc_handle_.size()) {
+        a.hAllocation = slot_alloc_handle_[i];
+        a.alloc_id = slot_alloc_id_[i];
+        a.share_token = slot_share_token_[i];
+        a.write = (slot_write_[i] != 0);
+      }
+      out.push_back(a);
     }
-    out.push_back(a);
+  } catch (...) {
+    // Failed to snapshot tracked allocations (OOM). Return an empty vector so
+    // callers can detect and fail cleanly instead of crashing.
+    out.clear();
   }
   return out;
 }

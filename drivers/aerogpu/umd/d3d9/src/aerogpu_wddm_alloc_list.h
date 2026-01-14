@@ -43,6 +43,7 @@ enum class AllocRefStatus : uint32_t {
   kAllocIdOutOfRange,
   kAllocIdCollision,
   kAllocIdMismatch,
+  kOutOfMemory,
 };
 
 struct AllocRef {
@@ -148,6 +149,7 @@ struct AllocRef {
 
   std::unordered_map<uint64_t, Entry> handle_to_entry_;
   std::unordered_map<UINT, uint64_t> alloc_id_to_handle_;
+  bool oom_ = false;
  };
 
 } // namespace aerogpu
