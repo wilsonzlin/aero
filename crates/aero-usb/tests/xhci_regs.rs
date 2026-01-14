@@ -55,7 +55,7 @@ fn dboff_and_rtsoff_within_mmio_window() {
 fn usbcmd_usbsts_run_stop_reset() {
     let mut xhci = XhciController::new();
 
-    let caplength = xhci.mmio_read(REG_CAPLENGTH, 1) as u64;
+    let caplength = xhci.mmio_read(REG_CAPLENGTH, 1);
     let op_base = caplength;
 
     let usbcmd = op_base + OP_USBCMD;

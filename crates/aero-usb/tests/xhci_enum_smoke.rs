@@ -136,7 +136,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
 
     // --- Capability discovery (driver-style) ---
     let cap0 = xhci.mmio_read(regs::REG_CAPLENGTH_HCIVERSION, 4);
-    let caplength = (cap0 & 0xff) as u64;
+    let caplength = cap0 & 0xff;
     assert_eq!(caplength as u8, regs::CAPLENGTH_BYTES);
 
     let _hcsparams1 = xhci.mmio_read(regs::REG_HCSPARAMS1, 4);

@@ -119,10 +119,10 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     assert!(xhci.irq_level());
 
     // Many xHCI drivers acknowledge interrupts by writing ERDP with EHB set.
-    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | u64::from(ERDP_EHB));
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | ERDP_EHB);
     let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
     assert_eq!(
-        erdp_lo & u64::from(ERDP_EHB),
+        erdp_lo & ERDP_EHB,
         0,
         "EHB should be a transient ack bit"
     );
@@ -160,10 +160,10 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
 
     // Exercise sub-dword MMIO writes: a byte write with EHB set should still acknowledge the
     // interrupt pending latch.
-    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 1, u64::from(ERDP_EHB));
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 1, ERDP_EHB);
     let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
     assert_eq!(
-        erdp_lo & u64::from(ERDP_EHB),
+        erdp_lo & ERDP_EHB,
         0,
         "EHB should be a transient ack bit"
     );
@@ -485,7 +485,7 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     // Guest consumes both TRBs and writes ERDP back to the same address. xHCI drivers can do this
     // when they consume a whole number of ring laps. The model should treat this as a wrap and
     // toggle the consumer cycle state to unblock the producer.
-    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | u64::from(ERDP_EHB));
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | ERDP_EHB);
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     xhci.service_event_ring(&mut mem);
