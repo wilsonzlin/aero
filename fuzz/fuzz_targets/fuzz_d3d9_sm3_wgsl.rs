@@ -83,7 +83,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deep decode/IR/WGSL paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 8;
+    let mode = seed.get(6).copied().unwrap_or(0) % 9;
 
     // For the texture-sampling path, force a pixel shader so we can exercise `texldd`.
     let stage_is_pixel = ((seed.get(0).copied().unwrap_or(0) & 1 != 0) || mode == 4) && mode != 7;
@@ -171,9 +171,18 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
         // Simple control-flow: if/else/endif.
         1 => {
-            // if src0
-            tokens.push(opcode_token(40, 1, 0));
-            tokens.push(src0);
+            let use_ifc = seed.get(17).copied().unwrap_or(0) & 1 != 0;
+            if use_ifc {
+                // ifc src0, src1 (comparison op encoded in opcode_token[16..19])
+                let cmp = (seed.get(18).copied().unwrap_or(0) % 6) as u32;
+                tokens.push(opcode_token(41, 2, 0) | (cmp << 16));
+                tokens.push(src0);
+                tokens.push(src1);
+            } else {
+                // if src0
+                tokens.push(opcode_token(40, 1, 0));
+                tokens.push(src0);
+            }
             // then: mov
             tokens.push(opcode_token(1, 2, mod_bits));
             tokens.push(dst);
@@ -365,7 +374,40 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(v_tex_src);
         }
 
-        _ => unreachable!("mode is reduced modulo 8"),
+        // Rep + endrep to exercise count-controlled loops.
+        8 => {
+            let i_idx = seed.get(17).copied().unwrap_or(0) % 4;
+            let i_dst = dst_token(7, i_idx, 0);
+
+            // defi i#, imm0..imm3
+            tokens.push(opcode_token(82, 5, 0));
+            tokens.push(i_dst);
+            tokens.push(u32_from_seed(seed, 24));
+            tokens.push(u32_from_seed(seed, 28));
+            tokens.push(u32_from_seed(seed, 32));
+            tokens.push(u32_from_seed(seed, 36));
+
+            // rep i#
+            let count_reg = src_token(7, i_idx, 0xE4, 0);
+            tokens.push(opcode_token(38, 1, 0));
+            tokens.push(count_reg);
+
+            // add dst, src0, src1
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // break
+            if seed.get(19).copied().unwrap_or(0) & 1 != 0 {
+                tokens.push(opcode_token(44, 0, 0));
+            }
+
+            // endrep
+            tokens.push(opcode_token(39, 0, 0));
+        }
+
+        _ => unreachable!("mode is reduced modulo 9"),
     };
 
     tokens.push(0x0000_FFFF);
