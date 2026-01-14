@@ -4636,6 +4636,40 @@ mod tests {
     }
 
     #[test]
+    fn build_manifest_v1_rejects_missing_sha256_entry() {
+        let err = build_manifest_v1(
+            10,
+            4,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &[Some(sha256_hex(b"chunk0"))],
+        )
+        .expect_err("expected missing sha256 failure");
+        assert!(
+            err.to_string().contains("missing sha256 for chunk 1"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn build_manifest_v1_rejects_explicit_null_sha256_entry() {
+        let err = build_manifest_v1(
+            10,
+            4,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &[Some(sha256_hex(b"chunk0")), None, Some(sha256_hex(b"chunk2"))],
+        )
+        .expect_err("expected missing sha256 failure");
+        assert!(
+            err.to_string().contains("missing sha256 for chunk 1"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
     fn validate_manifest_v1_rejects_unknown_schema() {
         let manifest = ManifestV1 {
             schema: "not-a-schema".to_string(),
