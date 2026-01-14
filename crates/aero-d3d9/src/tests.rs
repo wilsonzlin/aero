@@ -7538,6 +7538,50 @@ fn translate_entrypoint_rejects_used_volume_sampler() {
 }
 
 #[test]
+fn translate_entrypoint_supports_used_1d_sampler() {
+    // Regression test: used 1D samplers should translate and validate end-to-end.
+    let mut words = vec![0xFFFF_0300];
+    // dcl_1d s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        1u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0
+    words.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert!(translated.used_samplers.contains(&0));
+    assert_eq!(
+        translated.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::Texture1D)
+    );
+    assert!(
+        translated.wgsl.contains("texture_1d<f32>"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(".x"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn legacy_translator_emits_texture_1d_and_x_coords() {
     // Minimal ps_3_0 that samples from a 1D texture.
     let mut words = vec![0xFFFF_0300];
