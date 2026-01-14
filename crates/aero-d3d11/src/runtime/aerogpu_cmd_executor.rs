@@ -949,6 +949,26 @@ struct InputLayoutResource {
     /// this layout (bindings to unrelated slots should not invalidate the cache).
     used_slots: Vec<u32>,
     mapping_cache: HashMap<u64, BuiltVertexState>,
+    /// Cache for compute-side vertex pulling metadata.
+    ///
+    /// Keyed by the vertex shader's DXBC hash since the pulling layout depends on the VS input
+    /// signature.
+    vertex_pulling_cache: HashMap<u64, CachedVertexPullingLayout>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedVertexPullingLayout {
+    pulling: VertexPullingLayout,
+    /// WGSL used by the GS/HS/DS compute prepass when vertex pulling is enabled (non-indexed draw).
+    wgsl_no_index_pulling: Arc<str>,
+    /// WGSL used by the GS/HS/DS compute prepass when vertex pulling + index pulling is enabled
+    /// (indexed draw).
+    wgsl_with_index_pulling: Arc<str>,
+    /// Bind-group layout entries for the vertex pulling bind group (`@group(VERTEX_PULLING_GROUP)`
+    /// in WGSL) without index pulling.
+    bgl_entries: Vec<wgpu::BindGroupLayoutEntry>,
+    /// Bind-group layout entries for the vertex pulling bind group including index pulling.
+    bgl_entries_with_index_pulling: Vec<wgpu::BindGroupLayoutEntry>,
 }
 
 #[derive(Debug)]
@@ -3014,8 +3034,6 @@ impl AerogpuD3d11Executor {
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
-        self.validate_gs_hs_ds_emulation_capabilities()?;
-
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
         // wired up yet, so keep this as an explicit marker.
@@ -3425,104 +3443,268 @@ impl AerogpuD3d11Executor {
         //   input layout is bound.
         // - Indexed draws can still bind index pulling even without an input layout (useful for
         //   future VS-as-compute shaders that use only `SV_VertexID`).
-        let mut vertex_pulling_bgl: Option<
-            aero_gpu::bindings::layout_cache::CachedBindGroupLayout,
-        > = None;
+        let mut vertex_pulling_bgl: Option<aero_gpu::bindings::layout_cache::CachedBindGroupLayout> =
+            None;
         let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
-        let mut vertex_pulling_cs_wgsl: Option<String> = None;
+        let mut vertex_pulling_cs_wgsl: Option<Arc<str>> = None;
         if !patchlist_only_emulation {
             if let Some(layout_handle) = self.state.input_layout {
-            let vs = self
-                .resources
-                .shaders
-                .get(&vs_handle)
-                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
-                .clone();
-            if vs.stage != ShaderStage::Vertex {
-                bail!("shader {vs_handle} is not a vertex shader");
-            }
-            let layout = self
-                .resources
-                .input_layouts
-                .get(&layout_handle)
-                .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
-
-            // Strides come from IASetVertexBuffers state, not from ILAY.
-            let slot_strides: Vec<u32> = self
-                .state
-                .vertex_buffers
-                .iter()
-                .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
-                .collect();
-            let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
-            let pulling =
-                VertexPullingLayout::new(&binding, &vs.vs_input_signature).map_err(|e| {
-                    anyhow!("failed to build vertex pulling layout for input layout {layout_handle}: {e}")
-                })?;
-
-            // Build per-slot uniform data + bind group.
-            let mut slots: Vec<VertexPullingSlot> =
-                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
-            let mut buffers: Vec<&wgpu::Buffer> =
-                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
-            for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
-                let vb = self
-                    .state
-                    .vertex_buffers
-                    .get(d3d_slot as usize)
-                    .and_then(|v| *v)
-                    .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
-                let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
-                    anyhow!(
-                        "vertex buffer slot {d3d_slot} offset {} out of range",
-                        vb.offset_bytes
-                    )
-                })?;
-
-                let buf = self
+                let vs = self
                     .resources
-                    .buffers
-                    .get(&vb.buffer)
-                    .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
-                slots.push(VertexPullingSlot {
-                    base_offset_bytes,
-                    stride_bytes: vb.stride_bytes,
-                });
-                buffers.push(&buf.buffer);
-            }
+                    .shaders
+                    .get(&vs_handle)
+                    .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
+                    .clone();
+                if vs.stage != ShaderStage::Vertex {
+                    bail!("shader {vs_handle} is not a vertex shader");
+                }
+                let layout = self
+                    .resources
+                    .input_layouts
+                    .get_mut(&layout_handle)
+                    .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
 
-            let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
-            let uniform_alloc = self
-                .expansion_scratch
-                .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
-                .map_err(|e| anyhow!("geometry prepass: alloc vertex pulling uniform: {e}"))?;
-            self.queue.write_buffer(
-                uniform_alloc.buffer.as_ref(),
-                uniform_alloc.offset,
-                &uniform_bytes,
-            );
+                // Cache the vertex pulling layout + WGSL per (ILAY, VS) so we don't rebuild and
+                // re-format WGSL every draw.
+                let vp_cache_key = vs.dxbc_hash_fnv1a64;
+                if !layout.vertex_pulling_cache.contains_key(&vp_cache_key) {
+                    // Strides come from IASetVertexBuffers state, not from ILAY.
+                    let slot_strides: Vec<u32> = self
+                        .state
+                        .vertex_buffers
+                        .iter()
+                        .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
+                        .collect();
 
-            let mut vp_bgl_entries = pulling.bind_group_layout_entries();
-            let vp_bindings = compute_prepass_vertex_pulling_binding_numbers(buffers.len() as u32);
-            let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
-                Vec::with_capacity(buffers.len() + 3);
-            for (slot, buf) in buffers.iter().enumerate() {
+                    let fallback_signature;
+                    let sig = if vs.vs_input_signature.is_empty() {
+                        // Some bring-up shaders may lack an `ISGN` signature. Fall back to mapping ILAY
+                        // semantics to 0..N locations (same approach as the render pipeline mapping
+                        // cache).
+                        fallback_signature = build_fallback_vs_signature(&layout.layout);
+                        fallback_signature.as_slice()
+                    } else {
+                        vs.vs_input_signature.as_slice()
+                    };
+
+                    let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+                    let pulling = VertexPullingLayout::new(&binding, sig).map_err(|e| {
+                        anyhow!(
+                            "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
+                        )
+                    })?;
+
+                    let bgl_entries = pulling.bind_group_layout_entries();
+                    let mut bgl_entries_with_index_pulling = bgl_entries.clone();
+                    bgl_entries_with_index_pulling.push(wgpu::BindGroupLayoutEntry {
+                        binding: INDEX_PULLING_PARAMS_BINDING,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
+                    });
+                    bgl_entries_with_index_pulling.push(wgpu::BindGroupLayoutEntry {
+                        binding: INDEX_PULLING_BUFFER_BINDING,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    });
+
+                    let cs_body = if pulling.slot_count() > 0 {
+                        GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL
+                    } else {
+                        GEOMETRY_PREPASS_CS_WGSL
+                    };
+
+                    let mut prelude = pulling.wgsl_prelude();
+                    let wgsl_no_index_pulling: Arc<str> =
+                        Arc::from(format!("{prelude}\n{cs_body}"));
+                    prelude.push_str(&super::index_pulling::wgsl_index_pulling_lib(
+                        VERTEX_PULLING_GROUP,
+                        INDEX_PULLING_PARAMS_BINDING,
+                        INDEX_PULLING_BUFFER_BINDING,
+                    ));
+                    let wgsl_with_index_pulling: Arc<str> =
+                        Arc::from(format!("{prelude}\n{cs_body}"));
+
+                    layout.vertex_pulling_cache.insert(
+                        vp_cache_key,
+                        CachedVertexPullingLayout {
+                            pulling,
+                            wgsl_no_index_pulling,
+                            wgsl_with_index_pulling,
+                            bgl_entries,
+                            bgl_entries_with_index_pulling,
+                        },
+                    );
+                }
+
+                let cached = layout
+                    .vertex_pulling_cache
+                    .get(&vp_cache_key)
+                    .expect("inserted above");
+                let pulling = &cached.pulling;
+
+                // Build per-slot uniform data + bind group.
+                let mut slots: Vec<VertexPullingSlot> =
+                    Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+                let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+                    Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len() + 3);
+                for (pulling_slot, &d3d_slot) in pulling.pulling_slot_to_d3d_slot.iter().enumerate() {
+                    let vb = self
+                        .state
+                        .vertex_buffers
+                        .get(d3d_slot as usize)
+                        .and_then(|v| *v)
+                        .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+
+                    let required_stride = pulling
+                        .required_strides
+                        .get(pulling_slot)
+                        .copied()
+                        .unwrap_or(0);
+                    if vb.stride_bytes < required_stride {
+                        bail!(
+                            "vertex buffer slot {d3d_slot} stride {} is smaller than required stride {required_stride}",
+                            vb.stride_bytes
+                        );
+                    }
+
+                    let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
+                        anyhow!(
+                            "vertex buffer slot {d3d_slot} offset {} out of range",
+                            vb.offset_bytes
+                        )
+                    })?;
+
+                    let buf = self
+                        .resources
+                        .buffers
+                        .get(&vb.buffer)
+                        .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+
+                    slots.push(VertexPullingSlot {
+                        base_offset_bytes,
+                        stride_bytes: vb.stride_bytes,
+                    });
+                    vp_bg_entries.push(wgpu::BindGroupEntry {
+                        binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + pulling_slot as u32,
+                        resource: buf.buffer.as_entire_binding(),
+                    });
+                }
+
+                let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+                let uniform_alloc = self
+                    .expansion_scratch
+                    .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
+                    .map_err(|e| anyhow!("geometry prepass: alloc vertex pulling uniform: {e}"))?;
+                self.queue.write_buffer(
+                    uniform_alloc.buffer.as_ref(),
+                    uniform_alloc.offset,
+                    &uniform_bytes,
+                );
+
                 vp_bg_entries.push(wgpu::BindGroupEntry {
-                    binding: vp_bindings[slot],
-                    resource: buf.as_entire_binding(),
+                    binding: VERTEX_PULLING_UNIFORM_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: uniform_alloc.buffer.as_ref(),
+                        offset: uniform_alloc.offset,
+                        size: wgpu::BufferSize::new(uniform_alloc.size),
+                    }),
                 });
-            }
-            vp_bg_entries.push(wgpu::BindGroupEntry {
-                binding: *vp_bindings.last().unwrap(),
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: uniform_alloc.buffer.as_ref(),
-                    offset: uniform_alloc.offset,
-                    size: wgpu::BufferSize::new(uniform_alloc.size),
-                }),
-            });
-            let mut vp_cs_prelude = pulling.wgsl_prelude();
-            let index_pulling_setup = if opcode == OPCODE_DRAW_INDEXED {
-                let ib = self.state.index_buffer.expect("checked above");
+
+                let bgl_entries = if opcode == OPCODE_DRAW_INDEXED {
+                    &cached.bgl_entries_with_index_pulling
+                } else {
+                    &cached.bgl_entries
+                };
+
+                // Keep index pulling resources alive until after bind group creation.
+                let mut index_pulling_params_alloc = None;
+                let mut index_pulling_buffer: Option<&wgpu::Buffer> = None;
+
+                if opcode == OPCODE_DRAW_INDEXED {
+                    let ib = self.state.index_buffer.expect("checked above");
+                    let ib_buf = self
+                        .resources
+                        .buffers
+                        .get(&ib.buffer)
+                        .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+                    index_pulling_buffer = Some(&ib_buf.buffer);
+
+                    let index_format = match ib.format {
+                        wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                        wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+                    };
+                    let params = IndexPullingParams {
+                        first_index: vertex_pulling_draw.first_index,
+                        base_vertex: vertex_pulling_draw.base_vertex,
+                        index_format,
+                        _pad0: 0,
+                    };
+
+                    let params_bytes = params.to_le_bytes();
+                    let params_alloc = self
+                        .expansion_scratch
+                        .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+                        .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
+                    self.queue.write_buffer(
+                        params_alloc.buffer.as_ref(),
+                        params_alloc.offset,
+                        &params_bytes,
+                    );
+                    index_pulling_params_alloc = Some(params_alloc);
+                }
+
+                if let (Some(params_alloc), Some(ib_buffer)) = (
+                    index_pulling_params_alloc.as_ref(),
+                    index_pulling_buffer,
+                ) {
+                    vp_bg_entries.push(wgpu::BindGroupEntry {
+                        binding: INDEX_PULLING_PARAMS_BINDING,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: params_alloc.buffer.as_ref(),
+                            offset: params_alloc.offset,
+                            size: wgpu::BufferSize::new(params_alloc.size),
+                        }),
+                    });
+                    vp_bg_entries.push(wgpu::BindGroupEntry {
+                        binding: INDEX_PULLING_BUFFER_BINDING,
+                        resource: ib_buffer.as_entire_binding(),
+                    });
+                }
+
+                let vp_bgl = self
+                    .bind_group_layout_cache
+                    .get_or_create(&self.device, bgl_entries);
+                let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd vertex pulling bind group"),
+                    layout: vp_bgl.layout.as_ref(),
+                    entries: &vp_bg_entries,
+                });
+
+                vertex_pulling_cs_wgsl = Some(if opcode == OPCODE_DRAW_INDEXED {
+                    cached.wgsl_with_index_pulling.clone()
+                } else {
+                    cached.wgsl_no_index_pulling.clone()
+                });
+                vertex_pulling_bgl = Some(vp_bgl);
+                vertex_pulling_bg = Some(vp_bg);
+            } else if opcode == OPCODE_DRAW_INDEXED {
+                // Even without an input layout, indexed draws still need index pulling when executing
+                // the IA/VS stages in compute. Bind the real index buffer + params so future VS-as-
+                // compute implementations can resolve `SV_VertexID` correctly.
+                let ib = self
+                    .state
+                    .index_buffer
+                    .expect("checked DRAW_INDEXED precondition above");
                 let ib_buf = self
                     .resources
                     .buffers
@@ -3539,7 +3721,6 @@ impl AerogpuD3d11Executor {
                     index_format,
                     _pad0: 0,
                 };
-
                 let params_bytes = params.to_le_bytes();
                 let params_alloc = self
                     .expansion_scratch
@@ -3551,158 +3732,66 @@ impl AerogpuD3d11Executor {
                     &params_bytes,
                 );
 
-                vp_cs_prelude.push_str(&super::index_pulling::wgsl_index_pulling_lib(
-                    VERTEX_PULLING_GROUP,
-                    INDEX_PULLING_PARAMS_BINDING,
-                    INDEX_PULLING_BUFFER_BINDING,
-                ));
-                Some((params_alloc, &ib_buf.buffer))
-            } else {
-                None
-            };
-
-            if let Some((params_alloc, ib_buffer)) = index_pulling_setup.as_ref() {
-                vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
-                    binding: INDEX_PULLING_PARAMS_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(16),
-                    },
-                    count: None,
-                });
-                vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
-                    binding: INDEX_PULLING_BUFFER_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                });
-
-                // Bind index pulling resources in the same group as vertex pulling.
-                vp_bg_entries.push(wgpu::BindGroupEntry {
-                    binding: INDEX_PULLING_PARAMS_BINDING,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: params_alloc.buffer.as_ref(),
-                        offset: params_alloc.offset,
-                        size: wgpu::BufferSize::new(params_alloc.size),
-                    }),
-                });
-                vp_bg_entries.push(wgpu::BindGroupEntry {
-                    binding: INDEX_PULLING_BUFFER_BINDING,
-                    resource: ib_buffer.as_entire_binding(),
-                });
-            }
-
-            let vp_bgl = self
-                .bind_group_layout_cache
-                .get_or_create(&self.device, &vp_bgl_entries);
-            let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd vertex pulling bind group"),
-                layout: vp_bgl.layout.as_ref(),
-                entries: &vp_bg_entries,
-            });
-
-            let cs_body = if pulling.slot_count() > 0 {
-                GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL
-            } else {
-                GEOMETRY_PREPASS_CS_WGSL
-            };
-            vertex_pulling_cs_wgsl = Some(format!("{vp_cs_prelude}\n{cs_body}"));
-            vertex_pulling_bgl = Some(vp_bgl);
-            vertex_pulling_bg = Some(vp_bg);
-        } else if opcode == OPCODE_DRAW_INDEXED {
-            // Even without an input layout, indexed draws still need index pulling when executing
-            // the IA/VS stages in compute. Bind the real index buffer + params so future VS-as-
-            // compute implementations can resolve `SV_VertexID` correctly.
-            let ib = self
-                .state
-                .index_buffer
-                .expect("checked DRAW_INDEXED precondition above");
-            let ib_buf = self
-                .resources
-                .buffers
-                .get(&ib.buffer)
-                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
-
-            let index_format = match ib.format {
-                wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
-                wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
-            };
-            let params = IndexPullingParams {
-                first_index: vertex_pulling_draw.first_index,
-                base_vertex: vertex_pulling_draw.base_vertex,
-                index_format,
-                _pad0: 0,
-            };
-            let params_bytes = params.to_le_bytes();
-            let params_alloc = self
-                .expansion_scratch
-                .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
-                .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
-            self.queue.write_buffer(
-                params_alloc.buffer.as_ref(),
-                params_alloc.offset,
-                &params_bytes,
-            );
-
-            let ip_bgl_entries = [
-                wgpu::BindGroupLayoutEntry {
-                    binding: INDEX_PULLING_PARAMS_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(16),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: INDEX_PULLING_BUFFER_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ];
-            let ip_bgl = self
-                .bind_group_layout_cache
-                .get_or_create(&self.device, &ip_bgl_entries);
-            let ip_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd index pulling bind group"),
-                layout: ip_bgl.layout.as_ref(),
-                entries: &[
-                    wgpu::BindGroupEntry {
+                let ip_bgl_entries = [
+                    wgpu::BindGroupLayoutEntry {
                         binding: INDEX_PULLING_PARAMS_BINDING,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: params_alloc.buffer.as_ref(),
-                            offset: params_alloc.offset,
-                            size: wgpu::BufferSize::new(params_alloc.size),
-                        }),
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
                     },
-                    wgpu::BindGroupEntry {
+                    wgpu::BindGroupLayoutEntry {
                         binding: INDEX_PULLING_BUFFER_BINDING,
-                        resource: ib_buf.buffer.as_entire_binding(),
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                ],
-            });
+                ];
+                let ip_bgl = self
+                    .bind_group_layout_cache
+                    .get_or_create(&self.device, &ip_bgl_entries);
+                let ip_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd index pulling bind group"),
+                    layout: ip_bgl.layout.as_ref(),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: INDEX_PULLING_PARAMS_BINDING,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: params_alloc.buffer.as_ref(),
+                                offset: params_alloc.offset,
+                                size: wgpu::BufferSize::new(params_alloc.size),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: INDEX_PULLING_BUFFER_BINDING,
+                            resource: ib_buf.buffer.as_entire_binding(),
+                        },
+                    ],
+                });
 
-            let ip_wgsl = super::index_pulling::wgsl_index_pulling_lib(
-                VERTEX_PULLING_GROUP,
-                INDEX_PULLING_PARAMS_BINDING,
-                INDEX_PULLING_BUFFER_BINDING,
-            );
-            vertex_pulling_cs_wgsl = Some(format!("{ip_wgsl}\n{GEOMETRY_PREPASS_CS_WGSL}"));
-            vertex_pulling_bgl = Some(ip_bgl);
-            vertex_pulling_bg = Some(ip_bg);
-        }
+                // Cache the simple (index pulling only) prepass WGSL so we don't re-format it every draw.
+                static INDEX_PULLING_PREPASS_WGSL: std::sync::OnceLock<Arc<str>> =
+                    std::sync::OnceLock::new();
+                let cached_wgsl = INDEX_PULLING_PREPASS_WGSL.get_or_init(|| {
+                    let ip_wgsl = super::index_pulling::wgsl_index_pulling_lib(
+                        VERTEX_PULLING_GROUP,
+                        INDEX_PULLING_PARAMS_BINDING,
+                        INDEX_PULLING_BUFFER_BINDING,
+                    );
+                    Arc::from(format!("{ip_wgsl}
+{GEOMETRY_PREPASS_CS_WGSL}"))
+                });
+                vertex_pulling_cs_wgsl = Some(cached_wgsl.clone());
+                vertex_pulling_bgl = Some(ip_bgl);
+                vertex_pulling_bg = Some(ip_bg);
+            }
         }
 
         // Build compute prepass pipeline + bind group.
@@ -10235,6 +10324,7 @@ impl AerogpuD3d11Executor {
                 layout,
                 used_slots,
                 mapping_cache: HashMap::new(),
+                vertex_pulling_cache: HashMap::new(),
             },
         );
         Ok(())
@@ -14884,6 +14974,7 @@ mod tests {
         let pulling = VertexPullingLayout {
             d3d_slot_to_pulling_slot,
             pulling_slot_to_d3d_slot: vec![0, 1, 2],
+            required_strides: vec![0; 3],
             attributes: Vec::new(),
         };
 
@@ -15452,6 +15543,7 @@ mod tests {
                     },
                     used_slots: Vec::new(),
                     mapping_cache: HashMap::new(),
+                    vertex_pulling_cache: HashMap::new(),
                 },
             );
 
@@ -15642,6 +15734,7 @@ mod tests {
                     },
                     used_slots: Vec::new(),
                     mapping_cache: HashMap::new(),
+                    vertex_pulling_cache: HashMap::new(),
                 },
             );
 

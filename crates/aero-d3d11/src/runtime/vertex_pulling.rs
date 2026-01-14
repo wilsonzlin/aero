@@ -97,6 +97,11 @@ pub struct VertexPullingLayout {
     pub d3d_slot_to_pulling_slot: BTreeMap<u32, u32>,
     /// Pulling slot → D3D11 input slot.
     pub pulling_slot_to_d3d_slot: Vec<u32>,
+    /// Required stride in bytes for each pulling slot (same order as
+    /// [`Self::pulling_slot_to_d3d_slot`]).
+    ///
+    /// This is derived from the input layout element declarations (format sizes/offsets).
+    pub required_strides: Vec<u32>,
     pub attributes: Vec<VertexPullingAttribute>,
 }
 
@@ -272,6 +277,16 @@ impl VertexPullingLayout {
             pulling_slot_to_d3d_slot.push(d3d_slot);
         }
 
+        let mut required_strides: Vec<u32> = Vec::with_capacity(pulling_slot_to_d3d_slot.len());
+        for d3d_slot in &pulling_slot_to_d3d_slot {
+            required_strides.push(
+                slot_state
+                    .get(d3d_slot)
+                    .expect("slot_state contains every used slot")
+                    .required_stride,
+            );
+        }
+
         let mut attributes: Vec<VertexPullingAttribute> = temp_elems
             .into_iter()
             .map(|e| VertexPullingAttribute {
@@ -290,6 +305,7 @@ impl VertexPullingLayout {
         Ok(Self {
             d3d_slot_to_pulling_slot,
             pulling_slot_to_d3d_slot,
+            required_strides,
             attributes,
         })
     }

@@ -610,6 +610,7 @@ mod tests {
         let pulling = VertexPullingLayout {
             d3d_slot_to_pulling_slot,
             pulling_slot_to_d3d_slot: vec![0, 1, 2],
+            required_strides: vec![0; 3],
             attributes: Vec::new(),
         };
 
