@@ -27,6 +27,7 @@ dependencies = [
  "aero-protocol",
  "anyhow",
  "bytemuck",
+ "futures-intrusive",
  "image",
  "pollster",
  "serde_json",
