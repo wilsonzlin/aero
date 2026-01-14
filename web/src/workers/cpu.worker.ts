@@ -3250,7 +3250,12 @@ async function runLoopInner(): Promise<void> {
               // re-marking `frameState` DIRTY when we didn't actually publish a new shared
               // framebuffer frame (prevents tick/present storms).
               if (!sharedHeader || Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) === 0) {
-                const seq = cpuDemo.render_frame(0, now);
+                const demoAny = cpuDemo as unknown as Record<string, unknown>;
+                const renderFrame = demoAny.render_frame ?? demoAny.renderFrame;
+                if (typeof renderFrame !== "function") {
+                  throw new Error("CpuWorkerDemo missing render_frame/renderFrame export.");
+                }
+                const seq = (renderFrame as (frameSeq: number, nowMs: number) => unknown).call(cpuDemo, 0, now) as number;
                 if (perfActive) perfInstructions += instructionsPerSharedFrame;
                 if (frameState) {
                   Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
@@ -3265,7 +3270,12 @@ async function runLoopInner(): Promise<void> {
           // Legacy demo loop: publish a shared-framebuffer animation.
           if (cpuDemo) {
             if (!sharedHeader || Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) === 0) {
-              const seq = cpuDemo.render_frame(0, now);
+              const demoAny = cpuDemo as unknown as Record<string, unknown>;
+              const renderFrame = demoAny.render_frame ?? demoAny.renderFrame;
+              if (typeof renderFrame !== "function") {
+                throw new Error("CpuWorkerDemo missing render_frame/renderFrame export.");
+              }
+              const seq = (renderFrame as (frameSeq: number, nowMs: number) => unknown).call(cpuDemo, 0, now) as number;
               if (perfActive) perfInstructions += instructionsPerSharedFrame;
               if (frameState) {
                 Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
