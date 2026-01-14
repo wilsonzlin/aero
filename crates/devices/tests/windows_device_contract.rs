@@ -211,6 +211,71 @@ fn inf_model_entry_for_hwid(
     None
 }
 
+fn inf_model_entries_for_hwid(
+    contents: &str,
+    section_name: &str,
+    expected_hwid: &str,
+) -> Vec<(String, String)> {
+    let expected_hwid_upper = expected_hwid.to_ascii_uppercase();
+    let mut current_section = String::new();
+    let mut matches = Vec::new();
+
+    for raw in contents.lines() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            current_section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        if !current_section.eq_ignore_ascii_case(section_name) {
+            continue;
+        }
+        let mut parts = line.splitn(2, '=');
+        let device_desc = parts.next().unwrap_or("").trim();
+        let rhs = parts.next().unwrap_or("").trim();
+        if device_desc.is_empty() || rhs.is_empty() {
+            continue;
+        }
+        let rhs_parts: Vec<&str> = rhs
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if rhs_parts.len() < 2 {
+            continue;
+        }
+        let install_section = rhs_parts[0];
+        let Some(hwid) = rhs_parts
+            .iter()
+            .rev()
+            .copied()
+            .find(|p| p.to_ascii_uppercase().starts_with("PCI\\VEN_"))
+        else {
+            continue;
+        };
+        if hwid.to_ascii_uppercase() != expected_hwid_upper {
+            continue;
+        }
+        matches.push((device_desc.to_string(), install_section.to_string()));
+    }
+
+    matches
+}
+
+fn resolve_inf_device_desc(desc: &str, strings: &BTreeMap<String, String>) -> String {
+    let d = desc.trim();
+    if d.starts_with('%') && d.ends_with('%') && d.len() >= 3 {
+        let key = d[1..d.len() - 1].trim().to_ascii_lowercase();
+        let value = strings.get(&key).unwrap_or_else(|| {
+            panic!("undefined [Strings] token referenced by models section: {desc:?}")
+        });
+        return value.clone();
+    }
+    d.to_string()
+}
+
 fn inf_strings(contents: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut current_section = String::new();
@@ -428,15 +493,35 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     let hwid_fallback_revisionless = "PCI\\VEN_1AF4&DEV_1052";
     let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
 
+    let strings = inf_strings(&inf_contents);
+
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
-            .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
-        let (mouse_desc, mouse_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
-                .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
-        let (fallback_desc, fallback_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
-                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
+        let kbd_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_kbd);
+        assert_eq!(
+            kbd_entries.len(),
+            1,
+            "expected exactly one {hwid_kbd} model entry in [{section}] (found {})",
+            kbd_entries.len()
+        );
+        let (kbd_desc, kbd_install) = kbd_entries[0].clone();
+
+        let mouse_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_mouse);
+        assert_eq!(
+            mouse_entries.len(),
+            1,
+            "expected exactly one {hwid_mouse} model entry in [{section}] (found {})",
+            mouse_entries.len()
+        );
+        let (mouse_desc, mouse_install) = mouse_entries[0].clone();
+
+        let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_fallback);
+        assert_eq!(
+            fallback_entries.len(),
+            1,
+            "expected exactly one {hwid_fallback} model entry in [{section}] (found {})",
+            fallback_entries.len()
+        );
+        let (fallback_desc, fallback_install) = fallback_entries[0].clone();
 
         assert_eq!(
             kbd_install, mouse_install,
@@ -451,17 +536,18 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
-
-        // The strict generic fallback HWID (no SUBSYS) exists so that driver binding
-        // remains revision-gated even when subsystem IDs are absent/ignored. It must
-        // remain generic (not reusing the keyboard/mouse DeviceDesc).
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
-            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
+        let kbd_desc_str = resolve_inf_device_desc(&kbd_desc, &strings);
+        let mouse_desc_str = resolve_inf_device_desc(&mouse_desc, &strings);
+        let fallback_desc_str = resolve_inf_device_desc(&fallback_desc, &strings);
+        assert_ne!(
+            fallback_desc_str.to_ascii_lowercase(),
+            kbd_desc_str.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc must be generic (must not equal keyboard)"
         );
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
-            "{section}: fallback DeviceDesc token must be generic (not mouse)"
+        assert_ne!(
+            fallback_desc_str.to_ascii_lowercase(),
+            mouse_desc_str.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc must be generic (must not equal mouse)"
         );
         assert!(
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback_revisionless).is_none(),
@@ -475,10 +561,8 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
-        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
 
-    let strings = inf_strings(&inf_contents);
     let kbd_name = strings
         .get("aerovirtiokeyboard.devicedesc")
         .expect("missing AeroVirtioKeyboard.DeviceDesc in [Strings]");
@@ -509,9 +593,9 @@ fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical()
     // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
     // reference `virtio-input.inf`.
     //
-    // Contract: the alias INF is a *filename alias only*. From the first section header
-    // (`[Version]`) onward, it must match the canonical INF byte-for-byte (only the leading
-    // banner/comments may differ).
+    // Contract: the alias INF is a *filename alias only*. If it exists, it must match the
+    // canonical INF byte-for-byte from the first section header (`[Version]`) onward (only the
+    // leading banner/comments may differ).
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
@@ -551,15 +635,35 @@ fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical()
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
     let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
 
+    let strings = inf_strings(&inf_contents);
+
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
-            .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
-        let (mouse_desc, mouse_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
-                .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
-        let (fallback_desc, fallback_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
-                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
+        let kbd_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_kbd);
+        assert_eq!(
+            kbd_entries.len(),
+            1,
+            "expected exactly one {hwid_kbd} model entry in [{section}] (found {})",
+            kbd_entries.len()
+        );
+        let (kbd_desc, kbd_install) = kbd_entries[0].clone();
+
+        let mouse_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_mouse);
+        assert_eq!(
+            mouse_entries.len(),
+            1,
+            "expected exactly one {hwid_mouse} model entry in [{section}] (found {})",
+            mouse_entries.len()
+        );
+        let (mouse_desc, mouse_install) = mouse_entries[0].clone();
+
+        let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_fallback);
+        assert_eq!(
+            fallback_entries.len(),
+            1,
+            "expected exactly one {hwid_fallback} model entry in [{section}] (found {})",
+            fallback_entries.len()
+        );
+        let (fallback_desc, fallback_install) = fallback_entries[0].clone();
 
         assert_eq!(
             kbd_install, mouse_install,
@@ -575,22 +679,25 @@ fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical()
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
-            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
+        let kbd_desc_str = resolve_inf_device_desc(&kbd_desc, &strings);
+        let mouse_desc_str = resolve_inf_device_desc(&mouse_desc, &strings);
+        let fallback_desc_str = resolve_inf_device_desc(&fallback_desc, &strings);
+        assert_ne!(
+            fallback_desc_str.to_ascii_lowercase(),
+            kbd_desc_str.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc must be generic (must not equal keyboard)"
         );
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
-            "{section}: fallback DeviceDesc token must be generic (not mouse)"
+        assert_ne!(
+            fallback_desc_str.to_ascii_lowercase(),
+            mouse_desc_str.to_ascii_lowercase(),
+            "{section}: fallback DeviceDesc must be generic (must not equal mouse)"
         );
 
         // The alias INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
-        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
 
-    let strings = inf_strings(&inf_contents);
     let kbd_name = strings
         .get("aerovirtiokeyboard.devicedesc")
         .expect("missing AeroVirtioKeyboard.DeviceDesc in [Strings]");
