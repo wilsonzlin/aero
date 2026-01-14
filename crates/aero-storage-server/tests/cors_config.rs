@@ -16,6 +16,21 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
         .await
         .expect("write test file");
 
+    // Chunked artifacts for the chunked endpoints.
+    let chunk_root = dir.path().join("chunked").join("test.img");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk");
+
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
     let state = AppState::new(store)
         .with_cors_allow_origin("https://example.com".parse().unwrap())
@@ -25,6 +40,8 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
     ] {
         let resp = app
             .clone()
@@ -64,13 +81,32 @@ async fn cors_preflight_for_metadata_endpoints_allows_if_none_match() {
         .await
         .expect("write test file");
 
+    let chunk_root = dir.path().join("chunked").join("test.img");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk");
+
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
     let state = AppState::new(store)
         .with_cors_allow_origin("https://example.com".parse().unwrap())
         .with_cors_allow_credentials(true);
     let app = aero_storage_server::app(state);
 
-    for (name, uri) in [("list", "/v1/images"), ("meta", "/v1/images/test.img/meta")] {
+    for (name, uri) in [
+        ("list", "/v1/images"),
+        ("meta", "/v1/images/test.img/meta"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+    ] {
         let resp = app
             .clone()
             .oneshot(
@@ -161,6 +197,7 @@ async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
 
     // Metadata endpoint guard should return 400 and also include CORS headers.
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
@@ -187,5 +224,31 @@ async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "no-cache"
+    );
+
+    // Chunked endpoints share the same image id length guard and must still include CORS headers.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{long_raw}/chunked/manifest.json"))
+                .header(header::ORIGIN, "https://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "https://example.com"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-credentials"]
+            .to_str()
+            .unwrap(),
+        "true"
     );
 }
