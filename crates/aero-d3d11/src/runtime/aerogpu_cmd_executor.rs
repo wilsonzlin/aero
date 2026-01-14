@@ -3970,16 +3970,9 @@ impl AerogpuD3d11Executor {
 
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
-        // wired up yet, so fail fast with a clear error instead of panicking (the command stream is
-        // guest-controlled).
-        if self.state.hs.is_some() || self.state.ds.is_some() {
-            bail!(
-                "aerogpu_cmd: tessellation (HS/DS) compute expansion is not wired up yet (hs={:?} ds={:?} topology={:?})",
-                self.state.hs,
-                self.state.ds,
-                self.state.primitive_topology
-            );
-        }
+        // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
+        // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
+        // topologies) do not crash.
 
         let Some(next) = stream.iter.peek() else {
             return Ok(());
@@ -4121,6 +4114,14 @@ impl AerogpuD3d11Executor {
             1
         };
 
+        // Patchlist topology / HS+DS bindings require tessellation emulation. Until real
+        // tessellation is implemented, route these through the same placeholder compute prepass but
+        // avoid touching guest IA buffers (the placeholder shader ignores them).
+        let tessellation_placeholder =
+            matches!(self.state.primitive_topology, CmdPrimitiveTopology::PatchList { .. })
+                || self.state.hs.is_some()
+                || self.state.ds.is_some();
+
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -4133,19 +4134,22 @@ impl AerogpuD3d11Executor {
 
         // Upload any dirty resources used by the current input assembler bindings. The
         // vertex-pulling prepass reads at least one dword (and the eventual GS/HS/DS emulation path
-        // will use the full vertex pulling layout).
-        let mut ia_buffers: Vec<u32> = self
-            .state
-            .vertex_buffers
-            .iter()
-            .flatten()
-            .map(|b| b.buffer)
-            .collect();
-        if let Some(ib) = self.state.index_buffer {
-            ia_buffers.push(ib.buffer);
-        }
-        for handle in ia_buffers {
-            self.ensure_buffer_uploaded(encoder, handle, allocs, guest_mem)?;
+        // will use the full vertex pulling layout). The tessellation placeholder path intentionally
+        // ignores guest IA buffers, so avoid uploading them there.
+        if !tessellation_placeholder {
+            let mut ia_buffers: Vec<u32> = self
+                .state
+                .vertex_buffers
+                .iter()
+                .flatten()
+                .map(|b| b.buffer)
+                .collect();
+            if let Some(ib) = self.state.index_buffer {
+                ia_buffers.push(ib.buffer);
+            }
+            for handle in ia_buffers {
+                self.ensure_buffer_uploaded(encoder, handle, allocs, guest_mem)?;
+            }
         }
 
         // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies
@@ -4303,17 +4307,8 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
-        let patchlist_only_emulation = matches!(
-            self.state.primitive_topology,
-            CmdPrimitiveTopology::PatchList { .. }
-        ) && self.state.gs.is_none()
-            && self.state.hs.is_none()
-            && self.state.ds.is_none();
-        let centered_placeholder_triangle = patchlist_only_emulation
-            || matches!(
-                self.state.primitive_topology,
-                CmdPrimitiveTopology::PointList
-            );
+        let centered_placeholder_triangle = tessellation_placeholder
+            || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
@@ -4492,7 +4487,7 @@ impl AerogpuD3d11Executor {
             let mut vp_index_params_buffer: Option<wgpu::Buffer> = None;
             let mut index_pulling_params_buffer: Option<wgpu::Buffer> = None;
 
-            if !patchlist_only_emulation {
+            if !tessellation_placeholder {
                 if let Some(layout_handle) = self.state.input_layout {
                     let vs = self
                         .resources
@@ -12896,6 +12891,7 @@ impl AerogpuD3d11Executor {
             Vec::with_capacity(pipeline_bindings.group_layouts.len());
 
         for group_index in 0..pipeline_bindings.group_layouts.len() {
+            let group_u32 = group_index as u32;
             let group_bindings = &pipeline_bindings.group_bindings[group_index];
             if group_bindings.is_empty() {
                 // Some internal emulation paths (expanded-geometry draws) extend the pipeline layout
@@ -12904,7 +12900,6 @@ impl AerogpuD3d11Executor {
                 // group with the internal expanded-vertex buffer binding, so bind a dummy storage
                 // buffer here. Callers that actually use expanded draws will overwrite this bind
                 // group with the correct expanded-vertex buffer before issuing the draw.
-                let group_u32 = group_index as u32;
                 if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
                     let entries = [BindGroupCacheEntry {
                         binding: BINDING_INTERNAL_EXPANDED_VERTICES,
