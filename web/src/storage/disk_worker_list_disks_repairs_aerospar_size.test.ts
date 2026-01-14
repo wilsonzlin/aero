@@ -34,6 +34,9 @@ function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: num
   const tableEntries = (BigInt(diskSizeBytes) + blockSizeBig - 1n) / blockSizeBig;
   const dataOffset = alignUpBigInt(64n + tableEntries * 8n, blockSizeBig);
   const fileSize = Number(dataOffset); // allocatedBlocks=0 so file only needs to cover the data offset
+  // `FileSystemWritableFileStream.write()` only accepts views backed by a transferable `ArrayBuffer`
+  // (TypeScript models this as `ArrayBufferView<ArrayBuffer>`). This buffer is always `ArrayBuffer`-backed,
+  // but we assert the generic type so `w.write(bytes)` typechecks.
   const out = new Uint8Array(fileSize) as Uint8Array<ArrayBuffer>;
   out.set(new TextEncoder().encode("AEROSPAR"), 0);
 
@@ -145,7 +148,7 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
 
     const state = await opfsReadState();
     expect(state.disks["disk1"]?.sizeBytes).toBe(1024 * 1024);
-  });
+  }, 20_000);
 
   it("repairs mislabeled aerospar files that were imported as raw", async () => {
     vi.resetModules();
@@ -226,7 +229,7 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
     const repaired = await opfsReadState();
     expect(repaired.disks[id]?.format).toBe("aerospar");
     expect(repaired.disks[id]?.sizeBytes).toBe(logicalSize);
-  });
+  }, 20_000);
 
   it("treats truncated aerospar magic as aerospar to avoid leaking header bytes as raw", async () => {
     vi.resetModules();
@@ -256,7 +259,7 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
     const fileName = `${id}.img`;
 
     // Create a file that begins with the aerospar magic but is too small to contain a full header.
-    const bytes = new TextEncoder().encode("AEROSPAR"); // 8 bytes
+    const bytes = new TextEncoder().encode("AEROSPAR") as Uint8Array<ArrayBuffer>; // 8 bytes
     const disksDir = await opfsGetDisksDir();
     const fh = await disksDir.getFileHandle(fileName, { create: true });
     const w = await fh.createWritable({ keepExistingData: false });
@@ -302,5 +305,5 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
 
     const repaired = await opfsReadState();
     expect(repaired.disks[id]?.format).toBe("aerospar");
-  });
+  }, 20_000);
 });

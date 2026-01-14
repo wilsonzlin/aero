@@ -144,11 +144,9 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
         format: SCANOUT_FORMAT_B8G8R8X8,
       });
 
-      // Metrics are rate-limited (250ms). Tick once, wait long enough, then tick again to ensure a
-      // metrics post with the current scanout state.
-      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+      // Metrics are rate-limited (250ms). Wait long enough so `performance.now()` inside the worker
+      // crosses the interval, then tick once and assert the emitted metrics include scanout telemetry.
       await new Promise((resolve) => setTimeout(resolve, 300));
-
       const metricsPromise = waitForWorkerMessage(
         worker,
         (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "metrics" && !!(msg as any).scanout,
