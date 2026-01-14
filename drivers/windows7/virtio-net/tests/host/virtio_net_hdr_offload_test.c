@@ -91,7 +91,7 @@ static int test_ipv4_tcp_no_vlan(void) {
   ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
   ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
   ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
-  ASSERT_EQ_U16(Hdr.HdrLen, 54);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
   ASSERT_EQ_U16(Hdr.CsumStart, 34);
   ASSERT_EQ_U16(Hdr.CsumOffset, 16);
 
@@ -150,7 +150,7 @@ static int test_ipv4_udp_no_vlan(void) {
   ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
   ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
   ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
-  ASSERT_EQ_U16(Hdr.HdrLen, 42);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
   ASSERT_EQ_U16(Hdr.CsumStart, 34);
   ASSERT_EQ_U16(Hdr.CsumOffset, 6);
 

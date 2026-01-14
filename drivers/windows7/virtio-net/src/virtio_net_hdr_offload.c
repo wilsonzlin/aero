@@ -380,8 +380,10 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdr(const VIRTIO_NET_HDR
 
   VirtioNetHdrOffloadMemset(Hdr, 0, sizeof(*Hdr));
 
-  /* Always report header length when we can (useful for debugging/tests). */
-  Hdr->HdrLen = Info->PayloadOffset;
+  /* No offload requested: virtio header must be all zeros. */
+  if (!TxReq->NeedsCsum && !TxReq->Tso) {
+    return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
+  }
 
   if (TxReq->NeedsCsum || TxReq->Tso) {
     /* Do not attempt offloads on fragmented packets. */
@@ -422,6 +424,7 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdr(const VIRTIO_NET_HDR
 
   Hdr->GsoType = (uint8_t)(BaseGso | (TxReq->TsoEcn ? VIRTIO_NET_HDR_GSO_ECN : 0u));
   Hdr->GsoSize = TxReq->TsoMss;
+  Hdr->HdrLen = Info->PayloadOffset;
   return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
 }
 
@@ -433,6 +436,11 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdrFromFrame(const uint8
 
   if (TxReq == NULL || Hdr == NULL) {
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_INVALID_ARGUMENT;
+  }
+
+  if (!TxReq->NeedsCsum && !TxReq->Tso) {
+    VirtioNetHdrOffloadZero(Hdr);
+    return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
   }
 
   St = VirtioNetHdrOffloadParseFrame(Frame, FrameLen, &Info);
