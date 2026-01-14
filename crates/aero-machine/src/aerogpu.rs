@@ -1522,9 +1522,6 @@ impl AeroGpuMmioDevice {
                 }
                 if self.scanout0_enable && !new_enable {
                     // Disabling scanout stops vblank scheduling and flushes any vsync-paced fences.
-                    //
-                    // Note: once WDDM scanout has been claimed, ownership remains sticky even while
-                    // the guest toggles `SCANOUT0_ENABLE` (Win7 uses this as a visibility toggle).
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
                     // Disabling scanout releases WDDM scanout ownership so hosts can fall back to
