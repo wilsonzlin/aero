@@ -460,6 +460,22 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_type: DxgiFormatComponentType::F32,
             component_count: 4,
         },
+        // R32G32B32A32_UINT
+        3 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint32x4,
+            size_bytes: 16,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 4,
+        },
+        // R32G32B32A32_SINT
+        4 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Sint32x4,
+            size_bytes: 16,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
+            component_count: 4,
+        },
         // R32G32B32_FLOAT
         6 => DxgiFormatInfo {
             wgpu_vertex_format: wgpu::VertexFormat::Float32x3,
@@ -468,12 +484,44 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_type: DxgiFormatComponentType::F32,
             component_count: 3,
         },
+        // R32G32B32_UINT
+        7 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint32x3,
+            size_bytes: 12,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 3,
+        },
+        // R32G32B32_SINT
+        8 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Sint32x3,
+            size_bytes: 12,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
+            component_count: 3,
+        },
         // R32G32_FLOAT
         16 => DxgiFormatInfo {
             wgpu_vertex_format: wgpu::VertexFormat::Float32x2,
             size_bytes: 8,
             align_bytes: 4,
             component_type: DxgiFormatComponentType::F32,
+            component_count: 2,
+        },
+        // R32G32_UINT
+        17 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint32x2,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 2,
+        },
+        // R32G32_SINT
+        18 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Sint32x2,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
             component_count: 2,
         },
         // R32_FLOAT
@@ -492,11 +540,56 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_type: DxgiFormatComponentType::Unorm8,
             component_count: 4,
         },
+        // R8G8B8A8_UNORM_SRGB
+        //
+        // In D3D, _SRGB formats are primarily meaningful for textures; vertex fetch does not apply
+        // automatic gamma conversion. Treat this like `UNORM` for layout purposes.
+        29 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
+        },
+        // R8G8B8A8_UINT
+        30 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Uint8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U8,
+            component_count: 4,
+        },
+        // R8G8B8A8_SNORM
+        31 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Snorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Snorm8,
+            component_count: 4,
+        },
+        // R8G8B8A8_SINT
+        32 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Sint8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I8,
+            component_count: 4,
+        },
         // B8G8R8A8_UNORM
         //
         // WebGPU does not have a dedicated BGRA vertex format in wgpu 0.20, so we expose this as
         // `Unorm8x4` and rely on higher-level shader translation to swizzle channels when needed.
         87 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
+        },
+        // B8G8R8A8_UNORM_SRGB
+        //
+        // Same reasoning as `R8G8B8A8_UNORM_SRGB`: treat as `UNORM` for vertex input purposes.
+        91 => DxgiFormatInfo {
             wgpu_vertex_format: wgpu::VertexFormat::Unorm8x4,
             size_bytes: 4,
             align_bytes: 4,

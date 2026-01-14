@@ -460,6 +460,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn opcode_name_includes_switch_ops() {
@@ -487,9 +488,15 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_IMAX), Some("imax"));
         assert_eq!(opcode_name(OPCODE_UMIN), Some("umin"));
         assert_eq!(opcode_name(OPCODE_UMAX), Some("umax"));
+        assert_eq!(opcode_name(OPCODE_IADD), Some("iadd"));
+        assert_eq!(opcode_name(OPCODE_ISUB), Some("isub"));
         assert_eq!(opcode_name(OPCODE_IMUL), Some("imul"));
         assert_eq!(opcode_name(OPCODE_AND), Some("and"));
         assert_eq!(opcode_name(OPCODE_OR), Some("or"));
+        assert_eq!(opcode_name(OPCODE_XOR), Some("xor"));
+        assert_eq!(opcode_name(OPCODE_NOT), Some("not"));
+        assert_eq!(opcode_name(OPCODE_ISHL), Some("ishl"));
+        assert_eq!(opcode_name(OPCODE_ISHR), Some("ishr"));
         assert_eq!(opcode_name(OPCODE_USHR), Some("ushr"));
         assert_eq!(opcode_name(OPCODE_IEQ), Some("ieq"));
         assert_eq!(opcode_name(OPCODE_IGE), Some("ige"));
@@ -519,18 +526,8 @@ mod tests {
     }
 
     #[test]
-    fn integer_compare_opcodes_do_not_overlap_with_integer_bitwise_ops() {
-        use std::collections::HashSet;
-
-        let compare = [
-            OPCODE_IEQ,
-            OPCODE_IGE,
-            OPCODE_ILT,
-            OPCODE_INE,
-            OPCODE_ULT,
-            OPCODE_UGE,
-        ];
-        let bitwise = [
+    fn opcode_constants_do_not_collide_between_integer_ops_and_compares() {
+        let ops = [
             OPCODE_IADD,
             OPCODE_ISUB,
             OPCODE_IMUL,
@@ -541,11 +538,16 @@ mod tests {
             OPCODE_ISHL,
             OPCODE_ISHR,
             OPCODE_USHR,
+            OPCODE_IEQ,
+            OPCODE_IGE,
+            OPCODE_ILT,
+            OPCODE_INE,
+            OPCODE_ULT,
+            OPCODE_UGE,
         ];
-
         let mut seen = HashSet::new();
-        for op in compare.iter().chain(bitwise.iter()) {
-            assert!(seen.insert(*op), "duplicate opcode value 0x{op:x}");
+        for &op in &ops {
+            assert!(seen.insert(op), "opcode collision detected: {op:#x}");
         }
     }
 }

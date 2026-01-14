@@ -52,9 +52,45 @@ fn maps_new_dxgi_formats_to_wgpu_vertex_formats() {
     let tex_hash = fnv1a_32(b"TEXCOORD");
     let cases = [
         Case {
+            name: "R32G32B32A32_UINT",
+            dxgi_format: 3,
+            expect: wgpu::VertexFormat::Uint32x4,
+            stride: 16,
+        },
+        Case {
+            name: "R32G32B32A32_SINT",
+            dxgi_format: 4,
+            expect: wgpu::VertexFormat::Sint32x4,
+            stride: 16,
+        },
+        Case {
             name: "R16G16B16A16_UNORM",
             dxgi_format: 11,
             expect: wgpu::VertexFormat::Unorm16x4,
+            stride: 8,
+        },
+        Case {
+            name: "R32G32B32_UINT",
+            dxgi_format: 7,
+            expect: wgpu::VertexFormat::Uint32x3,
+            stride: 12,
+        },
+        Case {
+            name: "R32G32B32_SINT",
+            dxgi_format: 8,
+            expect: wgpu::VertexFormat::Sint32x3,
+            stride: 12,
+        },
+        Case {
+            name: "R32G32_UINT",
+            dxgi_format: 17,
+            expect: wgpu::VertexFormat::Uint32x2,
+            stride: 8,
+        },
+        Case {
+            name: "R32G32_SINT",
+            dxgi_format: 18,
+            expect: wgpu::VertexFormat::Sint32x2,
             stride: 8,
         },
         Case {
@@ -73,6 +109,24 @@ fn maps_new_dxgi_formats_to_wgpu_vertex_formats() {
             name: "R10G10B10A2_UNORM",
             dxgi_format: 24,
             expect: wgpu::VertexFormat::Unorm10_10_10_2,
+            stride: 4,
+        },
+        Case {
+            name: "R8G8B8A8_UINT",
+            dxgi_format: 30,
+            expect: wgpu::VertexFormat::Uint8x4,
+            stride: 4,
+        },
+        Case {
+            name: "R8G8B8A8_SNORM",
+            dxgi_format: 31,
+            expect: wgpu::VertexFormat::Snorm8x4,
+            stride: 4,
+        },
+        Case {
+            name: "R8G8B8A8_SINT",
+            dxgi_format: 32,
+            expect: wgpu::VertexFormat::Sint8x4,
             stride: 4,
         },
         Case {
@@ -136,6 +190,38 @@ fn dxgi_format_info_includes_component_metadata() {
 
     let cases = [
         Case {
+            dxgi_format: 3, // R32G32B32A32_UINT
+            wgpu_format: wgpu::VertexFormat::Uint32x4,
+            size_bytes: 16,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 4, // R32G32B32A32_SINT
+            wgpu_format: wgpu::VertexFormat::Sint32x4,
+            size_bytes: 16,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 7, // R32G32B32_UINT
+            wgpu_format: wgpu::VertexFormat::Uint32x3,
+            size_bytes: 12,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 3,
+        },
+        Case {
+            dxgi_format: 8, // R32G32B32_SINT
+            wgpu_format: wgpu::VertexFormat::Sint32x3,
+            size_bytes: 12,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
+            component_count: 3,
+        },
+        Case {
             dxgi_format: 11, // R16G16B16A16_UNORM
             wgpu_format: wgpu::VertexFormat::Unorm16x4,
             size_bytes: 8,
@@ -176,6 +262,54 @@ fn dxgi_format_info_includes_component_metadata() {
             component_count: 4,
         },
         Case {
+            dxgi_format: 17, // R32G32_UINT
+            wgpu_format: wgpu::VertexFormat::Uint32x2,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 2,
+        },
+        Case {
+            dxgi_format: 18, // R32G32_SINT
+            wgpu_format: wgpu::VertexFormat::Sint32x2,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I32,
+            component_count: 2,
+        },
+        Case {
+            dxgi_format: 29, // R8G8B8A8_UNORM_SRGB
+            wgpu_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 30, // R8G8B8A8_UINT
+            wgpu_format: wgpu::VertexFormat::Uint8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U8,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 31, // R8G8B8A8_SNORM
+            wgpu_format: wgpu::VertexFormat::Snorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Snorm8,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 32, // R8G8B8A8_SINT
+            wgpu_format: wgpu::VertexFormat::Sint8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I8,
+            component_count: 4,
+        },
+        Case {
             dxgi_format: 49, // R8G8_UNORM
             wgpu_format: wgpu::VertexFormat::Unorm8x2,
             size_bytes: 2,
@@ -206,6 +340,14 @@ fn dxgi_format_info_includes_component_metadata() {
             align_bytes: 4,
             component_type: DxgiFormatComponentType::I8,
             component_count: 2,
+        },
+        Case {
+            dxgi_format: 91, // B8G8R8A8_UNORM_SRGB
+            wgpu_format: wgpu::VertexFormat::Unorm8x4,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 4,
         },
     ];
 
