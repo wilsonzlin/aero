@@ -482,6 +482,12 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
         OPCODE_DCL_GS_INSTANCE_COUNT => Some("dcl_gs_instance_count"),
+        OPCODE_DCL_HS_MAX_TESSFACTOR => Some("dcl_hs_max_tessfactor"),
+        OPCODE_DCL_HS_DOMAIN => Some("dcl_hs_domain"),
+        OPCODE_DCL_HS_PARTITIONING => Some("dcl_hs_partitioning"),
+        OPCODE_DCL_HS_OUTPUT_TOPOLOGY => Some("dcl_hs_output_topology"),
+        OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT => Some("dcl_hs_output_control_point_count"),
+        OPCODE_DCL_DS_DOMAIN => Some("dcl_ds_domain"),
         OPCODE_DCL_RESOURCE_RAW => Some("dcl_resource_raw"),
         OPCODE_DCL_RESOURCE_STRUCTURED => Some("dcl_resource_structured"),
         OPCODE_DCL_UAV_RAW => Some("dcl_uav_raw"),
@@ -553,6 +559,28 @@ mod tests {
     #[test]
     fn opcode_name_includes_predicate_ops() {
         assert_eq!(opcode_name(OPCODE_SETP), Some("setp"));
+    }
+
+    #[test]
+    fn opcode_name_includes_tessellation_decls() {
+        assert_eq!(
+            opcode_name(OPCODE_DCL_HS_MAX_TESSFACTOR),
+            Some("dcl_hs_max_tessfactor")
+        );
+        assert_eq!(opcode_name(OPCODE_DCL_HS_DOMAIN), Some("dcl_hs_domain"));
+        assert_eq!(
+            opcode_name(OPCODE_DCL_HS_PARTITIONING),
+            Some("dcl_hs_partitioning")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_HS_OUTPUT_TOPOLOGY),
+            Some("dcl_hs_output_topology")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT),
+            Some("dcl_hs_output_control_point_count")
+        );
+        assert_eq!(opcode_name(OPCODE_DCL_DS_DOMAIN), Some("dcl_ds_domain"));
     }
 
     #[test]
