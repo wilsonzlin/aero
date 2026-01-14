@@ -628,6 +628,71 @@ fn tier2_inline_tlb_store_bumps_code_version_table_on_unshared_memory() {
 }
 
 #[test]
+fn tier2_inline_tlb_store_to_non_ram_uses_slow_helper_and_does_not_bump_code_version_table() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1234),
+            src: Operand::Const(0xCD),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let table_ptr: u32 = 0x2000;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
+        &trace,
+        ram,
+        cpu_ptr,
+        // Mark only the first 0x1000 bytes as RAM so the store address is considered non-RAM.
+        0x1000,
+        table_ptr,
+        &[123],
+    );
+
+    assert_eq!(got_ram[0x1234], 0xCD);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 123);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier2_inline_tlb_store_to_out_of_range_page_does_not_bump_code_version_table() {
+    // Store to page 3, but provide a code-version table with only 1 entry (page 0). The inline bump
+    // fast-path should bounds-check and skip the update.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x3000),
+            src: Operand::Const(0xEE),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let table_ptr: u32 = 0x1000;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        table_ptr,
+        &[7],
+    );
+
+    assert_eq!(got_ram[0x3000], 0xEE);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 7);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_collision_forces_retranslate() {
     let collide_addr = (JIT_TLB_ENTRIES as u64) << PAGE_SHIFT;
 
