@@ -214,7 +214,8 @@ The modeled mouse report supports 5 buttons (left/right/middle/back/forward) and
 | Button 5 | `1<<4` | forward / extra |
 
 Note: in **HID boot protocol**, the standard boot mouse format only defines 3 buttons; Aero masks
-buttons 4/5 to zero when emitting boot-protocol reports.
+buttons 4/5 to zero when emitting boot-protocol reports. Because these buttons are not guest-visible
+in boot mode, Aero also avoids enqueueing “no-op” interrupt reports when only buttons 4/5 change.
 
 ### Movement (`PointerLock` + `MouseEvent.movementX/Y`)
 
