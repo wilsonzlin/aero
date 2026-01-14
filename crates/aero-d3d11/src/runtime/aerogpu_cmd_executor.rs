@@ -13966,6 +13966,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     Ok((key, pipeline, wgpu_slot_to_d3d_slot))
 }
 
+#[allow(dead_code)]
 fn expanded_draw_passthrough_vs_wgsl(pass_locations: &BTreeSet<u32>) -> String {
     let mut wgsl = String::new();
     wgsl.push_str("struct VsIn {\n");
@@ -14003,7 +14004,7 @@ fn expanded_draw_passthrough_vs_wgsl(pass_locations: &BTreeSet<u32>) -> String {
     wgsl
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(dead_code, clippy::too_many_arguments)]
 fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     device: &wgpu::Device,
     pipeline_cache: &'a mut PipelineCache,
