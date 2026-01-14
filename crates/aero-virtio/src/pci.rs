@@ -2379,7 +2379,7 @@ mod tests {
         assert!(state.borrow().msix_messages.is_empty());
 
         // Address: valid xAPIC MSI window.
-        pci.bar0_write(entry1 + 0x00, &0xfee0_0000u32.to_le_bytes());
+        pci.bar0_write(entry1, &0xfee0_0000u32.to_le_bytes());
         pci.bar0_write(entry1 + 0x04, &0u32.to_le_bytes());
 
         let state = state.borrow();
