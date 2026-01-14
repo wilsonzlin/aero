@@ -195,9 +195,10 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       - Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`), then waits
       for host-injected events and emits `...|PASS|...` or `...|FAIL|reason=...|...`.
-  - Optional **keyboard LED/statusq** smoke test (`virtio-input-led`):
+  - Optional **keyboard LED/statusq** smoke test (`virtio-input-led`; compat: `virtio-input-leds`):
     - Disabled by default.
     - Enable with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`).
+      - Compatibility: `--test-input-leds` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`).
     - The selftest opens the virtio-input **keyboard** HID interface and sends HID **output reports** that toggle a keyboard LED
       bit (CapsLock/NumLock/ScrollLock), then verifies the virtio-input driver observed statusq submits/completions (so the device
       model consumes and completes statusq descriptors as required by the contract; descriptor contents may be ignored).
@@ -205,7 +206,10 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - When running the host harness, you can require the marker to PASS with:
       - PowerShell: `-WithInputLed`
       - Python: `--with-input-led`
-    - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...`.
+      - Compatibility: `-WithInputLeds` / `--with-input-leds` (requires the legacy marker).
+    - The selftest emits **both** markers for compatibility:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS/FAIL/SKIP|...`
   - Optional virtio-input MSI-X requirement (`virtio-input-msix`):
     - The selftest emits a `virtio-input-msix` marker describing interrupt mode (`mode=intx/msix`) and vector mapping.
     - Use `--require-input-msix` to fail the overall selftest when virtio-input is not using MSI-X.
