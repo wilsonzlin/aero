@@ -251,10 +251,21 @@ impl VirtioInputPciDeviceCore {
     }
 
     pub fn inject_button(&mut self, btn: u16, pressed: bool, mem: &mut dyn GuestMemory) {
-        if self.kind != VirtioInputDeviceKind::Mouse {
+        if !matches!(
+            self.kind,
+            VirtioInputDeviceKind::Mouse | VirtioInputDeviceKind::Tablet
+        ) {
             return;
         }
         self.input_mut().inject_button(btn, pressed);
+        self.poll(mem);
+    }
+
+    pub fn inject_abs(&mut self, x: i32, y: i32, mem: &mut dyn GuestMemory) {
+        if self.kind != VirtioInputDeviceKind::Tablet {
+            return;
+        }
+        self.input_mut().inject_abs_move(x, y);
         self.poll(mem);
     }
 
@@ -576,9 +587,10 @@ mod wasm {
             let kind_enum = match kind.as_str() {
                 "keyboard" => VirtioInputDeviceKind::Keyboard,
                 "mouse" => VirtioInputDeviceKind::Mouse,
+                "tablet" => VirtioInputDeviceKind::Tablet,
                 _ => {
                     return Err(js_error(
-                        r#"Invalid virtio-input kind (expected \"keyboard\" or \"mouse\")"#,
+                        r#"Invalid virtio-input kind (expected \"keyboard\", \"mouse\", or \"tablet\")"#,
                     ));
                 }
             };
@@ -718,12 +730,17 @@ mod wasm {
             self.inject_rel(dx, dy)
         }
 
-        /// Inject a mouse button event (mouse devices only).
+        /// Inject a Linux input button event (mouse/tablet devices only).
         pub fn inject_button(&mut self, btn: u32, pressed: bool) {
             let Ok(code) = u16::try_from(btn) else {
                 return;
             };
             self.inner.inject_button(code, pressed, &mut self.mem);
+        }
+
+        /// Inject an absolute pointer event (tablet devices only).
+        pub fn inject_abs(&mut self, x: i32, y: i32) {
+            self.inner.inject_abs(x, y, &mut self.mem);
         }
 
         /// Inject a mouse wheel event (mouse devices only).
