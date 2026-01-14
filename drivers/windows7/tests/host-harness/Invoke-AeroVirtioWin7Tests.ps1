@@ -1804,6 +1804,58 @@ function Try-EmitAeroVirtioNetLargeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioBlkIoMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  # Backward compatible: older guest selftests will not include the I/O perf fields. Emit nothing
+  # unless we see at least one throughput/byte count key.
+  if (-not (
+      $fields.ContainsKey("write_bytes") -or
+      $fields.ContainsKey("write_mbps") -or
+      $fields.ContainsKey("read_bytes") -or
+      $fields.ContainsKey("read_mbps")
+    )) {
+    return
+  }
+
+  $status = "INFO"
+  if ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
+  elseif (($fields.ContainsKey("write_ok") -and $fields["write_ok"] -eq "0") -or ($fields.ContainsKey("flush_ok") -and $fields["flush_ok"] -eq "0") -or ($fields.ContainsKey("read_ok") -and $fields["read_ok"] -eq "0")) {
+    $status = "FAIL"
+  } elseif (($fields.ContainsKey("write_ok") -and $fields["write_ok"] -eq "1") -and ($fields.ContainsKey("flush_ok") -and $fields["flush_ok"] -eq "1") -and ($fields.ContainsKey("read_ok") -and $fields["read_ok"] -eq "1")) {
+    $status = "PASS"
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|$status"
+  foreach ($k in @("write_ok", "write_bytes", "write_mbps", "flush_ok", "read_ok", "read_bytes", "read_mbps")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioIrqMarkerFromTestMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -1851,6 +1903,166 @@ function Try-EmitAeroVirtioIrqMarkerFromTestMarker {
     $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
   }
 
+  Write-Host $out
+}
+
+function Try-EmitAeroVirtioSndCaptureMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd-capture marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|$status"
+
+  # The guest SKIP marker often uses a plain token (e.g. `...|SKIP|endpoint_missing`) rather than
+  # a `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+  if (($status -eq "SKIP" -or $status -eq "FAIL") -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim() -eq $status) {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $fields["reason"] = $reasonTok
+          }
+        }
+        break
+      }
+    }
+  }
+
+  foreach ($k in @("method", "frames", "non_silence", "silence_only", "reason", "hr")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  Write-Host $out
+}
+
+function Try-EmitAeroVirtioSndDuplexMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd-duplex marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|$status"
+
+  if (($status -eq "SKIP" -or $status -eq "FAIL") -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim() -eq $status) {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $fields["reason"] = $reasonTok
+          }
+        }
+        break
+      }
+    }
+  }
+
+  foreach ($k in @("frames", "non_silence", "reason", "hr")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  Write-Host $out
+}
+
+function Try-EmitAeroVirtioSndBufferLimitsMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd-buffer-limits marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|$status"
+  foreach ($k in @("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
   Write-Host $out
 }
 
@@ -3860,12 +4072,16 @@ try {
   }
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkIoMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndCaptureMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndFormatMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndDuplexMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndBufferLimitsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   switch ($result.Result) {
