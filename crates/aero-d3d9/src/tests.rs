@@ -683,6 +683,123 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_nrm_sm3_decoder() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 3.0, 4.0, 0.0, 0.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x4040_0000,
+            0x4080_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // nrm r0, c0
+    out.extend(enc_inst(
+        0x0024,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_lit_sm3_decoder() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.5, 0.5, 0.0, 2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F00_0000,
+            0x3F00_0000,
+            0x0000_0000,
+            0x4000_0000,
+        ],
+    ));
+    // lit r0, c0
+    out.extend(enc_inst(
+        0x0010,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_sincos_sm3_decoder() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 0.0 (angle)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c1, 2.0, 0.0, 0.0, 0.0 (scale)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x4000_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c2, 0.5, 0.0, 0.0, 0.0 (bias)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3F00_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // sincos_sat r0, c0, c1, c2
+    out.extend(enc_inst_with_extra(
+        0x0025,
+        1u32 << 20, // saturate
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(2, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+            enc_src(2, 2, 0xE4),
+        ],
+    ));
+    // mov r0.w, c0.x (set alpha to 1.0)
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0x8), enc_src(2, 0, 0x00)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -1685,6 +1802,157 @@ fn sm3_predicated_exp_log_pow_with_modifiers_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "ce434184a3c5460d276eb05eb0e4561574b5687d80b85b587158f774dd65091e"
+    );
+}
+
+#[test]
+fn sm3_nrm_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_nrm_sm3_decoder());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos, (u, v)) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // normalize(vec3(3, 4, 0)) = (0.6, 0.8, 0.0), alpha=1.0
+    assert_eq!(rt.get(4, 4).to_rgba8(), [153, 204, 0, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "1340a1f6459e5c42c08ac8ac55c2f41d26b33ee195991fc28677d853437b62a9"
+    );
+}
+
+#[test]
+fn sm3_lit_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_lit_sm3_decoder());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos, (u, v)) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // lit(0.5, 0.5, _, 2.0) = (1.0, 0.5, pow(0.5, 2.0)=0.25, 1.0)
+    assert_eq!(rt.get(4, 4).to_rgba8(), [255, 128, 64, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "be1d6094f2901029ca3e780770b605b503320b770ef790a80c6dd352e00b1ea4"
+    );
+}
+
+#[test]
+fn sm3_sincos_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_sincos_sm3_decoder());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos, (u, v)) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // angle = c0.x * c1.x + c2.x = 1.0*2.0 + 0.5 = 2.5
+    // sin(2.5) ~= 0.598, cos(2.5) ~= -0.801 -> saturate clamps cos to 0.
+    assert_eq!(rt.get(4, 4).to_rgba8(), [153, 0, 0, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "0790007b251eedb069fd94f15e2cb2ad3bede332ddec8dd49daa06b190f7c1ec"
     );
 }
 
