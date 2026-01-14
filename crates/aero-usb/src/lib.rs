@@ -53,6 +53,8 @@ pub mod usb2_port;
 pub mod web;
 pub mod xhci;
 
+mod visited_set;
+
 extern crate alloc;
 
 pub use device::{UsbInResult, UsbOutResult};

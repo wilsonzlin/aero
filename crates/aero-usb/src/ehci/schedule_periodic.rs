@@ -1,9 +1,9 @@
 use alloc::vec;
-use alloc::vec::Vec;
 
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
+use crate::visited_set::VisitedSet;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 use super::schedule::{ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
@@ -104,7 +104,7 @@ fn walk_link<M: MemoryBus + ?Sized>(
     mut link: LinkPointer,
     microframe: u8,
 ) -> Result<(), ScheduleError> {
-    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    let mut visited = VisitedSet::new(MAX_PERIODIC_LINKS_PER_FRAME);
     for _ in 0..MAX_PERIODIC_LINKS_PER_FRAME {
         if link.terminated() {
             return Ok(());
@@ -115,10 +115,9 @@ fn walk_link<M: MemoryBus + ?Sized>(
             return Ok(());
         }
 
-        if visited.contains(&addr) {
+        if visited.insert(addr) {
             return Err(ScheduleError::PeriodicCycle);
         }
-        visited.push(addr);
 
         match link.link_type() {
             LP_TYPE_QH => {
@@ -174,7 +173,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
     }
 
     let mut next = QtdPointer(ctx.mem.read_u32(qh_addr.wrapping_add(0x10) as u64));
-    let mut visited_qtd: Vec<u32> = Vec::with_capacity(16);
+    let mut visited_qtd = VisitedSet::new(MAX_QTD_STEPS_PER_QH);
     for _ in 0..MAX_QTD_STEPS_PER_QH {
         if next.terminated() {
             return Ok(horiz);
@@ -184,10 +183,9 @@ fn process_qh<M: MemoryBus + ?Sized>(
         if qtd_addr == 0 {
             return Ok(horiz);
         }
-        if visited_qtd.contains(&qtd_addr) {
+        if visited_qtd.insert(qtd_addr) {
             return Err(ScheduleError::QtdCycle);
         }
-        visited_qtd.push(qtd_addr);
 
         let next_ptr = ctx.mem.read_u32(qtd_addr as u64);
 

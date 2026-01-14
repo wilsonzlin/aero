@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
+use crate::visited_set::VisitedSet;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 use super::schedule::{ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};
@@ -122,13 +123,12 @@ pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
 
     // The async schedule list is a circular list of QHs. Stop when we return to the head, but also
     // cap iterations to avoid infinite loops if the guest corrupts pointers.
-    let mut visited_qh: Vec<u32> = Vec::with_capacity(16);
+    let mut visited_qh = VisitedSet::new(MAX_ASYNC_QH_VISITS);
     let mut qh_addr = head;
     for _ in 0..MAX_ASYNC_QH_VISITS {
-        if visited_qh.contains(&qh_addr) {
+        if visited_qh.insert(qh_addr) {
             return Err(ScheduleError::AsyncQhCycle);
         }
-        visited_qh.push(qh_addr);
 
         process_qh(ctx, qh_addr)?;
 
@@ -143,7 +143,7 @@ pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
         if next == head {
             return Ok(());
         }
-        if next == qh_addr || visited_qh.contains(&next) {
+        if next == qh_addr || visited_qh.contains(next) {
             return Err(ScheduleError::AsyncQhCycle);
         }
         qh_addr = next;
@@ -293,7 +293,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         return Ok(());
     };
 
-    let mut visited_qtd: Vec<u32> = Vec::with_capacity(16);
+    let mut visited_qtd = VisitedSet::new(MAX_QTD_STEPS_PER_QH);
     for _ in 0..MAX_QTD_STEPS_PER_QH {
         // If no current qTD is loaded, attempt to fetch the one pointed to by QH.Next qTD.
         //
@@ -311,16 +311,17 @@ fn process_qh<M: MemoryBus + ?Sized>(
             if addr == 0 {
                 return Ok(());
             }
-            if visited_qtd.contains(&addr) {
+            if visited_qtd.contains(addr) {
                 return Err(ScheduleError::QtdCycle);
             }
-            visited_qtd.push(addr);
             load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
             cur_qtd = addr;
         }
 
-        if !visited_qtd.contains(&cur_qtd) {
-            visited_qtd.push(cur_qtd);
+        // Track visited qTDs so malicious guests cannot craft cyclic qTD lists that would otherwise
+        // cause unbounded work.
+        if visited_qtd.insert(cur_qtd) {
+            return Err(ScheduleError::QtdCycle);
         }
 
         let mut token = ctx.mem.read_u32(qh_addr.wrapping_add(QH_TOKEN) as u64);
@@ -344,10 +345,9 @@ fn process_qh<M: MemoryBus + ?Sized>(
                     .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
                 return Ok(());
             }
-            if visited_qtd.contains(&addr) {
+            if visited_qtd.contains(addr) {
                 return Err(ScheduleError::QtdCycle);
             }
-            visited_qtd.push(addr);
             load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
             continue;
         }
@@ -585,10 +585,9 @@ fn process_qh<M: MemoryBus + ?Sized>(
                 .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
             return Ok(());
         }
-        if visited_qtd.contains(&addr) {
+        if visited_qtd.contains(addr) {
             return Err(ScheduleError::QtdCycle);
         }
-        visited_qtd.push(addr);
         load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
         // Continue to process the next qTD in the same tick.
     }

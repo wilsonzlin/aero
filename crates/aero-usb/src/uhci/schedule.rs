@@ -1,10 +1,10 @@
 use alloc::vec;
-use alloc::vec::Vec;
 
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::hub::RootHub;
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
+use crate::visited_set::VisitedSet;
 
 use super::regs::{
     USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_HSE, USBSTS_USBERRINT, USBSTS_USBINT,
@@ -77,7 +77,7 @@ pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
 }
 
 fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: LinkPointer) {
-    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    let mut visited = VisitedSet::new(MAX_SCHEDULE_LINKS_PER_FRAME);
     for _ in 0..MAX_SCHEDULE_LINKS_PER_FRAME {
         if link.terminated() {
             return;
@@ -90,12 +90,11 @@ fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: 
             return;
         }
 
-        if visited.contains(&addr) {
+        if visited.insert(addr) {
             // Cycle detected in guest schedule memory.
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return;
         }
-        visited.push(addr);
 
         link = if link.is_qh() {
             process_qh(ctx, addr)
@@ -118,6 +117,7 @@ fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     struct TestMem {
         data: Vec<u8>,
@@ -198,7 +198,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
     let horiz = LinkPointer(ctx.mem.read_u32(qh_addr as u64));
     let mut elem = LinkPointer(ctx.mem.read_u32(qh_addr.wrapping_add(4) as u64));
 
-    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    let mut visited = VisitedSet::new(MAX_QH_ELEMENT_STEPS);
     let mut budget_exhausted = true;
     for _ in 0..MAX_QH_ELEMENT_STEPS {
         if elem.terminated() || elem.is_qh() {
@@ -212,12 +212,11 @@ fn process_qh<M: MemoryBus + ?Sized>(
             budget_exhausted = false;
             break;
         }
-        if visited.contains(&td_addr) {
+        if visited.insert(td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             budget_exhausted = false;
             break;
         }
-        visited.push(td_addr);
 
         match process_single_td(ctx, td_addr) {
             TdProgress::NoProgress => {
@@ -249,7 +248,9 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
     ctx: &mut ScheduleContext<'_, M>,
     mut td_addr: u32,
 ) -> LinkPointer {
-    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    // The stop/skip path has its own loop bound, so this chain can touch up to
+    // `2 * MAX_TD_CHAIN_STEPS` TDs in the worst case.
+    let mut visited = VisitedSet::new(MAX_TD_CHAIN_STEPS.saturating_mul(2));
     let mut steps = 0usize;
 
     loop {
@@ -262,11 +263,10 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
             return LinkPointer(LINK_PTR_TERMINATE);
         }
         steps += 1;
-        if visited.contains(&td_addr) {
+        if visited.insert(td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return LinkPointer(LINK_PTR_TERMINATE);
         }
-        visited.push(td_addr);
 
         let link = LinkPointer(ctx.mem.read_u32(td_addr as u64));
         match process_single_td(ctx, td_addr) {
@@ -274,11 +274,10 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
             TdProgress::Nak => return link,
             TdProgress::Advanced { stop, .. } => {
                 if stop {
-                    // Stop further TD processing within this chain for the current frame, but still
-                    // continue walking the schedule at the first non-TD link (QH/terminate).
-                    let mut skip = link;
-                    let mut skip_steps = 0usize;
-                    let mut skip_visited: Vec<u32> = Vec::with_capacity(16);
+                     // Stop further TD processing within this chain for the current frame, but still
+                     // continue walking the schedule at the first non-TD link (QH/terminate).
+                     let mut skip = link;
+                     let mut skip_steps = 0usize;
                     while !skip.terminated() && !skip.is_qh() {
                         let addr = skip.addr();
                         if addr == 0 {
@@ -289,11 +288,10 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }
                         skip_steps += 1;
-                        if visited.contains(&addr) || skip_visited.contains(&addr) {
+                        if visited.insert(addr) {
                             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }
-                        skip_visited.push(addr);
                         skip = LinkPointer(ctx.mem.read_u32(addr as u64));
                     }
                     return skip;
