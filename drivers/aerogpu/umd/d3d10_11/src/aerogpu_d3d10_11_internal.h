@@ -30,6 +30,7 @@
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   #include "aerogpu_d3d10_11_wddm_submit.h"
 #endif
+#include "../../../protocol/aerogpu_wddm_alloc.h"
 #include "../../../protocol/aerogpu_umd_private.h"
 
 #if defined(_WIN32)
@@ -101,6 +102,52 @@ inline bool HasLiveCookie(const void* pDrvPrivate, uint32_t expected_cookie) {
   uint32_t cookie = 0;
   std::memcpy(&cookie, pDrvPrivate, sizeof(cookie));
   return cookie == expected_cookie;
+}
+
+// Decodes a WDDM allocation-private-data blob into the latest (v2) struct layout.
+//
+// Older binaries may have emitted the v1 layout; this helper normalizes those to
+// a v2-shaped struct for easier handling by UMD codepaths.
+inline bool ConsumeWddmAllocPrivV2(const void* priv_data, size_t priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
+  if (out) {
+    std::memset(out, 0, sizeof(*out));
+  }
+  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return false;
+  }
+
+  aerogpu_wddm_alloc_priv header{};
+  std::memcpy(&header, priv_data, sizeof(header));
+  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
+    return false;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
+      return false;
+    }
+    std::memcpy(out, priv_data, sizeof(*out));
+    return true;
+  }
+
+  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+    out->magic = header.magic;
+    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+    out->alloc_id = header.alloc_id;
+    out->flags = header.flags;
+    out->share_token = header.share_token;
+    out->size_bytes = header.size_bytes;
+    out->reserved0 = header.reserved0;
+    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
+    out->width = 0;
+    out->height = 0;
+    out->format = 0;
+    out->row_pitch_bytes = 0;
+    out->reserved1 = 0;
+    return true;
+  }
+
+  return false;
 }
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;

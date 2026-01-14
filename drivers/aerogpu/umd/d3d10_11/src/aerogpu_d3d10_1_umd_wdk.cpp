@@ -158,6 +158,7 @@ using aerogpu::d3d10_11::bytes_per_pixel_aerogpu;
 using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
 using aerogpu::shared_surface::D3d9FormatToDxgi;
 using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
+using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -254,48 +255,6 @@ struct AeroGpuResource {
   uint32_t mapped_wddm_pitch = 0;
   uint32_t mapped_wddm_slice_pitch = 0;
 };
-
-static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
-  if (out) {
-    std::memset(out, 0, sizeof(*out));
-  }
-  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
-    return false;
-  }
-
-  aerogpu_wddm_alloc_priv header{};
-  std::memcpy(&header, priv_data, sizeof(header));
-  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
-    return false;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
-    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
-      return false;
-    }
-    std::memcpy(out, priv_data, sizeof(*out));
-    return true;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
-    out->magic = header.magic;
-    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
-    out->alloc_id = header.alloc_id;
-    out->flags = header.flags;
-    out->share_token = header.share_token;
-    out->size_bytes = header.size_bytes;
-    out->reserved0 = header.reserved0;
-    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
-    out->width = 0;
-    out->height = 0;
-    out->format = 0;
-    out->row_pitch_bytes = 0;
-    out->reserved1 = 0;
-    return true;
-  }
-
-  return false;
-}
 
 struct AeroGpuShader {
   aerogpu_handle_t handle = 0;

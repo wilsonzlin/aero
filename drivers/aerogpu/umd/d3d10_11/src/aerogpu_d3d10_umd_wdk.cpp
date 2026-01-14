@@ -71,6 +71,7 @@ using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
 using aerogpu::d3d10_11::ResetObject;
 using aerogpu::d3d10_11::kD3D10DeviceLiveCookie;
 using aerogpu::d3d10_11::HasLiveCookie;
+using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -674,48 +675,6 @@ struct AeroGpuResource {
     return false;
   }
   return wddm_pitch >= min_row_bytes;
-}
-
-static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
-  if (out) {
-    std::memset(out, 0, sizeof(*out));
-  }
-  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
-    return false;
-  }
-
-  aerogpu_wddm_alloc_priv header{};
-  std::memcpy(&header, priv_data, sizeof(header));
-  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
-    return false;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
-    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
-      return false;
-    }
-    std::memcpy(out, priv_data, sizeof(*out));
-    return true;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
-    out->magic = header.magic;
-    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
-    out->alloc_id = header.alloc_id;
-    out->flags = header.flags;
-    out->share_token = header.share_token;
-    out->size_bytes = header.size_bytes;
-    out->reserved0 = header.reserved0;
-    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
-    out->width = 0;
-    out->height = 0;
-    out->format = 0;
-    out->row_pitch_bytes = 0;
-    out->reserved1 = 0;
-    return true;
-  }
-
-  return false;
 }
 
 struct AeroGpuShader {

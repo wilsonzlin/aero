@@ -679,50 +679,6 @@ struct OpenResourceAllocInfoAccess<OpenT, false, true> {
   }
 };
 
-static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
-  if (out) {
-    std::memset(out, 0, sizeof(*out));
-  }
-  if (!out || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
-    return false;
-  }
-
-  // The v1 and v2 layouts share the same header (magic/version). Probe the
-  // version and decode into a v2-shaped struct.
-  aerogpu_wddm_alloc_priv header{};
-  std::memcpy(&header, priv_data, sizeof(header));
-  if (header.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC) {
-    return false;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
-    if (priv_data_size < sizeof(aerogpu_wddm_alloc_priv_v2)) {
-      return false;
-    }
-    std::memcpy(out, priv_data, sizeof(*out));
-    return true;
-  }
-
-  if (header.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
-    out->magic = header.magic;
-    out->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
-    out->alloc_id = header.alloc_id;
-    out->flags = header.flags;
-    out->share_token = header.share_token;
-    out->size_bytes = header.size_bytes;
-    out->reserved0 = header.reserved0;
-    out->kind = AEROGPU_WDDM_ALLOC_KIND_UNKNOWN;
-    out->width = 0;
-    out->height = 0;
-    out->format = 0;
-    out->row_pitch_bytes = 0;
-    out->reserved1 = 0;
-    return true;
-  }
-
-  return false;
-}
-
 static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool write = false) {
   if (!dev || !res) {
     return;
