@@ -675,6 +675,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_accepts_node_dir_flag() {
+        let opts = parse_args(vec!["--node-dir".into(), "web".into()])
+            .expect("parse_args should accept --node-dir")
+            .expect("expected Some(opts)");
+        assert_eq!(opts.node_dir.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn parse_args_accepts_node_dir_equals_form() {
+        let opts = parse_args(vec!["--node-dir=web".into()])
+            .expect("parse_args should accept --node-dir=web")
+            .expect("expected Some(opts)");
+        assert_eq!(opts.node_dir.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn parse_args_accepts_web_dir_alias() {
+        let opts = parse_args(vec!["--web-dir=web".into()])
+            .expect("parse_args should accept --web-dir=web")
+            .expect("expected Some(opts)");
+        assert_eq!(opts.node_dir.as_deref(), Some("web"));
+    }
+
+    #[test]
     fn curated_e2e_specs_include_input_batch_malformed() {
         assert!(
             INPUT_E2E_SPECS.contains(&INPUT_BATCH_MALFORMED_SPEC),
