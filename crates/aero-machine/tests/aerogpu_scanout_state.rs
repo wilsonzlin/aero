@@ -6,7 +6,7 @@ use aero_devices::pci::PciBdf;
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use aero_protocol::aerogpu::aerogpu_pci as agpu_pci;
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
     SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
@@ -52,6 +52,32 @@ fn build_int10_vbe_set_mode_then_wait_then_text_boot_sector() -> [u8; 512] {
 
     // mov ax, 0x0003 (80x25 text mode)
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x03, 0x00]);
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+fn build_int10_vbe_set_mode_then_hlt_boot_sector_for_mode(mode: u16) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+
+    // mov bx, (mode + LFB requested)
+    let bx = mode | 0x4000;
+    let [bx_lo, bx_hi] = bx.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xBB, bx_lo, bx_hi]);
     i += 3;
 
     // int 0x10
@@ -188,4 +214,56 @@ fn aerogpu_scanout_state_transitions_from_legacy_to_wddm_and_is_sticky() {
     let snap3 = scanout_state.snapshot();
     assert_eq!(snap3.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap3.generation, gen2);
+}
+
+#[test]
+fn aerogpu_scanout_state_wddm_mismatch_falls_back_to_legacy_text_for_8bpp_vbe() {
+    let boot = build_int10_vbe_set_mode_then_hlt_boot_sector_for_mode(0x105);
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 4 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        // Keep the test deterministic/minimal.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let scanout_state = Arc::new(ScanoutState::new());
+    m.set_scanout_state(Some(scanout_state.clone()));
+
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m, 200);
+
+    // Ensure the BIOS VBE mode is set (so this is *not* the "None => legacy text" fallback).
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1024, 768));
+
+    // Simulate a shared scanout descriptor stuck in WDDM mode (e.g. after a reset/restore mismatch)
+    // while the AeroGPU device model has not claimed WDDM scanout ownership.
+    scanout_state.publish(ScanoutStateUpdate {
+        source: SCANOUT_SOURCE_WDDM,
+        base_paddr_lo: 0,
+        base_paddr_hi: 0,
+        width: 1,
+        height: 1,
+        pitch_bytes: 4,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    let gen_before = scanout_state.snapshot().generation;
+    assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
+
+    m.process_aerogpu();
+
+    let snap = scanout_state.snapshot();
+    assert_ne!(snap.generation, gen_before);
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
 }

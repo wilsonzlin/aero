@@ -8624,20 +8624,31 @@ impl Machine {
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         if let Some(scanout_state) = &self.scanout_state {
             let publish_legacy_scanout_descriptor = |scanout_state: &ScanoutState| {
+                let legacy_text = ScanoutStateUpdate {
+                    source: SCANOUT_SOURCE_LEGACY_TEXT,
+                    base_paddr_lo: 0,
+                    base_paddr_hi: 0,
+                    width: 0,
+                    height: 0,
+                    pitch_bytes: 0,
+                    format: SCANOUT_FORMAT_B8G8R8X8,
+                };
+
                 match self.bios.video.vbe.current_mode {
                     None => {
-                        scanout_state.publish(ScanoutStateUpdate {
-                            source: SCANOUT_SOURCE_LEGACY_TEXT,
-                            base_paddr_lo: 0,
-                            base_paddr_hi: 0,
-                            width: 0,
-                            height: 0,
-                            pitch_bytes: 0,
-                            format: SCANOUT_FORMAT_B8G8R8X8,
-                        });
+                        scanout_state.publish(legacy_text);
                     }
                     Some(mode) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                            // `ScanoutState` currently only supports a single representable scanout
+                            // format (B8G8R8X8 / 32bpp). If the guest selected a palettized VBE mode
+                            // (e.g. 8bpp), fall back to the implicit legacy path rather than
+                            // publishing a misleading B8G8R8X8 descriptor.
+                            if mode_info.bpp != 32 {
+                                scanout_state.publish(legacy_text);
+                                return;
+                            }
+
                             // Keep the published legacy scanout descriptor consistent with the BIOS VBE
                             // state used by the AeroGPU VBE/text fallback renderer
                             // (`display_present_aerogpu_vbe_lfb`).
@@ -8651,7 +8662,9 @@ impl Machine {
                                     .bytes_per_scan_line
                                     .max(mode_info.bytes_per_scan_line()),
                             );
-                            let bytes_per_pixel = u64::from(mode_info.bytes_per_pixel()).max(1);
+                            // 32bpp direct-color VBE modes use little-endian packed pixels
+                            // B8G8R8X8.
+                            let bytes_per_pixel = 4u64;
                             let base = u64::from(self.bios.video.vbe.lfb_base)
                                 .saturating_add(
                                     u64::from(self.bios.video.vbe.display_start_y)
