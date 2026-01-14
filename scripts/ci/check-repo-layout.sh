@@ -509,7 +509,7 @@ need_file "drivers/aerogpu/protocol/aerogpu_alloc.h"
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
 # Additional guardrails to keep docs/protocol commentary from regressing back to
-# the obsolete "share_token derived from D3D shared HANDLE" model.
+# the obsolete "share_token derived from user-mode shared HANDLE numeric values" model.
 if command -v python3 >/dev/null 2>&1; then
   python3 scripts/ci/check-aerogpu-share-token-contract.py
 else
