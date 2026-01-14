@@ -7,6 +7,7 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::memory::MemoryBus;
+use aero_usb::UsbDeviceModel;
 use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::{regs, trb::*, XhciController};
 
@@ -31,6 +32,7 @@ const EP0_BUF_BASE: u64 = 0xa000;
 
 const ROUTE_KEYBOARD: u32 = 0x1;
 const ROUTE_MOUSE: u32 = 0x2;
+const ROUTE_HUB: u32 = 0x0;
 
 // xHCI transfer TRB control bits.
 const TRB_CTRL_IDT: u32 = 1 << 6;
@@ -319,6 +321,7 @@ enum CommandRingSeed {
     EnableSlot,
     AddressDeviceAndEvaluateContext,
     AddressDeviceAndEvaluateContextMouse,
+    AddressDeviceAndEvaluateContextHub,
     ConfigureEndpointEp1In,
     EndpointCommandsEp1In,
     EndpointCommandsEp0,
@@ -380,6 +383,38 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
             slot_ctx.set_root_hub_port_number(1);
             // Route string 0x2 == hub port 2 behind the root port (mouse).
             slot_ctx.set_route_string(ROUTE_MOUSE);
+            slot_ctx.set_context_entries(1);
+            slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
+
+            bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
+
+            {
+                let mut trb0 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb0.set_trb_type(TrbType::AddressDeviceCommand);
+                trb0.set_slot_id(1);
+                trb0.set_address_device_bsr(false);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut trb1 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb1.set_trb_type(TrbType::EvaluateContextCommand);
+                trb1.set_slot_id(1);
+                trb1.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, trb1);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, stop);
+            }
+        }
+        CommandRingSeed::AddressDeviceAndEvaluateContextHub => {
+            // Bind slot 1 to the external hub itself (route string empty).
+            let mut slot_ctx = SlotContext::default();
+            slot_ctx.set_root_hub_port_number(1);
+            slot_ctx.set_route_string(ROUTE_HUB);
             slot_ctx.set_context_entries(1);
             slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
 
@@ -608,23 +643,57 @@ fuzz_target!(|data: &[u8]| {
     // subsequent commands have a valid output context target.
     bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
 
-    // Second command-ring pass: Address Device + Evaluate Context for slot 1. This exercises the
-    // topology resolution + SET_ADDRESS path as well as the context merge logic.
-    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::AddressDeviceAndEvaluateContext);
-    xhci.tick_1ms(&mut bus);
+    let db1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let setup_set_configuration = [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-    // Configure EP1 IN via Configure Endpoint so we can ring an interrupt endpoint doorbell later.
+    // Bind slot 1 to the hub itself and poll its interrupt endpoint. This exercises the USB hub
+    // device model (port-change bitmap) and xHCI route-string length=0 topology.
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::AddressDeviceAndEvaluateContextHub);
+    xhci.tick_1ms(&mut bus);
     rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::ConfigureEndpointEp1In);
     xhci.tick_1ms(&mut bus);
+    if let Some(ep0) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(1))
+    {
+        seed_ep0_control_td(
+            &mut bus,
+            ep0.dequeue_ptr(),
+            ep0.cycle_state(),
+            setup_set_configuration,
+            None,
+        );
+        xhci.mmio_write(db1, 4, 1);
+        xhci.tick_1ms(&mut bus);
+    }
+    if let Some(ep1) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(3))
+    {
+        seed_ep1_in_td(&mut bus, ep1.dequeue_ptr(), ep1.cycle_state(), 8);
+        xhci.mmio_write(db1, 4, 3);
+        xhci.tick_1ms(&mut bus);
+    }
 
-    // Execute a control transfer (EP0) to set the keyboard configuration so interrupt IN can
-    // deliver reports.
-    let db1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(db1, 4, 1);
+    // Bind slot 1 to the keyboard and perform one interrupt IN transfer.
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::AddressDeviceAndEvaluateContext);
     xhci.tick_1ms(&mut bus);
-
-    // Queue one report and poll it via EP1 IN so the transfer-ring executor paths are exercised
-    // even for tiny seeds.
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::ConfigureEndpointEp1In);
+    xhci.tick_1ms(&mut bus);
+    if let Some(ep0) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(1))
+    {
+        seed_ep0_control_td(
+            &mut bus,
+            ep0.dequeue_ptr(),
+            ep0.cycle_state(),
+            setup_set_configuration,
+            None,
+        );
+        xhci.mmio_write(db1, 4, 1);
+        xhci.tick_1ms(&mut bus);
+    }
     kbd.key_event(0x04, true); // 'A'
     if let Some(ring) = xhci
         .slot_state(1)
@@ -643,10 +712,22 @@ fuzz_target!(|data: &[u8]| {
         CommandRingSeed::AddressDeviceAndEvaluateContextMouse,
     );
     xhci.tick_1ms(&mut bus);
-
-    // Re-run the EP0 SetConfiguration TD now targeting the mouse.
-    xhci.mmio_write(db1, 4, 1);
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::ConfigureEndpointEp1In);
     xhci.tick_1ms(&mut bus);
+    if let Some(ep0) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(1))
+    {
+        seed_ep0_control_td(
+            &mut bus,
+            ep0.dequeue_ptr(),
+            ep0.cycle_state(),
+            setup_set_configuration,
+            None,
+        );
+        xhci.mmio_write(db1, 4, 1);
+        xhci.tick_1ms(&mut bus);
+    }
 
     // Queue one mouse report and poll it via EP1 IN.
     mouse.movement(1, -1);
@@ -664,7 +745,7 @@ fuzz_target!(|data: &[u8]| {
 
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
-        match tag % 12 {
+        match tag % 13 {
             0 | 1 | 2 => {
                 let offset = biased_offset(&mut u, port_count);
                 let size = decode_size(tag >> 3);
@@ -684,12 +765,13 @@ fuzz_target!(|data: &[u8]| {
             7 => {
                 // Rearm the command ring back to a known, small sequence and ring DB0.
                 let mode: u8 = u.arbitrary().unwrap_or(0);
-                let seed = match mode % 6 {
+                let seed = match mode % 7 {
                     0 => CommandRingSeed::EnableSlot,
                     1 => CommandRingSeed::AddressDeviceAndEvaluateContext,
                     2 => CommandRingSeed::AddressDeviceAndEvaluateContextMouse,
-                    3 => CommandRingSeed::ConfigureEndpointEp1In,
-                    4 => CommandRingSeed::EndpointCommandsEp1In,
+                    3 => CommandRingSeed::AddressDeviceAndEvaluateContextHub,
+                    4 => CommandRingSeed::ConfigureEndpointEp1In,
+                    5 => CommandRingSeed::EndpointCommandsEp1In,
                     _ => CommandRingSeed::EndpointCommandsEp0,
                 };
                 rearm_command_ring(&mut bus, &mut xhci, seed);
@@ -768,6 +850,29 @@ fuzz_target!(|data: &[u8]| {
                 let len: usize = u.int_in_range(0usize..=64).unwrap_or(0);
                 let bytes = u.bytes(len).unwrap_or(&[]);
                 bus.write_physical(addr, bytes);
+            }
+            12 => {
+                // Detach/attach devices behind the external hub to exercise hub port change state
+                // and xHCI topology errors.
+                let which: u8 = u.arbitrary().unwrap_or(0);
+                let attach = (which & 1) != 0;
+                let port = if (which & 2) == 0 { 1u8 } else { 2u8 };
+
+                if let Some(root) = xhci.port_device_mut(0) {
+                    let hub_model = root.model_mut();
+                    let _ = hub_model.hub_detach_device(port);
+                    if attach {
+                        if port == 1 {
+                            let mut dev = kbd.clone();
+                            dev.reset();
+                            let _ = hub_model.hub_attach_device(port, Box::new(dev));
+                        } else {
+                            let mut dev = mouse.clone();
+                            dev.reset();
+                            let _ = hub_model.hub_attach_device(port, Box::new(dev));
+                        }
+                    }
+                }
             }
             _ => {}
         }
