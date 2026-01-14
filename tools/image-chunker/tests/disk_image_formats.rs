@@ -155,6 +155,25 @@ fn make_vhd_fixed_with_pattern(virtual_size: u64) -> MemBackend {
     backend
 }
 
+fn make_vhd_fixed_with_footer_copy(virtual_size: u64) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+    let mut data = vec![0u8; virtual_size as usize];
+    data[0..10].copy_from_slice(b"hello vhd!");
+
+    let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_FIXED, u64::MAX);
+
+    // Some tools store an extra copy of the footer at offset 0 even for fixed disks. In that
+    // layout, the disk payload begins at offset 512.
+    let mut backend = MemBackend::with_len(virtual_size + (SECTOR_SIZE as u64) * 2).unwrap();
+    backend.write_at(0, &footer).unwrap();
+    backend.write_at(SECTOR_SIZE as u64, &data).unwrap();
+    backend
+        .write_at(SECTOR_SIZE as u64 + virtual_size, &footer)
+        .unwrap();
+    backend
+}
+
 fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
     assert_eq!(block_size as usize % SECTOR_SIZE, 0);
@@ -404,6 +423,43 @@ fn chunking_vhd_uses_virtual_disk_bytes() {
             .as_deref()
             .expect("sha256 present");
         assert_eq!(actual, expected, "sha256 mismatch for vhd chunk {i}");
+    }
+}
+
+#[test]
+fn chunking_vhd_fixed_with_footer_copy_uses_virtual_disk_bytes() {
+    let disk_size_bytes = 64 * 1024u64;
+    let chunk_size = 4096u64;
+
+    let backend = make_vhd_fixed_with_footer_copy(disk_size_bytes);
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+    assert_eq!(chunks.len() as u64, manifest.chunk_count);
+
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    expected[0..10].copy_from_slice(b"hello vhd!");
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let expected = sha256_hex(chunk);
+        let actual = manifest.chunks[i]
+            .sha256
+            .as_deref()
+            .expect("sha256 present");
+        assert_eq!(actual, expected, "sha256 mismatch for vhd+copy chunk {i}");
     }
 }
 
