@@ -12,7 +12,7 @@ import {
   CURSOR_FORMAT_R8G8B8X8,
   CURSOR_FORMAT_R8G8B8X8_SRGB,
   CursorStateIndex,
-  publishCursorState,
+  tryPublishCursorState,
   type CursorStateUpdate,
 } from "../../ipc/cursor_state.ts";
 import {
@@ -403,12 +403,16 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       // treat the hardware cursor path as authoritative once the guest starts touching it).
       if (this.#cursorStateWords && this.#imageParamsDirty) {
         const words = this.#cursorStateWords;
+        const update = this.#cursorUpdateForPublish(this.#cursorEnable, plan);
+        // Best-effort: if the CursorState seqlock is wedged (busy bit stuck), do not throw or
+        // poison the IO worker tick loop. We'll retry on the next tick.
+        const published = tryPublishCursorState(words, update);
+        if (published === null) return;
+
         // Establish a new baseline hash if we can safely read the image (enabled + valid plan).
         this.#lastSentImageKey = plan?.key ?? null;
         this.#lastSentImageHash = renderEnabled && plan ? this.#hashCursor(plan) : 0;
         this.#lastImagePollMs = nowMs;
-        const update = this.#cursorUpdateForPublish(this.#cursorEnable, plan);
-        publishCursorState(words, update);
         // The publish wrote dynamic fields too; keep the fast-path caches consistent.
         this.#lastSentEnabled = !!this.#cursorEnable;
         this.#lastSentX = update.x;
@@ -728,19 +732,23 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     const words = this.#cursorStateWords;
     if (!words) return false;
     const keyChanged = this.#lastSentImageKey !== plan.key;
-    if (!opts.force && !keyChanged) {
-      const nextHash = this.#hashCursor(plan);
-      if (nextHash === this.#lastSentImageHash) {
-        return false;
+    const nextHash = (() => {
+      if (!opts.force && !keyChanged) {
+        const h = this.#hashCursor(plan);
+        return h === this.#lastSentImageHash ? null : h;
       }
-      // Hash changed: bump generation and update baseline.
-      this.#lastSentImageHash = nextHash;
-    } else {
-      // Forced refresh: update the baseline hash so polling can detect subsequent in-place updates.
-      this.#lastSentImageHash = this.#hashCursor(plan);
+      return this.#hashCursor(plan);
+    })();
+    if (nextHash === null) return false;
+
+    // Best-effort: do not throw if the seqlock is wedged. Keep the previous sent key/hash so we
+    // will retry on the next poll tick.
+    if (tryPublishCursorState(words, this.#cursorUpdateForPublish(true, plan)) === null) {
+      return false;
     }
+
     this.#lastSentImageKey = plan.key;
-    publishCursorState(words, this.#cursorUpdateForPublish(true, plan));
+    this.#lastSentImageHash = nextHash;
     return true;
   }
 
