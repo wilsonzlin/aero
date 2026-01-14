@@ -535,8 +535,7 @@ if "!REL:~0,1!"=="/" (
   echo ERROR: manifest.json contains an unsafe absolute path: !REL!
   endlocal & exit /b 2
 )
-echo(!REL!| "%SYS32%\findstr.exe" /i "\.\." >nul 2>&1
-if not errorlevel 1 (
+if not "!REL:..=!"=="!REL!" (
   echo ERROR: manifest.json contains an unsafe path traversal: !REL!
   endlocal & exit /b 2
 )
@@ -550,9 +549,10 @@ if not exist "!FULL!" (
 )
 
 set "ACTUAL="
-for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "!FULL!" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[0-9a-f][0-9a-f]*$"`) do (
+for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "!FULL!" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[ ]*[0-9a-f][0-9a-f ]*$"`) do (
   if not defined ACTUAL set "ACTUAL=%%H"
 )
+set "ACTUAL=!ACTUAL: =!"
 
 if not defined ACTUAL (
   echo ERROR: Failed to hash file: !REL!
