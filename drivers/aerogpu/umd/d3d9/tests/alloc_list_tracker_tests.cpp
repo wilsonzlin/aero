@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "aerogpu_wddm_alloc_list.h"
@@ -116,11 +117,44 @@ void test_snapshot_and_replay() {
   assert(!tracker.replay_tracked_allocations(snap));
 }
 
+void test_snapshot_independent_of_list_memory() {
+  // Ensure snapshot does not depend on reading fields back out of the
+  // runtime-owned D3DDDI_ALLOCATIONLIST buffer (which can be rotated or reused).
+  D3DDDI_ALLOCATIONLIST list[4] = {};
+  aerogpu::AllocationListTracker tracker(list, 4, 0xFFFFu);
+
+  auto r0 = tracker.track_buffer_read(1, 10, 111);
+  assert(r0.status == aerogpu::AllocRefStatus::kOk);
+  auto r1 = tracker.track_render_target_write(2, 20, 222);
+  assert(r1.status == aerogpu::AllocRefStatus::kOk);
+  // Alias should not allocate a new slot and should preserve the canonical handle.
+  auto alias = tracker.track_buffer_read(3, 20, 222);
+  assert(alias.status == aerogpu::AllocRefStatus::kOk);
+  assert(tracker.list_len() == 2);
+
+  // Simulate the list memory being clobbered/reused by the runtime.
+  std::memset(list, 0, sizeof(list));
+
+  const std::vector<aerogpu::AllocationListTracker::TrackedAllocation> snap = tracker.snapshot_tracked_allocations();
+  assert(snap.size() == 2);
+  assert(snap[0].hAllocation == 1);
+  assert(snap[0].alloc_id == 10);
+  assert(snap[0].share_token == 111);
+  assert(!snap[0].write);
+
+  // Slot 1 should still reflect the original (canonical) handle 2 and the write flag.
+  assert(snap[1].hAllocation == 2);
+  assert(snap[1].alloc_id == 20);
+  assert(snap[1].share_token == 222);
+  assert(snap[1].write);
+}
+
 } // namespace
 
 int main() {
   test_dedup_and_write_upgrade();
   test_mismatch_and_capacity();
   test_snapshot_and_replay();
+  test_snapshot_independent_of_list_memory();
   return 0;
 }
