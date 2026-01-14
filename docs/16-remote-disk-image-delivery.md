@@ -10,7 +10,7 @@ Aero supports **streaming 20GB+ disk images** into the browser without downloadi
 - Downloaded ranges are persisted locally (OPFS) so repeated reads stop hitting the network.
 
 Implementation note: in Rust, the streaming-disk implementation and cache traits live under
-`crates/aero-storage` (e.g. `aero_storage::StreamingDisk` / `aero_storage::streaming::ChunkStore`).
+`crates/aero-storage` (e.g. `aero_storage::StreamingDisk` / `aero_storage::ChunkStore`).
 For the repo-wide canonical disk/backend trait mapping, see
 [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
