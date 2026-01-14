@@ -191,6 +191,9 @@ impl XhciControllerBridge {
 
         // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
+        if guest_size_u64 == 0 {
+            return Err(js_error("XhciControllerBridge.new: guest_size must be non-zero"));
+        }
 
         let end = (guest_base as u64)
             .checked_add(guest_size_u64)

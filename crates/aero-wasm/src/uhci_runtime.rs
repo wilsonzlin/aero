@@ -57,6 +57,9 @@ fn new_guest_memory_bus(
         u64::from(guest_size)
     }
     .min(crate::guest_layout::PCI_MMIO_BASE);
+    if guest_size_u64 == 0 {
+        return Err(js_error("UhciRuntime.new: guest_size must be non-zero"));
+    }
 
     let end = (guest_base as u64).checked_add(guest_size_u64).ok_or_else(|| {
         js_error(&format!(
