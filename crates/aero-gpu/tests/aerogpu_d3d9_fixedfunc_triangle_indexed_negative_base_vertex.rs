@@ -128,17 +128,17 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_draw_indexed_negative_base_vertex_renders_
     // `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`).
     const VS_WORDS: [u32; 8] = [
         0xFFFE_0200u32, // vs_2_0
-        0x0200_0001u32, // mov oPos, v0
+        0x0300_0001u32, // mov oPos, v0
         0x400F_0000u32, // oPos.xyzw
         0x10E4_0000u32, // v0.xyzw
-        0x0200_0001u32, // mov oD0, v1
+        0x0300_0001u32, // mov oD0, v1
         0x500F_0000u32, // oD0.xyzw
         0x10E4_0001u32, // v1.xyzw
         0x0000_FFFFu32, // end
     ];
     const PS_WORDS: [u32; 5] = [
         0xFFFF_0200u32, // ps_2_0
-        0x0200_0001u32, // mov oC0, v0
+        0x0300_0001u32, // mov oC0, v0
         0x000F_0800u32, // oC0.xyzw
         0x10E4_0000u32, // v0.xyzw
         0x0000_FFFFu32, // end
