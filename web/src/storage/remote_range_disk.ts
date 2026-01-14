@@ -1543,6 +1543,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       const cache = this.ensureOpen();
       if (this.persistentCacheWritesDisabled) {
         if (this.inMemoryChunks.has(chunkIndex)) return;
+        // If persistence has already been disabled and no reads are active, this is likely a
+        // background prefetch. Don't keep allocating RAM for cache data that won't be reused.
+        if (this.activeReads === 0) return;
       } else {
         if (cache.isBlockAllocated(chunkIndex)) return;
       }
@@ -1566,7 +1569,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         if (generation !== this.cacheGeneration) continue;
 
         if (this.persistentCacheWritesDisabled) {
-          this.inMemoryChunks.set(chunkIndex, bytes);
+          if (this.activeReads > 0) {
+            this.inMemoryChunks.set(chunkIndex, bytes);
+          }
           if (generation === this.cacheGeneration) {
             this.lastFetchMs = performance.now() - start;
             this.lastFetchAtMs = Date.now();
@@ -1584,7 +1589,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
             // reads by keeping the downloaded bytes in memory and disabling further persistent
             // cache writes for the disk lifetime.
             this.disablePersistentCacheWrites();
-            this.inMemoryChunks.set(chunkIndex, bytes);
+            if (this.activeReads > 0) {
+              this.inMemoryChunks.set(chunkIndex, bytes);
+            }
             if (generation === this.cacheGeneration) {
               this.lastFetchMs = performance.now() - start;
               this.lastFetchAtMs = Date.now();
@@ -1603,7 +1610,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           // Another inflight chunk may have hit quota while we were writing. Do not record persistent
           // metadata once persistence is disabled, but keep the bytes in memory so subsequent reads
           // don't need to re-download.
-          this.inMemoryChunks.set(chunkIndex, bytes);
+          if (this.activeReads > 0) {
+            this.inMemoryChunks.set(chunkIndex, bytes);
+          }
           return;
         }
         this.recordCachedChunk(chunkIndex, generation);
