@@ -865,8 +865,11 @@ Rules:
 - For instanced draws, the input primitive stream is replicated per instance. Many sizing and
   dispatch formulas therefore use:
   - `input_prim_count_total = input_prim_count * instance_count`
-  - and flatten `(instance_id, primitive_id_in_instance)` into a single `prim_id` in
-    `0..input_prim_count_total` for compute expansion (see GS pass sequence and `gs_inputs` packing).
+  - Instancing can be represented either as a second dispatch dimension (`instance_id`), or by
+    flattening `(instance_id, primitive_id_in_instance)` into a single `prim_id` in
+    `0..input_prim_count_total`. The in-tree translated-GS prepass uses a 2D dispatch shape in the
+    translator and uses `draw_instance_id` when indexing packed `gs_inputs` (see “GS pass sequence”
+    and “GS input register payload layout”).
 - `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
   `lineadj`/`triadj`). The in-tree translated-GS prepass supports adjacency **list** topologies
   (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`); strip-adjacency (`*_STRIP_ADJ`) remains future work.
@@ -1085,23 +1088,21 @@ struct Vec4F32Buffer { data: array<vec4<f32>>; }
 @group(G) @binding(B) var<storage, read_write> gs_inputs: Vec4F32Buffer;
 ```
 
-Flattened indexing (normative, matches `gs_translate`):
+Flattened indexing (matches in-tree `gs_translate`):
 
 ```
-idx = ((prim_id * GS_INPUT_VERTS_PER_PRIM + vertex_in_prim) * GS_INPUT_REG_COUNT + reg)
+// gs_inputs index (vec4<f32> element index):
+idx = (((draw_instance_id * primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vertex_in_prim) * GS_INPUT_REG_COUNT + reg)
 ```
 
 Where:
 
-- `prim_id` is the GS `SV_PrimitiveID` over the expanded input stream.
-  - In the baseline compute-expansion design we **flatten instancing** into `prim_id` so packing and
-    deterministic ordering are simple:
-    - `prim_id` ranges `0..(input_prim_count * instance_count)`
-    - `instance_id = prim_id / input_prim_count`
-    - `primitive_id_in_instance = prim_id % input_prim_count`
-  - Alternative: preserve instancing in the GS phase by treating `primitive_id_in_instance` as the
-    `prim_id` dimension and carrying `instance_id` separately; this requires a different dispatch
-    shape and a different `gs_inputs` packing scheme.
+- `draw_instance_id` is the draw instance index in `0..instance_count`. The translated GS compute entry
+  point treats `@builtin(global_invocation_id).y` as this value.
+- `prim_id` is the per-instance input primitive index in `0..primitive_count`.
+  - In the in-tree translated GS prepass, the translator maps `SV_PrimitiveID` to `prim_id` (per draw
+    instance), and uses `draw_instance_id` only to select which instance’s inputs are being read.
+- `primitive_count` is the number of input primitives per instance for the current draw/topology.
 - `vertex_in_prim` is the vertex index within the input primitive (`0..GS_INPUT_VERTS_PER_PRIM`),
   where `GS_INPUT_VERTS_PER_PRIM` depends on the GS declared input primitive:
   - point: 1
@@ -1127,15 +1128,16 @@ To populate `gs_inputs`, the runtime must:
      (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`) translated-GS prepass paths in
      `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS outputs**
      via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with a guarded
-      IA-fill fallback:
+     IA-fill fallback:
        - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
          VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
          IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
-       - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency) requires
-         the input-fill pass to implement the primitive assembly rules in section 2.1.1b, including
-         primitive restart for indexed strips.
-       - Note: translated GS prepass execution currently assumes `instance_count == 1` (draw instancing
-         is not implemented yet for this path).
+   - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency) requires
+     the input-fill pass to implement the primitive assembly rules in section 2.1.1b, including
+     primitive restart for indexed strips.
+   - Note: translated GS prepass execution currently assumes `instance_count == 1` (draw instancing is
+     not implemented yet for this path), so in practice `draw_instance_id` is always 0 and the
+     indexing formula reduces to a single-instance packed layout.
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
@@ -1532,7 +1534,8 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Purpose: packed per-primitive GS inputs when using a GS translator that expects a dense
       register-file buffer (see “GS input register payload layout”).
     - Usage: `STORAGE` (declared as read_write for scratch-buffer compatibility; conceptually read-only).
-    - Layout: `array<vec4<f32>>` registers packed by `((prim_id * verts_per_prim + vertex) * reg_count + reg)`.
+    - Layout: `array<vec4<f32>>` registers packed by:
+      - `(((draw_instance_id * input_prim_count + prim_id) * verts_per_prim + vertex) * reg_count + reg)`
     - Capacity sizing:
       - `input_prim_count * instance_count * GS_INPUT_VERTS_PER_PRIM * GS_INPUT_REG_COUNT` registers.
 
@@ -1953,9 +1956,13 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Dispatch shape / ordering:
         - **Current in-tree strategy (`runtime/gs_translate.rs`):**
         - Dispatch the translated GS compute entry point (`gs_main`) with `@workgroup_size(1)` and
-          `dispatch_workgroups(input_prim_count, 1, 1)`.
-        - Each invocation processes one input primitive (`prim_id = global_invocation_id.x`) and
-          loops `gs_instance_id` in `0..gs_instance_count` (matching `SV_GSInstanceID` semantics).
+          `dispatch_workgroups(input_prim_count, instance_count, 1)`.
+        - Each invocation processes one input primitive for one draw instance:
+          - `prim_id = global_invocation_id.x` (`SV_PrimitiveID` in the translated GS),
+          - `draw_instance_id = global_invocation_id.y` (used to select per-instance `gs_inputs`),
+          and loops `gs_instance_id` in `0..gs_instance_count` (matching `SV_GSInstanceID` semantics).
+        - Note: the in-tree executor currently runs this path only for `instance_count == 1`, so it
+          dispatches `dispatch_workgroups(input_prim_count, 1, 1)` in practice.
         - Output allocation uses atomic counters; strip→list conversion and `cut`/restart semantics
           are handled in WGSL.
         - After `gs_main`, dispatch a 1-workgroup finalize entry point (`cs_finalize`) to write
