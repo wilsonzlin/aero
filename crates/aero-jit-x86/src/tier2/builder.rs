@@ -201,36 +201,6 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_util::capture_panic_location;
-
-    #[derive(Default)]
-    struct DummyBus;
-
-    impl Tier1Bus for DummyBus {
-        fn read_u8(&self, _addr: u64) -> u8 {
-            0
-        }
-
-        fn write_u8(&mut self, _addr: u64, _value: u8) {}
-    }
-
-    #[test]
-    fn build_function_from_x86_panics_at_call_site_on_invalid_bitness() {
-        let bus = DummyBus::default();
-
-        let expected_file = file!();
-        let expected_line = line!() + 2;
-        let (file, line) = capture_panic_location(|| {
-            let _ = build_function_from_x86(&bus, 0, 0, CfgBuildConfig::default());
-        });
-        assert_eq!(file, expected_file);
-        assert_eq!(line, expected_line);
-    }
-}
-
 enum TerminatorLowering {
     Term(Terminator),
     /// The block must side-exit at its entry RIP, and must not execute any lowered instructions.
@@ -1420,5 +1390,35 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
             instrs: lower.instrs,
             term: Terminator::Return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[derive(Default)]
+    struct DummyBus;
+
+    impl Tier1Bus for DummyBus {
+        fn read_u8(&self, _addr: u64) -> u8 {
+            0
+        }
+
+        fn write_u8(&mut self, _addr: u64, _value: u8) {}
+    }
+
+    #[test]
+    fn build_function_from_x86_panics_at_call_site_on_invalid_bitness() {
+        let bus = DummyBus;
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = build_function_from_x86(&bus, 0, 0, CfgBuildConfig::default());
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }

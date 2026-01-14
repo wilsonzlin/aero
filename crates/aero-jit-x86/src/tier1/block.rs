@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn discover_block_mode_panics_at_call_site_on_invalid_bitness() {
-        let bus = DummyBus::default();
+        let bus = DummyBus;
 
         let expected_file = file!();
         let expected_line = line!() + 2;
