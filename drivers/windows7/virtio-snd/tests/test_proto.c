@@ -328,6 +328,71 @@ static void test_control_set_params_formats_channels(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_control_set_params_uses_selected_format(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+    const VIRTIO_TEST_QUEUE_CAPTURE *cap;
+
+    virtio_test_queue_init(&q, TRUE);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    /*
+     * Playback: select a non-contract format/rate and verify SET_PARAMS uses it.
+     * S24 is interpreted as 24-bit samples in a 32-bit container, so bytes/sample=4.
+     */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S24,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    assert(status == STATUS_SUCCESS);
+
+    status = VirtioSndCtrlSetParams(&ctrl, 1920u, 192u); /* divisible by 8 bytes/frame */
+    assert(status == STATUS_SUCCESS);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SET_PARAMS_REQ));
+    {
+        const VIRTIO_SND_PCM_SET_PARAMS_REQ *req = (const VIRTIO_SND_PCM_SET_PARAMS_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_SET_PARAMS);
+        assert(req->stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+        assert(req->channels == 2u);
+        assert(req->format == VIRTIO_SND_PCM_FMT_S24);
+        assert(req->rate == VIRTIO_SND_PCM_RATE_44100);
+    }
+
+    /* Capture: mono S24 @ 44.1k. */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_CAPTURE_STREAM_ID,
+        1u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S24,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    assert(status == STATUS_SUCCESS);
+
+    status = VirtioSndCtrlSetParams1(&ctrl, 960u, 96u); /* divisible by 4 bytes/frame */
+    assert(status == STATUS_SUCCESS);
+
+    cap = virtio_test_queue_last(&q);
+    assert(cap->out0_copy_len == sizeof(VIRTIO_SND_PCM_SET_PARAMS_REQ));
+    {
+        const VIRTIO_SND_PCM_SET_PARAMS_REQ *req = (const VIRTIO_SND_PCM_SET_PARAMS_REQ *)cap->out0_copy;
+        assert(req->code == VIRTIO_SND_R_PCM_SET_PARAMS);
+        assert(req->stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+        assert(req->channels == 1u);
+        assert(req->format == VIRTIO_SND_PCM_FMT_S24);
+        assert(req->rate == VIRTIO_SND_PCM_RATE_44100);
+    }
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
 static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
 {
     VIRTIO_TEST_QUEUE q;
@@ -691,6 +756,7 @@ int main(void)
     test_rx_rejects_misaligned_payload_bytes();
     test_rx_builds_hdr_payload_status_chain();
     test_control_set_params_formats_channels();
+    test_control_set_params_uses_selected_format();
     test_control_timeout_then_late_completion_runs_at_dpc_level();
     test_control_uninit_cancels_timed_out_request();
     test_control_cancel_all_frees_timed_out_request();

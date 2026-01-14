@@ -113,6 +113,46 @@ static void test_pcm_set_params_req_packing_and_validation(void)
         VIRTIOSND_MAX_PCM_PAYLOAD_BYTES,
         VIRTIOSND_MAX_PCM_PAYLOAD_BYTES);
     TEST_ASSERT(status == STATUS_SUCCESS);
+
+    /*
+     * Multi-format builder (non-contract): verify S24 uses 4 bytes/sample
+     * (24-bit samples stored in a 32-bit container).
+     */
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        1920u,
+        192u,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S24,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(req.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    TEST_ASSERT(req.channels == 2u);
+    TEST_ASSERT(req.format == VIRTIO_SND_PCM_FMT_S24);
+    TEST_ASSERT(req.rate == VIRTIO_SND_PCM_RATE_44100);
+
+    /* Misaligned period (not divisible by 8 bytes/frame) must be rejected. */
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        1920u,
+        194u,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S24,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Unsupported format must be rejected. */
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        1920u,
+        192u,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_IMA_ADPCM,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
 }
 
 static void test_pcm_simple_req_packing(void)
