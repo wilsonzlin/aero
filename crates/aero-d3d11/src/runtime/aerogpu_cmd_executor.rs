@@ -18101,9 +18101,7 @@ mod tests {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(
-                    bindings.as_slice(),
-                )],
+                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info should succeed");
