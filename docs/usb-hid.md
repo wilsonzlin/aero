@@ -124,7 +124,9 @@ When adding support for a new key code:
 
 1. Add it to `docs/fixtures/hid_usage_keyboard.json` (as `code` + expected usage).
 2. Update **both** mapping functions.
-3. Run `cargo test -p aero-usb --locked` and `npm -w web run test:unit`.
+3. Run `cargo xtask input` (recommended) or run the equivalent commands manually:
+   - `cargo test -p aero-usb --locked`
+   - `npm -w web run test:unit -- src/input`
 
 (The mapping is still not intended to be exhaustive, but the fixture is intentionally thorough so a
 change on either side requires updating the shared list.)
