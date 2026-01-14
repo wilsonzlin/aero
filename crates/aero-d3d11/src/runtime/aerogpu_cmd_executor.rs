@@ -1480,6 +1480,16 @@ impl AerogpuD3d11Executor {
         &self.device
     }
 
+    /// GPU/device capabilities detected at executor creation time.
+    pub fn caps(&self) -> &GpuCapabilities {
+        &self.caps
+    }
+
+    /// Whether the underlying adapter/device supports indirect execution.
+    pub fn supports_indirect(&self) -> bool {
+        self.caps.supports_indirect_execution
+    }
+
     pub fn backend(&self) -> wgpu::Backend {
         self.backend
     }

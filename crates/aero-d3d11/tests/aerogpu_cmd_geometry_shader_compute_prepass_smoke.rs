@@ -39,13 +39,21 @@ fn patch_first_set_primitive_topology(bytes: &mut [u8], topology: u32) {
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_compute_prepass_smoke"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const RT: u32 = 1;
         const VS: u32 = 2;

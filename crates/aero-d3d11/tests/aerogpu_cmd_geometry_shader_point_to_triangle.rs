@@ -18,85 +18,6 @@ fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
 }
 
-async fn create_executor_with_compute_and_indirect() -> Option<AerogpuD3d11Executor> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
-
-    let downlevel = adapter.get_downlevel_capabilities();
-    let flags = downlevel.flags;
-    if !flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
-        return None;
-    }
-    if !flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION) {
-        return None;
-    }
-
-    let backend = adapter.get_info().backend;
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 GS point->triangle test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()?;
-
-    Some(AerogpuD3d11Executor::new_with_supports(
-        device,
-        queue,
-        backend,
-        flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS),
-        flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION),
-    ))
-}
-
 #[derive(Clone, Copy)]
 struct SigParam {
     semantic_name: &'static str,
@@ -250,16 +171,21 @@ struct VertexPos3Color4 {
 #[test]
 fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
     pollster::block_on(async {
-        let mut exec = match create_executor_with_compute_and_indirect().await {
-            Some(exec) => exec,
-            None => {
-                common::skip_or_panic(
-                    module_path!(),
-                    "WebGPU compute shaders / indirect execution not supported",
-                );
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_point_list_expands_to_triangle"
+        );
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const VB: u32 = 1;
         const RT: u32 = 2;
@@ -343,7 +269,7 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
             Ok(report) => report,
             Err(err) => {
-                if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
                     return;
                 }
                 panic!("execute_cmd_stream failed: {err:#}");

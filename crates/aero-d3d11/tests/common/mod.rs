@@ -48,4 +48,25 @@ pub fn skip_if_compute_or_indirect_unsupported(
     false
 }
 
+pub fn require_gs_prepass_or_skip(
+    exec: &aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor,
+    test_name: &str,
+) -> bool {
+    if !exec.caps().supports_compute {
+        skip_or_panic(
+            test_name,
+            "geometry shader prepass requires compute shaders, but this wgpu backend does not support compute",
+        );
+        return false;
+    }
+    if !exec.supports_indirect() {
+        skip_or_panic(
+            test_name,
+            "geometry shader prepass requires indirect execution, but this wgpu backend does not support indirect draws",
+        );
+        return false;
+    }
+    true
+}
+
 pub mod wgpu;
