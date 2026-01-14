@@ -111,9 +111,9 @@ impl VecMemory {
     }
 
     fn clear(&mut self) {
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB when
         // wasm linear memory is backed by a `SharedArrayBuffer`.
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(self.base as usize);
@@ -124,8 +124,8 @@ impl VecMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memset is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memset is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `base`/`len` describe an allocated region in wasm linear memory.
             let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(self.base as usize);
@@ -153,9 +153,9 @@ impl VecMemory {
 
     fn read_u32(&self, addr: u32) -> u32 {
         let linear = self.linear_addr(addr, 4);
-        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // Shared-memory (threaded wasm) builds: use atomic byte loads to avoid Rust data-race UB when
         // wasm linear memory is backed by a `SharedArrayBuffer`.
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -171,9 +171,9 @@ impl VecMemory {
             u32::from_le_bytes(bytes)
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so plain loads are
+        // Non-threaded wasm builds: linear memory is not shared across threads, so plain loads are
         // fine.
-        #[cfg(not(target_feature = "atomics"))]
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
             let src: *const u32 = core::ptr::with_exposed_provenance(linear as usize);
@@ -183,9 +183,9 @@ impl VecMemory {
 
     fn write_u32(&mut self, addr: u32, value: u32) {
         let linear = self.linear_addr(addr, 4);
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB when
         // wasm linear memory is backed by a `SharedArrayBuffer`.
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -196,9 +196,9 @@ impl VecMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so plain stores are
+        // Non-threaded wasm builds: linear memory is not shared across threads, so plain stores are
         // fine.
-        #[cfg(not(target_feature = "atomics"))]
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
             let dst: *mut u32 = core::ptr::with_exposed_provenance_mut(linear as usize);
@@ -211,9 +211,9 @@ impl MemoryBus for VecMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
-        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // Shared-memory (threaded wasm) builds: use atomic byte loads to avoid Rust data-race UB when
         // wasm linear memory is backed by a `SharedArrayBuffer`.
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -223,8 +223,8 @@ impl MemoryBus for VecMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
             let src: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -235,9 +235,9 @@ impl MemoryBus for VecMemory {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB when
         // wasm linear memory is backed by a `SharedArrayBuffer`.
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -247,8 +247,8 @@ impl MemoryBus for VecMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
             let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);

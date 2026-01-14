@@ -306,9 +306,9 @@ impl aero_snapshot::SnapshotSource for WasmSnapshotSource {
             .checked_add(offset as u64)
             .ok_or(SnapshotError::Corrupt("ram base overflow"))?;
 
-        // Shared-memory (`+atomics`) builds: use atomic byte reads to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte reads to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src: *const AtomicU8 = core::ptr::with_exposed_provenance(ptr_u64 as usize);
@@ -318,8 +318,8 @@ impl aero_snapshot::SnapshotSource for WasmSnapshotSource {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: we bounds-check against `guest_size` computed from the wasm linear memory
             // size.
@@ -391,9 +391,9 @@ impl aero_snapshot::SnapshotTarget for WasmSnapshotTarget {
             .checked_add(offset as u64)
             .ok_or(SnapshotError::Corrupt("ram base overflow"))?;
 
-        // Shared-memory (`+atomics`) builds: use atomic byte writes to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte writes to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(ptr_u64 as usize);
@@ -403,8 +403,8 @@ impl aero_snapshot::SnapshotTarget for WasmSnapshotTarget {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: bounds-checked above.
             let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(ptr_u64 as usize);

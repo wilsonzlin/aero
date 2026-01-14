@@ -102,8 +102,8 @@ impl GuestMemory for WasmGuestMemory {
                 let linear = self.linear_offset(addr, ram_offset, len)?;
                 let ptr: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
 
-                // Shared-memory (`+atomics`) build: atomic byte loads to avoid Rust data-race UB.
-                #[cfg(target_feature = "atomics")]
+                // Shared-memory (threaded wasm) build: atomic byte loads to avoid Rust data-race UB.
+                #[cfg(feature = "wasm-threaded")]
                 {
                     use core::sync::atomic::{AtomicU8, Ordering};
                     let src = ptr as *const AtomicU8;
@@ -113,7 +113,7 @@ impl GuestMemory for WasmGuestMemory {
                     }
                 }
 
-                #[cfg(not(target_feature = "atomics"))]
+                #[cfg(not(feature = "wasm-threaded"))]
                 unsafe {
                     core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), len);
                 }
@@ -145,7 +145,7 @@ impl GuestMemory for WasmGuestMemory {
                 let linear = self.linear_offset(addr, ram_offset, len)?;
                 let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);
 
-                #[cfg(target_feature = "atomics")]
+                #[cfg(feature = "wasm-threaded")]
                 {
                     use core::sync::atomic::{AtomicU8, Ordering};
                     let dst = ptr as *mut AtomicU8;
@@ -155,7 +155,7 @@ impl GuestMemory for WasmGuestMemory {
                     }
                 }
 
-                #[cfg(not(target_feature = "atomics"))]
+                #[cfg(not(feature = "wasm-threaded"))]
                 unsafe {
                     core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, len);
                 }

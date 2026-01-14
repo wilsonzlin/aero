@@ -61,9 +61,9 @@ pub unsafe fn render_rgba8888_raw(
 
             let pixel_ptr = unsafe { dst.add(row_base + x * BYTES_PER_PIXEL) };
 
-            // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB
-            // when writing into a shared `WebAssembly.Memory`.
-            #[cfg(target_feature = "atomics")]
+            // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race
+            // UB when writing into a shared `WebAssembly.Memory`.
+            #[cfg(feature = "wasm-threaded")]
             {
                 use core::sync::atomic::{AtomicU8, Ordering};
                 let dst = pixel_ptr as *const AtomicU8;
@@ -75,8 +75,8 @@ pub unsafe fn render_rgba8888_raw(
                 }
             }
 
-            // Non-atomic builds: write a packed u32 for speed.
-            #[cfg(not(target_feature = "atomics"))]
+            // Non-threaded builds: write a packed u32 for speed.
+            #[cfg(not(feature = "wasm-threaded"))]
             {
                 // Write `[r, g, b, 255]` in little-endian form.
                 //

@@ -101,9 +101,9 @@ impl WasmPhysBus {
         let ptr = self.ptr(paddr, N)?;
         let mut out = [0u8; N];
 
-        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte loads to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src = ptr as *const AtomicU8;
@@ -114,8 +114,8 @@ impl WasmPhysBus {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `ptr()` bounds-checks against the configured guest region.
             core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
@@ -129,9 +129,9 @@ impl WasmPhysBus {
         let Some(ptr) = self.ptr_mut(paddr, N) else {
             return false;
         };
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst = ptr as *const AtomicU8;
@@ -142,8 +142,8 @@ impl WasmPhysBus {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `ptr_mut()` bounds-checks against the configured guest region.
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, N);

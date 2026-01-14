@@ -309,9 +309,9 @@ impl SnapshotSource for WorkerVmSnapshot {
 
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
         let abs = self.ram_range_checked(offset, buf.len())?;
-        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte loads to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src: *const AtomicU8 = core::ptr::with_exposed_provenance(abs as usize);
@@ -322,8 +322,8 @@ impl SnapshotSource for WorkerVmSnapshot {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
             // current wasm linear memory size.
@@ -362,9 +362,9 @@ impl SnapshotTarget for WorkerVmSnapshot {
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> aero_snapshot::Result<()> {
         let abs = self.ram_range_checked(offset, data.len())?;
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
-        // guest RAM lives in a shared `WebAssembly.Memory`.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB
+        // when guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(abs as usize);
@@ -375,8 +375,8 @@ impl SnapshotTarget for WorkerVmSnapshot {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
             // current wasm linear memory size.

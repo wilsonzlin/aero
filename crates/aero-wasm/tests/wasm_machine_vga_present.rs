@@ -1071,10 +1071,16 @@ fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
     machine.reset();
 
     // If the build does not support shared scanout state (non-threaded WASM), skip.
+    #[cfg(not(feature = "wasm-threaded"))]
     if scanout_ptr == 0 {
         assert_eq!(scanout_len, 0);
         return;
     }
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        scanout_ptr, 0,
+        "scanout_state_ptr must be non-zero in wasm-threaded builds"
+    );
     assert_eq!(scanout_len, SCANOUT_STATE_BYTE_LEN);
 
     let mut halted = false;

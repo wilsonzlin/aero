@@ -142,8 +142,8 @@ fn check_range(size: u64, paddr: u64, len: usize) -> GuestMemoryResult<()> {
 /// references into the shared backing store.
 ///
 /// # Threading / data races
-/// When compiled with `target_feature=atomics` (shared-memory wasm builds), this backend uses
-/// byte-granular atomic loads/stores to avoid Rust UB from unsynchronized concurrent accesses.
+/// When compiled with the `wasm-threaded` cargo feature (shared-memory wasm builds), this backend
+/// uses byte-granular atomic loads/stores to avoid Rust UB from unsynchronized concurrent accesses.
 ///
 /// In non-atomic wasm32 builds, guest RAM is not shared across threads, so plain memcpy-style access
 /// is used.
@@ -197,7 +197,7 @@ impl WasmSharedGuestMemory {
     /// - `base` points to a valid allocation of at least `size` bytes for the lifetime of the
     ///   returned [`WasmSharedGuestMemory`].
     /// - All concurrent accesses to the region are properly synchronized *or* are performed via
-    ///   atomic operations (e.g. in a `target_feature=atomics` wasm build).
+    ///   atomic operations (e.g. in a threaded/shared-memory wasm build).
     #[cfg(any(test, not(target_arch = "wasm32")))]
     pub unsafe fn from_raw_ptr(base: *mut u8, size: u64) -> GuestMemoryResult<Self> {
         let _size_usize =
@@ -251,8 +251,8 @@ impl GuestMemory for WasmSharedGuestMemory {
             return Ok(());
         }
 
-        // Shared-memory (atomics) builds: use atomic byte reads to avoid Rust data-race UB.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        // Shared-memory (threaded wasm) builds: use atomic byte reads to avoid Rust data-race UB.
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -263,8 +263,8 @@ impl GuestMemory for WasmSharedGuestMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threaded")))]
         unsafe {
             let src: *const u8 = core::ptr::with_exposed_provenance(src_addr);
             core::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), dst.len());
@@ -281,8 +281,8 @@ impl GuestMemory for WasmSharedGuestMemory {
             return Ok(());
         }
 
-        // Shared-memory (atomics) builds: use atomic byte writes to avoid Rust data-race UB.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        // Shared-memory (threaded wasm) builds: use atomic byte writes to avoid Rust data-race UB.
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -293,8 +293,8 @@ impl GuestMemory for WasmSharedGuestMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threaded")))]
         unsafe {
             let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(dst_addr);
             core::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());

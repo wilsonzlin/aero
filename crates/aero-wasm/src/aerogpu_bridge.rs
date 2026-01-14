@@ -80,9 +80,9 @@ impl MemoryBus for LinearGuestMemory {
                         return;
                     };
 
-                    // Shared-memory (`+atomics`) builds: use atomic byte reads to avoid Rust
+                    // Shared-memory (threaded wasm) builds: use atomic byte reads to avoid Rust
                     // data-race UB when the guest RAM lives in a shared `WebAssembly.Memory`.
-                    #[cfg(target_feature = "atomics")]
+                    #[cfg(feature = "wasm-threaded")]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
                         let src = ptr as *const AtomicU8;
@@ -93,9 +93,9 @@ impl MemoryBus for LinearGuestMemory {
                         }
                     }
 
-                    // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy
+                    // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy
                     // is fine.
-                    #[cfg(not(target_feature = "atomics"))]
+                    #[cfg(not(feature = "wasm-threaded"))]
                     unsafe {
                         // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes`
                         // and the guest region is bounds-checked against the wasm linear memory
@@ -149,9 +149,9 @@ impl MemoryBus for LinearGuestMemory {
                         return;
                     };
 
-                    // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust
+                    // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust
                     // data-race UB when the guest RAM lives in a shared `WebAssembly.Memory`.
-                    #[cfg(target_feature = "atomics")]
+                    #[cfg(feature = "wasm-threaded")]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
                         let dst = ptr as *const AtomicU8;
@@ -162,9 +162,9 @@ impl MemoryBus for LinearGuestMemory {
                         }
                     }
 
-                    // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy
+                    // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy
                     // is fine.
-                    #[cfg(not(target_feature = "atomics"))]
+                    #[cfg(not(feature = "wasm-threaded"))]
                     unsafe {
                         // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes`
                         // and the guest region is bounds-checked against the wasm linear memory

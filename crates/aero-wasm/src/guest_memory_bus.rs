@@ -185,8 +185,8 @@ pub(crate) struct WasmLinearMemory;
 impl LinearMemory for WasmLinearMemory {
     #[inline]
     fn read(&self, linear: u32, dst: &mut [u8]) {
-        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte loads to avoid Rust data-race UB.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -197,8 +197,8 @@ impl LinearMemory for WasmLinearMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: Callers validate `linear` is within the module's linear memory and that the
             // requested range lies within the configured guest RAM size.
@@ -209,8 +209,8 @@ impl LinearMemory for WasmLinearMemory {
 
     #[inline]
     fn write(&mut self, linear: u32, src: &[u8]) {
-        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB.
-        #[cfg(target_feature = "atomics")]
+        // Shared-memory (threaded wasm) builds: use atomic byte stores to avoid Rust data-race UB.
+        #[cfg(feature = "wasm-threaded")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
             let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
@@ -221,8 +221,8 @@ impl LinearMemory for WasmLinearMemory {
             }
         }
 
-        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
-        #[cfg(not(target_feature = "atomics"))]
+        // Non-threaded wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(feature = "wasm-threaded"))]
         unsafe {
             // Safety: Callers validate `linear` is within the module's linear memory and that the
             // requested range lies within the configured guest RAM size.

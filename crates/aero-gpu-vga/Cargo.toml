@@ -9,11 +9,15 @@ aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
 memory = { path = "../memory", optional = true }
 aero-platform = { path = "../platform", optional = true }
 
-[target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aero-shared = { path = "../aero-shared" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+aero-shared = { path = "../aero-shared", optional = true }
 
 [features]
 default = []
+wasm-threaded = ["dep:aero-shared"]
 io-snapshot = ["dep:aero-io-snapshot"]
 integration-memory = ["dep:memory"]
 integration-platform = ["dep:aero-platform"]

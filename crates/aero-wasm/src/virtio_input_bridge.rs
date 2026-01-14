@@ -471,9 +471,9 @@ mod wasm_guest_memory {
                 GuestRamRange::Ram { ram_offset } => {
                     let ptr = self.ram_ptr_for_range(addr, ram_offset, len)? as *const u8;
 
-                    // Shared-memory (`+atomics`) wasm build: use atomic byte loads to avoid Rust
+                    // Shared-memory (threaded wasm) build: use atomic byte loads to avoid Rust
                     // data-race UB.
-                    #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
                         let src = ptr as *const AtomicU8;
@@ -484,7 +484,7 @@ mod wasm_guest_memory {
                     }
 
                     // Non-atomic builds: guest RAM is not shared across threads, so memcpy is fine.
-                    #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+                    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
                     unsafe {
                         core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), len);
                     }
@@ -512,7 +512,7 @@ mod wasm_guest_memory {
                 GuestRamRange::Ram { ram_offset } => {
                     let ptr = self.ram_ptr_for_range(addr, ram_offset, len)?;
 
-                    #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
                         let dst = ptr as *mut AtomicU8;
@@ -522,7 +522,7 @@ mod wasm_guest_memory {
                         }
                     }
 
-                    #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+                    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
                     unsafe {
                         core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, len);
                     }

@@ -20,7 +20,7 @@ mod palette;
 mod snapshot;
 mod text_font;
 
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
     SCANOUT_SOURCE_LEGACY_VBE_LFB,
@@ -454,7 +454,7 @@ impl VgaDevice {
         self.vram.len()
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     /// Returns a [`ScanoutStateUpdate`] describing the VGA/VBE source that should currently be
     /// presented.
     ///
@@ -2178,7 +2178,7 @@ impl IoSnapshot for VgaDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     use aero_shared::scanout_state::{SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB};
 
     fn vbe_write(dev: &mut VgaDevice, index: u16, val: u16) {
@@ -2906,7 +2906,7 @@ mod tests {
         assert_eq!(dev.port_read(VBE_DISPI_DATA_PORT, 2), 0x0123);
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
     fn scanout_update_reports_legacy_text_in_text_mode() {
         let dev = VgaDevice::new();
@@ -2914,7 +2914,7 @@ mod tests {
         assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_TEXT);
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
     fn scanout_update_reports_vbe_lfb_base_and_pitch() {
         let mut dev = VgaDevice::new();
@@ -2928,7 +2928,7 @@ mod tests {
         assert_eq!(update.pitch_bytes, 64 * 4);
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
     fn scanout_update_accounts_for_stride_and_panning() {
         let mut dev = VgaDevice::new();
@@ -2954,7 +2954,7 @@ mod tests {
         assert_eq!(base, expected_base);
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
     fn scanout_update_uses_scanline_override_and_pan_offsets() {
         let mut dev = VgaDevice::new();
@@ -2974,7 +2974,7 @@ mod tests {
         assert_eq!(base, 0xD000_0000 + 3 * 512 + 2 * 4);
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
     fn scanout_update_disables_when_pan_offsets_exceed_vram() {
         let mut dev = VgaDevice::new();
