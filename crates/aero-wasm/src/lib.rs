@@ -5931,10 +5931,18 @@ impl Machine {
         self.mouse_buttons_known = false;
     }
 
-    /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.
+    /// Inject a browser-style keyboard event into the guest.
     ///
     /// `code` must be a DOM `KeyboardEvent.code` string (e.g. `"KeyA"`, `"Enter"`, `"ArrowUp"`).
     /// Unknown codes are ignored.
+    ///
+    /// Routing:
+    /// - If `code` has a PS/2 Set-2 scancode mapping and the i8042 controller is present, it is
+    ///   injected via PS/2.
+    /// - Otherwise, if `code` maps to a HID Consumer Control usage (media keys / browser navigation),
+    ///   it is forwarded to the Consumer Control backend:
+    ///   - virtio-input (when the guest driver is active and the usage is supported), otherwise
+    ///   - the synthetic USB HID consumer-control device (when enabled).
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         self.inner.inject_browser_key(code, pressed);
     }

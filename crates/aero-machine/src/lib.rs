@@ -8000,6 +8000,30 @@ impl Machine {
         let Some(usage) = aero_usb::hid::usage::keyboard_code_to_consumer_usage(code) else {
             return;
         };
+
+        // If virtio-input is active, route supported media keys through the virtio keyboard's
+        // Consumer Control collection so they work even when synthetic USB HID is disabled.
+        //
+        // Browser/application control usages (AC Back/Forward/etc.) are not currently modeled by
+        // the Windows 7 virtio-input driver and should continue to route via the synthetic USB
+        // consumer-control device when available.
+        if self.virtio_input_keyboard_driver_ok() {
+            use aero_virtio::devices::input::*;
+            let linux_key = match usage {
+                0x00E2 => Some(KEY_MUTE),
+                0x00EA => Some(KEY_VOLUMEDOWN),
+                0x00E9 => Some(KEY_VOLUMEUP),
+                0x00CD => Some(KEY_PLAYPAUSE),
+                0x00B5 => Some(KEY_NEXTSONG),
+                0x00B6 => Some(KEY_PREVIOUSSONG),
+                0x00B7 => Some(KEY_STOPCD),
+                _ => None,
+            };
+            if let Some(key) = linux_key {
+                self.inject_virtio_key(key, pressed);
+                return;
+            }
+        }
         self.inject_usb_hid_consumer_usage(u32::from(usage), pressed);
     }
 
@@ -8702,6 +8726,20 @@ impl Machine {
             })
         }
 
+        fn hid_consumer_usage_to_linux_key(usage: u16) -> Option<u16> {
+            use aero_virtio::devices::input::*;
+            Some(match usage {
+                0x00E2 => KEY_MUTE,
+                0x00EA => KEY_VOLUMEDOWN,
+                0x00E9 => KEY_VOLUMEUP,
+                0x00CD => KEY_PLAYPAUSE,
+                0x00B5 => KEY_NEXTSONG,
+                0x00B6 => KEY_PREVIOUSSONG,
+                0x00B7 => KEY_STOPCD,
+                _ => return None,
+            })
+        }
+
         for i in 0..count {
             let off = HEADER_WORDS + i * WORDS_PER_EVENT;
             let ty = words[off];
@@ -8763,6 +8801,27 @@ impl Machine {
                     // Only Usage Page 0x0C ("Consumer") is supported by the canonical synthetic
                     // consumer-control device today.
                     if usage_page == 0x000c {
+                        // Prefer virtio-input when the virtio keyboard driver is active and the
+                        // usage is representable as a Linux `KEY_*` code (media keys subset).
+                        if use_virtio_keyboard {
+                            let usage16 = usage_id as u16;
+                            if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
+                                let Some(kbd) = &self.virtio_input_keyboard else {
+                                    continue;
+                                };
+                                let mut dev = kbd.borrow_mut();
+                                let Some(input) = dev.device_mut::<VirtioInput>() else {
+                                    continue;
+                                };
+                                input.inject_key(code, pressed);
+                                virtio_input_dirty = true;
+                                continue;
+                            }
+                        }
+
+                        // Otherwise fall back to the synthetic USB consumer-control device (when
+                        // available). This handles browser navigation keys (AC Back/Forward/etc.)
+                        // which are not currently modeled by the virtio-input keyboard.
                         self.inject_usb_hid_consumer_usage(usage_id, pressed);
                     }
                 }
