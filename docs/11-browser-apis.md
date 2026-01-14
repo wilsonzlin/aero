@@ -763,23 +763,56 @@ async function importDiskImage(file, progressCallback) {
     const root = await navigator.storage.getDirectory();
     const imagesDir = await root.getDirectoryHandle('images', { create: true });
     const destHandle = await imagesDir.getFileHandle(file.name, { create: true });
-    
-    const writable = await destHandle.createWritable();
+
+    // Prefer truncating overwrites so importing over an existing file does not leave trailing bytes.
+    // Some implementations may reject the options bag; fall back to `createWritable()` and
+    // best-effort truncate.
+    let writable;
+    let truncateFallback = false;
+    try {
+        writable = await destHandle.createWritable({ keepExistingData: false });
+    } catch {
+        writable = await destHandle.createWritable();
+        truncateFallback = true;
+    }
+    if (truncateFallback) {
+        try {
+            await writable.truncate(0);
+        } catch {
+            // ignore
+        }
+    }
+
     const reader = file.stream().getReader();
     
     let bytesWritten = 0;
     const totalBytes = file.size;
     
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            await writable.write(value);
+            bytesWritten += value.length;
+            progressCallback(bytesWritten / totalBytes);
+        }
         
-        await writable.write(value);
-        bytesWritten += value.length;
-        progressCallback(bytesWritten / totalBytes);
+        await writable.close();
+    } catch (err) {
+        // Abort on error so a failed write does not leave behind a partially-written/truncated file.
+        try {
+            await reader.cancel(err);
+        } catch {
+            // ignore
+        }
+        try {
+            await writable.abort(err);
+        } catch {
+            // ignore
+        }
+        throw err;
     }
-    
-    await writable.close();
 }
 ```
 
