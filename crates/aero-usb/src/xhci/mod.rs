@@ -445,7 +445,7 @@ pub struct XhciController {
     //
     // Guest software programs CRCR with a dequeue pointer + cycle state and rings doorbell 0 to
     // notify the controller. We keep a small "kick" flag so command processing can continue across
-    // subsequent MMIO accesses without requiring the guest to ring doorbell 0 for every TRB.
+    // subsequent controller ticks without requiring the guest to ring doorbell 0 for every TRB.
     command_ring: Option<RingCursor>,
     cmd_kick: bool,
 
