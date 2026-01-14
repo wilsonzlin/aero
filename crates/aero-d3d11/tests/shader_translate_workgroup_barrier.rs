@@ -82,3 +82,68 @@ fn translates_sync_uav_fence_only_to_wgsl() {
     );
     assert_wgsl_validates(&translated.wgsl);
 }
+
+#[test]
+fn translates_sync_all_memory_fence_only_to_wgsl() {
+    // "AllMemoryBarrier()" fence-only form: both UAV+TGSM bits set, but no group sync.
+    //
+    // The translator can currently only model the UAV/storage fence portion (via `storageBarrier()`),
+    // but must still avoid introducing a control barrier (`workgroupBarrier()`).
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_UAV_MEMORY | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(
+        !translated.wgsl.contains("workgroupBarrier()"),
+        "fence-only sync must not introduce a workgroup barrier"
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn translates_sync_tgsm_fence_only_is_noop() {
+    // "GroupMemoryBarrier()" fence-only form: TGSM bit set, but no group sync.
+    //
+    // We currently don't model TGSM/workgroup shared memory, so this becomes a no-op (but must still
+    // avoid introducing a control barrier).
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(
+        !translated.wgsl.contains("storageBarrier()"),
+        "TGSM-only fence-only sync should not emit a storage barrier"
+    );
+    assert!(
+        !translated.wgsl.contains("workgroupBarrier()"),
+        "TGSM-only fence-only sync must not introduce a workgroup barrier"
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}
