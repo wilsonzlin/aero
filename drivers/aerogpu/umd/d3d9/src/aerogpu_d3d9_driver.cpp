@@ -27114,17 +27114,27 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_stream_source_freq(D3DDDI_HDEVICE hDevice, uint32_t stream, uint32_t value) {
+  // Prefer the real DDI implementation when building the full WDK-backed UMD on
+  // Windows so state-block recording and DDI validation match the runtime path.
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_stream_source_freq_dispatch(hDevice, stream, value);
+#else
+  // Host-side portable tests build a minimal D3D9DDI_DEVICEFUNCS table that does
+  // not include SetStreamSourceFreq. Provide a small direct-call helper so tests
+  // can still exercise instancing behavior without mutating `Device` caches
+  // directly.
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   if (stream >= 16) {
-    // Match D3DERR_INVALIDCALL (kD3DErrInvalidCall) without relying on internal-linkage constants.
-    return static_cast<HRESULT>(0x8876086CL);
+    return kD3DErrInvalidCall;
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->stream_source_freq[stream] = value;
+  stateblock_record_stream_source_freq_locked(dev, stream, value);
   return S_OK;
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_transform(
