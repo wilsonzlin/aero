@@ -608,12 +608,8 @@ impl Tlb {
     }
 
     #[inline]
-    pub(crate) fn set_dirty_slot(&mut self, is_exec: bool, set: usize, way: usize) {
-        if is_exec {
-            self.itlb.set_dirty_hit(set, way);
-        } else {
-            self.dtlb.set_dirty_hit(set, way);
-        }
+    pub(crate) fn set_dirty_slot(&mut self, set: usize, way: usize) {
+        self.dtlb.set_dirty_hit(set, way);
     }
 
     pub(crate) fn flush_all(&mut self) {

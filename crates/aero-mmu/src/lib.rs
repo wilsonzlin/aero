@@ -957,7 +957,7 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb.set_dirty_slot(is_exec, tlb_set, tlb_way);
+                        self.tlb.set_dirty_slot(tlb_set, tlb_way);
                     }
 
                     return Ok(paddr);
