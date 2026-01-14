@@ -16629,6 +16629,9 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     kA8R8G8B8,
     kX8R8G8B8,
     kA8B8G8R8,
+    kR5G6B5,
+    kX1R5G5B5,
+    kA1R5G5B5,
   };
 
   MipGenFormat gen_format{};
@@ -16638,6 +16641,15 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
       break;
     case 22u: // D3DFMT_X8R8G8B8
       gen_format = MipGenFormat::kX8R8G8B8;
+      break;
+    case 23u: // D3DFMT_R5G6B5
+      gen_format = MipGenFormat::kR5G6B5;
+      break;
+    case 24u: // D3DFMT_X1R5G5B5
+      gen_format = MipGenFormat::kX1R5G5B5;
+      break;
+    case 25u: // D3DFMT_A1R5G5B5
+      gen_format = MipGenFormat::kA1R5G5B5;
       break;
     case 32u: // D3DFMT_A8B8G8R8
       gen_format = MipGenFormat::kA8B8G8R8;
@@ -16650,6 +16662,11 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
       });
       return trace.ret(kD3DErrInvalidCall);
     }
+  }
+
+  const uint32_t bpp = bytes_per_pixel(res->format);
+  if (bpp != 4u && bpp != 2u) {
+    return trace.ret(kD3DErrInvalidCall);
   }
 
   // Validate the mip-chain layout against the resource size to prevent OOB writes on malformed descriptors.
@@ -16736,6 +16753,42 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
         // XRGB alpha is treated as 1.0.
         c.a = 0xFFu;
         break;
+      case MipGenFormat::kR5G6B5: {
+        const uint16_t v = static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+        const uint8_t r5 = static_cast<uint8_t>((v >> 11) & 0x1Fu);
+        const uint8_t g6 = static_cast<uint8_t>((v >> 5) & 0x3Fu);
+        const uint8_t b5 = static_cast<uint8_t>((v >> 0) & 0x1Fu);
+        // Bit replication to 8-bit channels.
+        c.r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+        c.g = static_cast<uint8_t>((g6 << 2) | (g6 >> 4));
+        c.b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+        c.a = 0xFFu;
+        break;
+      }
+      case MipGenFormat::kX1R5G5B5: {
+        const uint16_t v = static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+        const uint8_t r5 = static_cast<uint8_t>((v >> 10) & 0x1Fu);
+        const uint8_t g5 = static_cast<uint8_t>((v >> 5) & 0x1Fu);
+        const uint8_t b5 = static_cast<uint8_t>((v >> 0) & 0x1Fu);
+        c.r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+        c.g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+        c.b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+        // X1 formats treat alpha as always-opaque.
+        c.a = 0xFFu;
+        break;
+      }
+      case MipGenFormat::kA1R5G5B5: {
+        const uint16_t v = static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+        const uint8_t a1 = static_cast<uint8_t>((v >> 15) & 0x1u);
+        const uint8_t r5 = static_cast<uint8_t>((v >> 10) & 0x1Fu);
+        const uint8_t g5 = static_cast<uint8_t>((v >> 5) & 0x1Fu);
+        const uint8_t b5 = static_cast<uint8_t>((v >> 0) & 0x1Fu);
+        c.r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+        c.g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+        c.b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+        c.a = a1 ? 0xFFu : 0u;
+        break;
+      }
       case MipGenFormat::kA8B8G8R8:
         // Stored as RGBA in little-endian memory.
         c.r = p[0];
@@ -16761,6 +16814,35 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
         p[2] = c.r;
         p[3] = 0xFFu;
         break;
+      case MipGenFormat::kR5G6B5: {
+        const uint16_t r5 = static_cast<uint16_t>((static_cast<uint32_t>(c.r) * 31u + 127u) / 255u);
+        const uint16_t g6 = static_cast<uint16_t>((static_cast<uint32_t>(c.g) * 63u + 127u) / 255u);
+        const uint16_t b5 = static_cast<uint16_t>((static_cast<uint32_t>(c.b) * 31u + 127u) / 255u);
+        const uint16_t v = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | (b5 << 0));
+        p[0] = static_cast<uint8_t>(v & 0xFFu);
+        p[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+        break;
+      }
+      case MipGenFormat::kX1R5G5B5: {
+        const uint16_t r5 = static_cast<uint16_t>((static_cast<uint32_t>(c.r) * 31u + 127u) / 255u);
+        const uint16_t g5 = static_cast<uint16_t>((static_cast<uint32_t>(c.g) * 31u + 127u) / 255u);
+        const uint16_t b5 = static_cast<uint16_t>((static_cast<uint32_t>(c.b) * 31u + 127u) / 255u);
+        // X1 formats are treated as opaque alpha (top bit set).
+        const uint16_t v = static_cast<uint16_t>((1u << 15) | (r5 << 10) | (g5 << 5) | (b5 << 0));
+        p[0] = static_cast<uint8_t>(v & 0xFFu);
+        p[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+        break;
+      }
+      case MipGenFormat::kA1R5G5B5: {
+        const uint16_t a1 = static_cast<uint16_t>(c.a >= 128u ? 1u : 0u);
+        const uint16_t r5 = static_cast<uint16_t>((static_cast<uint32_t>(c.r) * 31u + 127u) / 255u);
+        const uint16_t g5 = static_cast<uint16_t>((static_cast<uint32_t>(c.g) * 31u + 127u) / 255u);
+        const uint16_t b5 = static_cast<uint16_t>((static_cast<uint32_t>(c.b) * 31u + 127u) / 255u);
+        const uint16_t v = static_cast<uint16_t>((a1 << 15) | (r5 << 10) | (g5 << 5) | (b5 << 0));
+        p[0] = static_cast<uint8_t>(v & 0xFFu);
+        p[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+        break;
+      }
       case MipGenFormat::kA8B8G8R8:
         p[0] = c.r;
         p[1] = c.g;
@@ -16814,10 +16896,10 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
         const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
         const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
 
-        const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * 4u;
-        const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * 4u;
-        const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * 4u;
-        const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * 4u;
+        const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * bpp;
+        const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * bpp;
+        const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * bpp;
+        const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * bpp;
 
         const Rgba8 c00 = decode(p00);
         const Rgba8 c10 = decode(p10);
@@ -16828,9 +16910,11 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
         out.r = avg4(c00.r, c10.r, c01.r, c11.r);
         out.g = avg4(c00.g, c10.g, c01.g, c11.g);
         out.b = avg4(c00.b, c10.b, c01.b, c11.b);
-        out.a = (gen_format == MipGenFormat::kX8R8G8B8) ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+        const bool opaque_alpha = (gen_format == MipGenFormat::kX8R8G8B8) ||
+                                  (gen_format == MipGenFormat::kX1R5G5B5);
+        out.a = opaque_alpha ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
 
-        encode(out_row + static_cast<size_t>(x) * 4u, out);
+        encode(out_row + static_cast<size_t>(x) * bpp, out);
       }
     }
   }
