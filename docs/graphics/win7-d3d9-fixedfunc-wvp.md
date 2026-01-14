@@ -10,7 +10,7 @@ It is referenced by:
 
 ## Draw-time WVP for fixed-function `D3DFVF_XYZ*` draws
 
-When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD binds an internal VS that applies the combined `WORLD0 * VIEW * PROJECTION` transform on the GPU.
+When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD binds an internal VS variant that applies the combined `WORLD0 * VIEW * PROJECTION` transform on the GPU.
 
 Fixed-function `D3DFVF_XYZ*` FVF → internal VS mapping:
 
@@ -18,7 +18,7 @@ Fixed-function `D3DFVF_XYZ*` FVF → internal VS mapping:
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` → `fixedfunc::kVsWvpPosColorTex0`
 - `D3DFVF_XYZ | D3DFVF_TEX1` → `fixedfunc::kVsTransformPosWhiteTex1` (driver supplies default diffuse white)
 
-These shaders source the WVP matrix from a reserved high VS constant register range:
+WVP constant upload (bring-up):
 
 - Computes `WORLD0 * VIEW * PROJECTION` from cached `Device::transform_matrices[...]` and uploads it via `ensure_fixedfunc_wvp_constants_locked()`.
 - Constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`)
@@ -81,10 +81,10 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 
 - Fixed-function shader binding:
   - `ensure_fixedfunc_pipeline_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
+- Fixed-function shader token streams:
+  - `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
 - Draw-time fixed-function CPU conversions:
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
-- Draw-time fixed-function scratch vertex decl:
-  - `ensure_fixedfunc_fvf_vertex_decl_locked()` (`POSITIONT=float4` + `COLOR0` + optional `TEXCOORD0`)
 - Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
 - Existing CPU vertex processing:

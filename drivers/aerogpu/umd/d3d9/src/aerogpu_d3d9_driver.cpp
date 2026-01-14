@@ -4768,8 +4768,11 @@ VertexDecl* ensure_fixedfunc_fvf_vertex_decl_locked(Device* dev, bool tex1) {
     return nullptr;
   }
 
-  // Internal declaration used by fixed-function fallbacks and scratch vertex
-  // uploads. This matches the bring-up fixed-function shader expectations:
+  // Legacy internal declaration used by an earlier bring-up path that
+  // CPU-transformed `D3DFVF_XYZ*` vertices to clip-space and uploaded them as
+  // `POSITIONT=float4`. Retained for reference/potential future use.
+  //
+  // This matches the bring-up fixed-function shader expectations:
   //   v0 = float4 position
   //   v1 = D3DCOLOR diffuse
   //   v2 = float2 tex0 (optional, TEX1 variant)
@@ -6401,6 +6404,11 @@ namespace {
 void d3d9_mul_vec4_mat4_row_major(const float v[4], const float m[16], float out[4]);
 } // namespace
 
+// Legacy helper: previously used by an early bring-up path that CPU-transformed
+// `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` fixed-function vertices to clip-space.
+// The current fixed-function path uses internal VS variants + WVP constants
+// (`ensure_fixedfunc_wvp_constants_locked()`), so this is not currently
+// referenced.
 HRESULT convert_xyz_to_clipspace_locked(
     Device* dev,
     const void* src_vertices,
@@ -15864,6 +15872,8 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior:
 //   - Untransformed `D3DFVF_XYZ*`: internal WVP VS variants using a reserved high
 //     VS constant range (`c240..c243`).
+//     - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
+//       diffuse color.
 //   - Pre-transformed `D3DFVF_XYZRHW*`: CPU conversion of `XYZRHW` (`POSITIONT`) to
 //     clip-space at draw time (`convert_xyzrhw_to_clipspace_locked()`).
 // - Stage0 texture stage state selects a fixed-function PS variant.

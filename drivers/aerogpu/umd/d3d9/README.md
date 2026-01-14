@@ -404,7 +404,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
-- Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`c240..c243`)
+- Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`WORLD0*VIEW*PROJECTION` into `c240..c243`)
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
     (see supported combinations above), so the draw path can bind a known input layout.
@@ -444,8 +444,12 @@ Implementation notes (bring-up):
   that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fallback path uses internal VS variants that apply WVP from a
-  reserved VS constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
+- For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function fallback uses small internal vertex shader
+  variants that apply `WORLD0*VIEW*PROJECTION` from a reserved VS constant range (`c240..c243`) uploaded by
+  `ensure_fixedfunc_wvp_constants_locked()`.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
+  - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
   - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
     fixed-function and programmable paths.
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
@@ -466,8 +470,9 @@ Limitations (bring-up):
   - The conversion uses the current viewport (`X/Y/Width/Height`) and treats `w = 1/rhw` (with a safe fallback when
     `rhw==0`); `z` is treated as D3D9 NDC depth (`0..1`) and currently ignores viewport `MinZ`/`MaxZ`.
 - For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the bring-up path uses internal WVP vertex shaders with a reserved VS
-  constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
-  (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).) Fixed-function lighting/material is still not implemented.
+  constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`. Fixed-function lighting/material is
+  still not implemented.
+  (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - The fixed-function fallback's `TEX1` path assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`).
   Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets require user shaders (layout translation
   is supported; fixed-function shading is not).
