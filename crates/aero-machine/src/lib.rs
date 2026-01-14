@@ -1951,49 +1951,6 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
-struct VgaLfbMmio {
-    dev: Rc<RefCell<VgaDevice>>,
-}
-
-impl MmioHandler for VgaLfbMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = match size {
-            1 | 2 | 4 | 8 => size,
-            _ => size.clamp(1, 8),
-        };
-
-        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
-        let mut out = 0u64;
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = dev.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
-            out |= b << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = match size {
-            1 | 2 | 4 | 8 => size,
-            _ => size.clamp(1, 8),
-        };
-
-        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = ((value >> (i * 8)) & 0xFF) as u8;
-            dev.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
-        }
-    }
-}
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -6140,7 +6097,7 @@ Track progress: docs/21-smp.md\n\
                         self.aerogpu_mmio = Some(dev);
                     }
                 }
-
+ 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
                 // The PC platform installs a range-based PCI I/O BAR router over most ports, so
                 // legacy VGA ports must be wired as exact per-port mappings to avoid overlapping
@@ -6159,7 +6116,7 @@ Track progress: docs/21-smp.md\n\
                         }
                     },
                 );
-
+ 
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
                 // aliases `VRAM[0..128KiB]`.
                 self.mem
@@ -6201,6 +6158,13 @@ Track progress: docs/21-smp.md\n\
                     .borrow_mut()
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
+            }
+            if self.cfg.enable_aerogpu {
+                // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
             }
 
             // PCI INTx router.
