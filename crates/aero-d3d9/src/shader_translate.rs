@@ -284,8 +284,7 @@ fn validate_sampler_texture_types(
 ) -> Result<(), ShaderTranslateError> {
     // D3D9 supports 1D/2D/3D/Cube sampler declarations.
     //
-    // The D3D9 executor may fall back to dummy texture views for resource types that are not
-    // currently supported by the command stream (e.g. 3D textures), but unknown sampler texture
+    // The D3D9 executor does not currently support binding 3D textures, but unknown sampler texture
     // type encodings are treated as malformed bytecode and must still be rejected.
     for &sampler in used_samplers {
         let ty = sampler_texture_types
@@ -293,21 +292,21 @@ fn validate_sampler_texture_types(
             .copied()
             .unwrap_or(TextureType::Texture2D);
         match ty {
-            TextureType::Texture2D | TextureType::TextureCube => {}
+            TextureType::Texture1D | TextureType::Texture2D | TextureType::TextureCube => {}
             // The runtime can tolerate unsupported sampler declarations as long as the sampler is
             // never used. However, once a sampler is actually referenced by a texture instruction
             // we must reject unsupported dimensions so callers don't assume the command stream can
-            // bind 1D/3D textures.
-            TextureType::Texture1D | TextureType::Texture3D => {
+            // bind them.
+            TextureType::Texture3D => {
                 return Err(ShaderTranslateError::Translation(format!(
-                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
+                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/Cube)"
                 )));
             }
             // Unknown texture type encodings are treated as malformed input (not a fallbackable
             // unsupported feature).
             TextureType::Unknown(_) => {
                 return Err(ShaderTranslateError::Malformed(format!(
-                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
+                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/Cube)"
                 )));
             }
         }

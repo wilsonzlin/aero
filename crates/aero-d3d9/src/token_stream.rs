@@ -78,6 +78,7 @@ fn score_sm2_sm3_length_encoding(
     let mut score = 0i32;
     let mut idx = 1usize;
     let mut steps = 0usize;
+    let mut saw_end = false;
     while idx < token_count && steps < token_count {
         let token = read_token_u32_le(token_stream, idx)?;
         let opcode = (token & 0xFFFF) as u16;
@@ -95,6 +96,7 @@ fn score_sm2_sm3_length_encoding(
         }
 
         if opcode == 0xFFFF {
+            saw_end = true;
             break;
         }
 
@@ -126,6 +128,13 @@ fn score_sm2_sm3_length_encoding(
 
         idx += total_len;
         steps += 1;
+    }
+
+    // All valid SM2/SM3 instruction streams are terminated by an explicit `end` (0xFFFF) opcode.
+    // If our chosen encoding never encounters it, we likely misclassified an intentionally
+    // malformed/truncated stream (e.g. by "consuming" the end token as an operand).
+    if !saw_end {
+        return None;
     }
 
     Some(score)
