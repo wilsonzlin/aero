@@ -64,6 +64,10 @@ Artifacts collected:
    Notes:
 ```
 
+Note: when the suite runner is invoked with `--json`, failing tests in `report.json` include an `artifacts` array
+listing relevant files (for example: per-test logs and dbgctl dumps when `--dbgctl=...` is enabled), so downstream CI
+can locate the most relevant outputs without additional heuristics.
+
 `--dbgctl=...` is optional. In packaged installs, `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory:
  - Guest Tools ISO/zip: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (Win7 x64) and `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (Win7 x86)
  - CI-staged packages: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
