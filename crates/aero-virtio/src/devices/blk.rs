@@ -684,6 +684,19 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             }
         }
 
+        if !header_ok {
+            // Header is malformed (short, out-of-bounds, or wrong direction). Fail the request
+            // without scanning the remaining descriptors so malformed chains can't force extra
+            // work beyond the header read.
+            if can_write_status {
+                let _ = write_u8(mem, status_desc.addr, VIRTIO_BLK_S_IOERR);
+            }
+            return queue
+                // Contract v1: virtio-blk drivers must not depend on used lengths.
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError);
+        }
+
         // Build data segments (everything between header cursor and status descriptor), enforcing
         // a per-request payload cap to avoid unbounded allocations or work.
         let mut data_segs: Vec<(crate::queue::Descriptor, usize, usize)> = Vec::new();
@@ -720,7 +733,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
         }
 
         let mut status = VIRTIO_BLK_S_IOERR;
-        if header_ok && data_len_ok {
+        if data_len_ok {
             status = VIRTIO_BLK_S_OK;
 
             let typ = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
@@ -1051,13 +1064,12 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 mod tests {
     use super::{
         BlockBackend, BlockBackendAsAeroVirtualDisk, BlockBackendError, MemDisk, VirtioBlk,
-        VirtioBlkDisk,
-        VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
+        VirtioBlkDisk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
     };
     use crate::devices::VirtioDevice;
     use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
     use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
-    use aero_storage::{DiskError, MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
+    use aero_storage::{DiskError, MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
     use std::io;
 
     fn write_desc(
