@@ -610,6 +610,18 @@ What is still missing (P0):
   - 16bpp layouts (`B5G6R5` (opaque) / `B5G5R5A1` (1-bit alpha))
   Unsupported formats publish a deterministic disabled descriptor.
 
+Repro commands:
+
+```bash
+# Rust: scanout handoff + disable semantics
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_handoff --locked
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_disable_publishes_wddm_disabled --locked
+
+# Browser e2e: scanout presentation from guest RAM / VRAM aperture
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts
+```
+
 Impact:
 
 - End-to-end validation is still required that the Win7 driver + browser runtime converge on supported scanout formats + update cadence (see docs below).
@@ -671,6 +683,10 @@ These are the fast, repeatable commands used to validate the current graphics st
 bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --locked
 
+# AeroGPU bridge/backends (canonical in-browser integration boundary)
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_backend_completes_fence --locked
+
 # AeroGPU protocol + host-side command processing
 bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
@@ -683,4 +699,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 # Legacy/sandbox emulator path (device model + e2e tests)
 bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --locked
 bash ./scripts/safe-run.sh cargo test -p emulator --locked
+
+# Browser e2e smoke tests
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts
 ```
