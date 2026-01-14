@@ -361,6 +361,7 @@ pub struct AeroGpuMmioDevice {
     scanout0_format: u32,
     scanout0_pitch_bytes: u32,
     scanout0_fb_gpa: u64,
+    scanout0_fb_gpa_lo_pending: bool,
     scanout0_vblank_seq: u64,
     scanout0_vblank_time_ns: u64,
     scanout0_vblank_period_ns: u32,
@@ -458,6 +459,7 @@ impl Default for AeroGpuMmioDevice {
             scanout0_format: 0,
             scanout0_pitch_bytes: 0,
             scanout0_fb_gpa: 0,
+            scanout0_fb_gpa_lo_pending: false,
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
             scanout0_vblank_period_ns,
@@ -662,6 +664,11 @@ impl AeroGpuMmioDevice {
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     pub fn take_scanout0_state_update(&mut self) -> Option<ScanoutStateUpdate> {
         if !self.scanout0_dirty {
+            return None;
+        }
+
+        // Avoid publishing a torn 64-bit `fb_gpa` update (drivers typically write LO then HI).
+        if self.scanout0_fb_gpa_lo_pending {
             return None;
         }
         self.scanout0_dirty = false;
@@ -1088,6 +1095,11 @@ impl AeroGpuMmioDevice {
                     // Explicit disable releases the WDDM scanout claim so legacy scanout can take
                     // back over.
                     self.wddm_scanout_active = false;
+                    // Reset torn-update tracking so a stale LO write can't block future publishes.
+                    self.scanout0_fb_gpa_lo_pending = false;
+                }
+                if new_enable && !self.scanout0_enable {
+                    self.wddm_scanout_active = true;
                 }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -1131,6 +1143,8 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
                 self.scanout0_fb_gpa =
                     (self.scanout0_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid publishing a torn 64-bit `fb_gpa` update. Defer until the HI write.
+                self.scanout0_fb_gpa_lo_pending = true;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
                     self.scanout0_dirty = true;
@@ -1140,6 +1154,8 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
                 self.scanout0_fb_gpa =
                     (self.scanout0_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                self.scanout0_fb_gpa_lo_pending = false;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
                     self.scanout0_dirty = true;
