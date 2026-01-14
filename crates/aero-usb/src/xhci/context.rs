@@ -48,7 +48,10 @@ impl fmt::Display for ContextError {
 
 impl core::error::Error for ContextError {}
 
-fn read_context32_dwords(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> [u32; CONTEXT_DWORDS] {
+fn read_context32_dwords(
+    mem: &mut (impl MemoryBus + ?Sized),
+    paddr: u64,
+) -> [u32; CONTEXT_DWORDS] {
     let mut raw = [0u8; CONTEXT_DWORDS * 4];
     mem.read_bytes(paddr, &mut raw);
     let mut out = [0u32; CONTEXT_DWORDS];

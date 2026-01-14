@@ -82,6 +82,16 @@ impl Trb {
     pub const CONTROL_TRB_TYPE_SHIFT: u32 = 10;
     pub const CONTROL_TRB_TYPE_MASK: u32 = 0x3f << Self::CONTROL_TRB_TYPE_SHIFT;
 
+    /// Address Device Command TRB "Block Set Address Request" (BSR) bit.
+    ///
+    /// Reference: xHCI 1.2 §6.4.3.4 "Address Device Command TRB".
+    pub const CONTROL_ADDRESS_DEVICE_BSR_BIT: u32 = 1 << 9;
+
+    /// Configure Endpoint Command TRB "Deconfigure" bit.
+    ///
+    /// Reference: xHCI 1.2 §6.4.3.5 "Configure Endpoint Command TRB".
+    pub const CONTROL_CONFIGURE_ENDPOINT_DECONFIGURE_BIT: u32 = 1 << 9;
+
     /// Event/command slot ID field (bits 24..=31).
     pub const CONTROL_SLOT_ID_SHIFT: u32 = 24;
     pub const CONTROL_SLOT_ID_MASK: u32 = 0xff << Self::CONTROL_SLOT_ID_SHIFT;
@@ -233,6 +243,29 @@ impl Trb {
         let endpoint_id = (endpoint_id as u32) & 0x1f;
         self.control = (self.control & !Self::CONTROL_ENDPOINT_ID_MASK)
             | (endpoint_id << Self::CONTROL_ENDPOINT_ID_SHIFT);
+    }
+
+    /// For Address Device Command TRBs, returns the "Block Set Address Request" (BSR) flag.
+    #[inline]
+    pub const fn address_device_bsr(&self) -> bool {
+        (self.control & Self::CONTROL_ADDRESS_DEVICE_BSR_BIT) != 0
+    }
+
+    #[inline]
+    pub fn set_address_device_bsr(&mut self, on: bool) {
+        self.control = (self.control & !Self::CONTROL_ADDRESS_DEVICE_BSR_BIT) | ((on as u32) << 9);
+    }
+
+    /// For Configure Endpoint Command TRBs, returns the "Deconfigure" flag.
+    #[inline]
+    pub const fn configure_endpoint_deconfigure(&self) -> bool {
+        (self.control & Self::CONTROL_CONFIGURE_ENDPOINT_DECONFIGURE_BIT) != 0
+    }
+
+    #[inline]
+    pub fn set_configure_endpoint_deconfigure(&mut self, on: bool) {
+        self.control = (self.control & !Self::CONTROL_CONFIGURE_ENDPOINT_DECONFIGURE_BIT)
+            | ((on as u32) << 9);
     }
 
     /// Interpret the parameter field as a pointer and mask it to 16-byte alignment.

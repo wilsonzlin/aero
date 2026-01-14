@@ -31,10 +31,18 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
     let cmd_ring = alloc.alloc(0x40, 0x40);
 
     // Input contexts are 64-byte aligned.
-    let input_ctx = alloc.alloc(0x40, 0x40);
+    let input_ctx = alloc.alloc(0x80, 0x40);
     // Slot context is the second context entry in an input context (after the Input Control
     // Context). Root hub port number is encoded in Slot Context dword1 bits 23:16.
     mem.write_u32(input_ctx + 0x20 + 4, 1u32 << 16);
+    // Input Control Context: add Slot + EP0.
+    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
+    // EP0 context must be type=Control.
+    mem.write_u32(input_ctx + 0x40 + 4, 4u32 << 3);
+
+    // Allocate a Device Context and install it into the DCBAA after Enable Slot completes.
+    let dev_ctx = alloc.alloc(0x200, 0x40);
 
     let event_ring = alloc.alloc(16 * 8, 0x10);
 
@@ -75,8 +83,8 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
         trb.write_to(&mut mem, (cmd_ring + 32) as u64);
     }
 
-    // Process commands (equivalent to ringing doorbell 0 in a full controller model).
-    processor.process(&mut mem, 256);
+    // Process Enable Slot first (equivalent to ringing doorbell 0 in a full controller model).
+    processor.process(&mut mem, 1);
 
     // Command Completion Event for Enable Slot.
     let evt0 = Trb::read_from(&mut mem, event_ring as u64);
@@ -84,6 +92,12 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
     assert_eq!(evt0.completion_code_raw(), CompletionCode::Success.as_u8());
     assert_eq!(evt0.slot_id(), 1);
     assert_eq!(evt0.parameter & !0x0Fu64, cmd_ring as u64);
+
+    // Guest installs the Device Context pointer into the DCBAA entry for the newly enabled slot.
+    mem.write(dcbaa + 8, &(dev_ctx as u64).to_le_bytes());
+
+    // Now process Address Device (+ the Link TRB).
+    processor.process(&mut mem, 256);
 
     // Command Completion Event for Address Device.
     let evt1 = Trb::read_from(&mut mem, (event_ring + 16) as u64);
@@ -111,15 +125,30 @@ fn address_device_uses_route_string_to_target_downstream_device() {
     let cmd_ring = alloc.alloc(0x60, 0x40);
 
     // Input contexts are 64-byte aligned.
-    let hub_input_ctx = alloc.alloc(0x40, 0x40);
-    let leaf_input_ctx = alloc.alloc(0x40, 0x40);
+    let hub_input_ctx = alloc.alloc(0x80, 0x40);
+    let leaf_input_ctx = alloc.alloc(0x80, 0x40);
 
     // Hub slot context: root port 1, route string = 0.
     mem.write_u32(hub_input_ctx + 0x20 + 4, 1u32 << 16);
+    // Input Control Context: add Slot + EP0.
+    mem.write_u32(hub_input_ctx + 0x00, 0);
+    mem.write_u32(hub_input_ctx + 0x04, (1 << 0) | (1 << 1));
+    // EP0 context must be type=Control.
+    mem.write_u32(hub_input_ctx + 0x40 + 4, 4u32 << 3);
 
     // Leaf slot context: root port 1, route string tier0 = 3.
     mem.write_u32(leaf_input_ctx + 0x20 + 0, 3);
     mem.write_u32(leaf_input_ctx + 0x20 + 4, 1u32 << 16);
+    // Input Control Context: add Slot + EP0.
+    mem.write_u32(leaf_input_ctx + 0x00, 0);
+    mem.write_u32(leaf_input_ctx + 0x04, (1 << 0) | (1 << 1));
+    // EP0 context must be type=Control.
+    mem.write_u32(leaf_input_ctx + 0x40 + 4, 4u32 << 3);
+
+    // Allocate Device Contexts for both slots; software installs them into the DCBAA after Enable
+    // Slot completes.
+    let hub_dev_ctx = alloc.alloc(0x200, 0x40);
+    let leaf_dev_ctx = alloc.alloc(0x200, 0x40);
 
     let event_ring = alloc.alloc(16 * 8, 0x10);
 
@@ -179,7 +208,19 @@ fn address_device_uses_route_string_to_target_downstream_device() {
         trb.write_to(&mut mem, (cmd_ring + 64) as u64);
     }
 
-    processor.process(&mut mem, 256);
+    // Process Enable Slot (slot 1), then install its Device Context pointer.
+    processor.process(&mut mem, 1);
+    mem.write(dcbaa + 8, &(hub_dev_ctx as u64).to_le_bytes());
+
+    // Address Device for hub (slot 1).
+    processor.process(&mut mem, 1);
+
+    // Process Enable Slot (slot 2), then install its Device Context pointer.
+    processor.process(&mut mem, 1);
+    mem.write(dcbaa + 16, &(leaf_dev_ctx as u64).to_le_bytes());
+
+    // Address Device for leaf device (slot 2).
+    processor.process(&mut mem, 1);
 
     // Hub should have been assigned address 1.
     let hub_dev = processor

@@ -1,6 +1,19 @@
 use super::command_ring::{CommandRing, CommandRingProcessor, EventRing};
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use crate::MemoryBus;
+use crate::hub::UsbHubDevice;
+use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
+
+struct DummyUsbDevice;
+
+impl UsbDeviceModel for DummyUsbDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Ack
+    }
+}
 
 struct TestMem {
     data: Vec<u8>,
@@ -128,6 +141,201 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
     let completion = ctrl.reset_endpoint(&mut mem, slot_id, endpoint_id);
     assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+}
+
+#[test]
+fn address_device_copies_slot_routing_and_ep0_tr_dequeue_pointer() {
+    let mut mem = TestMem::new(0x20_000);
+    let mem_size = mem.len() as u64;
+
+    // All xHCI context pointers are 64-byte aligned in our model.
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let input_ctx = 0x3000u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+
+    // Input Control Context: Drop=0, Add = Slot + EP0.
+    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
+
+    // Slot Context: Route String + Root Hub Port Number.
+    // Route String lives in DW0 bits 0..19. Encode ports [2, 5] from root => raw 0x25.
+    let route_string = 0x25u32;
+    let speed_id = 3u32; // arbitrary
+    let context_entries = 1u32;
+    mem.write_u32(
+        input_ctx + 0x20 + 0,
+        route_string | (speed_id << 20) | (context_entries << 27),
+    );
+    mem.write_u32(input_ctx + 0x20 + 4, 7u32 << 16); // RootHubPortNumber = 7 (bits 23:16)
+
+    // EP0 Endpoint Context: type=Control, MPS=64, TR Dequeue Pointer.
+    let mps = 64u32;
+    let ep_type_control = 4u32;
+    mem.write_u32(input_ctx + 0x40 + 4, (ep_type_control << 3) | (mps << 16));
+    let tr_dequeue_ptr = 0x9000u64;
+    let tr_raw = tr_dequeue_ptr | 1; // set DCS
+    mem.write_u32(input_ctx + 0x40 + 8, tr_raw as u32);
+    mem.write_u32(input_ctx + 0x40 + 12, (tr_raw >> 32) as u32);
+
+    // Command ring:
+    //  - Enable Slot
+    //  - Address Device (slot 1)
+    {
+        let mut trb0 = Trb::new(0, 0, 0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut trb1 = Trb::new(input_ctx, 0, 0);
+        trb1.set_trb_type(TrbType::AddressDeviceCommand);
+        trb1.set_slot_id(1);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+
+    let mut processor = CommandRingProcessor::new(
+        mem_size,
+        8,
+        dcbaa,
+        CommandRing {
+            dequeue_ptr: cmd_ring,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring, 16),
+    );
+
+    // Attach a hub chain that matches the route string [2, 5] so Address Device targets the leaf.
+    // The default hub model has only 4 ports; allocate enough ports for the route's hop (5).
+    let mut inner_hub = UsbHubDevice::with_port_count(8);
+    inner_hub.attach(5, Box::new(DummyUsbDevice));
+    let mut outer_hub = UsbHubDevice::new();
+    outer_hub.attach(2, Box::new(inner_hub));
+    processor.attach_root_port(7, Box::new(outer_hub));
+
+    // Enable Slot, then let the guest install a Device Context pointer into the DCBAA entry.
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev0 = mem.read_trb(event_ring);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Now process Address Device.
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
+
+    // Slot Context routing fields should be copied into the Device Context.
+    let mut buf = [0u8; 4];
+    mem.read_physical(dev_ctx + 0x00, &mut buf);
+    let out_slot_dw0 = u32::from_le_bytes(buf);
+    assert_eq!(out_slot_dw0 & 0x000f_ffff, route_string);
+
+    mem.read_physical(dev_ctx + 0x04, &mut buf);
+    let out_slot_dw1 = u32::from_le_bytes(buf);
+    assert_eq!((out_slot_dw1 >> 16) & 0xff, 7);
+
+    // EP0 TR Dequeue Pointer should be copied through (including DCS).
+    let mut lo = [0u8; 4];
+    let mut hi = [0u8; 4];
+    mem.read_physical(dev_ctx + 0x20 + 8, &mut lo);
+    mem.read_physical(dev_ctx + 0x20 + 12, &mut hi);
+    let got_raw = (u32::from_le_bytes(hi) as u64) << 32 | (u32::from_le_bytes(lo) as u64);
+    assert_eq!(got_raw & !0x0f, tr_dequeue_ptr);
+    assert_eq!(got_raw & 0x01, 1);
+}
+
+#[test]
+fn configure_endpoint_rejects_unsupported_add_flags() {
+    let mut mem = TestMem::new(0x20_000);
+    let mem_size = mem.len() as u64;
+
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let input_ctx = 0x3000u64;
+    let address_ctx = 0x3200u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+
+    // Seed Device Context EP0 MPS so we can verify it is not modified on error.
+    mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
+
+    // Address Device input context: Slot + EP0 for a device on root port 1.
+    mem.write_u32(address_ctx + 0x00, 0);
+    mem.write_u32(address_ctx + 0x04, (1 << 0) | (1 << 1));
+    mem.write_u32(address_ctx + 0x20 + 4, 1u32 << 16); // RootHubPortNumber = 1
+    mem.write_u32(address_ctx + 0x40 + 4, (4u32 << 3) | (8u32 << 16)); // EP0 type=Control, MPS=8
+
+    // Configure Endpoint input context: request EP0 + EP1 OUT (unsupported by MVP).
+    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx + 0x04, (1 << 1) | (1 << 2));
+    // Provide an EP0 context that would otherwise update MPS to 64 (should be ignored).
+    mem.write_u32(input_ctx + 0x40 + 4, (4u32 << 3) | (64u32 << 16));
+
+    {
+        let mut trb0 = Trb::new(0, 0, 0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut trb1 = Trb::new(address_ctx, 0, 0);
+        trb1.set_trb_type(TrbType::AddressDeviceCommand);
+        trb1.set_slot_id(1);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+    {
+        let mut trb2 = Trb::new(input_ctx, 0, 0);
+        trb2.set_trb_type(TrbType::ConfigureEndpointCommand);
+        trb2.set_slot_id(1);
+        trb2.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, trb2);
+    }
+
+    let mut processor = CommandRingProcessor::new(
+        mem_size,
+        8,
+        dcbaa,
+        CommandRing {
+            dequeue_ptr: cmd_ring,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring, 16),
+    );
+
+    processor.attach_root_port(1, Box::new(DummyUsbDevice));
+
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev0 = mem.read_trb(event_ring);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
+
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+
+    let ev1 = mem.read_trb(event_ring + 2 * 16);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev1), CompletionCode::ParameterError.as_u8());
+
+    // Ensure we didn't update EP0 despite the input asking for MPS=64.
+    let mut buf = [0u8; 4];
+    mem.read_physical(dev_ctx + 0x20 + 4, &mut buf);
+    let out_dw1 = u32::from_le_bytes(buf);
+    assert_eq!((out_dw1 >> 16) & 0xffff, 8);
 }
 
 #[test]

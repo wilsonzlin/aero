@@ -2147,7 +2147,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 12;
+        const TAG_PORTS: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -2183,7 +2183,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 12;
+        const TAG_PORTS: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;

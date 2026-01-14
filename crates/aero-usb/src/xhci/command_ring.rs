@@ -4,11 +4,14 @@ use alloc::vec::Vec;
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::{MemoryBus, SetupPacket, UsbDeviceModel};
 
-use super::context::{EndpointContext, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT, XhciRouteString};
+use super::context::{
+    EndpointContext, EndpointType, InputContext32, XHCI_ROUTE_STRING_MAX_DEPTH,
+    XHCI_ROUTE_STRING_MAX_PORT,
+};
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 
 const CONTEXT_ALIGN: u64 = 64;
-const CONTEXT_SIZE: u64 = 32;
+const CONTEXT_SIZE: u64 = super::context::CONTEXT_SIZE as u64;
 
 // Input context layout (32-byte contexts):
 //   0x00: Input Control Context (32 bytes)
@@ -24,13 +27,24 @@ const INPUT_EP0_CTX_OFFSET: u64 = INPUT_CONTROL_CTX_SIZE + CONTEXT_SIZE;
 const DEVICE_SLOT_CTX_OFFSET: u64 = 0;
 const DEVICE_EP0_CTX_OFFSET: u64 = CONTEXT_SIZE;
 
-const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_0000;
+// Slot Context DW3 contains:
+// - bits 0..=7: USB Device Address (xHC-owned after Address Device)
+// - bits 27..=31: Slot State (xHC-owned)
+//
+// When copying Slot Contexts from guest-provided Input Contexts into the output Device Context we
+// must preserve controller-owned fields.
+const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_00ff;
 
 const ICC_DROP_FLAGS_OFFSET: u64 = 0;
 const ICC_ADD_FLAGS_OFFSET: u64 = 4;
 
 const ICC_CTX_FLAG_SLOT: u32 = 1 << 0;
 const ICC_CTX_FLAG_EP0: u32 = 1 << 1;
+const ICC_CTX_FLAG_EP1_IN: u32 = 1 << 3;
+const ICC_CTX_FLAG_EP2_OUT: u32 = 1 << 4;
+const ICC_CTX_FLAG_EP2_IN: u32 = 1 << 5;
+
+const EP_STATE_MASK_DWORD0: u32 = 0x7;
 
 const EP_STATE_RUNNING: u32 = 1;
 const EP_STATE_HALTED: u32 = 2;
@@ -441,188 +455,6 @@ impl CommandRingProcessor {
         }
     }
 
-    fn handle_address_device(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
-        let slot_id = cmd.slot_id();
-        if slot_id == 0 || slot_id > self.max_slots {
-            return CompletionCode::SlotNotEnabledError;
-        }
-        if self
-            .slots
-            .get(slot_id as usize)
-            .and_then(|s| s.as_ref())
-            .is_none()
-        {
-            return CompletionCode::SlotNotEnabledError;
-        }
-
-        let input_ctx_ptr = cmd.pointer();
-        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
-            return CompletionCode::ParameterError;
-        }
-        // Need at least ICC + Slot Context.
-        let min_input_ctx_len = INPUT_CONTROL_CTX_SIZE + CONTEXT_SIZE;
-        if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
-            return CompletionCode::ParameterError;
-        }
-
-        let slot_dword0 = match self.read_u32(mem, input_ctx_ptr + INPUT_SLOT_CTX_OFFSET) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-        let slot_dword1 = match self.read_u32(mem, input_ctx_ptr + INPUT_SLOT_CTX_OFFSET + 4) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-        // xHCI Slot Context dword1 bits 23:16 = Root Hub Port Number (1-based).
-        let root_port = ((slot_dword1 >> 16) & 0xff) as u8;
-        if root_port == 0 {
-            return CompletionCode::ParameterError;
-        }
-
-        let route_string = slot_dword0 & 0x000f_ffff;
-        let route = match XhciRouteString::from_raw(route_string).map(|rs| rs.ports_from_root()) {
-            Ok(route) => route,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-
-        let Some(addr) = self.alloc_device_address() else {
-            return CompletionCode::TrbError;
-        };
-
-        {
-            let Some(dev) = self.find_device_by_topology(root_port, &route) else {
-                return CompletionCode::ContextStateError;
-            };
-
-            let setup = SetupPacket {
-                bm_request_type: 0x00, // HostToDevice | Standard | Device
-                b_request: USB_REQUEST_SET_ADDRESS,
-                w_value: addr as u16,
-                w_index: 0,
-                w_length: 0,
-            };
-            if dev.handle_setup(setup) != UsbOutResult::Ack {
-                return CompletionCode::TrbError;
-            }
-            match dev.handle_in(0, 0) {
-                UsbInResult::Data(data) if data.is_empty() => {}
-                _ => return CompletionCode::TrbError,
-            }
-        }
-
-        if let Some(slot) = self
-            .slots
-            .get_mut(slot_id as usize)
-            .and_then(|s| s.as_mut())
-        {
-            slot.root_port = Some(root_port);
-            slot.route = route;
-            slot.address = addr;
-        }
-
-        CompletionCode::Success
-    }
-
-    fn handle_configure_endpoint(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
-        let slot_id = cmd.slot_id();
-        if slot_id == 0 || slot_id > self.max_slots {
-            return CompletionCode::SlotNotEnabledError;
-        }
-        if self
-            .slots
-            .get(slot_id as usize)
-            .and_then(|s| s.as_ref())
-            .is_none()
-        {
-            return CompletionCode::SlotNotEnabledError;
-        }
-
-        let input_ctx_ptr = cmd.pointer();
-        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
-            return CompletionCode::ParameterError;
-        }
-        if !self.check_range(input_ctx_ptr, 8) {
-            return CompletionCode::ParameterError;
-        }
-
-        // Validate that the slot still resolves to a connected device using the topology captured
-        // during Address Device.
-        let (root_port, route) = {
-            let Some(slot) = self
-                .slots
-                .get(slot_id as usize)
-                .and_then(|s| s.as_ref())
-            else {
-                return CompletionCode::SlotNotEnabledError;
-            };
-            let Some(root_port) = slot.root_port else {
-                return CompletionCode::ContextStateError;
-            };
-            (root_port, slot.route.clone())
-        };
-        if self.find_device_by_topology(root_port, &route).is_none() {
-            return CompletionCode::ContextStateError;
-        }
-
-        let drop_flags = match self.read_u32(mem, input_ctx_ptr + ICC_DROP_FLAGS_OFFSET) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-        let add_flags = match self.read_u32(mem, input_ctx_ptr + ICC_ADD_FLAGS_OFFSET) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-
-        let mut updates: Vec<(u8, Option<EndpointState>)> = Vec::new();
-        for dci in 1u8..=31 {
-            let bit = 1u32 << dci;
-            if (drop_flags & bit) != 0 {
-                updates.push((dci, None));
-            }
-            if (add_flags & bit) != 0 {
-                let ep_ctx_addr = input_ctx_ptr
-                    + INPUT_CONTROL_CTX_SIZE
-                    + CONTEXT_SIZE * (dci as u64);
-                if !self.check_range(ep_ctx_addr, CONTEXT_SIZE) {
-                    return CompletionCode::ParameterError;
-                }
-                let dw2 = match self.read_u32(mem, ep_ctx_addr + 8) {
-                    Ok(v) => v,
-                    Err(_) => return CompletionCode::ParameterError,
-                };
-                let dw3 = match self.read_u32(mem, ep_ctx_addr + 12) {
-                    Ok(v) => v,
-                    Err(_) => return CompletionCode::ParameterError,
-                };
-                let ptr = ((dw3 as u64) << 32 | (dw2 as u64)) & !0x0f;
-                let cycle = (dw2 & 1) != 0;
-                updates.push((
-                    dci,
-                    Some(EndpointState {
-                        dequeue_ptr: ptr,
-                        cycle,
-                        stopped: false,
-                        halted: false,
-                    }),
-                ));
-            }
-        }
-
-        if let Some(slot) = self
-            .slots
-            .get_mut(slot_id as usize)
-            .and_then(|s| s.as_mut())
-        {
-            for (dci, state) in updates {
-                if let Some(ep) = slot.endpoints.get_mut(dci as usize) {
-                    *ep = state;
-                }
-            }
-        }
-
-        CompletionCode::Success
-    }
-
     fn alloc_device_address(&mut self) -> Option<u8> {
         for _ in 0..127 {
             let addr = self.next_device_address;
@@ -958,6 +790,418 @@ impl CommandRingProcessor {
         CompletionCode::Success
     }
 
+    fn handle_address_device(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        // Address Device (xHCI 1.2 §4.6.5, §6.4.3.4).
+        //
+        // MVP:
+        // - Validate ICC + Slot + EP0 contexts from the guest Input Context.
+        // - Send USB SET_ADDRESS to the attached root-port device.
+        // - Copy Slot Context + EP0 Context into the output Device Context.
+        let slot_id = cmd.slot_id();
+        if slot_id == 0 || slot_id > self.max_slots {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        let idx = usize::from(slot_id);
+        if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        if cmd.address_device_bsr() {
+            // We do not implement the "Block Set Address Request" mode yet.
+            return CompletionCode::ParameterError;
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(code) => return code,
+        };
+
+        // We must be able to touch at least Slot + EP0 contexts.
+        let min_device_ctx_len = (2 * CONTEXT_SIZE) as u64;
+        if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
+            return CompletionCode::ParameterError;
+        }
+
+        let input_ctx_ptr = cmd.pointer();
+        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        // Must be able to read at least ICC + Slot + EP0 contexts.
+        let min_input_ctx_len = (3 * CONTEXT_SIZE) as u64;
+        if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
+            return CompletionCode::ParameterError;
+        }
+
+        let input_ctx = InputContext32::new(input_ctx_ptr);
+        let icc = input_ctx.input_control(mem);
+
+        // Address Device requires Slot + EP0 contexts.
+        let supported_add = ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0;
+        if icc.drop_flags() != 0 {
+            return CompletionCode::ParameterError;
+        }
+        if (icc.add_flags() & (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0)) != (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0) {
+            return CompletionCode::ParameterError;
+        }
+        if (icc.add_flags() & !supported_add) != 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        // Validate Route String + Root Hub Port Number.
+        let in_slot = match input_ctx.slot_context(mem) {
+            Ok(ctx) => ctx,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        let route = match in_slot.parsed_route_string() {
+            Ok(rs) => rs.ports_from_root(),
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        if in_slot.root_hub_port_number() == 0 {
+            return CompletionCode::ParameterError;
+        }
+        let root_port = in_slot.root_hub_port_number();
+
+        // Validate EP0 type.
+        let in_ep0 = match input_ctx.endpoint_context(mem, 1) {
+            Ok(ctx) => ctx,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        if in_ep0.endpoint_type() != EndpointType::Control {
+            return CompletionCode::ParameterError;
+        }
+
+        let Some(addr) = self.alloc_device_address() else {
+            return CompletionCode::TrbError;
+        };
+
+        // USB-level side effect: issue SET_ADDRESS to the attached device.
+        {
+            let Some(dev) = self.find_device_by_topology(root_port, &route) else {
+                return CompletionCode::ContextStateError;
+            };
+            let setup = SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: addr as u16,
+                w_index: 0,
+                w_length: 0,
+            };
+            if dev.handle_setup(setup) != UsbOutResult::Ack {
+                return CompletionCode::TrbError;
+            }
+            match dev.handle_in(0, 0) {
+                UsbInResult::Data(data) if data.is_empty() => {}
+                _ => return CompletionCode::TrbError,
+            }
+        }
+
+        // Update internal slot state.
+        let ep0_state = EndpointState {
+            dequeue_ptr: in_ep0.tr_dequeue_pointer(),
+            cycle: in_ep0.dcs(),
+            stopped: false,
+            halted: false,
+        };
+        if let Some(slot) = self.internal_slot_mut(slot_id) {
+            slot.root_port = Some(root_port);
+            slot.route = route;
+            slot.address = addr;
+            if let Some(ep) = slot.endpoints.get_mut(1) {
+                *ep = Some(ep0_state);
+            }
+        }
+
+        // Apply Slot Context (preserve Slot State field).
+        let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
+        let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
+        if let Err(code) = self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr) {
+            return code;
+        }
+        // Slot Context DW3 bits 0..=7 are the USB device address, which is assigned by the
+        // controller. Ensure we reflect the newly allocated address in the output context.
+        let out_slot_dw3_addr = out_slot_addr + 12;
+        let out_dw3 = match self.read_u32(mem, out_slot_dw3_addr) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
+        let out_dw3 = (out_dw3 & !0xff) | u32::from(addr);
+        if self.write_u32(mem, out_slot_dw3_addr, out_dw3).is_err() {
+            return CompletionCode::ParameterError;
+        }
+
+        // Apply EP0 Context (preserve Endpoint State field).
+        let in_ep0_addr = input_ctx_ptr + INPUT_EP0_CTX_OFFSET;
+        let out_ep0_addr = dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET;
+        if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_ep0_addr, out_ep0_addr) {
+            return code;
+        }
+
+        CompletionCode::Success
+    }
+
+    fn handle_configure_endpoint(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
+        // Configure Endpoint (xHCI 1.2 §6.4.3.5).
+        //
+        // MVP: apply context add/drop flags for a small subset of endpoints:
+        // - EP0 (Control)
+        // - one Interrupt IN endpoint (HID) => Device Context index 3 (Endpoint 1 IN)
+        // - one Bulk IN/OUT pair (WebUSB passthrough) => indices 4/5 (Endpoint 2 OUT/IN)
+        let slot_id = cmd.slot_id();
+        if slot_id == 0 || slot_id > self.max_slots {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        let idx = usize::from(slot_id);
+        if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
+            return CompletionCode::SlotNotEnabledError;
+        }
+        if cmd.configure_endpoint_deconfigure() {
+            // Deconfigure mode not supported yet.
+            return CompletionCode::ParameterError;
+        }
+
+        // Configure Endpoint is only valid once Address Device has bound the slot to a topology.
+        let (root_port, route) = {
+            let Some(slot) = self.slots.get(idx).and_then(|s| s.as_ref()) else {
+                return CompletionCode::SlotNotEnabledError;
+            };
+            let Some(root_port) = slot.root_port else {
+                return CompletionCode::ContextStateError;
+            };
+            (root_port, slot.route.clone())
+        };
+        if self.find_device_by_topology(root_port, &route).is_none() {
+            return CompletionCode::ContextStateError;
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(code) => return code,
+        };
+
+        let input_ctx_ptr = cmd.pointer();
+        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        // Must be able to read at least the Input Control Context + Slot Context.
+        let min_input_ctx_len = (2 * CONTEXT_SIZE) as u64;
+        if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
+            return CompletionCode::ParameterError;
+        }
+
+        let input_ctx = InputContext32::new(input_ctx_ptr);
+        let icc = input_ctx.input_control(mem);
+        let drop_flags = icc.drop_flags();
+        let add_flags = icc.add_flags();
+
+        // Ensure the input context covers any endpoint contexts we're about to read.
+        //
+        // Input context layout (32-byte contexts):
+        //   0: ICC
+        //   1: Slot Context (DCI 0)
+        //   2: EP0 (DCI 1)
+        //   3: EP1 OUT (DCI 2)
+        //   4: EP1 IN (DCI 3)
+        //   5: EP2 OUT (DCI 4)
+        //   6: EP2 IN (DCI 5)
+        let mut required_input_contexts = 2u64; // ICC + Slot
+        if (add_flags & ICC_CTX_FLAG_EP0) != 0 {
+            required_input_contexts = required_input_contexts.max(3);
+        }
+        if (add_flags & ICC_CTX_FLAG_EP1_IN) != 0 {
+            required_input_contexts = required_input_contexts.max(5);
+        }
+        if (add_flags & (ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN)) != 0 {
+            required_input_contexts = required_input_contexts.max(7);
+        }
+        if !self.check_range(input_ctx_ptr, required_input_contexts * CONTEXT_SIZE) {
+            return CompletionCode::ParameterError;
+        }
+
+        let supported_add =
+            ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0 | ICC_CTX_FLAG_EP1_IN | ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN;
+        let supported_drop = ICC_CTX_FLAG_EP1_IN | ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN;
+
+        if (add_flags & !supported_add) != 0 {
+            return CompletionCode::ParameterError;
+        }
+        if (drop_flags & !supported_drop) != 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        // For now, require bulk endpoints to be configured/dropped as a pair.
+        let bulk_bits = ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN;
+        if (add_flags & bulk_bits) != 0 && (add_flags & bulk_bits) != bulk_bits {
+            return CompletionCode::ParameterError;
+        }
+        if (drop_flags & bulk_bits) != 0 && (drop_flags & bulk_bits) != bulk_bits {
+            return CompletionCode::ParameterError;
+        }
+
+        // Reject contradictory add+drop for the same context.
+        if (add_flags & drop_flags) != 0 {
+            return CompletionCode::ParameterError;
+        }
+
+        // We must be able to touch any contexts we drop/add in the output Device Context. Since the
+        // MVP supports contexts up to index 5, require enough space for Slot + EP0 + endpoints up to
+        // EP2 IN.
+        let min_device_ctx_len = (6 * CONTEXT_SIZE) as u64;
+        if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
+            return CompletionCode::ParameterError;
+        }
+
+        // Validate all contexts to be added before mutating the output Device Context.
+        let mut updates: Vec<(u8, Option<EndpointState>)> = Vec::new();
+
+        if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
+            let in_slot = match input_ctx.slot_context(mem) {
+                Ok(ctx) => ctx,
+                Err(_) => return CompletionCode::ParameterError,
+            };
+            if in_slot.parsed_route_string().is_err() {
+                return CompletionCode::ParameterError;
+            }
+            if in_slot.root_hub_port_number() == 0 {
+                return CompletionCode::ParameterError;
+            }
+        }
+
+        if (add_flags & ICC_CTX_FLAG_EP0) != 0 {
+            let in_ep0 = match input_ctx.endpoint_context(mem, 1) {
+                Ok(ctx) => ctx,
+                Err(_) => return CompletionCode::ParameterError,
+            };
+            if in_ep0.endpoint_type() != EndpointType::Control {
+                return CompletionCode::ParameterError;
+            }
+            updates.push((
+                1,
+                Some(EndpointState {
+                    dequeue_ptr: in_ep0.tr_dequeue_pointer(),
+                    cycle: in_ep0.dcs(),
+                    stopped: false,
+                    halted: false,
+                }),
+            ));
+        }
+
+        if (add_flags & ICC_CTX_FLAG_EP1_IN) != 0 {
+            let in_ep = match input_ctx.endpoint_context(mem, 3) {
+                Ok(ctx) => ctx,
+                Err(_) => return CompletionCode::ParameterError,
+            };
+            if in_ep.endpoint_type() != EndpointType::InterruptIn {
+                return CompletionCode::ParameterError;
+            }
+            updates.push((
+                3,
+                Some(EndpointState {
+                    dequeue_ptr: in_ep.tr_dequeue_pointer(),
+                    cycle: in_ep.dcs(),
+                    stopped: false,
+                    halted: false,
+                }),
+            ));
+        }
+
+        if (add_flags & bulk_bits) != 0 {
+            let in_out = match input_ctx.endpoint_context(mem, 4) {
+                Ok(ctx) => ctx,
+                Err(_) => return CompletionCode::ParameterError,
+            };
+            if in_out.endpoint_type() != EndpointType::BulkOut {
+                return CompletionCode::ParameterError;
+            }
+            let in_in = match input_ctx.endpoint_context(mem, 5) {
+                Ok(ctx) => ctx,
+                Err(_) => return CompletionCode::ParameterError,
+            };
+            if in_in.endpoint_type() != EndpointType::BulkIn {
+                return CompletionCode::ParameterError;
+            }
+            updates.push((
+                4,
+                Some(EndpointState {
+                    dequeue_ptr: in_out.tr_dequeue_pointer(),
+                    cycle: in_out.dcs(),
+                    stopped: false,
+                    halted: false,
+                }),
+            ));
+            updates.push((
+                5,
+                Some(EndpointState {
+                    dequeue_ptr: in_in.tr_dequeue_pointer(),
+                    cycle: in_in.dcs(),
+                    stopped: false,
+                    halted: false,
+                }),
+            ));
+        }
+
+        // Apply drops first.
+        for &idx in &[3u8, 4u8, 5u8] {
+            if (drop_flags & (1u32 << idx)) != 0 {
+                let out_addr = dev_ctx_ptr + (u64::from(idx) * CONTEXT_SIZE);
+                if let Err(code) = self.clear_context(mem, out_addr) {
+                    return code;
+                }
+                updates.push((idx, None));
+            }
+        }
+
+        // Apply adds.
+        if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
+            let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
+            let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
+            if let Err(code) = self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr) {
+                return code;
+            }
+        }
+
+        if (add_flags & ICC_CTX_FLAG_EP0) != 0 {
+            let in_addr = input_ctx_ptr + INPUT_EP0_CTX_OFFSET;
+            let out_addr = dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET;
+            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_addr, out_addr) {
+                return code;
+            }
+        }
+
+        if (add_flags & ICC_CTX_FLAG_EP1_IN) != 0 {
+            let in_addr = input_ctx_ptr + (4u64 * CONTEXT_SIZE); // input ctx index = dci + 1 => 3 + 1 = 4
+            let out_addr = dev_ctx_ptr + (3u64 * CONTEXT_SIZE);
+            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_addr, out_addr) {
+                return code;
+            }
+        }
+
+        if (add_flags & bulk_bits) != 0 {
+            let in_out_addr = input_ctx_ptr + (5u64 * CONTEXT_SIZE); // input index 5 = dci 4 + 1
+            let out_out_addr = dev_ctx_ptr + (4u64 * CONTEXT_SIZE);
+            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_out_addr, out_out_addr) {
+                return code;
+            }
+
+            let in_in_addr = input_ctx_ptr + (6u64 * CONTEXT_SIZE); // input index 6 = dci 5 + 1
+            let out_in_addr = dev_ctx_ptr + (5u64 * CONTEXT_SIZE);
+            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_in_addr, out_in_addr) {
+                return code;
+            }
+        }
+
+        // Apply internal endpoint state updates after all memory writes succeed.
+        if let Some(slot) = self.internal_slot_mut(slot_id) {
+            for (dci, state) in updates {
+                if let Some(ep) = slot.endpoints.get_mut(dci as usize) {
+                    *ep = state;
+                }
+            }
+        }
+
+        CompletionCode::Success
+    }
+
     fn update_ep0_context(
         &mut self,
         mem: &mut dyn MemoryBus,
@@ -999,6 +1243,40 @@ impl CommandRingProcessor {
                 .map_err(|_| CompletionCode::ParameterError)?;
         }
 
+        Ok(())
+    }
+
+    fn copy_endpoint_context_preserve_state(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        in_ep: u64,
+        out_ep: u64,
+    ) -> Result<(), CompletionCode> {
+        for i in 0..8u64 {
+            let in_dw = self
+                .read_u32(mem, in_ep + i * 4)
+                .map_err(|_| CompletionCode::ParameterError)?;
+            let out_addr = out_ep + i * 4;
+            let value = if i == 0 {
+                let out_dw = self
+                    .read_u32(mem, out_addr)
+                    .map_err(|_| CompletionCode::ParameterError)?;
+                (in_dw & !EP_STATE_MASK_DWORD0) | (out_dw & EP_STATE_MASK_DWORD0)
+            } else {
+                in_dw
+            };
+            self.write_u32(mem, out_addr, value)
+                .map_err(|_| CompletionCode::ParameterError)?;
+        }
+
+        Ok(())
+    }
+
+    fn clear_context(&mut self, mem: &mut dyn MemoryBus, ctx_addr: u64) -> Result<(), CompletionCode> {
+        for i in 0..8u64 {
+            self.write_u32(mem, ctx_addr + i * 4, 0)
+                .map_err(|_| CompletionCode::ParameterError)?;
+        }
         Ok(())
     }
 
