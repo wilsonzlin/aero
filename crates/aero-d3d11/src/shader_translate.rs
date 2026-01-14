@@ -929,6 +929,14 @@ fn translate_hs(
     // Patch-constant output buffers exclude tess factors; those are written to a separate compact
     // scalar buffer consumed by the tessellator.
     let hs_pc_layout = build_hs_patch_constant_layout(pcsg);
+    // Tess factors are stored in a compact per-patch vec4 buffer. We currently support only the
+    // triangle-domain layout (`outer[3] + inner[1]` => 4 scalars).
+    if hs_pc_layout.tess_factor_stride > 4 {
+        return Err(ShaderTranslateError::UnsupportedInstruction {
+            inst_index: 0,
+            opcode: format!("hs_tess_factors_stride_{}", hs_pc_layout.tess_factor_stride),
+        });
+    }
     io_pc.hs_is_patch_constant_phase = true;
     io_pc.hs_pc_patch_constant_reg_masks = hs_pc_layout.patch_constant_reg_masks.clone();
     io_pc.hs_pc_tess_factor_writes = hs_pc_layout.tess_factor_writes.clone();
@@ -938,10 +946,44 @@ fn translate_hs(
     let mut outputs_reflection = io_cp.outputs_reflection_vertex();
     outputs_reflection.extend(io_pc.outputs_reflection_vertex());
 
+    // Bindings for HS compute emulation include both:
+    // - D3D11 register-space resources (cbuffers/textures/samplers/UAVs), and
+    // - expansion-internal stage interface buffers (VS outputs + HS outputs/tess factors).
+    //
+    // The internal bindings are required for pipeline-layout construction and for wgpu hazard
+    // avoidance logic that suballocates multiple scratch ranges from a single backing buffer.
+    let mut reflection_bindings = resources.bindings(ShaderStage::Hull);
+    reflection_bindings.extend([
+        Binding {
+            group: crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+            binding: crate::runtime::tessellation::BINDING_VS_OUT_REGS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: BindingKind::ExpansionStorageBuffer { read_only: false },
+        },
+        Binding {
+            group: crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+            binding: crate::runtime::tessellation::BINDING_HS_OUT_REGS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: BindingKind::ExpansionStorageBuffer { read_only: false },
+        },
+        Binding {
+            group: crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+            binding: crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: BindingKind::ExpansionStorageBuffer { read_only: false },
+        },
+        Binding {
+            group: crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+            binding: crate::runtime::tessellation::BINDING_HS_TESS_FACTORS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            kind: BindingKind::ExpansionStorageBuffer { read_only: false },
+        },
+    ]);
+
     let reflection = ShaderReflection {
         inputs: io_cp.inputs_reflection(),
         outputs: outputs_reflection,
-        bindings: resources.bindings(ShaderStage::Hull),
+        bindings: reflection_bindings,
         rdef,
     };
 
@@ -964,13 +1006,15 @@ fn translate_hs(
     const BINDING_HS_PATCH_CONSTANTS: u32 =
         crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS;
     const BINDING_HS_TESS_FACTORS: u32 = crate::runtime::tessellation::BINDING_HS_TESS_FACTORS;
-
     // NOTE: Stage-interface register files are typeless 32-bit lanes (D3D semantics). Model them
     // as `vec4<u32>` and bitcast to/from `vec4<f32>` when interacting with the translator's
     // internal `vec4<f32>` register model.
     w.line("struct HsRegBuffer { data: array<vec4<u32>> };");
+    w.line(
+        "// NOTE: Scratch buffers are bound as `read_write` even when logically read-only. wgpu tracks buffer usage hazards at the whole-buffer granularity (not per binding range), and the expansion scratch allocator suballocates multiple logical buffers from a single backing buffer.",
+    );
     w.line(&format!(
-        "@group({INTERNAL_GROUP}) @binding({BINDING_VS_OUT}) var<storage, read> hs_in: HsRegBuffer;"
+        "@group({INTERNAL_GROUP}) @binding({BINDING_VS_OUT}) var<storage, read_write> hs_in: HsRegBuffer;"
     ));
     w.line(&format!(
         "@group({INTERNAL_GROUP}) @binding({BINDING_HS_OUT}) var<storage, read_write> hs_out_cp: HsRegBuffer;"
@@ -1173,7 +1217,8 @@ fn build_hs_patch_constant_layout(pcsg: &DxbcSignature) -> HsPatchConstantLayout
     // Patch-constant signatures can pack both tess factors and user patch constants into the same
     // output register file. We split them into two buffers:
     // - `hs_patch_constants`: vec4 register file for user patch constants (by output register index)
-    // - `hs_tess_factors`: compact scalar buffer (outer factors first, then inside factors)
+    // - `hs_tess_factors`: compact per-patch tess-factor buffer (currently packed into a single
+    //   `vec4<f32>` for tri-domain: `{outer0, outer1, outer2, inner0}`).
     let mut patch_constant_reg_masks = BTreeMap::<u32, u8>::new();
     let mut outer_writes = Vec::<HsTessFactorWrite>::new();
     let mut inner_writes = Vec::<HsTessFactorWrite>::new();
