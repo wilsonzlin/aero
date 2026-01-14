@@ -21127,7 +21127,20 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   PatchCacheEntry temp{};
   PatchCacheEntry* entry = &temp;
   if (handle != 0) {
-    entry = &dev->patch_cache[handle];
+    auto it = dev->patch_cache.find(handle);
+    if (it != dev->patch_cache.end()) {
+      entry = &it->second;
+    } else {
+      // Patch cache is best-effort; if we cannot allocate/insert (OOM), fall back to
+      // a local temp entry so exceptions never escape driver code.
+      try {
+        auto [new_it, inserted] = dev->patch_cache.emplace(handle, PatchCacheEntry{});
+        (void)inserted;
+        entry = &new_it->second;
+      } catch (...) {
+        entry = &temp;
+      }
+    }
   }
 
   HRESULT hr = S_OK;
@@ -21402,7 +21415,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   PatchCacheEntry temp{};
   PatchCacheEntry* entry = &temp;
   if (handle != 0) {
-    entry = &dev->patch_cache[handle];
+    auto it = dev->patch_cache.find(handle);
+    if (it != dev->patch_cache.end()) {
+      entry = &it->second;
+    } else {
+      try {
+        auto [new_it, inserted] = dev->patch_cache.emplace(handle, PatchCacheEntry{});
+        (void)inserted;
+        entry = &new_it->second;
+      } catch (...) {
+        entry = &temp;
+      }
+    }
   }
 
   HRESULT hr = S_OK;
