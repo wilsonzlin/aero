@@ -368,6 +368,7 @@ pub struct XhciController {
     host_controller_error: bool,
     crcr: u64,
     dcbaap: u64,
+    config: u32,
     slots: Vec<SlotState>,
 
     // Root hub ports.
@@ -420,6 +421,7 @@ impl fmt::Debug for XhciController {
             .field("host_controller_error", &self.host_controller_error)
             .field("crcr", &self.crcr)
             .field("dcbaap", &self.dcbaap)
+            .field("config", &self.config)
             .field("slots", &self.slots.len())
             .field("command_ring", &self.command_ring)
             .field("cmd_kick", &self.cmd_kick)
@@ -452,7 +454,7 @@ impl XhciController {
 
     pub fn with_port_count(port_count: u8) -> Self {
         assert!(port_count > 0, "xHCI controller must expose at least one port");
-        const DEFAULT_MAX_SLOTS: usize = 32;
+        const DEFAULT_MAX_SLOTS: usize = regs::MAX_SLOTS as usize;
         let slots: Vec<SlotState> = core::iter::repeat_with(SlotState::default)
             .take(DEFAULT_MAX_SLOTS + 1)
             .collect();
@@ -467,6 +469,7 @@ impl XhciController {
             host_controller_error: false,
             crcr: 0,
             dcbaap: 0,
+            config: 0,
             slots,
             cmd_kick: false,
             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
@@ -1696,7 +1699,7 @@ impl XhciController {
             regs::REG_CAPLENGTH_HCIVERSION => regs::CAPLENGTH_HCIVERSION,
             regs::REG_HCSPARAMS1 => {
                 // HCSPARAMS1: MaxSlots (7:0), MaxIntrs (18:8), MaxPorts (31:24).
-                let max_slots = 32u32;
+                let max_slots = u32::from(regs::MAX_SLOTS);
                 let max_intrs = 1u32;
                 let max_ports = self.port_count as u32;
                 (max_slots & 0xff) | ((max_intrs & 0x7ff) << 8) | ((max_ports & 0xff) << 24)
@@ -1726,10 +1729,10 @@ impl XhciController {
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
             regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
             regs::REG_DCBAAP_HI => (self.dcbaap >> 32) as u32,
+            regs::REG_CONFIG => self.config,
 
             // Runtime registers.
             regs::REG_MFINDEX => self.mfindex & 0x3fff,
-
             // Runtime interrupter 0 registers.
             regs::REG_INTR0_IMAN => self.interrupter0.iman_raw(),
             regs::REG_INTR0_IMOD => self.interrupter0.imod_raw(),
@@ -1894,6 +1897,15 @@ impl XhciController {
                 self.dcbaap = (self.dcbaap & 0x0000_0000_ffff_ffff) | (hi << 32);
                 self.dcbaap &= !0x3f;
             }
+            regs::REG_CONFIG => {
+                let mut v = merge(self.config);
+                // xHCI spec: CONFIG bits 7:0 = MaxSlotsEn, bits 9:8 are used for optional features.
+                // Clamp MaxSlotsEn so the value remains self-consistent with HCSPARAMS1.MaxSlots.
+                v &= 0x3ff;
+                let max_slots_en = (v & 0xff) as u8;
+                let max_slots_en = max_slots_en.min(regs::MAX_SLOTS);
+                self.config = (v & !0xff) | u32::from(max_slots_en);
+            }
 
             // Runtime interrupter 0 registers.
             regs::REG_INTR0_IMAN => {
@@ -1939,6 +1951,7 @@ impl XhciController {
         self.host_controller_error = false;
         self.crcr = 0;
         self.dcbaap = 0;
+        self.config = 0;
         self.command_ring = None;
         self.cmd_kick = false;
         self.mfindex = 0;
@@ -2533,6 +2546,8 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
         const TAG_PORTS: u16 = 11;
+        const TAG_CONFIG: u16 = 13;
+        const TAG_MFINDEX: u16 = 14;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -2543,6 +2558,8 @@ impl IoSnapshot for XhciController {
         w.field_u64(TAG_CRCR, self.crcr);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
         w.field_u64(TAG_DCBAAP, self.dcbaap);
+        w.field_u32(TAG_CONFIG, self.config);
+        w.field_u32(TAG_MFINDEX, self.mfindex);
         w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
         w.field_u32(TAG_INTR0_IMOD, self.interrupter0.imod_raw());
         w.field_u32(TAG_INTR0_ERSTSZ, self.interrupter0.erstsz_raw());
@@ -2569,6 +2586,8 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
         const TAG_PORTS: u16 = 11;
+        const TAG_CONFIG: u16 = 13;
+        const TAG_MFINDEX: u16 = 14;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -2597,6 +2616,11 @@ impl IoSnapshot for XhciController {
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
         self.sync_command_ring_from_crcr();
+        self.config = r.u32(TAG_CONFIG)?.unwrap_or(0) & 0x3ff;
+        // Clamp to ensure `CONFIG.MaxSlotsEn` remains consistent with `HCSPARAMS1.MaxSlots`.
+        let max_slots_en = (self.config & 0xff) as u8;
+        self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
+        self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & 0x3fff;
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);

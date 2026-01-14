@@ -20,6 +20,7 @@ pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
 pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
 pub const REG_DCBAAP_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::DCBAAP as u64);
 pub const REG_DCBAAP_HI: u64 = REG_DCBAAP_LO + 4;
+pub const REG_CONFIG: u64 = (CAPLENGTH_BYTES as u64) + (op::CONFIG as u64);
 
 /// Runtime register absolute offsets (subset).
 pub const REG_MFINDEX: u64 = RTSOFF_VALUE as u64 + runtime::MFINDEX as u64;
@@ -126,6 +127,11 @@ pub mod doorbell {
 /// Real xHCI controllers typically expose a 0x40-byte capability register block (spec 5.3.1). Keep
 /// the canonical size and place Extended Capabilities elsewhere in the MMIO window (via xECP).
 pub const CAPLENGTH_BYTES: u8 = 0x40;
+
+/// Maximum number of device slots exposed by this controller model.
+///
+/// This value is reported through `HCSPARAMS1.MaxSlots` and is used to clamp `CONFIG.MaxSlotsEn`.
+pub const MAX_SLOTS: u8 = 32;
 
 /// xHCI interface version (HCIVERSION).
 ///

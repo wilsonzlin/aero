@@ -293,3 +293,69 @@ fn xhci_controller_snapshot_roundtrip_preserves_dcbaap_and_port_count() {
     let restored_hcsparams1 = restored.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
     assert_eq!((restored_hcsparams1 >> 24) & 0xff, 4);
 }
+
+#[test]
+fn xhci_controller_config_register_is_writable_and_clamped() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 8);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4) & 0xff, 8);
+
+    // Clamp MaxSlotsEn to HCSPARAMS1.MaxSlots.
+    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 1, 0xff);
+    let cfg = ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4);
+    assert_eq!(cfg & 0xff, u32::from(regs::MAX_SLOTS));
+    assert_eq!(cfg & !0x3ff, 0, "reserved CONFIG bits should read as 0");
+}
+
+#[test]
+fn xhci_controller_mfindex_advances() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    let before = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
+    ctrl.tick_1ms();
+    let after = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
+    assert_eq!(after, (before + 8) & 0x3fff);
+}
+
+#[test]
+fn xhci_controller_portsc_array_bounds() {
+    let mut ctrl = XhciController::with_port_count(2);
+    let mut mem = PanicMem;
+
+    let p0 = ctrl.mmio_read(&mut mem, regs::port::portsc_offset(0), 4);
+    let p1 = ctrl.mmio_read(&mut mem, regs::port::portsc_offset(1), 4);
+    assert_ne!(p0 & regs::PORTSC_PP, 0);
+    assert_ne!(p1 & regs::PORTSC_PP, 0);
+
+    // Port index 2 is out-of-range for a 2-port controller and should read as 0 (unimplemented).
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::port::portsc_offset(2), 4), 0);
+
+    // Writes to out-of-range ports should be ignored.
+    ctrl.mmio_write(&mut mem, regs::port::portsc_offset(2), 4, 0xffff_ffff);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::port::portsc_offset(2), 4), 0);
+}
+
+#[test]
+fn xhci_controller_doorbell_writes_do_not_alias_operational_regs() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    let dboff = ctrl.mmio_read(&mut mem, regs::REG_DBOFF, 4) as u64;
+    assert_eq!(dboff, u64::from(regs::DBOFF_VALUE));
+
+    ctrl.mmio_write(&mut mem, dboff, 4, 0x1); // DB0
+    ctrl.mmio_write(
+        &mut mem,
+        dboff + u64::from(regs::doorbell::DOORBELL_STRIDE),
+        4,
+        0x1,
+    ); // DB1
+
+    // Doorbell writes should not affect the operational register file directly.
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_USBCMD, 4), 0);
+}
