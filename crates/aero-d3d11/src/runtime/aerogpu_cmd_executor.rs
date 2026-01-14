@@ -3549,6 +3549,18 @@ impl AerogpuD3d11Executor {
         // buffer hazards at buffer granularity, so using disjoint ranges of the same scratch buffer
         // as both `storage, read` and `storage, read_write` in the GS prepass dispatch triggers
         // validation errors on some backends (notably GL).
+        let max_buffer_size = self.device.limits().max_buffer_size;
+        if gs_inputs_size > max_buffer_size {
+            bail!(
+                "GS prepass: gs_inputs buffer size {gs_inputs_size} exceeds max_buffer_size {max_buffer_size}"
+            );
+        }
+        let max_storage_binding_size = self.device.limits().max_storage_buffer_binding_size as u64;
+        if gs_inputs_size > max_storage_binding_size {
+            bail!(
+                "GS prepass: gs_inputs buffer size {gs_inputs_size} exceeds max_storage_buffer_binding_size {max_storage_binding_size}"
+            );
+        }
         let gs_inputs_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd gs prepass gs_inputs buffer"),
             size: gs_inputs_size,
