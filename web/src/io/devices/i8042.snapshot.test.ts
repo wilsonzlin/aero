@@ -38,7 +38,9 @@ describe("io/devices/i8042 snapshot", () => {
 
     // Default i8042 command byte enables Set-2 -> Set-1 translation, so KeyA
     // make/break becomes 0x1E/0x9E.
-    expect(drainPort60(restored)).toEqual([0x1e, 0x9e, 0xfa, 0x00]);
+    // The canonical Rust model can interleave keyboard and mouse bytes fairly when both devices
+    // have output pending (mouse ACKs can appear between make/break bytes).
+    expect(drainPort60(restored)).toEqual([0x1e, 0xfa, 0x9e, 0x00]);
   });
 
   it("preserves pending controller command state (0xD4 awaiting data) across restore", () => {

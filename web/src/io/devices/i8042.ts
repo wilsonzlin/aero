@@ -977,6 +977,7 @@ export class I8042Controller implements PortIoHandler {
 
   #outQueue: OutputByte[] = [];
   #irqLastHead: OutputByte | null = null;
+  #preferMouse = false;
 
   #outputPort = OUTPUT_PORT_RESET;
 
@@ -1285,33 +1286,51 @@ export class I8042Controller implements PortIoHandler {
   }
 
   #pumpDeviceQueues(): void {
-    while (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-        if (this.#keyboardPortEnabled()) {
-          const kb = this.#keyboard.popOutputByte();
-          if (kb !== null) {
-            if (this.#translationEnabled()) {
-              const out = this.#translator.feed(kb);
-              if (out !== null) {
-                this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
-              }
-            } else {
-              this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
-            }
-            // Either we pushed output bytes, or we consumed a prefix byte (F0) that
-          // produced no output. In both cases, keep pumping.
-          continue;
-        }
-      }
+    // Align with the canonical Rust model (`aero_devices_input::I8042Controller::service_output`):
+    // only pull new bytes from the keyboard/mouse devices when the controller output buffer is
+    // completely empty. This ensures:
+    // - controller replies queued while OBF is set are delivered before additional device bytes,
+    // - keyboard and mouse bytes can interleave fairly when both devices have pending output.
+    if (this.#outQueue.length !== 0) return;
 
-      if (this.#mousePortEnabled()) {
-        const ms = this.#mouse.popOutputByte();
-        if (ms !== null) {
-          this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
-          continue;
+    const pullKeyboard = (): boolean => {
+      if (!this.#keyboardPortEnabled()) return false;
+      const kb = this.#keyboard.popOutputByte();
+      if (kb === null) return false;
+      if (this.#translationEnabled()) {
+        const out = this.#translator.feed(kb);
+        if (out !== null) {
+          this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
         }
+      } else {
+        this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
       }
+      // Return true if we consumed a device byte, even if translation produced no output (e.g. F0 prefix).
+      return true;
+    };
 
-      break;
+    const pullMouse = (): boolean => {
+      if (!this.#mousePortEnabled()) return false;
+      const ms = this.#mouse.popOutputByte();
+      if (ms === null) return false;
+      this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
+      return true;
+    };
+
+    // Keep pulling until we have at least one output byte available, or both device queues are empty.
+    // When both devices have output, pull 1 byte from each (order depends on `#preferMouse`) so
+    // bytes can interleave (mirroring Rust's `prefer_mouse` behavior).
+    while (this.#outQueue.length === 0) {
+      const takeMouseFirst = this.#preferMouse;
+      let progressed = false;
+      if (takeMouseFirst) {
+        progressed = pullMouse() || progressed;
+        progressed = pullKeyboard() || progressed;
+      } else {
+        progressed = pullKeyboard() || progressed;
+        progressed = pullMouse() || progressed;
+      }
+      if (!progressed) break;
     }
   }
 
@@ -1331,6 +1350,11 @@ export class I8042Controller implements PortIoHandler {
     // represent the edge by emitting an explicit pulse each time the head output byte changes.
     if (head !== this.#irqLastHead) {
       this.#irqLastHead = head;
+      // Update the interleaving preference to match the byte we just loaded into the output buffer.
+      // When the output buffer becomes empty, keep the previous preference (mirrors Rust behavior).
+      if (head) {
+        this.#preferMouse = head.source === "keyboard";
+      }
       if (headSource === "keyboard") {
         if ((this.#commandByte & 0x01) !== 0) {
           this.#irq.raiseIrq(1);
@@ -1364,6 +1388,7 @@ export class I8042Controller implements PortIoHandler {
     if (this.#lastWriteWasCommand) flags |= 1 << 0;
     if (this.#translator.sawE0) flags |= 1 << 1;
     if (this.#translator.sawF0) flags |= 1 << 2;
+    if (this.#preferMouse) flags |= 1 << 3;
     w.u16(flags);
 
     w.u8(this.#status);
@@ -1423,6 +1448,7 @@ export class I8042Controller implements PortIoHandler {
     this.#lastWriteWasCommand = (flags & (1 << 0)) !== 0;
     this.#translator.sawE0 = (flags & (1 << 1)) !== 0;
     this.#translator.sawF0 = (flags & (1 << 2)) !== 0;
+    this.#preferMouse = (flags & (1 << 3)) !== 0;
 
     this.#status = r.u8() & 0xff;
     this.#commandByte = r.u8() & 0xff;
@@ -1455,6 +1481,14 @@ export class I8042Controller implements PortIoHandler {
 
     this.#keyboard.loadState(r);
     this.#mouse.loadState(r);
+
+    // When a byte is already present in the output buffer, `preferMouse` is fully determined by
+    // its source (see Rust `prefer_mouse` contract). Override the snapshot flag for backwards
+    // compatibility with older snapshots that did not record this bit.
+    const head = this.#outQueue[0] ?? null;
+    if (head) {
+      this.#preferMouse = head.source === "keyboard";
+    }
 
     // Restore derived status bits. Snapshot restore should not emit spurious IRQ pulses for any
     // already-buffered output byte; pending edge-triggered interrupts must be captured/restored

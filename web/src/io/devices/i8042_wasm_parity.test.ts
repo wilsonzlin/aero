@@ -173,6 +173,14 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       writeToMouseWasm(bridge, 0xf4);
       expect(assertDrainParity("mouse enable reporting ACK parity")).toEqual([0xfa]);
 
+      // When both the keyboard and mouse have pending output, the canonical Rust model can
+      // interleave bytes fairly (driven by the internal `prefer_mouse` toggle). Ensure the TS
+      // fallback matches this scheduling.
+      const printPress = ps2Set2BytesForKeyEvent("PrintScreen", true)!;
+      injectKeyboardScancodeBytes(ts, bridge, printPress);
+      injectMouseMove(ts, bridge, 5, 3);
+      expect(assertDrainParity("interleaved keyboard+mouse parity")).toEqual([0xe0, 0x08, 0x2a, 0x05, 0xe0, 0x03, 0x37]);
+
       const buttonMasks = [
         0x01, // left
         0x03, // left + right
