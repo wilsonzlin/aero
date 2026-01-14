@@ -187,6 +187,54 @@ fn a20_masking_aliases_high_mmio_addresses() {
 }
 
 #[test]
+fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_offsets() {
+    // When A20 is disabled, bit 20 is forced low. A read that crosses a 1MiB boundary at a high
+    // MMIO address must therefore "wrap" back by 1MiB (i.e. alias), and MUST NOT be treated as a
+    // single contiguous physical access at the unmasked address.
+    let mut bus = new_bus(false, 0);
+
+    // Large enough to include offsets both before and after the 1MiB boundary.
+    let mmio_len = (1 << 20) + 0x40u64;
+    let mut mem = vec![0xEEu8; mmio_len as usize];
+
+    // Bytes just before the 1MiB boundary.
+    for i in 0..0x10usize {
+        mem[0x0F_FFF0 + i] = 0xA0u8.wrapping_add(i as u8);
+    }
+    // Bytes at the start of the region (where the wrapped portion should land).
+    for i in 0..0x30usize {
+        mem[i] = 0xB0u8.wrapping_add(i as u8);
+    }
+
+    // Use IOAPIC MMIO base (bit 20 clear) so crossing +1MiB flips bit 20.
+    let mmio_base = IOAPIC_MMIO_BASE;
+    let (mmio, mmio_state) = RecordingMmio::new(mem);
+    bus.map_mmio(mmio_base, mmio_len, Box::new(mmio)).unwrap();
+
+    let start = mmio_base + 0x0F_FFF0;
+    let mut buf = [0u8; 0x40];
+    bus.read_physical(start, &mut buf);
+
+    let mut expected = [0u8; 0x40];
+    for i in 0..0x10usize {
+        expected[i] = 0xA0u8.wrapping_add(i as u8);
+    }
+    for i in 0..0x30usize {
+        expected[0x10 + i] = 0xB0u8.wrapping_add(i as u8);
+    }
+    assert_eq!(buf, expected);
+
+    // Ensure we did not accidentally perform a linear read past the 1MiB boundary (which would
+    // have hit offsets >= 0x1_00000 inside the MMIO handler).
+    let state = mmio_state.lock().unwrap();
+    assert!(
+        state.reads.iter().all(|(off, _)| *off < (1 << 20)),
+        "unexpected MMIO reads past 1MiB boundary: {:?}",
+        state.reads
+    );
+}
+
+#[test]
 fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
     let mut bus = new_bus(false, 2 * 1024 * 1024);
 
