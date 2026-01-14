@@ -137,12 +137,6 @@ mod tests {
         ints.lapic_mmio_write_for_apic(apic_id, 0xF0, &(0x1FFu32).to_le_bytes());
     }
 
-    fn enable_lapic_svr(ints: &PlatformInterrupts) {
-        for cpu in 0..ints.cpu_count() {
-            ints.lapic_mmio_write_for_cpu(cpu, 0xF0, &(0x1FFu32).to_le_bytes());
-        }
-    }
-
     fn msi_message(dest_id: u8, vector: u8) -> MsiMessage {
         msi_message_with(dest_id, vector, false, 0)
     }
