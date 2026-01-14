@@ -989,6 +989,13 @@ struct PatchCacheEntry {
   // when switching back to the fixed-function WVP vertex shaders (user shaders
   // may have written overlapping VS constant registers).
   bool fixedfunc_matrix_dirty = true;
+  // True when fixed-function WVP constants must be re-uploaded even if the
+  // computed matrix matches the cached VS constant range.
+  //
+  // This is used when switching back from a user VS to the fixed-function path:
+  // some runtimes expect the reserved WVP constant range to be refreshed
+  // immediately when the user shader is unbound (not just lazily at draw time).
+  bool fixedfunc_matrix_force_upload = false;
   // True when cached lighting/material state changed and the fixed-function
   // fallback needs to re-upload the lighting constant register block.
   bool fixedfunc_lighting_dirty = true;

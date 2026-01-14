@@ -1017,6 +1017,23 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
   if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
     return false;
   }
+  // Ensure the driver must actually re-upload the fixed-function WVP constants
+  // in this command stream: the device may have already populated c240..c243
+  // during earlier setup (e.g. when synthesizing the fixed-function VS).
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+  {
+    const float zeros[16] = {};
+    hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                                 kD3d9ShaderStageVs,
+                                                 /*start_reg=*/240,
+                                                 zeros,
+                                                 /*vec4_count=*/4);
+    if (!Check(hr == S_OK, "SetShaderConstF(clobber fixedfunc WVP range)")) {
+      return false;
+    }
+  }
   D3DMATRIX identity{};
   identity.m[0][0] = 1.0f;
   identity.m[1][1] = 1.0f;

@@ -5525,6 +5525,7 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
     return E_FAIL;
   }
   if (!dev->fixedfunc_matrix_dirty) {
+    dev->fixedfunc_matrix_force_upload = false;
     return S_OK;
   }
 
@@ -5542,6 +5543,17 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
     cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
 
+  // If the computed WVP constants already match the cached VS constant range,
+  // skip re-uploading them. This handles benign "dirty" triggers (e.g. setting
+  // the same FVF repeatedly) while still fixing real clobbers: user shaders that
+  // overwrite the reserved constant registers will update `vs_consts_f` and
+  // therefore fail this comparison.
+  const float* cached = dev->vs_consts_f + static_cast<size_t>(kFixedfuncMatrixStartRegister) * 4u;
+  if (!dev->fixedfunc_matrix_force_upload && std::memcmp(cached, cols, sizeof(cols)) == 0) {
+    dev->fixedfunc_matrix_dirty = false;
+    return S_OK;
+  }
+
   if (!emit_set_shader_constants_f_locked(dev,
                                           kD3d9ShaderStageVs,
                                           kFixedfuncMatrixStartRegister,
@@ -5551,6 +5563,7 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   }
 
   dev->fixedfunc_matrix_dirty = false;
+  dev->fixedfunc_matrix_force_upload = false;
   return S_OK;
 }
 
@@ -5629,6 +5642,12 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
   constexpr uint32_t kD3dRsAmbient = 26u;
   d3d9_argb_to_float4(dev->render_states[kD3dRsAmbient], global_ambient);
   std::memcpy(&regs[9 * 4u], global_ambient, sizeof(global_ambient));
+
+  const float* cached = dev->vs_consts_f + static_cast<size_t>(kFixedfuncLightingStartRegister) * 4u;
+  if (std::memcmp(cached, regs, sizeof(regs)) == 0) {
+    dev->fixedfunc_lighting_dirty = false;
+    return S_OK;
+  }
 
   if (!emit_set_shader_constants_f_locked(dev,
                                           kD3d9ShaderStageVs,
@@ -14576,6 +14595,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   // changing FVF/decl), we must re-upload the matrix constants.
   if (stage == kD3d9ShaderStageVs && sh && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (stage == kD3d9ShaderStageVs && !sh && fixedfunc_fvf_needs_matrix(dev->fvf)) {
+    // Some runtimes expect fixed-function WVP constants to be refreshed
+    // immediately when a user VS is unbound (not just lazily at draw time).
+    dev->fixedfunc_matrix_dirty = true;
+    dev->fixedfunc_matrix_force_upload = true;
   }
   // Same idea for fixed-function lighting: the lit VS variants use a reserved
   // high constant range for normals/light/material state.
