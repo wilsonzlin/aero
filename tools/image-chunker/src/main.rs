@@ -1322,11 +1322,13 @@ async fn verify_chunk_file(
     expected_size: u64,
     expected_sha256: Option<&str>,
 ) -> Result<u64> {
-    if expected_sha256.is_none() {
-        let meta = tokio::fs::metadata(path)
-            .await
-            .with_context(|| format!("stat chunk {index} at {}", path.display()))?;
-        let size = meta.len();
+    // Always prefer a cheap stat to validate the expected size first.
+    let meta = tokio::fs::metadata(path)
+        .await
+        .with_context(|| format!("stat chunk {index} at {}", path.display()))?;
+    let size = meta.len();
+
+    if size != expected_size {
         verify_chunk_integrity(
             index,
             &format!("file://{}", path.display()),
@@ -1335,6 +1337,11 @@ async fn verify_chunk_file(
             None,
             None,
         )?;
+        // `verify_chunk_integrity` should have errored, but keep a defensive guard here.
+        return Ok(size);
+    }
+
+    if expected_sha256.is_none() {
         return Ok(size);
     }
 
