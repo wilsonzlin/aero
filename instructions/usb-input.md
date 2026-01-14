@@ -141,6 +141,7 @@ devices when `MachineConfig.enable_synthetic_usb_hid = true` (or via the WASM wr
 `MachineConfig.enable_uhci` by itself only attaches the UHCI controller; hosts can still attach
 device models explicitly via:
  - UHCI: `Machine.usb_attach_*` (when `MachineConfig.enable_uhci` is enabled)
+ - EHCI: `Machine.usb_ehci_attach_*` (when `MachineConfig.enable_ehci` is enabled)
  - xHCI: `Machine.usb_xhci_attach_*` (when `MachineConfig.enable_xhci` is enabled)
 
 ---
