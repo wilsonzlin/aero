@@ -48,6 +48,10 @@ To publish other disk image formats, use `--format`:
 
 For container formats (`qcow2`, `vhd`, `aerosparse`), the published chunks correspond to the **logical disk byte stream** (what the guest sees), not the on-disk container file bytes.
 
+Note: images that require an explicit parent (QCOW2 backing files, VHD differencing) are rejected by
+this tool because it currently opens a single input file. Flatten/merge to a standalone image first
+(e.g. `qemu-img convert -O raw ...`) before publishing.
+
 ### CDN-ready HTTP metadata (Cache-Control, Content-Encoding)
 
 `aero-image-chunker publish` sets object metadata so the uploaded artifacts are ready to serve through a CDN without extra configuration:

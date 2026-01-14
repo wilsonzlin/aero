@@ -372,7 +372,7 @@ The canonical Rust disk image formats live in `crates/aero-storage/` and current
 - **Aero Sparse (`AEROSPAR`, v1; `aero_storage::AeroSparseDisk`)** (Aero-specific sparse format for large virtual disks).\
   Implementation: [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs). See also:
   [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
-- **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
+- **QCOW2 v2/v3** (common unencrypted, uncompressed images; backing files require an explicit parent disk when opened).
 - **VHD fixed, dynamic, and differencing** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap; differencing disks require an explicit parent when opened).
 - **Copy-on-write overlays** (`aero_storage::AeroCowDisk`) - writable overlay on top of a base disk.
 - **Write-back block caching** (`aero_storage::BlockCachedDisk`) - performance wrapper for small random I/O.
