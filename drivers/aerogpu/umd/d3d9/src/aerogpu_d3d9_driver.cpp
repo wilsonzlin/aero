@@ -7854,11 +7854,22 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
       dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
     }
 
-    if (dev->alloc_list_tracker.list_base() != reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList) ||
-        dev->alloc_list_tracker.list_capacity() != dev->wddm_context.AllocationListSize) {
+    const bool needs_alloc_list_rebind =
+        dev->alloc_list_tracker.list_base() != reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList) ||
+        dev->alloc_list_tracker.list_capacity() != dev->wddm_context.AllocationListSize;
+    if (needs_alloc_list_rebind) {
+      std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
+      if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
+        preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
+      }
       dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
                                      dev->wddm_context.AllocationListSize,
                                      dev->adapter->max_allocation_list_slot_id);
+      if (!preserved_allocs.empty() && !dev->alloc_list_tracker.replay_tracked_allocations(preserved_allocs)) {
+        logf("aerogpu-d3d9: failed to replay tracked allocations after allocation-list pointer rotation (count=%llu)\n",
+             static_cast<unsigned long long>(preserved_allocs.size()));
+        return false;
+      }
     }
     return true;
   }
