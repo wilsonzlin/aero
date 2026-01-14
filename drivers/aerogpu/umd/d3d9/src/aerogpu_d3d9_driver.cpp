@@ -22914,39 +22914,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_INVALIDARG);
   }
 
-  HRESULT hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(hr)) {
-    return trace.ret(hr);
-  }
-
-  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
-  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-
-  DeviceStateStream saved = dev->streams[0];
-
-  if (fixedfunc_vertex_active) {
-    const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, stride_bytes);
-    if (FAILED(stride_hr)) {
-      return trace.ret(stride_hr);
-    }
-  }
-
-  std::vector<uint8_t> converted;
-  const void* upload_data = pVertexData;
-  uint32_t upload_size = static_cast<uint32_t>(size_u64);
-  uint32_t upload_stride = stride_bytes;
-
-  if (fixedfunc_xyzrhw) {
-    HRESULT hr = convert_xyzrhw_to_clipspace_locked(dev, pVertexData, stride_bytes, vertex_count, &converted);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
-    }
-    upload_data = converted.data();
-    upload_size = static_cast<uint32_t>(converted.size());
-  }
+  HRESULT hr = S_OK;
 
   // Validate instancing configuration up-front so invalid-call failures do not
-  // emit UP uploads or temporary stream bindings.
+  // emit shader binds or UP uploads/bindings.
   if (any_stream_source_freq_non_default_locked(dev)) {
     std::bitset<16> used_streams{};
     if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
@@ -22976,6 +22947,37 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
         return trace.ret(kD3DErrInvalidCall);
       }
     }
+  }
+
+  hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
+  DeviceStateStream saved = dev->streams[0];
+
+  if (fixedfunc_vertex_active) {
+    const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, stride_bytes);
+    if (FAILED(stride_hr)) {
+      return trace.ret(stride_hr);
+    }
+  }
+
+  std::vector<uint8_t> converted;
+  const void* upload_data = pVertexData;
+  uint32_t upload_size = static_cast<uint32_t>(size_u64);
+  uint32_t upload_stride = stride_bytes;
+
+  if (fixedfunc_xyzrhw) {
+    HRESULT hr = convert_xyzrhw_to_clipspace_locked(dev, pVertexData, stride_bytes, vertex_count, &converted);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+    upload_data = converted.data();
+    upload_size = static_cast<uint32_t>(converted.size());
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
@@ -23116,40 +23118,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_INVALIDARG;
   }
 
-  HRESULT hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
-  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-
-  DeviceStateStream saved = dev->streams[0];
-
-  if (fixedfunc_vertex_active) {
-    const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, pDraw->VertexStreamZeroStride);
-    if (FAILED(stride_hr)) {
-      return stride_hr;
-    }
-  }
-
-  std::vector<uint8_t> converted;
-  const void* upload_data = pDraw->pVertexStreamZeroData;
-  uint32_t upload_size = static_cast<uint32_t>(size_u64);
-  uint32_t upload_stride = pDraw->VertexStreamZeroStride;
-
-  if (fixedfunc_xyzrhw) {
-    HRESULT hr = convert_xyzrhw_to_clipspace_locked(
-        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, vertex_count, &converted);
-    if (FAILED(hr)) {
-      return hr;
-    }
-    upload_data = converted.data();
-    upload_size = static_cast<uint32_t>(converted.size());
-  }
+  HRESULT hr = S_OK;
 
   // Validate instancing configuration up-front so invalid-call failures do not
-  // emit UP uploads or temporary stream bindings.
+  // emit shader binds or UP uploads/bindings.
   if (any_stream_source_freq_non_default_locked(dev)) {
     std::bitset<16> used_streams{};
     if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
@@ -23179,6 +23151,38 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
         return kD3DErrInvalidCall;
       }
     }
+  }
+
+  hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
+  const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
+  DeviceStateStream saved = dev->streams[0];
+
+  if (fixedfunc_vertex_active) {
+    const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, pDraw->VertexStreamZeroStride);
+    if (FAILED(stride_hr)) {
+      return stride_hr;
+    }
+  }
+
+  std::vector<uint8_t> converted;
+  const void* upload_data = pDraw->pVertexStreamZeroData;
+  uint32_t upload_size = static_cast<uint32_t>(size_u64);
+  uint32_t upload_stride = pDraw->VertexStreamZeroStride;
+
+  if (fixedfunc_xyzrhw) {
+    HRESULT hr = convert_xyzrhw_to_clipspace_locked(
+        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, vertex_count, &converted);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    upload_data = converted.data();
+    upload_size = static_cast<uint32_t>(converted.size());
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
@@ -23289,7 +23293,42 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return E_INVALIDARG;
   }
 
-  HRESULT hr = ensure_draw_pipeline_locked(dev);
+  HRESULT hr = S_OK;
+
+  // Validate instancing configuration up-front so invalid-call failures do not
+  // emit shader binds or UP uploads/bindings.
+  if (any_stream_source_freq_non_default_locked(dev)) {
+    std::bitset<16> used_streams{};
+    if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+      return kD3DErrInvalidCall;
+    }
+    bool any_used_non_default = false;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+        any_used_non_default = true;
+        break;
+      }
+    }
+    if (any_used_non_default) {
+      InstancingConfig cfg{};
+      hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      bool has_instanced_stream = false;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
+          has_instanced_stream = true;
+          break;
+        }
+      }
+      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
+        return kD3DErrInvalidCall;
+      }
+    }
+  }
+
+  hr = ensure_draw_pipeline_locked(dev);
   if (FAILED(hr)) {
     return hr;
   }
@@ -23326,39 +23365,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
     }
     vb_upload_data = converted.data();
     vb_upload_size = static_cast<uint32_t>(converted.size());
-  }
-
-  // Validate instancing configuration up-front so invalid-call failures do not
-  // emit UP uploads or temporary stream/index bindings.
-  if (any_stream_source_freq_non_default_locked(dev)) {
-    std::bitset<16> used_streams{};
-    if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
-      return kD3DErrInvalidCall;
-    }
-    bool any_used_non_default = false;
-    for (uint32_t s = 0; s < 16; ++s) {
-      if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
-        any_used_non_default = true;
-        break;
-      }
-    }
-    if (any_used_non_default) {
-      InstancingConfig cfg{};
-      hr = parse_instancing_config_locked(dev, used_streams, &cfg);
-      if (FAILED(hr)) {
-        return hr;
-      }
-      bool has_instanced_stream = false;
-      for (uint32_t s = 0; s < 16; ++s) {
-        if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
-          has_instanced_stream = true;
-          break;
-        }
-      }
-      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
-        return kD3DErrInvalidCall;
-      }
-    }
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);

@@ -8,6 +8,8 @@
 
 namespace aerogpu {
 
+HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf);
+
 // Forward declarations for the draw entrypoints under test.
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
@@ -49,6 +51,11 @@ namespace {
 // SetStreamSourceFreq encodings (from d3d9types.h).
 constexpr uint32_t kD3DStreamSourceIndexedData = 0x40000000u;
 constexpr uint32_t kD3DStreamSourceInstanceData = 0x80000000u;
+
+// Fixed-function FVF bits (from d3d9types.h). Keep local for portability.
+constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 
 // ABI-compatible D3DVERTEXELEMENT9 encoding.
 #pragma pack(push, 1)
@@ -937,6 +944,85 @@ void TestIndexedTriangleListUpInstancingRestoresStream0AndIb() {
   assert(std::memcmp(payload_ib, expected_indices_u32, sizeof(expected_indices_u32)) == 0);
 }
 
+void TestPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  // Use a supported fixed-function FVF so ensure_draw_pipeline_locked would
+  // otherwise emit fixed-function shader binds.
+  HRESULT hr = aerogpu::device_set_fvf(hDevice, kFvfXyzrhwDiffuse);
+  assert(hr == S_OK);
+
+  // Enable instancing but don't bind a user vertex shader: instancing must fail
+  // with INVALIDCALL without emitting shader bind/upload packets.
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+
+  struct XyzrhwDiffuseVertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t diffuse;
+  };
+  const XyzrhwDiffuseVertex vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFF0000FFu},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFF0000u},
+  };
+
+  const size_t baseline_size = dev.cmd.size();
+  hr = aerogpu::device_draw_primitive_up(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*primitive_count=*/1,
+      vertices,
+      sizeof(XyzrhwDiffuseVertex));
+  assert(hr == D3DERR_INVALIDCALL);
+  assert(dev.cmd.size() == baseline_size);
+}
+
+void TestIndexedPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  HRESULT hr = aerogpu::device_set_fvf(hDevice, kFvfXyzrhwDiffuse);
+  assert(hr == S_OK);
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+
+  struct XyzrhwDiffuseVertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t diffuse;
+  };
+  const XyzrhwDiffuseVertex vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFF0000FFu},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFF0000u},
+  };
+  const uint16_t indices_u16[3] = {0, 1, 2};
+
+  const size_t baseline_size = dev.cmd.size();
+  hr = aerogpu::device_draw_indexed_primitive_up(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*min_vertex_index=*/0,
+      /*num_vertices=*/3,
+      /*primitive_count=*/1,
+      indices_u16,
+      static_cast<D3DDDIFORMAT>(101), // D3DFMT_INDEX16
+      vertices,
+      sizeof(XyzrhwDiffuseVertex));
+  assert(hr == D3DERR_INVALIDCALL);
+  assert(dev.cmd.size() == baseline_size);
+}
+
 void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
   aerogpu::Adapter adapter{};
   aerogpu::Device dev(&adapter);
@@ -1156,8 +1242,10 @@ int main() {
   TestNonIndexedTriangleListBasic();
   TestNonIndexedTriangleStripDrawsPerInstance();
   TestNonIndexedTriangleListUpInstancingRestoresStream0();
+  TestPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds();
   TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion();
   TestIndexedTriangleStripNegativeBaseVertex();
   TestIndexedTriangleListUpInstancingRestoresStream0AndIb();
+  TestIndexedPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds();
   return 0;
 }
