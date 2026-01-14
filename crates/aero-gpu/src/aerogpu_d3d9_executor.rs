@@ -2797,6 +2797,9 @@ impl AerogpuD3d9Executor {
             | AeroGpuCmd::DestroySampler { .. }
             | AeroGpuCmd::SetSamplers { .. }
             | AeroGpuCmd::SetConstantBuffers { .. }
+            | AeroGpuCmd::SetShaderResourceBuffers { .. }
+            | AeroGpuCmd::SetUnorderedAccessBuffers { .. }
+            | AeroGpuCmd::Dispatch { .. }
             | AeroGpuCmd::Unknown { .. } => Ok(()),
             AeroGpuCmd::CreateBuffer {
                 buffer_handle,

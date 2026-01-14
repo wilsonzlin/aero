@@ -379,6 +379,18 @@ pub enum AeroGpuCmd<'a> {
         buffer_count: u32,
         bindings_bytes: &'a [u8],
     },
+    SetShaderResourceBuffers {
+        shader_stage: u32,
+        start_slot: u32,
+        buffer_count: u32,
+        bindings_bytes: &'a [u8],
+    },
+    SetUnorderedAccessBuffers {
+        shader_stage: u32,
+        start_slot: u32,
+        uav_count: u32,
+        bindings_bytes: &'a [u8],
+    },
     SetRenderState {
         state: u32,
         value: u32,
@@ -403,6 +415,11 @@ pub enum AeroGpuCmd<'a> {
         first_index: u32,
         base_vertex: i32,
         first_instance: u32,
+    },
+    Dispatch {
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
     },
 
     /// Unrecognized opcode; payload is the bytes after `AeroGpuCmdHdr`.
@@ -960,6 +977,50 @@ pub fn parse_cmd_stream(
                     bindings_bytes,
                 }
             }
+            Some(AeroGpuOpcode::SetShaderResourceBuffers) => {
+                let cmd: protocol::AerogpuCmdSetShaderResourceBuffers = read_packed_prefix(packet)?;
+                let bindings_start = size_of::<protocol::AerogpuCmdSetShaderResourceBuffers>();
+                let buffer_count = u32::from_le(cmd.buffer_count);
+                let count = usize::try_from(buffer_count)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_len = count
+                    .checked_mul(size_of::<protocol::AerogpuShaderResourceBufferBinding>())
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_end = bindings_start
+                    .checked_add(bindings_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_bytes = packet
+                    .get(bindings_start..bindings_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetShaderResourceBuffers {
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    start_slot: u32::from_le(cmd.start_slot),
+                    buffer_count,
+                    bindings_bytes,
+                }
+            }
+            Some(AeroGpuOpcode::SetUnorderedAccessBuffers) => {
+                let cmd: protocol::AerogpuCmdSetUnorderedAccessBuffers = read_packed_prefix(packet)?;
+                let bindings_start = size_of::<protocol::AerogpuCmdSetUnorderedAccessBuffers>();
+                let uav_count = u32::from_le(cmd.uav_count);
+                let count =
+                    usize::try_from(uav_count).map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_len = count
+                    .checked_mul(size_of::<protocol::AerogpuUnorderedAccessBufferBinding>())
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_end = bindings_start
+                    .checked_add(bindings_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_bytes = packet
+                    .get(bindings_start..bindings_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetUnorderedAccessBuffers {
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    start_slot: u32::from_le(cmd.start_slot),
+                    uav_count,
+                    bindings_bytes,
+                }
+            }
             Some(AeroGpuOpcode::SetRenderState) => {
                 let cmd: protocol::AerogpuCmdSetRenderState = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetRenderState {
@@ -994,6 +1055,14 @@ pub fn parse_cmd_stream(
                     first_index: u32::from_le(cmd.first_index),
                     base_vertex: i32::from_le(cmd.base_vertex),
                     first_instance: u32::from_le(cmd.first_instance),
+                }
+            }
+            Some(AeroGpuOpcode::Dispatch) => {
+                let cmd: protocol::AerogpuCmdDispatch = read_packed_prefix(packet)?;
+                AeroGpuCmd::Dispatch {
+                    group_count_x: u32::from_le(cmd.group_count_x),
+                    group_count_y: u32::from_le(cmd.group_count_y),
+                    group_count_z: u32::from_le(cmd.group_count_z),
                 }
             }
 
