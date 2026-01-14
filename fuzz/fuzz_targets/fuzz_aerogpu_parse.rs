@@ -103,6 +103,8 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
             }
             match pkt.opcode {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
+                    // Exercise both the packet-level decoder (payload-only) and the public
+                    // decode helper that re-parses the header (different validation paths).
                     if let Ok((cmd_hdr, _dxbc_bytes)) = pkt.decode_create_shader_dxbc_payload_le() {
                         // Exercise stage_ex resolution helpers (forward-compat path).
                         let _ = match cmd_hdr.stage {
@@ -120,8 +122,12 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         // range of legacy and stage_ex encodings).
                         let _ = cmd::resolve_stage(cmd_hdr.stage, cmd_hdr.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(cmd_hdr.stage, cmd_hdr.reserved0);
+                        let _ = cmd_hdr.resolved_stage();
                         // Still fuzz the raw stage_ex decoder.
                         let _ = cmd::AerogpuShaderStageEx::from_u32(cmd_hdr.reserved0);
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_create_shader_dxbc_payload_le(packet_bytes);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::BindShaders) => {
@@ -132,9 +138,15 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             let _ = (ex.gs, ex.hs, ex.ds);
                         }
                     }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_bind_shaders_payload_le(packet_bytes);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::UploadResource) => {
                     let _ = pkt.decode_upload_resource_payload_le();
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_upload_resource_payload_le(packet_bytes);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::CreateInputLayout) => {
                     if let Ok((_cmd, blob_bytes)) = pkt.decode_create_input_layout_payload_le() {
@@ -166,6 +178,9 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             let _ = aero_gpu::AeroGpuInputLayoutElementDxgi::parse(elem_bytes);
                         }
                     }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_create_input_layout_blob_le(packet_bytes);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderConstantsF) => {
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
@@ -176,6 +191,8 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     {
                         let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd_sc.resolved_stage();
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
@@ -192,6 +209,9 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 }
                 Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
                     let _ = pkt.decode_set_vertex_buffers_payload_le();
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_vertex_buffers_bindings_le(packet_bytes);
+                    }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetTexture) => {
                     if pkt.payload.len() >= 16 {
@@ -210,6 +230,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_samplers.shader_stage,
                             cmd_samplers.reserved0,
                         );
+                        let _ = cmd::resolve_stage(cmd_samplers.shader_stage, cmd_samplers.reserved0);
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_samplers_handles_le(packet_bytes);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetConstantBuffers) => {
@@ -234,6 +258,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         for binding in bindings.iter().take(4) {
                             let _ = (binding.buffer, binding.offset_bytes, binding.size_bytes);
                         }
+                        let _ = cmd::resolve_stage(cmd_hdr.shader_stage, cmd_hdr.reserved0);
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_constant_buffers_bindings_le(packet_bytes);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderResourceBuffers) => {
@@ -245,6 +273,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_srv.shader_stage,
                             cmd_srv.reserved0,
                         );
+                        let _ = cmd::resolve_stage(cmd_srv.shader_stage, cmd_srv.reserved0);
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_shader_resource_buffers_bindings_le(packet_bytes);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers) => {
@@ -256,6 +288,11 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_uav.shader_stage,
                             cmd_uav.reserved0,
                         );
+                        let _ = cmd::resolve_stage(cmd_uav.shader_stage, cmd_uav.reserved0);
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ =
+                            cmd::decode_cmd_set_unordered_access_buffers_bindings_le(packet_bytes);
                     }
                 }
                 _ => {}
