@@ -92,6 +92,10 @@ The proxy is useful for reproducing “edge” behaviors (for example, overridin
 
 It also injects a `Cross-Origin-Resource-Policy` (CORP) header (configurable via `CROSS_ORIGIN_RESOURCE_POLICY`) to make it easier to test disk streaming under `Cross-Origin-Embedder-Policy: require-corp`.
 
+For caching correctness, the proxy also sets:
+
+- `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`
+
 ## Upload a large file
 
 ### Option A: MinIO Console UI (no extra tooling)
