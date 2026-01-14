@@ -6997,7 +6997,7 @@ def _emit_virtio_blk_irq_host_marker(
     """
     # Collect IRQ fields from (a) the virtio-blk per-test marker (IOCTL-derived fields) and/or
     # (b) standalone diagnostics:
-    #     - `virtio-blk-miniport-irq|...` (miniport IOCTL-derived mode/message_count/MSI-X vectors)
+    #     - `virtio-blk-miniport-irq|...` (miniport IOCTL-derived mode/messages/message_count/MSI-X vectors)
     #     - `virtio-blk-irq|...` (cfgmgr32 resource enumeration / Windows-assigned IRQ resources)
     #
     # Prefer the per-test marker when present, but fill in missing fields from the standalone

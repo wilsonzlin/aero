@@ -1632,7 +1632,7 @@ function Try-EmitAeroVirtioBlkIrqMarker {
 
   # Collect IRQ fields from (a) the virtio-blk per-test marker (IOCTL-derived fields) and/or
   # (b) standalone diagnostics:
-  #   - `virtio-blk-miniport-irq|...` (best-effort miniport IOCTL diagnostics; may include message_count + MSI-X vectors)
+  #   - `virtio-blk-miniport-irq|...` (best-effort miniport IOCTL diagnostics; may include messages/message_count + MSI-X vectors)
   #   - `virtio-blk-irq|...` (cfgmgr32 resource enumeration / Windows-assigned IRQ mode)
   #
   # Prefer the per-test marker when present, but fill in missing fields from the standalone
