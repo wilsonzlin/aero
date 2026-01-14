@@ -39,6 +39,10 @@ fn compute_can_vertex_pull_common_formats_from_multiple_vertex_buffers() {
                 return;
             }
         };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         const VB0: u32 = 1;
         const VB1: u32 = 2;

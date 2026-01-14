@@ -62,6 +62,15 @@ fn compute_store_raw_writes_u32_word() {
             return;
         };
 
+        let downlevel = adapter.get_downlevel_capabilities();
+        if !downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+        {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
         let (device, queue) = match adapter
             .request_device(
                 &wgpu::DeviceDescriptor {

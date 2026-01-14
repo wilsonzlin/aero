@@ -65,6 +65,13 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
     }
     .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+    let downlevel = adapter.get_downlevel_capabilities();
+    if !downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
+        return Err(anyhow!(
+            "wgpu: adapter does not support compute shaders (DownlevelFlags::COMPUTE_SHADERS missing)"
+        ));
+    }
+
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
