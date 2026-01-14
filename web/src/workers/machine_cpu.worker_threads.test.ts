@@ -190,4 +190,102 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       await worker.terminate();
     }
   }, 20_000);
+
+  it("queues input batches while snapshot-paused and flushes them on resume", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const messages: unknown[] = [];
+      const onMessage = (msg: unknown) => {
+        messages.push(msg);
+      };
+      worker.on("message", onMessage);
+      try {
+        const pause1Ack = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { kind?: unknown; requestId?: unknown; ok?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+          10_000,
+        );
+        worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+        await pause1Ack;
+
+        messages.length = 0;
+
+        const buf = new ArrayBuffer((2 + 4) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 1; // count
+        words[1] = 0; // timestamp (unused in this test)
+        words[2] = InputEventType.KeyScancode;
+        words[3] = 0; // event timestamp
+        words[4] = 0x1c; // packed scancode bytes
+        words[5] = 1; // len
+        const expected = Array.from(words);
+        const expectedByteLength = buf.byteLength;
+
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+
+        const pause2Ack = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 2,
+          10_000,
+        );
+        worker.postMessage({ kind: "vm.snapshot.pause", requestId: 2 });
+        await pause2Ack;
+
+        if (messages.some((msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle")) {
+          throw new Error("expected input batch buffers to not recycle while vm.snapshot.pause is active");
+        }
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        const resumedPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" && (msg as any).requestId === 3,
+          10_000,
+        );
+        worker.postMessage({ kind: "vm.snapshot.resume", requestId: 3 });
+
+        const [recycled] = (await Promise.all([recycledPromise, resumedPromise])) as [unknown, unknown];
+        const recycledBuf = (recycled as { buffer?: unknown }).buffer;
+        if (!(recycledBuf instanceof ArrayBuffer)) {
+          throw new Error("expected in:input-batch-recycle to carry an ArrayBuffer");
+        }
+        if (recycledBuf.byteLength !== expectedByteLength) {
+          throw new Error(`expected recycled buffer byteLength=${expectedByteLength}, got ${recycledBuf.byteLength}`);
+        }
+        const got = Array.from(new Int32Array(recycledBuf));
+        if (got.join(",") !== expected.join(",")) {
+          throw new Error(`unexpected recycled buffer contents: got [${got.join(",")}] expected [${expected.join(",")}]`);
+        }
+      } finally {
+        worker.off("message", onMessage);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
 });
