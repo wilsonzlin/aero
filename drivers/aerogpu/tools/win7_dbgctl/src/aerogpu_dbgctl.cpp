@@ -3110,6 +3110,7 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   bool havePrev = false;
   uint64_t prevSubmitted = 0;
   uint64_t prevCompleted = 0;
+  uint64_t prevErrorIrqCount = 0;
   LARGE_INTEGER prevTime;
   ZeroMemory(&prevTime, sizeof(prevTime));
   uint32_t stallIntervals = 0;
@@ -3166,10 +3167,14 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       stallIntervals = 0;
     }
 
+    const bool errorDelta = havePrev && (q.error_irq_count > prevErrorIrqCount);
+
     const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
     const wchar_t *warn = L"-";
     if (havePrev && delta.reset) {
       warn = L"RESET";
+    } else if (errorDelta) {
+      warn = L"ERROR";
     } else if (warnStall) {
       warn = L"STALL";
     }
@@ -3177,14 +3182,17 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     const uint64_t pending =
         (q.last_submitted_fence >= q.last_completed_fence) ? (q.last_submitted_fence - q.last_completed_fence) : 0;
 
-    wprintf(L"watch-fence sample=%lu/%lu t_ms=%.3f submitted=0x%I64x completed=0x%I64x pending=%I64u d_sub=%I64u d_comp=%I64u dt_ms=%.3f rate_comp_per_s=%.3f stall_intervals=%lu warn=%s\n",
+    wprintf(L"watch-fence sample=%lu/%lu t_ms=%.3f submitted=0x%I64x completed=0x%I64x pending=%I64u d_sub=%I64u d_comp=%I64u dt_ms=%.3f rate_comp_per_s=%.3f stall_intervals=%lu warn=%s error_irq_count=0x%I64x last_error_fence=0x%I64x\n",
             (unsigned long)(i + 1), (unsigned long)samples, tMs, (unsigned long long)q.last_submitted_fence,
             (unsigned long long)q.last_completed_fence, (unsigned long long)pending,
             (unsigned long long)delta.delta_submitted, (unsigned long long)delta.delta_completed, dtMs,
-            delta.completed_per_s, (unsigned long)stallIntervals, warn);
+            delta.completed_per_s, (unsigned long)stallIntervals, warn,
+            (unsigned long long)q.error_irq_count,
+            (unsigned long long)q.last_error_fence);
 
     prevSubmitted = q.last_submitted_fence;
     prevCompleted = q.last_completed_fence;
+    prevErrorIrqCount = q.error_irq_count;
     prevTime = now;
     havePrev = true;
 
@@ -6929,6 +6937,7 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
   bool havePrev = false;
   uint64_t prevSubmitted = 0;
   uint64_t prevCompleted = 0;
+  uint64_t prevErrorIrqCount = 0;
   LARGE_INTEGER prevTime;
   ZeroMemory(&prevTime, sizeof(prevTime));
   uint32_t stallIntervals = 0;
@@ -7027,10 +7036,14 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
       stallIntervals = 0;
     }
 
+    const bool errorDelta = havePrev && (q.error_irq_count > prevErrorIrqCount);
+
     const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
     const char *warn = "-";
     if (havePrev && delta.reset) {
       warn = "RESET";
+    } else if (errorDelta) {
+      warn = "ERROR";
     } else if (warnStall) {
       warn = "STALL";
     }
@@ -7073,6 +7086,7 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
 
     prevSubmitted = q.last_submitted_fence;
     prevCompleted = q.last_completed_fence;
+    prevErrorIrqCount = q.error_irq_count;
     prevTime = now;
     havePrev = true;
 
