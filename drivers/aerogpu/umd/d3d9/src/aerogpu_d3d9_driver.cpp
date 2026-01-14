@@ -10364,6 +10364,8 @@ namespace {
 struct Texture2dSubresourceLayout {
   uint32_t row_pitch_bytes = 0;
   uint32_t slice_pitch_bytes = 0;
+  uint64_t subresource_start_bytes = 0;
+  uint64_t subresource_end_bytes = 0;
 };
 
 // Computes the row/slice pitch for the texture subresource that contains
@@ -10426,6 +10428,8 @@ bool calc_texture2d_subresource_layout_for_offset(
       if (offset_bytes >= start && offset_bytes < end) {
         out->row_pitch_bytes = static_cast<uint32_t>(row_pitch);
         out->slice_pitch_bytes = static_cast<uint32_t>(slice_pitch);
+        out->subresource_start_bytes = start;
+        out->subresource_end_bytes = end;
         return true;
       }
 
@@ -10466,28 +10470,47 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
 
   const uint32_t offset = d3d9_lock_offset(*pLock);
   const uint32_t requested_size = d3d9_lock_size(*pLock);
-  uint32_t size = requested_size ? requested_size : (res->size_bytes - offset);
-  if (offset > res->size_bytes || size > res->size_bytes - offset) {
+  if (offset > res->size_bytes) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  Texture2dSubresourceLayout sub{};
+  const bool have_subresource_layout =
+      (res->kind != ResourceKind::Buffer) &&
+      (res->mip_levels > 1 || res->depth > 1) &&
+      calc_texture2d_subresource_layout_for_offset(res->format,
+                                                   res->width,
+                                                   res->height,
+                                                   res->mip_levels,
+                                                   res->depth,
+                                                   offset,
+                                                   &sub);
+
+  uint32_t size = requested_size;
+  if (size == 0) {
+    if (res->kind == ResourceKind::Buffer) {
+      size = res->size_bytes - offset;
+    } else if (have_subresource_layout && sub.subresource_end_bytes >= offset) {
+      const uint64_t end = std::min<uint64_t>(sub.subresource_end_bytes, res->size_bytes);
+      const uint64_t span = end - offset;
+      if (span > 0xFFFFFFFFull) {
+        return trace.ret(E_INVALIDARG);
+      }
+      size = static_cast<uint32_t>(span);
+    } else {
+      // Legacy fallback: lock the remaining bytes. This is correct for
+      // single-subresource surfaces/textures where offset==0.
+      size = res->size_bytes - offset;
+    }
+  }
+
+  if (size == 0 || size > res->size_bytes - offset) {
     return trace.ret(E_INVALIDARG);
   }
 
   uint32_t row_pitch = res->row_pitch;
   uint32_t slice_pitch = res->slice_pitch;
-  if ((res->kind == ResourceKind::Surface || res->kind == ResourceKind::Texture2D) && res->mip_levels > 1) {
-    // Win7 D3D9 DDI Lock arguments do not explicitly name a mip level. Instead,
-    // the runtime locks subresources by passing an offset into a packed mip
-    // chain. Infer the mip level from the offset so we return the correct
-    // per-level pitches.
-    Texture2dSubresourceLayout sub{};
-    if (!calc_texture2d_subresource_layout_for_offset(res->format,
-                                                      res->width,
-                                                      res->height,
-                                                      res->mip_levels,
-                                                      res->depth,
-                                                      static_cast<uint64_t>(offset),
-                                                      &sub)) {
-      return trace.ret(E_INVALIDARG);
-    }
+  if (have_subresource_layout) {
     row_pitch = sub.row_pitch_bytes;
     slice_pitch = sub.slice_pitch_bytes;
   }
