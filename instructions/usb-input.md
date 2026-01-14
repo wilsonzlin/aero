@@ -225,6 +225,9 @@ cargo xtask input
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
 cargo xtask input --rust-only
 
+# Also run the canonical machine integration tests (snapshot + USB container wiring).
+cargo xtask input --machine
+
 # Targeted WASM USB bridge regression test (runs in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 

@@ -9,6 +9,7 @@ use std::process::Command;
 #[derive(Default, Debug)]
 struct InputOpts {
     e2e: bool,
+    machine: bool,
     rust_only: bool,
     pw_extra_args: Vec<String>,
 }
@@ -37,17 +38,19 @@ pub fn print_help() {
 Run the USB/input-focused test suite (Rust + web) with one command.
 
 Usage:
-  cargo xtask input [--e2e] [--rust-only] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--machine] [--rust-only] [-- <extra playwright args>]
 
 Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked
-  3. (unless --rust-only) npm -w web run test:unit -- src/input
-  4. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked
+  4. (unless --rust-only) npm -w web run test:unit -- src/input
+  5. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
+  --machine             Also run `aero-machine` unit tests (covers snapshot + device integration).
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
@@ -55,6 +58,7 @@ Options:
 Examples:
   cargo xtask input
   cargo xtask input --rust-only
+  cargo xtask input --machine
   cargo xtask input --e2e
   cargo xtask input --e2e -- --project=chromium
   cargo xtask input --e2e -- --project=chromium --workers=4
@@ -80,6 +84,13 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     cmd.current_dir(&repo_root)
         .args(["test", "-p", "aero-usb", "--locked"]);
     runner.run_step("Rust: cargo test -p aero-usb --locked", &mut cmd)?;
+
+    if opts.machine {
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .args(["test", "-p", "aero-machine", "--lib", "--locked"]);
+        runner.run_step("Rust: cargo test -p aero-machine --lib --locked", &mut cmd)?;
+    }
 
     if opts.rust_only {
         println!();
@@ -133,6 +144,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
                 return Ok(None);
             }
             "--e2e" => opts.e2e = true,
+            "--machine" => opts.machine = true,
             "--rust-only" => opts.rust_only = true,
             "--" => {
                 opts.pw_extra_args = iter.collect();
