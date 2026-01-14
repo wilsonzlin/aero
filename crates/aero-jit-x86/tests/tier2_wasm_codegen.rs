@@ -1447,6 +1447,105 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
 }
 
 #[test]
+fn tier2_trace_wasm_matches_interpreter_on_addr_mem_ops() {
+    // Exercise `Instr::Addr` (including a non-power-of-two scale and negative displacement) feeding
+    // into memory operations.
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const {
+                dst: v(0),
+                value: 0x200,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 0x10,
+            },
+            Instr::Addr {
+                dst: v(2),
+                base: Operand::Value(v(0)),
+                index: Operand::Value(v(1)),
+                scale: 3,
+                disp: -5,
+            },
+            Instr::Const {
+                dst: v(3),
+                value: 0x1122_3344_5566_7788,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(v(2)),
+                src: Operand::Value(v(3)),
+                width: Width::W64,
+            },
+            Instr::LoadMem {
+                dst: v(4),
+                addr: Operand::Value(v(2)),
+                width: Width::W64,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(4)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let env = RuntimeEnv::default();
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1234;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1 | RFLAGS_DF;
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let res = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(res.exit, RunExit::Returned);
+    assert_eq!(
+        interp_state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, interp_state.cpu.rip);
+
+    let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+    memory.read(&store, 0, &mut got_guest_mem).unwrap();
+    assert_eq!(got_guest_mem.as_slice(), bus.mem());
+
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
 fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
     // Same basic loop shape as the side-exit test, but place the entry block at the end of a
     // 4KiB page so its code spans 2 pages. We then bump the second page's version mid-trace and
