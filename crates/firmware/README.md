@@ -68,6 +68,43 @@ MMC CD-ROM models), you still need to expose it to `firmware::bios` as a 512-byt
 For ISO media, [`BlockDevice::size_in_sectors`] must return the size in **512-byte** units, i.e.
 `iso_sector_count_2048 * 4`.
 
+Example adapter (pseudocode) from a 2048-byte ISO backend into `firmware::bios::BlockDevice`:
+
+```rust
+/// 2048-byte-sector, read-only ISO/CD backend.
+trait Iso2048 {
+    fn read_block(&mut self, lba2048: u32, buf: &mut [u8; 2048]) -> Result<(), ()>;
+    fn block_count(&self) -> u32;
+}
+
+/// Expose an ISO backend to `firmware::bios` by translating 512-byte sector reads into
+/// 2048-byte ISO logical blocks.
+struct IsoAsBlockDevice<I> {
+    iso: I,
+}
+
+impl<I: Iso2048> firmware::bios::BlockDevice for IsoAsBlockDevice<I> {
+    fn read_sector(&mut self, lba512: u64, out: &mut [u8; 512]) -> Result<(), firmware::bios::DiskError> {
+        let lba512 = u32::try_from(lba512).map_err(|_| firmware::bios::DiskError::OutOfRange)?;
+        let lba2048 = lba512 / 4;
+        let sub = (lba512 % 4) as usize * 512;
+        if lba2048 >= self.iso.block_count() {
+            return Err(firmware::bios::DiskError::OutOfRange);
+        }
+        let mut block = [0u8; 2048];
+        self.iso
+            .read_block(lba2048, &mut block)
+            .map_err(|_| firmware::bios::DiskError::OutOfRange)?;
+        out.copy_from_slice(&block[sub..sub + 512]);
+        Ok(())
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        u64::from(self.iso.block_count()) * 4
+    }
+}
+```
+
 The BIOS uses the following **drive numbers** in `DL`:
 
 - First HDD: `DL = 0x80`
