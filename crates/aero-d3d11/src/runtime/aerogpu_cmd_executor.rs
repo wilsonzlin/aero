@@ -13570,33 +13570,58 @@ impl AerogpuD3d11Executor {
         let group_count_x = read_u32_le(cmd_bytes, 8)?;
         let group_count_y = read_u32_le(cmd_bytes, 12)?;
         let group_count_z = read_u32_le(cmd_bytes, 16)?;
+        let stage_ex = read_u32_le(cmd_bytes, 20)?;
+        let pass_stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, stage_ex).ok_or_else(|| {
+                anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)")
+            })?;
 
         // D3D11 treats any zero group count as a no-op dispatch.
         if group_count_x == 0 || group_count_y == 0 || group_count_z == 0 {
             return Ok(());
         }
 
-        let cs_handle = self
-            .state
-            .cs
-            .ok_or_else(|| anyhow!("DISPATCH: no compute shader bound"))?;
+        let shader_handle = match pass_stage {
+            ShaderStage::Compute => self
+                .state
+                .cs
+                .ok_or_else(|| anyhow!("DISPATCH: no compute shader bound"))?,
+            ShaderStage::Geometry => self
+                .state
+                .gs
+                .ok_or_else(|| anyhow!("DISPATCH: no geometry shader bound"))?,
+            ShaderStage::Hull => self
+                .state
+                .hs
+                .ok_or_else(|| anyhow!("DISPATCH: no hull shader bound"))?,
+            ShaderStage::Domain => self
+                .state
+                .ds
+                .ok_or_else(|| anyhow!("DISPATCH: no domain shader bound"))?,
+            ShaderStage::Vertex | ShaderStage::Pixel => {
+                bail!("DISPATCH: invalid pass stage {pass_stage:?} (stage_ex={stage_ex})")
+            }
+        };
         // Clone shader metadata out of `self.resources` to avoid holding immutable borrows across
         // pipeline/bind-group construction.
-        let cs = self
+        let shader = self
             .resources
             .shaders
-            .get(&cs_handle)
-            .ok_or_else(|| anyhow!("DISPATCH: unknown CS shader {cs_handle}"))?
+            .get(&shader_handle)
+            .ok_or_else(|| anyhow!("DISPATCH: unknown shader {shader_handle}"))?
             .clone();
-        if cs.stage != ShaderStage::Compute {
-            bail!("DISPATCH: shader {cs_handle} is not a compute shader");
+        if shader.stage != pass_stage {
+            bail!(
+                "DISPATCH: shader {shader_handle} is not a {pass_stage:?} shader (got {:?})",
+                shader.stage
+            );
         }
 
         let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
             [reflection_bindings::ShaderBindingSet::Guest(
-                cs.reflection.bindings.as_slice(),
+                shader.reflection.bindings.as_slice(),
             )],
             reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
@@ -13630,7 +13655,7 @@ impl AerogpuD3d11Executor {
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the compute pass.
         self.ensure_bound_resources_uploaded(
-            ShaderStage::Compute,
+            pass_stage,
             encoder,
             &pipeline_bindings,
             allocs,
@@ -13641,10 +13666,10 @@ impl AerogpuD3d11Executor {
         // pointer so we can continue mutating unrelated executor state while the compute pass is
         // alive.
         let compute_pipeline_ptr = {
-            let entry_point = cs.entry_point;
+            let entry_point = shader.entry_point;
             let pipeline_layout = pipeline_layout.clone();
             let key = ComputePipelineKey {
-                shader: cs.wgsl_hash,
+                shader: shader.wgsl_hash,
                 layout: layout_key.clone(),
                 entry_point,
             };
@@ -13652,7 +13677,7 @@ impl AerogpuD3d11Executor {
                 .pipeline_cache
                 .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
                     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd compute pipeline"),
+                        label: Some("aerogpu_cmd dispatch compute pipeline"),
                         layout: Some(pipeline_layout.as_ref()),
                         module: cs,
                         entry_point,
@@ -13665,52 +13690,7 @@ impl AerogpuD3d11Executor {
         let compute_pipeline = unsafe { &*compute_pipeline_ptr };
 
         // Build bind groups (before starting the pass so we can freely mutate executor caches).
-        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
-            Vec::with_capacity(pipeline_bindings.group_layouts.len());
-        for group_index in 0..pipeline_bindings.group_layouts.len() {
-            if pipeline_bindings.group_bindings[group_index].is_empty() {
-                let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                let bg = self.bind_group_cache.get_or_create(
-                    &self.device,
-                    &pipeline_bindings.group_layouts[group_index],
-                    &entries,
-                );
-                bind_groups.push(bg);
-            } else {
-                let stage = group_index_to_stage(group_index as u32)?;
-                let stage_bindings = self.bindings.stage_mut(stage);
-                let was_dirty = stage_bindings.is_dirty();
-                let provider = CmdExecutorBindGroupProvider {
-                    resources: &self.resources,
-                    legacy_constants: &self.legacy_constants,
-                    cbuffer_scratch: &self.cbuffer_scratch,
-                    srv_buffer_scratch: &self.srv_buffer_scratch,
-                    storage_align: (self.device.limits().min_storage_buffer_offset_alignment
-                        as u64)
-                        .max(1),
-                    max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
-                        as u64,
-                    dummy_uniform: &self.dummy_uniform,
-                    dummy_storage: &self.dummy_storage,
-                    dummy_texture_view: &self.dummy_texture_view,
-                    default_sampler: &self.default_sampler,
-                    stage,
-                    stage_state: stage_bindings,
-                    internal_buffers: &[],
-                };
-                let bg = reflection_bindings::build_bind_group(
-                    &self.device,
-                    &mut self.bind_group_cache,
-                    &pipeline_bindings.group_layouts[group_index],
-                    &pipeline_bindings.group_bindings[group_index],
-                    &provider,
-                )?;
-                if was_dirty {
-                    stage_bindings.clear_dirty();
-                }
-                bind_groups.push(bg);
-            }
-        }
+        let bind_groups = self.build_stage_bind_groups(pass_stage, &pipeline_bindings)?;
 
         self.encoder_has_commands = true;
         {
@@ -13726,11 +13706,15 @@ impl AerogpuD3d11Executor {
         }
 
         // Conservatively mark bound resources as used to preserve queue.write_* ordering heuristics.
+        let group_stage_overrides = [(pass_stage.as_bind_group_index(), pass_stage)];
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             if group_bindings.is_empty() {
                 continue;
             }
-            let stage = group_index_to_stage(group_index as u32)?;
+            let stage = group_index_to_stage_with_overrides(
+                group_index as u32,
+                group_stage_overrides.as_slice(),
+            )?;
             let stage_bindings = self.bindings.stage(stage);
             for binding in group_bindings {
                 #[allow(unreachable_patterns)]
@@ -19492,12 +19476,14 @@ mod tests {
                 }
             };
             let allocs = AllocTable::new(None).unwrap();
+            let mut guest_mem = VecGuestMemory::new(0);
 
             // Create a hull and geometry constant buffer with different contents so we can detect
             // which stage bucket was used to build the bind group for @group(3).
             const HULL_CB: u32 = 1;
             const GEOM_CB: u32 = 2;
             const OUT: u32 = 3;
+            const HS_SHADER: u32 = 4;
 
             for (handle, usage_flags, size_bytes) in [
                 (HULL_CB, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, 16u64),
@@ -19577,7 +19563,7 @@ mod tests {
                     }),
                 );
 
-            let bindings = [
+            let bindings = vec![
                 crate::Binding {
                     group: 3,
                     binding: crate::binding_model::BINDING_BASE_CBUFFER,
@@ -19594,28 +19580,6 @@ mod tests {
                     kind: crate::BindingKind::UavBuffer { slot: 0 },
                 },
             ];
-            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
-                &exec.device,
-                &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(
-                    bindings.as_slice(),
-                )],
-                reflection_bindings::BindGroupIndexValidation::GuestShaders,
-            )
-            .expect("build_pipeline_bindings_info should succeed");
-
-            let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
-                .group_layouts
-                .iter()
-                .map(|l| l.layout.as_ref())
-                .collect();
-            let pipeline_layout =
-                exec.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("aerogpu_cmd HS group3 bucket test pipeline layout"),
-                        bind_group_layouts: &layout_refs,
-                        push_constant_ranges: &[],
-                    });
 
             let wgsl = format!(
                 r#"
@@ -19623,34 +19587,38 @@ mod tests {
 @group(2) @binding({}) var<storage, read_write> out: array<u32>;
 
 @compute @workgroup_size(1)
-fn main() {{
+fn hs_main() {{
     out[0] = cb.x;
 }}
 "#,
                 crate::binding_model::BINDING_BASE_UAV
             );
-            let shader = exec
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("aerogpu_cmd HS group3 bucket test shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(wgsl)),
-                });
+            let (wgsl_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                wgsl.as_str(),
+                Some("aerogpu_cmd HS group3 bucket test shader"),
+            );
+            exec.resources.shaders.insert(
+                HS_SHADER,
+                ShaderResource {
+                    stage: ShaderStage::Hull,
+                    wgsl_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "hs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection {
+                        inputs: Vec::new(),
+                        outputs: Vec::new(),
+                        bindings,
+                        rdef: None,
+                    },
+                    wgsl_source: wgsl.clone(),
+                },
+            );
+            exec.state.hs = Some(HS_SHADER);
 
-            let pipeline = exec
-                .device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("aerogpu_cmd HS group3 bucket test pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: "main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                });
-
-            let bind_groups = exec
-                .build_stage_bind_groups(ShaderStage::Hull, &pipeline_bindings)
-                .expect("bind groups should build");
-
-            let out_buf = &exec.resources.buffers.get(&OUT).unwrap().buffer;
             let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd HS group3 bucket test staging"),
                 size: 4,
@@ -19663,17 +19631,18 @@ fn main() {{
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("aerogpu_cmd HS group3 bucket test encoder"),
                 });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("aerogpu_cmd HS group3 bucket test pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&pipeline);
-                for (group_index, bg) in bind_groups.iter().enumerate() {
-                    pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
-                }
-                pass.dispatch_workgroups(1, 1, 1);
-            }
+            let mut dispatch_cmd = Vec::new();
+            dispatch_cmd.extend_from_slice(&(AerogpuCmdOpcode::Dispatch as u32).to_le_bytes());
+            dispatch_cmd.extend_from_slice(&24u32.to_le_bytes());
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes());
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes());
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes());
+            // `stage_ex=3` selects the hull shader stage for compute-based execution.
+            dispatch_cmd.extend_from_slice(&3u32.to_le_bytes());
+            assert_eq!(dispatch_cmd.len(), 24);
+            exec.exec_dispatch(&mut encoder, dispatch_cmd.as_slice(), &allocs, &mut guest_mem)
+                .expect("DISPATCH should succeed");
+            let out_buf = &exec.resources.buffers.get(&OUT).unwrap().buffer;
             encoder.copy_buffer_to_buffer(out_buf, 0, &staging, 0, 4);
             exec.queue.submit([encoder.finish()]);
 
