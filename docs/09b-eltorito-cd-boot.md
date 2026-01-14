@@ -154,7 +154,7 @@ The Initial/Default Entry specifies the boot image location and how to load it.
 | `0x02` | 2 | Load Segment | `u16` LE. If `0`, BIOS must default to **`0x07C0`** |
 | `0x04` | 1 | System Type | Ignored by Aero for no-emulation |
 | `0x05` | 1 | Unused | Must be ignored |
-| `0x06` | 2 | Sector Count | `u16` LE, **count of 512-byte sectors to load** |
+| `0x06` | 2 | Sector Count | `u16` LE, **count of 512-byte sectors to load**. If `0`, BIOS must default to **4 sectors** (2048 bytes) per spec. |
 | `0x08` | 4 | Load RBA | `u32` LE, **ISO LBA (2048-byte)** of boot image |
 | `0x0C` | 20 | Unused | Must be ignored |
 
@@ -175,11 +175,14 @@ Given the initial/default entry:
 1. Compute `load_segment`:
    * If `load_segment != 0`, use it.
    * If `load_segment == 0`, default to **`0x07C0`**.
-2. Compute destination physical address: `dst = load_segment << 4`.
-3. Compute how many bytes to read: `bytes_to_load = sector_count * 512`.
-4. Convert the boot image start to BIOS LBA:
+2. Compute `sector_count`:
+   * If `sector_count != 0`, use it.
+   * If `sector_count == 0`, default to **4** (2048 bytes total).
+3. Compute destination physical address: `dst = load_segment << 4`.
+4. Compute how many bytes to read: `bytes_to_load = sector_count * 512`.
+5. Convert the boot image start to BIOS LBA:
    * `boot_image_lba512 = load_rba2048 * 4`
-5. Read exactly `sector_count` **512-byte** sectors starting at `boot_image_lba512` into memory at
+6. Read exactly `sector_count` **512-byte** sectors starting at `boot_image_lba512` into memory at
    `dst`.
 
 Important subtlety:
