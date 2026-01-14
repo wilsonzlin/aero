@@ -198,6 +198,12 @@ import {
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
 } from "./vm_snapshot_wasm";
+import {
+  IO_WORKER_RUNTIME_DISK_SNAPSHOT_KIND,
+  findRuntimeDiskWorkerSnapshotDeviceBlob,
+  restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs,
+} from "./io_worker_runtime_disk_snapshot";
+import { pauseIoWorkerSnapshotAndDrainDiskIo } from "./io_worker_snapshot_pause";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
 import { tryInitXhciDevice } from "./io_xhci_init";
@@ -3551,6 +3557,13 @@ async function handleVmSnapshotSaveToOpfs(
     if (!api) {
       throw new Error("WASM is not initialized in the IO worker; cannot save VM snapshot.");
     }
+    let mergedCoordinatorDevices = coordinatorDevices;
+    if (diskClient) {
+      const diskState = await diskClient.prepareSnapshot();
+      const diskBlob: VmSnapshotDeviceBlob = { kind: IO_WORKER_RUNTIME_DISK_SNAPSHOT_KIND, bytes: diskState.slice().buffer };
+      mergedCoordinatorDevices = Array.isArray(coordinatorDevices) ? [...coordinatorDevices, diskBlob] : [diskBlob];
+    }
+
     await saveIoWorkerVmSnapshotToOpfs({
       api,
       path,
@@ -3583,7 +3596,7 @@ async function handleVmSnapshotSaveToOpfs(
         netStack: resolveNetStackSnapshotBridge(),
       },
       restoredDevices: snapshotRestoredDeviceBlobs,
-      coordinatorDevices,
+      coordinatorDevices: mergedCoordinatorDevices,
     });
   } finally {
     snapshotOpInFlight = false;
@@ -3628,7 +3641,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         netStack: resolveNetStackSnapshotBridge(),
       },
     });
-
+ 
     // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
     // snapshot. Cancel any in-flight worker-side awaits so the guest can re-emit actions instead of
     // deadlocking on completions that will never arrive.
@@ -3638,6 +3651,15 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         usbPassthroughRuntime.start();
       } catch (err) {
         console.warn("[io.worker] Failed to reset WebUSB passthrough runtime after snapshot restore", err);
+      }
+    }
+
+    if (findRuntimeDiskWorkerSnapshotDeviceBlob(restored.restoredDevices)) {
+      if (!diskClient) diskClient = new RuntimeDiskClient();
+      const restoredDisk = await restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs({ devices: restored.restoredDevices, diskClient });
+      if (restoredDisk) {
+        activeDisk = restoredDisk.activeDisk;
+        cdDisk = restoredDisk.cdDisk;
       }
     }
 
@@ -4089,9 +4111,16 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
       switch (snapshotMsg.kind) {
         case "vm.snapshot.pause": {
-          snapshotPaused = true;
-          setUsbProxyCompletionRingDispatchPaused(true);
-          ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+          void pauseIoWorkerSnapshotAndDrainDiskIo({
+            setSnapshotPaused: (paused) => {
+              snapshotPaused = paused;
+            },
+            setUsbProxyCompletionRingDispatchPaused,
+            diskIoChain,
+            onPaused: () => {
+              ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+            },
+          });
           return;
         }
         case "vm.snapshot.resume": {

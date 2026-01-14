@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
+import { serializeRuntimeDiskSnapshot } from "../storage/runtime_disk_snapshot";
 import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, snapshotUsbDeviceState, restoreUsbDeviceState } from "./io_worker_vm_snapshot";
 import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
+import {
+  IO_WORKER_RUNTIME_DISK_SNAPSHOT_KIND,
+  appendRuntimeDiskWorkerSnapshotDeviceBlob,
+  restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs,
+} from "./io_worker_runtime_disk_snapshot";
+import { pauseIoWorkerSnapshotAndDrainDiskIo } from "./io_worker_snapshot_pause";
 import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
@@ -768,5 +775,80 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const xhci = decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
     expect(uhci).toEqual(uhciFresh);
     expect(xhci).toEqual(xhciOld);
+  });
+
+  it("includes RuntimeDiskWorker snapshot state as an extra device.<id> blob on save and applies it on restore", async () => {
+    const diskState = serializeRuntimeDiskSnapshot({
+      version: 1,
+      nextHandle: 3,
+      disks: [
+        {
+          handle: 1,
+          readOnly: false,
+          sectorSize: 512,
+          capacityBytes: 1024,
+          backend: {
+            kind: "local",
+            backend: "opfs",
+            key: "test.img",
+            format: "raw",
+            diskKind: "hdd",
+            sizeBytes: 1024,
+          },
+        },
+      ],
+    });
+    const diskClient = {
+      prepareSnapshot: vi.fn(async () => diskState),
+      restoreFromSnapshot: vi.fn(async () => undefined),
+    };
+
+    const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
+    await appendRuntimeDiskWorkerSnapshotDeviceBlob(devices, diskClient);
+    expect(diskClient.prepareSnapshot).toHaveBeenCalledTimes(1);
+    expect(devices).toEqual([{ kind: IO_WORKER_RUNTIME_DISK_SNAPSHOT_KIND, bytes: diskState }]);
+
+    const restored = await restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs({ devices, diskClient });
+    expect(diskClient.restoreFromSnapshot).toHaveBeenCalledTimes(1);
+    expect(diskClient.restoreFromSnapshot).toHaveBeenCalledWith(diskState);
+    expect(restored).toMatchObject({ state: diskState });
+    expect(restored?.activeDisk).toEqual({ handle: 1, sectorSize: 512, capacityBytes: 1024, readOnly: false });
+    expect(restored?.cdDisk).toBeNull();
+  });
+
+  it("vm.snapshot.pause waits for in-flight disk I/O (diskIoChain) before ACKing paused", async () => {
+    let resolveChain!: () => void;
+    const diskIoChain = new Promise<void>((resolve) => {
+      resolveChain = () => resolve();
+    });
+
+    const setSnapshotPaused = vi.fn();
+    const setUsbPaused = vi.fn();
+    const onPaused = vi.fn();
+
+    let finished = false;
+    const task = pauseIoWorkerSnapshotAndDrainDiskIo({
+      setSnapshotPaused,
+      setUsbProxyCompletionRingDispatchPaused: setUsbPaused,
+      diskIoChain,
+      onPaused: () => {
+        onPaused();
+        finished = true;
+      },
+    });
+
+    // Should synchronously enter snapshot-paused mode, but not ACK paused until disk I/O drains.
+    expect(setSnapshotPaused).toHaveBeenCalledWith(true);
+    expect(setUsbPaused).toHaveBeenCalledWith(true);
+    expect(onPaused).not.toHaveBeenCalled();
+
+    // Allow microtasks to run; still blocked on diskIoChain.
+    await Promise.resolve();
+    expect(finished).toBe(false);
+
+    resolveChain();
+    await task;
+    expect(onPaused).toHaveBeenCalledTimes(1);
+    expect(finished).toBe(true);
   });
 });
