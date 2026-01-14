@@ -33,7 +33,7 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
 
         # Job summary bullet labels
         self.assertIn("Host virtio-blk I/O marker", self.text)
-        self.assertIn("Host virtio-blk reset recovery marker", self.text)
+        self.assertIn("Host virtio-blk-reset-recovery marker", self.text)
         self.assertIn("Host virtio-net-large marker", self.text)
         self.assertIn("Host virtio-net-udp marker", self.text)
         self.assertIn("Host virtio-net-udp-dns marker", self.text)

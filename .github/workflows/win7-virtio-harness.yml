@@ -1000,11 +1000,6 @@ jobs:
                 echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
               fi
             fi
-            if [[ "${{ inputs.require_no_blk_reset_recovery }}" == "true" || "${{ inputs.fail_on_blk_reset_recovery }}" == "true" ]]; then
-              if [[ -n "${blk_reset_recovery_host_marker}" ]]; then
-                echo "- Host virtio-blk reset recovery marker: \`${blk_reset_recovery_host_marker}\`"
-              fi
-            fi
             if [[ "${{ inputs.require_virtio_net_msix }}" == "true" && -n "${net_msix_host_marker}" ]]; then
               echo "- Host virtio-net MSI-X marker: \`${net_msix_host_marker}\`"
             fi
@@ -1035,9 +1030,12 @@ jobs:
             if [[ -n "${blk_resize_marker}" ]]; then
               echo "- Guest virtio-blk-resize marker: ${blk_resize_marker}"
             fi
-             if [[ -n "${blk_reset_marker}" ]]; then
-               echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
-             fi
+              if [[ -n "${blk_reset_marker}" ]]; then
+                echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
+              fi
+              if [[ -n "${blk_reset_recovery_marker}" ]]; then
+                echo "- Guest virtio-blk-reset-recovery marker: \`${blk_reset_recovery_marker}\`"
+              fi
               if [[ -n "${blk_reset_host_marker}" ]]; then
                 echo "- Host virtio-blk-reset marker: \`${blk_reset_host_marker}\`"
               fi
