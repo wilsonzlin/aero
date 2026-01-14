@@ -39,7 +39,11 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
+
+It also expects the canonical keyboard/mouse INF to be **SUBSYS-gated** (no generic
+`PCI\VEN_1AF4&DEV_1052&REV_01` fallback match). If you need the generic fallback
+for environments that do not expose Aero subsystem IDs, use the legacy alias
+`virtio-input.inf.disabled` (rename it to `virtio-input.inf` to enable it).
 
 Run it from any PowerShell prompt:
 
