@@ -74,6 +74,33 @@ typedef struct io_connect_interrupt_ex_hook_ctx {
     int call_count;
 } io_connect_interrupt_ex_hook_ctx_t;
 
+typedef struct io_connect_interrupt_hook_ctx {
+    int call_count;
+} io_connect_interrupt_hook_ctx_t;
+
+static VOID io_connect_interrupt_hook_trigger_interrupt_and_run_dpc(_Inout_ PKINTERRUPT InterruptObject, _In_opt_ PVOID Context)
+{
+    io_connect_interrupt_hook_ctx_t* ctx = (io_connect_interrupt_hook_ctx_t*)Context;
+    PVIRTIO_INTX intx;
+
+    assert(ctx != NULL);
+    assert(InterruptObject != NULL);
+    assert(InterruptObject->ServiceRoutine != NULL);
+    assert(InterruptObject->ServiceContext != NULL);
+    ctx->call_count++;
+
+    intx = (PVIRTIO_INTX)InterruptObject->ServiceContext;
+    assert(intx->Initialized != FALSE);
+    assert(intx->InterruptObject == InterruptObject);
+
+    /*
+     * Simulate an INTx interrupt arriving and its DPC being dispatched before the
+     * connect helper returns.
+     */
+    assert(WdkTestTriggerInterrupt(InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx->Dpc) != FALSE);
+}
+
 static VOID io_connect_interrupt_ex_hook_trigger_message(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameters, _In_opt_ PVOID Context)
 {
     io_connect_interrupt_ex_hook_ctx_t* ctx = (io_connect_interrupt_ex_hook_ctx_t*)Context;
@@ -322,6 +349,50 @@ static void test_intx_connect_and_dispatch(void)
     VirtioPciWdmInterruptDisconnect(&intr);
     assert(WdkTestGetIoDisconnectInterruptCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+}
+
+static void test_intx_dpc_can_run_during_connect(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    io_connect_interrupt_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+    volatile UCHAR isr_reg = 0;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    /* Make callbacks usable even if the DPC runs before connect returns. */
+    ctx.expected = &intr;
+
+    /* Pre-set ISR byte so the hooked interrupt sees queue work. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptHook(io_connect_interrupt_hook_trigger_interrupt_and_run_dpc, &hook_ctx);
+
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
+
+    assert(hook_ctx.call_count == 1);
+    assert(isr_reg == 0);
+    assert(intr.u.Intx.Intx.IsrCount == 1);
+    assert(intr.u.Intx.Intx.DpcCount == 1);
+    assert(intr.u.Intx.Intx.DpcInFlight == 0);
+    assert(intr.u.Intx.Intx.Dpc.Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    assert(ctx.queue_calls == 1);
+    assert(ctx.last_queue_index == VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
+    assert(ctx.config_calls == 0);
+
+    WdkTestClearIoConnectInterruptHook();
+
+    VirtioPciWdmInterruptDisconnect(&intr);
 }
 
 static void test_message_connect_disconnect_calls_wdk_routines(void)
@@ -928,6 +999,7 @@ int main(void)
 {
     test_connect_validation();
     test_intx_connect_and_dispatch();
+    test_intx_dpc_can_run_during_connect();
     test_message_connect_disconnect_calls_wdk_routines();
     test_message_single_vector_default_mapping_dispatches_queue_work();
     test_message_isr_does_not_read_isr_status_byte();
