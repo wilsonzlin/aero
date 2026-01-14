@@ -665,6 +665,60 @@ static int test_qinq_tagged_ipv4_tcp(void) {
   return 0;
 }
 
+static int test_qinq_tagged_ipv4_udp(void) {
+  /* QinQ: outer 0x88A8 + inner 0x8100 */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype QinQ */
+      0x88, 0xa8,
+      /* outer tag */
+      0x00, 0x01, 0x81, 0x00,
+      /* inner tag */
+      0x00, 0x02, 0x08, 0x00,
+      /* IPv4 header */
+      0x45, 0x00, 0x00, 0x20, /* total_len=32 */
+      0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, /* proto=UDP */
+      0xc0, 0x00, 0x02, 0x01, 0xc6, 0x33, 0x64, 0x02,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x00, 0x0c, 0x00, 0x00, /* len=12, csum=0 */
+      /* payload */
+      'd',  'a',  't',  'a',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U16(Info.L2Len, 22);
+  ASSERT_EQ_U16(Info.L3Offset, 22);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV4);
+  ASSERT_EQ_U8(Info.L4Proto, 17);
+  ASSERT_EQ_U16(Info.L4Offset, 42);
+  ASSERT_EQ_U16(Info.L4Len, 8);
+  ASSERT_EQ_U16(Info.PayloadOffset, 50);
+  ASSERT_EQ_U16(Info.CsumStart, 42);
+  ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 42);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  return 0;
+}
+
 static int test_vlan_too_many_tags_unsupported(void) {
   /* 3 stacked VLAN tags should be rejected (we support up to 2). */
   static const uint8_t Frame[] = {
@@ -1235,6 +1289,7 @@ int main(void) {
   rc |= test_ipv6_no_next_header();
   rc |= test_vlan_tagged_ipv4_tcp();
   rc |= test_qinq_tagged_ipv4_tcp();
+  rc |= test_qinq_tagged_ipv4_udp();
   rc |= test_vlan_too_many_tags_unsupported();
   rc |= test_malformed_and_truncated();
   rc |= test_ipv4_tcp_options_boundary();

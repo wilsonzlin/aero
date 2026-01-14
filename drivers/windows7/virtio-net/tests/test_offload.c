@@ -465,6 +465,31 @@ static void test_ipv4_vlan_udp_checksum_only(void)
     assert(hdr.CsumOffset == 6);
 }
 
+static void test_ipv4_qinq_udp_checksum_only(void)
+{
+    uint8_t pkt[22 + 20 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth_qinq(pkt, 0x0800);
+    build_ipv4_udp(pkt + 22, 0);
+    build_udp_header(pkt + 22 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(22 + 20));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 4);
+    assert(info.L4Protocol == 17);
+}
+
 static void test_ipv4_ip_options_tcp_checksum_only(void)
 {
     /* IHL=6 (24 bytes). */
@@ -617,6 +642,28 @@ static void test_ipv4_fragment_rejected(void)
     assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION);
 }
 
+static void test_ipv4_fragment_udp_rejected(void)
+{
+    uint8_t pkt[14 + 20 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 20);
+
+    /* Set MF (more fragments) flag. */
+    pkt[14 + 6] = 0x20;
+    pkt[14 + 7] = 0x00;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION);
+}
+
 static void test_ipv6_fragment_rejected(void)
 {
     uint8_t pkt[14 + 40 + 8 + 20];
@@ -702,12 +749,14 @@ int main(void)
     test_ipv6_hopbyhop_udp_checksum_only();
     test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_vlan_udp_checksum_only();
+    test_ipv4_qinq_udp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();
     test_ipv4_tcp_lso();
     test_ipv4_tcp_options_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
     test_ipv4_fragment_rejected();
+    test_ipv4_fragment_udp_rejected();
     test_ipv6_fragment_rejected();
     test_ipv6_hopbyhop_tcp_checksum_only();
     test_unsupported_protocol();
