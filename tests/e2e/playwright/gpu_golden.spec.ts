@@ -22,6 +22,22 @@ function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(base64, 'base64');
 }
 
+async function skipIfWebGl2Unavailable(page: Page, projectName: string): Promise<void> {
+  const hasWebgl2 = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    return !!canvas.getContext('webgl2');
+  });
+  if (!hasWebgl2) {
+    // Chromium is expected to have WebGL2 available (we rely on SwiftShader in CI for determinism).
+    // Firefox headless environments may not provide WebGL2/WebGL at all; treat that as a skip so
+    // the rest of the GPU golden suite (Canvas2D + Chromium WebGL2) can still run.
+    if (projectName.startsWith('chromium')) {
+      throw new Error('WebGL2 is unavailable in this Chromium test environment');
+    }
+    test.skip(true, 'WebGL2 is unavailable in this browser/environment');
+  }
+}
+
 function resolveGoldenPngPath(goldenName: string): string {
   return path.resolve(TEST_DIR, '..', '..', 'golden', `${goldenName}.png`);
 }
@@ -160,6 +176,7 @@ test('VBE LFB microtest (color bars) matches golden', async ({ page }, testInfo)
 
 test('WebGL2 microtest (scissored clears) matches golden', async ({ page }, testInfo) => {
   await page.setContent(`<canvas id="c" width="64" height="64"></canvas>`);
+  await skipIfWebGl2Unavailable(page, testInfo.project.name);
 
   const result = await page.evaluate(() => {
     const canvas = document.getElementById('c');
@@ -402,6 +419,7 @@ test('WebGPU microtest (scissored quad) matches golden @webgpu', async ({ page }
 });
 
 test('GPU backend smoke: WebGL2 presents expected frame (golden)', async ({ page }, testInfo) => {
+  await skipIfWebGl2Unavailable(page, testInfo.project.name);
   await page.goto('/web/gpu-smoke.html?backend=webgl2&filter=nearest&aspect=stretch', {
     waitUntil: 'load',
   });
@@ -525,6 +543,7 @@ for (const traceFile of fs
       const traceB64 = fs.readFileSync(tracePath).toString('base64');
 
       await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
+      await skipIfWebGl2Unavailable(page, testInfo.project.name);
       await page.addScriptTag({ path: TRACE_TOOL_PATH });
 
       const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgl2' });
