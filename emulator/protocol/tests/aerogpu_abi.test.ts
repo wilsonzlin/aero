@@ -1526,6 +1526,18 @@ test("writeFencePageCompletedFence updates the expected bytes", () => {
   assert.equal(view.getBigUint64(AEROGPU_FENCE_PAGE_OFF_COMPLETED_FENCE, true), 0x0102030405060708n);
 });
 
+test("parseAndValidateAbiVersionU32 rejects unknown major versions", () => {
+  const versionU32 = ((AEROGPU_ABI_MAJOR + 1) << 16) | AEROGPU_ABI_MINOR;
+  assert.throws(() => parseAndValidateAbiVersionU32(versionU32), AerogpuAbiError);
+});
+
+test("parseAndValidateAbiVersionU32 accepts unknown minor versions", () => {
+  const versionU32 = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
+  const parsed = parseAndValidateAbiVersionU32(versionU32);
+  assert.equal(parsed.major, AEROGPU_ABI_MAJOR);
+  assert.equal(parsed.minor, AEROGPU_ABI_MINOR + 1);
+});
+
 test("decodeCmdStreamHeader rejects unknown major versions", () => {
   const buf = new ArrayBuffer(AEROGPU_CMD_STREAM_HEADER_SIZE);
   const view = new DataView(buf);
