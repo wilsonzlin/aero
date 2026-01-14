@@ -1118,6 +1118,28 @@ impl WasmTieredVm {
             .drain_write_log_to(|paddr, len| jit.on_guest_write(paddr, len));
     }
 
+    /// Execute a single tiered step and return the raw [`StepOutcome`].
+    ///
+    /// This is a Rust-only helper intended for wasm-bindgen integration tests that need to assert
+    /// on Tier-1 instruction retirement semantics (e.g. commit-flag rollback behavior). It mirrors
+    /// the inner dispatch path used by [`WasmTieredVm::run_blocks`]:
+    /// - keep the code-version table ABI slots initialized before entering JIT code, and
+    /// - flush any Tier-0 guest writes back into the JIT page-version tracker after the step.
+    pub fn step_raw(&mut self) -> StepOutcome {
+        self.sync_code_version_table_abi();
+        let outcome = self.dispatcher.step(&mut self.vcpu);
+        self.flush_guest_writes();
+        outcome
+    }
+
+    /// Return the guest-visible IA32_TSC value (`CpuState.msr.tsc`).
+    ///
+    /// For deterministic execution this advances only when the dispatcher retires committed
+    /// instructions (Tier-0 or Tier-1).
+    pub fn cpu_tsc(&self) -> u64 {
+        self.vcpu.cpu.state.msr.tsc
+    }
+
     fn init_code_version_table_fields(
         jit_abi: &mut JitAbiBuffer,
         jit: &mut JitRuntime<WasmJitBackend, CompileQueue>,
