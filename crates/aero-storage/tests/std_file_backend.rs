@@ -143,3 +143,19 @@ fn std_file_backend_with_read_only_flag_blocks_mutations_even_on_rw_handle() {
     assert_eq!(&buf, b"rw");
     backend.flush().unwrap();
 }
+
+#[test]
+fn std_file_backend_open_missing_file_reports_path_in_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("does-not-exist.img");
+
+    let err = StdFileBackend::open_read_only(&path).unwrap_err();
+    match err {
+        DiskError::Io(msg) => {
+            assert!(msg.contains("failed to open file"));
+            assert!(msg.contains(&format!("path={}", path.display())));
+            assert!(msg.contains("read_only=true"));
+        }
+        other => panic!("expected DiskError::Io, got {other:?}"),
+    }
+}
