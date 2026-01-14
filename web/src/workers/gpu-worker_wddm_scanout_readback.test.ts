@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { VRAM_BASE_PADDR } from "../arch/guest_phys";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
@@ -84,7 +85,13 @@ function writeBgrx2x2(dst: Uint8Array, pitchBytes: number): void {
 
 describe("workers/gpu-worker WDDM scanout readback", () => {
   it("reads BGRX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const width = 2;
@@ -181,7 +188,13 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
   }, 20_000);
 
   it("reads BGRX scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 1 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 1 * 1024 * 1024,
+    });
     const views = createSharedMemoryViews(segments);
 
     const width = 2;
@@ -276,4 +289,3 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     }
   }, 20_000);
 });
-

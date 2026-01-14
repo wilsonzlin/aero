@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import {
   FRAME_PRESENTED,
@@ -70,7 +71,13 @@ async function waitForWorkerMessage(
 
 describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
   it("emits a structured Validation event but does not send a fatal worker ERROR (no restart)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     // Ensure the frame scheduler tick path runs a present pass even if the legacy shared framebuffer
@@ -187,4 +194,3 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
     }
   }, 25_000);
 });
-

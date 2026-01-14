@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { allocateSharedMemorySegments } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "../ipc/gpu-protocol";
 import {
@@ -62,7 +62,13 @@ async function waitForWorkerMessage(
 
 describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
   it("emits a structured Scanout event and a coordinator ERROR when WDDM scanout points into VRAM without a shared VRAM SAB", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);

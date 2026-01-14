@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { allocateSharedMemorySegments } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import {
   FRAME_DIRTY,
@@ -16,9 +16,13 @@ import {
 import { SCANOUT_SOURCE_WDDM, SCANOUT_STATE_GENERATION_BUSY_BIT, ScanoutStateIndex, wrapScanoutState } from "../ipc/scanout_state";
 import { CURSOR_STATE_GENERATION_BUSY_BIT, CursorStateIndex, wrapCursorState } from "../ipc/cursor_state";
 import {
+  FramebufferFormat,
   layoutFromHeader,
+  computeSharedFramebufferLayout,
   SharedFramebufferHeaderIndex,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
 
 async function waitForWorkerMessage(
@@ -95,9 +99,43 @@ async function waitForAtomicValue(
   );
 }
 
+function createMinimalSharedFramebuffer(): SharedArrayBuffer {
+  const fbLayout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
+  const sharedFramebuffer = new SharedArrayBuffer(fbLayout.totalBytes);
+  const header = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  Atomics.store(header, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+  Atomics.store(header, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+  Atomics.store(header, SharedFramebufferHeaderIndex.WIDTH, fbLayout.width);
+  Atomics.store(header, SharedFramebufferHeaderIndex.HEIGHT, fbLayout.height);
+  Atomics.store(header, SharedFramebufferHeaderIndex.STRIDE_BYTES, fbLayout.strideBytes);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FORMAT, fbLayout.format);
+  Atomics.store(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILE_SIZE, fbLayout.tileSize);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_X, fbLayout.tilesX);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_Y, fbLayout.tilesY);
+  Atomics.store(header, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, fbLayout.dirtyWordsPerBuffer);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FLAGS, 0);
+  return sharedFramebuffer;
+}
+
+function allocateTestSegments() {
+  const sharedFramebuffer = createMinimalSharedFramebuffer();
+  return allocateHarnessSharedMemorySegments({
+    guestRamBytes: 1 * 1024 * 1024,
+    sharedFramebuffer,
+    sharedFramebufferOffsetBytes: 0,
+    ioIpcBytes: 0,
+    vramBytes: 0,
+  });
+}
+
 describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   it("presents from sharedFramebuffer via a mock presenter module (no vgaFramebuffer)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
@@ -228,7 +266,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   }, 20_000);
 
   it("counts dropped presents when the presenter module returns false", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
@@ -396,7 +434,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   }, 20_000);
 
   it("does not hang if scanout/cursor seqlock busy bit is stuck", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);

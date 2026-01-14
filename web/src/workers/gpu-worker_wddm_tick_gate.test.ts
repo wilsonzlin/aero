@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import {
   FRAME_PRESENTED,
@@ -11,13 +12,19 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
 } from "../ipc/gpu-protocol";
-import { SharedFramebufferHeaderIndex, SHARED_FRAMEBUFFER_HEADER_U32_LEN } from "../ipc/shared-layout";
+import {
+  FramebufferFormat,
+  SharedFramebufferHeaderIndex,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  computeSharedFramebufferLayout,
+} from "../ipc/shared-layout";
 import {
   publishScanoutState,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
   SCANOUT_SOURCE_WDDM,
-  SCANOUT_STATE_U32_LEN,
 } from "../ipc/scanout_state";
 
 async function waitForWorkerMessage(
@@ -77,7 +84,33 @@ async function waitForWorkerMessage(
 
 describe("workers/gpu-worker WDDM tick gating", () => {
   it("clears legacy shared framebuffer dirty on tick when scanout is WDDM-owned even if FRAME_STATUS is PRESENTED", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 0 });
+    const fbLayout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
+    const sharedFramebuffer = new SharedArrayBuffer(fbLayout.totalBytes);
+    const fbHeader = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.WIDTH, fbLayout.width);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.HEIGHT, fbLayout.height);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.STRIDE_BYTES, fbLayout.strideBytes);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FORMAT, fbLayout.format);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILE_SIZE, fbLayout.tileSize);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILES_X, fbLayout.tilesX);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILES_Y, fbLayout.tilesY);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, fbLayout.dirtyWordsPerBuffer);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
+
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 2 * 1024 * 1024,
+      sharedFramebuffer,
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -123,13 +156,7 @@ describe("workers/gpu-worker WDDM tick gating", () => {
         // No canvas: headless mode is sufficient for validating tick gating + dirty clearing.
       });
 
-      const fbHeader = new Int32Array(
-        segments.sharedFramebuffer,
-        segments.sharedFramebufferOffsetBytes,
-        SHARED_FRAMEBUFFER_HEADER_U32_LEN,
-      );
-
-      const scanoutWords = new Int32Array(segments.scanoutState!, segments.scanoutStateOffsetBytes ?? 0, SCANOUT_STATE_U32_LEN);
+      const scanoutWords = views.scanoutStateI32!;
 
       // 1) Legacy scanout: tick should be ignored while FRAME_STATUS is PRESENTED.
       publishScanoutState(scanoutWords, {
@@ -172,4 +199,3 @@ describe("workers/gpu-worker WDDM tick gating", () => {
     }
   }, 30_000);
 });
-
