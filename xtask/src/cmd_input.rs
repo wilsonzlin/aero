@@ -46,13 +46,13 @@ Usage:
 Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
-     --test ehci_snapshot_roundtrip --test usb2_companion_routing
+     --test ehci_snapshot_roundtrip --test usb2_companion_routing --test webusb_passthrough_uhci
      --test hid_composite_mouse_snapshot_compat --test hid_configuration_snapshot_clamping
      --test hid_consumer_control_snapshot_clamping --test hid_gamepad_snapshot_clamping
      --test hid_keyboard_snapshot_sanitization --test hid_mouse_snapshot_clamping
      --test usb_hub_snapshot_configuration_clamping --test attached_device_snapshot_address_clamping
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
-     --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers
+     --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers --test xhci_webusb_passthrough
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input
      --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
@@ -122,6 +122,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--test",
             "usb2_companion_routing",
             "--test",
+            "webusb_passthrough_uhci",
+            "--test",
             "hid_builtin_snapshot",
             "--test",
             "hid_composite_mouse_snapshot_compat",
@@ -151,6 +153,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "xhci_doorbell0",
             "--test",
             "xhci_usbcmd_run_gates_transfers",
+            "--test",
+            "xhci_webusb_passthrough",
         ]);
         runner.run_step("Rust: cargo test -p aero-usb --locked (focused)", &mut cmd)?;
     }
