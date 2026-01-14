@@ -1710,6 +1710,11 @@ fn translate_probe_does_not_populate_tlb_on_miss_long4() {
 fn stats_is_none_without_feature() {
     let mmu = Mmu::new();
     assert!(mmu.stats().is_none());
+
+    // Accessors should still compile and return 0 when the feature is disabled.
+    let s = MmuStats::default();
+    assert_eq!(s.dtlb_hits(), 0);
+    assert_eq!(s.page_walks(), 0);
 }
 
 #[cfg(feature = "stats")]

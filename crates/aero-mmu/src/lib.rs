@@ -432,6 +432,164 @@ pub struct MmuStats {
     pub tlb_invpcid: u64,
 }
 
+impl MmuStats {
+    /// Instruction TLB lookups.
+    #[inline]
+    pub fn itlb_lookups(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.itlb_lookups
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Instruction TLB hits.
+    #[inline]
+    pub fn itlb_hits(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.itlb_hits
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Instruction TLB misses.
+    #[inline]
+    pub fn itlb_misses(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.itlb_misses
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Data TLB lookups.
+    #[inline]
+    pub fn dtlb_lookups(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.dtlb_lookups
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Data TLB hits.
+    #[inline]
+    pub fn dtlb_hits(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.dtlb_hits
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Data TLB misses.
+    #[inline]
+    pub fn dtlb_misses(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.dtlb_misses
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// Page-table walks performed due to TLB misses.
+    #[inline]
+    pub fn page_walks(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.page_walks
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// TLB flushes of all entries (e.g. due to control register changes, INVPCID all-context).
+    #[inline]
+    pub fn tlb_flush_all(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.tlb_flush_all
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// TLB flushes of non-global entries.
+    #[inline]
+    pub fn tlb_flush_non_global(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.tlb_flush_non_global
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// TLB flushes of entries for a given PCID.
+    #[inline]
+    pub fn tlb_flush_pcid(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.tlb_flush_pcid
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// INVLPG operations performed.
+    #[inline]
+    pub fn tlb_invlpg(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.tlb_invlpg
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+
+    /// INVPCID operations performed.
+    #[inline]
+    pub fn tlb_invpcid(&self) -> u64 {
+        #[cfg(feature = "stats")]
+        {
+            self.tlb_invpcid
+        }
+        #[cfg(not(feature = "stats"))]
+        {
+            0
+        }
+    }
+}
+
 /// x86 MMU with a software TLB.
 #[derive(Debug, Clone)]
 pub struct Mmu {
