@@ -98,8 +98,6 @@ import type { AeroConfig } from '../config/aero_config';
 import { VRAM_BASE_PADDR } from '../arch/guest_phys.ts';
 import {
   createSharedMemoryViews,
-  guestPaddrToRamOffset,
-  guestRangeInBounds,
   ringRegionsForWorker,
   setReadyFlag,
   StatusIndex,
@@ -658,8 +656,14 @@ const tryReadHwCursorImageRgba8 = (
   const base = Number(basePaddr);
   if (!Number.isFinite(base) || base < 0) return null;
 
-  if (!guestRangeInBounds(layout, base, requiredBytes)) return null;
-  const start = guestPaddrToRamOffset(layout, base);
+  const ramBytes = layout.guest_size >>> 0;
+  try {
+    if (!guestRangeInBoundsRaw(ramBytes, base, requiredBytes)) return null;
+  } catch {
+    return null;
+  }
+
+  const start = guestPaddrToRamOffsetRaw(ramBytes, base);
   if (start === null) return null;
   const end = start + requiredBytes;
   if (end < start || end > guest.byteLength) return null;
