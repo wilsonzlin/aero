@@ -198,4 +198,42 @@ describe("disk_worker list_remote_caches", () => {
     const expectedKeys = [a.cacheKey, b.cacheKey, c.cacheKey].sort((x, y) => x.localeCompare(y));
     expect(list.caches.map((x) => x.cacheKey)).toEqual(expectedKeys);
   });
+
+  it("returns an empty list for non-OPFS backends", async () => {
+    vi.resetModules();
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "idb",
+        op: "list_remote_caches",
+        payload: {},
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(resp.result).toEqual({ ok: true, caches: [], corruptKeys: [] });
+  });
 });
