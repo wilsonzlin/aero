@@ -27,19 +27,6 @@ fn compute_store_raw_writes_u32_word() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::compute_store_raw_writes_u32_word");
 
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("compute_store_raw test device").await {
-                Ok(v) => v,
-                Err(err) => {
-                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                    return;
-                }
-            };
-        if !supports_compute {
-            common::skip_or_panic(test_name, "compute unsupported");
-            return;
-        }
-
         let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = parse_signatures(&dxbc).expect("parse signatures");
@@ -76,6 +63,24 @@ fn compute_store_raw_writes_u32_word() {
 
         let translated =
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+        assert!(
+            translated.wgsl.contains("floor("),
+            "expected float->u32 address heuristic in WGSL:\n{}",
+            translated.wgsl
+        );
+
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("compute_store_raw test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("compute_store_raw shader"),

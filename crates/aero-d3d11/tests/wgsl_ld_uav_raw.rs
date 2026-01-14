@@ -22,59 +22,6 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
             "::compute_shader_ld_uav_raw_accepts_float_byte_address"
         );
 
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("aero-d3d11 ld_uav_raw test device").await {
-                Ok(v) => v,
-                Err(err) => {
-                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                    return;
-                }
-            };
-        if !supports_compute {
-            common::skip_or_panic(test_name, "compute unsupported");
-            return;
-        }
-
-        // Input UAV data: 8 words (32 bytes).
-        let input_words: [u32; 8] = [
-            0x0001_0203,
-            0x0405_0607,
-            0x0809_0A0B,
-            0x0C0D_0E0F,
-            0x1020_3040,
-            0x5566_7788,
-            0x99AA_BBCC,
-            0xDDEE_FF00,
-        ];
-
-        // Output UAV: 4 words (16 bytes).
-        let output_words_len: usize = 4;
-
-        let input = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ld_uav_raw input buffer"),
-            size: (input_words.len() * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&input, 0, bytemuck::cast_slice(&input_words));
-
-        let output = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ld_uav_raw output buffer"),
-            size: (output_words_len * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&output, 0, &vec![0u8; output_words_len * 4]);
-
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ld_uav_raw staging buffer"),
-            size: (output_words_len * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // Build a compute shader:
         // - ld_uav_raw r0, l(16.0), u0
         // - store_raw u1, l(0), r0
@@ -148,6 +95,64 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
         };
         let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
             .expect("compute translation should succeed");
+        assert!(
+            translated.wgsl.contains("floor("),
+            "expected float->u32 address heuristic in WGSL:\n{}",
+            translated.wgsl
+        );
+
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 ld_uav_raw test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        // Input UAV data: 8 words (32 bytes).
+        let input_words: [u32; 8] = [
+            0x0001_0203,
+            0x0405_0607,
+            0x0809_0A0B,
+            0x0C0D_0E0F,
+            0x1020_3040,
+            0x5566_7788,
+            0x99AA_BBCC,
+            0xDDEE_FF00,
+        ];
+
+        // Output UAV: 4 words (16 bytes).
+        let output_words_len: usize = 4;
+
+        let input = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ld_uav_raw input buffer"),
+            size: (input_words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&input, 0, bytemuck::cast_slice(&input_words));
+
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ld_uav_raw output buffer"),
+            size: (output_words_len * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&output, 0, &vec![0u8; output_words_len * 4]);
+
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ld_uav_raw staging buffer"),
+            size: (output_words_len * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let cs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ld_uav_raw cs module"),

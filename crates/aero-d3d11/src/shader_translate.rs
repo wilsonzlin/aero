@@ -5250,17 +5250,34 @@ fn emit_src_vec4_u32(
     Ok(expr)
 }
 
-/// Emits a `vec4<u32>` source for integer-typed operations.
+/// Emits a `vec4<u32>` source for integer-like operations.
 ///
-/// DXBC registers are untyped 32-bit lanes. Integer ops therefore interpret sources as raw integer
-/// bits (via `bitcast<u32>`), not as numeric float values.
+/// SM4/SM5 register lanes are untyped 32-bit values; in practice integer operands can appear
+/// either as:
+/// - raw integer bits written into a register lane (common),
+/// - or numeric float values (e.g. produced by float arithmetic).
+///
+/// To cover both representations, this helper selects between:
+/// - `bitcast<u32>(f32)` (raw bits), and
+/// - `u32(f32)` (numeric conversion),
+/// based on whether the float value looks like a non-negative integer (per lane).
 fn emit_src_vec4_u32_int(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
     opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
-    emit_src_vec4_u32(src, inst_index, opcode, ctx)
+    let mut no_mod = src.clone();
+    no_mod.modifier = OperandModifier::None;
+    let f = emit_src_vec4(&no_mod, inst_index, opcode, ctx)?;
+    let bits = emit_src_vec4_u32(&no_mod, inst_index, opcode, ctx)?;
+    let is_int = format!("(({f}) == floor(({f})))");
+    let is_nonneg = format!("(({f}) >= vec4<f32>(0.0))");
+    // WGSL does not support boolean `&&` for `vecN<bool>`, so combine the predicates via `select`.
+    // Equivalent to: `is_nonneg && is_int`.
+    let cond = format!("select(vec4<bool>(false), {is_int}, {is_nonneg})");
+    let base = format!("select(({bits}), vec4<u32>({f}), {cond})");
+    Ok(apply_modifier_u32(base, src.modifier))
 }
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
