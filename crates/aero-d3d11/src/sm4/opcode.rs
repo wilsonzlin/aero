@@ -334,6 +334,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
+        OPCODE_DCL_GS_INSTANCE_COUNT => Some("dcl_gs_instance_count"),
         OPCODE_DCL_RESOURCE_RAW => Some("dcl_resource_raw"),
         OPCODE_DCL_RESOURCE_STRUCTURED => Some("dcl_resource_structured"),
         OPCODE_DCL_UAV_RAW => Some("dcl_uav_raw"),
