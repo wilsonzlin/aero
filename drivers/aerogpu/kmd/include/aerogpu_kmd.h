@@ -139,8 +139,6 @@ typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
     struct aerogpu_alloc_entry* TmpEntries;
     uint32_t* Seen;
     UINT* SeenIndex;
-    uint64_t* SeenGpa;
-    uint64_t* SeenSize;
 
 #if DBG
     volatile LONG HitCount;
