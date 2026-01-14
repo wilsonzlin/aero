@@ -81,7 +81,10 @@ fn translates_sync_uav_with_group_sync_to_wgsl() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert!(translated.wgsl.contains("storageBarrier()"));
-    assert!(translated.wgsl.contains("workgroupBarrier()"));
+    assert!(
+        !translated.wgsl.contains("workgroupBarrier()"),
+        "UAV-only barriers should not emit a workgroup barrier"
+    );
     assert_wgsl_validates(&translated.wgsl);
 }
 

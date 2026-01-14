@@ -6133,17 +6133,34 @@ fn emit_instructions(
                     // - `workgroupBarrier()` for control + workgroup-memory synchronization.
                     // - `storageBarrier()` for storage-buffer memory ordering.
                     //
-                    // Emit `storageBarrier()` only when the shader requested UAV/storage ordering
-                    // semantics; `GroupMemoryBarrierWithGroupSync()` only requires a workgroup
-                    // barrier.
+                    // For memory semantics, WGSL uses separate barrier built-ins:
+                    // - `workgroupBarrier()` for workgroup/TGSM ordering.
+                    // - `storageBarrier()` for storage/UAV ordering.
                     //
-                    // Order matters if `storageBarrier()` is treated as a memory fence without an
-                    // execution barrier: we want all invocations to execute it before
-                    // synchronizing.
-                    if (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0 {
-                        w.line("storageBarrier();");
+                    // DXBC `sync` encodes these bits independently, so we select the minimal WGSL
+                    // sequence:
+                    // - GroupMemoryBarrierWithGroupSync(): `workgroupBarrier()`
+                    // - DeviceMemoryBarrierWithGroupSync(): `storageBarrier()`
+                    // - AllMemoryBarrierWithGroupSync(): `storageBarrier(); workgroupBarrier();`
+                    //
+                    // When emitting both, we put `storageBarrier()` first so the device-memory
+                    // ordering is established before the final workgroup barrier.
+                    let uav = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
+                    let tgsm =
+                        (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY) != 0;
+                    match (uav, tgsm) {
+                        (true, true) => {
+                            w.line("storageBarrier();");
+                            w.line("workgroupBarrier();");
+                        }
+                        (true, false) => {
+                            w.line("storageBarrier();");
+                        }
+                        (false, _) => {
+                            // Includes TGSM-only barriers and the (rare) pure group-sync form.
+                            w.line("workgroupBarrier();");
+                        }
                     }
-                    w.line("workgroupBarrier();");
                 } else {
                     // Fence-only variants (no `THREAD_GROUP_SYNC`) do not require all threads to
                     // participate in D3D; emitting a WGSL `workgroupBarrier()` would introduce a
