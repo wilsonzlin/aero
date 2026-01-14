@@ -11,12 +11,19 @@
 export async function pauseIoWorkerSnapshotAndDrainDiskIo(opts: {
   setSnapshotPaused: (paused: boolean) => void;
   setUsbProxyCompletionRingDispatchPaused: (paused: boolean) => void;
-  diskIoChain: Promise<void>;
+  getDiskIoChain: () => Promise<void>;
   onPaused: () => void;
 }): Promise<void> {
   opts.setSnapshotPaused(true);
   opts.setUsbProxyCompletionRingDispatchPaused(true);
-  await opts.diskIoChain.catch(() => undefined);
+  // Disk I/O work is sequenced via a shared promise chain (`diskIoChain`). The IO worker can
+  // receive additional disk I/O requests while snapshot-pausing (e.g. commands already queued
+  // on the AIPC ring). Await the chain until it stops changing to ensure we don't ACK paused
+  // while a newly-chained DMA op is still in flight.
+  for (;;) {
+    const chain = opts.getDiskIoChain();
+    await chain.catch(() => undefined);
+    if (opts.getDiskIoChain() === chain) break;
+  }
   opts.onPaused();
 }
-

@@ -1039,7 +1039,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
   it("vm.snapshot.pause waits for in-flight disk I/O (diskIoChain) before ACKing paused", async () => {
     let resolveChain!: () => void;
-    const diskIoChain = new Promise<void>((resolve) => {
+    let diskIoChain: Promise<void> = new Promise<void>((resolve) => {
       resolveChain = () => resolve();
     });
 
@@ -1051,7 +1051,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const task = pauseIoWorkerSnapshotAndDrainDiskIo({
       setSnapshotPaused,
       setUsbProxyCompletionRingDispatchPaused: setUsbPaused,
-      diskIoChain,
+      getDiskIoChain: () => diskIoChain,
       onPaused: () => {
         onPaused();
         finished = true;
@@ -1071,5 +1071,38 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     await task;
     expect(onPaused).toHaveBeenCalledTimes(1);
     expect(finished).toBe(true);
+  });
+
+  it("vm.snapshot.pause waits for diskIoChain to stabilize when new I/O is queued during pause", async () => {
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    let diskIoChain: Promise<void> = new Promise<void>((resolve) => {
+      resolveFirst = () => resolve();
+    });
+
+    const setSnapshotPaused = vi.fn();
+    const setUsbPaused = vi.fn();
+    const onPaused = vi.fn();
+
+    const task = pauseIoWorkerSnapshotAndDrainDiskIo({
+      setSnapshotPaused,
+      setUsbProxyCompletionRingDispatchPaused: setUsbPaused,
+      getDiskIoChain: () => diskIoChain,
+      onPaused,
+    });
+
+    // Simulate a new disk I/O op being chained after pause begins.
+    diskIoChain = new Promise<void>((resolve) => {
+      resolveSecond = () => resolve();
+    });
+
+    resolveFirst();
+    // Allow the pause helper to observe the first chain resolved.
+    await Promise.resolve();
+    expect(onPaused).not.toHaveBeenCalled();
+
+    resolveSecond();
+    await task;
+    expect(onPaused).toHaveBeenCalledTimes(1);
   });
 });

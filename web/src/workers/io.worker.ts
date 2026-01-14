@@ -4355,7 +4355,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               snapshotPaused = paused;
             },
             setUsbProxyCompletionRingDispatchPaused,
-            diskIoChain,
+            getDiskIoChain: () => diskIoChain,
             onPaused: () => {
               ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
             },
