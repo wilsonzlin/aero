@@ -2932,10 +2932,6 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
 
 static VOID AeroGpuUnmapBar0(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
-    if (!Adapter || !Adapter->Bar0) {
-        return;
-    }
-
     /*
      * Detach Bar0 from the adapter before unmapping so any concurrent paths that
      * check `Adapter->Bar0` will observe NULL and avoid touching unmapped I/O
@@ -2945,10 +2941,15 @@ static VOID AeroGpuUnmapBar0(_Inout_ AEROGPU_ADAPTER* Adapter)
      * DxgkDdi* callback might still run while StopDevice/StartDevice failure is
      * unmapping BAR0.
      */
-    PUCHAR bar0 = Adapter->Bar0;
-    const ULONG bar0Length = Adapter->Bar0Length;
-    Adapter->Bar0 = NULL;
-    Adapter->Bar0Length = 0;
+    if (!Adapter) {
+        return;
+    }
+
+    PUCHAR bar0 = (PUCHAR)InterlockedExchangePointer((PVOID volatile*)&Adapter->Bar0, NULL);
+    const ULONG bar0Length = (ULONG)InterlockedExchange((volatile LONG*)&Adapter->Bar0Length, 0);
+    if (!bar0 || bar0Length == 0) {
+        return;
+    }
     MmUnmapIoSpace(bar0, bar0Length);
 }
 
