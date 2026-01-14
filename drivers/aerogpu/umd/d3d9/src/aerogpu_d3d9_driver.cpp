@@ -433,6 +433,48 @@ constexpr uint32_t kD3DIssueEnd = 0x1u;
 constexpr uint32_t kD3DIssueEndAlt = 0x2u;
 constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
+// D3DRESOURCETYPE / D3DDDIRESTYPE values (numeric values from d3d9types.h).
+//
+// AeroGPU only supports:
+// - buffers (Size!=0, mapped to CREATE_BUFFER)
+// - 2D images (Size==0, mapped to CREATE_TEXTURE2D)
+//
+// For Size==0 resources, we validate Type explicitly so we don't accidentally
+// treat volume/cube resources as 2D textures.
+constexpr uint32_t kD3dRTypeSurface = 1u; // D3DRTYPE_SURFACE
+constexpr uint32_t kD3dRTypeVolume = 2u; // D3DRTYPE_VOLUME
+constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRTYPE_TEXTURE
+constexpr uint32_t kD3dRTypeVolumeTexture = 4u; // D3DRTYPE_VOLUMETEXTURE
+constexpr uint32_t kD3dRTypeCubeTexture = 5u; // D3DRTYPE_CUBETEXTURE
+
+enum class D3d9NonBufferTypeValidation : uint32_t {
+  RejectUnknown = 0,
+  // OpenResource DDI structs vary across WDK header vintages; some do not
+  // expose a Type field. In that case `type` will be 0, and we treat it as a
+  // 2D surface description (Depth==1) for compatibility.
+  AllowUnknownAsSurface = 1,
+};
+
+bool d3d9_validate_nonbuffer_type(uint32_t type, uint32_t depth, D3d9NonBufferTypeValidation policy) {
+  switch (type) {
+    case kD3dRTypeTexture:
+      // For 2D textures, Depth is interpreted as array layers (Depth>=1).
+      return depth >= 1;
+    case kD3dRTypeSurface:
+      // Surfaces cannot be arrays.
+      return depth == 1;
+    case kD3dRTypeVolume:
+    case kD3dRTypeVolumeTexture:
+    case kD3dRTypeCubeTexture:
+      return false;
+    default:
+      if (type == 0 && policy == D3d9NonBufferTypeValidation::AllowUnknownAsSurface) {
+        return depth == 1;
+      }
+      return false;
+  }
+}
+
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
@@ -8473,46 +8515,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   }
 
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
-  // Portable build heuristic:
-  // - Interpret `depth > 1` as array layers for 2D textures.
-  // - Reject true 3D/volume/cube resources up front so we never silently
-  //   mis-create them as 2D arrays.
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
-  if (create_size_bytes == 0) {
-    // D3DRESOURCETYPE numeric values (from d3d9types.h). Keep local constants so
-    // portable builds don't require the Windows SDK/WDK.
-    constexpr uint32_t kD3dRTypeVolume = 2u;
-    constexpr uint32_t kD3dRTypeTexture = 3u;
-    constexpr uint32_t kD3dRTypeVolumeTexture = 4u;
-    constexpr uint32_t kD3dRTypeCubeTexture = 5u;
-
-    // Reject resources that cannot be represented by the CREATE_TEXTURE2D protocol.
-    if (create_type_u32 == kD3dRTypeVolume ||
-        create_type_u32 == kD3dRTypeVolumeTexture ||
-        create_type_u32 == kD3dRTypeCubeTexture) {
-      return trace.ret(D3DERR_INVALIDCALL);
-    }
-
-    // For 2D textures, the D3D9 DDI uses `Depth` to carry array layers.
-    // For all other resource kinds we expect depth==1.
-    if (create_depth > 1 && create_type_u32 != kD3dRTypeTexture) {
-      return trace.ret(D3DERR_INVALIDCALL);
-    }
+  if (create_size_bytes == 0 &&
+      !d3d9_validate_nonbuffer_type(create_type_u32, create_depth, D3d9NonBufferTypeValidation::RejectUnknown)) {
+    return trace.ret(D3DERR_INVALIDCALL);
   }
-#endif
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  // When compiling against WDK headers we can identify cube/volume resource
-  // types explicitly. This avoids accidentally treating them as 2D surfaces via
-  // the size-vs-(w,h) heuristic.
-  {
-    const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(create_type_u32);
-    if (create_size_bytes == 0 &&
-        (create_type == D3DDDIRESTYPE_CUBETEXTURE || create_type == D3DDDIRESTYPE_VOLUMETEXTURE ||
-         create_type == D3DDDIRESTYPE_VOLUME)) {
-      return trace.ret(D3DERR_INVALIDCALL);
-    }
-  }
-#endif
 
   auto res = std::make_unique<Resource>();
   res->handle = allocate_global_handle(dev->adapter);
@@ -9268,32 +9274,12 @@ static HRESULT device_open_resource_impl(
   }
   res->mip_levels = mip_levels;
 
-  // AeroGPU cannot represent volume/cube textures in the protocol. Reject shared
-  // allocations that describe them to avoid importing a handle that the host
-  // will interpret incorrectly.
-  //
-  // Note: D3D9Ex may use `Depth` for 2D texture arrays; allow Depth>1 for 2D
-  // resources and only reject explicit volume/cube resource types.
-  if (open_size_bytes == 0) {
-    // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
-    constexpr uint32_t kD3dRTypeTexture = 3u;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    const D3DDDIRESTYPE open_type = static_cast<D3DDDIRESTYPE>(res->type);
-    if (open_type == D3DDDIRESTYPE_CUBETEXTURE || open_type == D3DDDIRESTYPE_VOLUMETEXTURE || open_type == D3DDDIRESTYPE_VOLUME) {
-      return D3DERR_INVALIDCALL;
-    }
-#else
-    constexpr uint32_t kD3dRTypeVolume = 2u;
-    constexpr uint32_t kD3dRTypeVolumeTexture = 4u;
-    constexpr uint32_t kD3dRTypeCubeTexture = 5u;
-    if (res->type == kD3dRTypeCubeTexture || res->type == kD3dRTypeVolumeTexture || res->type == kD3dRTypeVolume) {
-      return D3DERR_INVALIDCALL;
-    }
-#endif
-    // Without an explicit 2D texture type, treat Depth>1 as a non-2D resource.
-    if (res->depth > 1 && res->type != kD3dRTypeTexture) {
-      return D3DERR_INVALIDCALL;
-    }
+  // AeroGPU cannot represent non-2D textures/surfaces in the protocol. Reject
+  // shared allocations that describe volume/cube resources to avoid importing a
+  // handle that the host will interpret incorrectly.
+  if (open_size_bytes == 0 &&
+      !d3d9_validate_nonbuffer_type(res->type, res->depth, D3d9NonBufferTypeValidation::AllowUnknownAsSurface)) {
+    return D3DERR_INVALIDCALL;
   }
 
   const aerogpu_wddm_alloc_priv_v2* priv2 = nullptr;

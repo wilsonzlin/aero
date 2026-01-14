@@ -35,6 +35,14 @@ constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 
+// D3DRESOURCETYPE numeric constants (from d3d9types.h). Tests use numeric values
+// so they can run in portable (non-WDK/non-Windows) builds.
+constexpr uint32_t kD3dRTypeSurface = 1u; // D3DRTYPE_SURFACE
+constexpr uint32_t kD3dRTypeVolume = 2u; // D3DRTYPE_VOLUME
+constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRTYPE_TEXTURE
+constexpr uint32_t kD3dRTypeVolumeTexture = 4u; // D3DRTYPE_VOLUMETEXTURE
+constexpr uint32_t kD3dRTypeCubeTexture = 5u; // D3DRTYPE_CUBETEXTURE
+
 // ABI-compatible D3DVERTEXELEMENT9 encoding (8 bytes, packed). The UMD treats
 // vertex decls as opaque blobs at the DDI boundary, so tests define a portable
 // layout here.
@@ -1790,7 +1798,7 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
   // Use an obviously invalid D3D9 format value to ensure the UMD rejects unknown
   // GPU formats in the default pool (rather than emitting invalid host commands).
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 0xFFFFFFFFu;
   create_res.width = 4;
   create_res.height = 4;
@@ -1810,6 +1818,97 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
     return false;
   }
   return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
+}
+
+bool TestCreateResourceRejectsUnknownNonBufferType() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a span-backed command buffer so we can assert that no CREATE_TEXTURE2D
+  // packets are emitted when CreateResource fails validation.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0; // unknown/unsupported when Size==0
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource rejects unknown Type for size==0 resources")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed CreateResource")) {
+    return false;
+  }
+  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0,
+               "failed CreateResource must not emit CREATE_TEXTURE2D");
 }
 
 bool TestCreateResourceRejectsNon2dDepth() {
@@ -1883,9 +1982,7 @@ bool TestCreateResourceRejectsNon2dDepth() {
   } cmd_restore{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  // D3DRESOURCETYPE::D3DRTYPE_VOLUME == 2.
-  constexpr uint32_t kD3dRTypeVolume = 2u;
-  create_res.type = kD3dRTypeVolume;
+  create_res.type = kD3dRTypeVolumeTexture; // explicit non-2D resource type
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 4;
   create_res.height = 4;
@@ -2101,7 +2198,7 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   } cmd_guard{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1 (BC1)
   create_res.width = 7;
   create_res.height = 5;
@@ -4486,7 +4583,7 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChain() {
     HANDLE shared_handle = nullptr;
 
     D3D9DDIARG_CREATERESOURCE create_shared{};
-    create_shared.type = 0;
+    create_shared.type = kD3dRTypeSurface;
     create_shared.format = 22u; // D3DFMT_X8R8G8B8
     create_shared.width = 32;
     create_shared.height = 32;
@@ -4644,7 +4741,7 @@ bool TestCreateResourceComputes16BitTexturePitchAndFormat() {
     dev->cmd.reset();
 
     D3D9DDIARG_CREATERESOURCE create_res{};
-    create_res.type = 0;
+    create_res.type = kD3dRTypeTexture;
     create_res.format = c.d3d9_format;
     create_res.width = kWidth;
     create_res.height = kHeight;
@@ -4785,7 +4882,7 @@ bool TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites() {
   constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0; // surface/texture heuristics are based on size vs width/height.
+  create_res.type = kD3dRTypeTexture;
   create_res.format = kD3dFmtX1R5G5B5;
   create_res.width = 2;
   create_res.height = 1;
@@ -5081,7 +5178,7 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
 
   // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 4;
   create_res.height = 4;
@@ -5531,7 +5628,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
 
   // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 24u; // D3DFMT_X1R5G5B5
   create_res.width = 4;
   create_res.height = 4;
@@ -5726,7 +5823,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dR5G6B5() {
 
   // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 23u; // D3DFMT_R5G6B5
   create_res.width = 4;
   create_res.height = 4;
@@ -5921,7 +6018,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
 
   // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 25u; // D3DFMT_A1R5G5B5
   create_res.width = 4;
   create_res.height = 4;
@@ -6135,7 +6232,7 @@ bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
   std::memset(&priv, 0, sizeof(priv));
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 4;
   create_res.height = 4;
@@ -6345,7 +6442,7 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   stale.size_bytes = 0x1000u;
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeSurface;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 32;
   create_res.height = 32;
@@ -6456,7 +6553,7 @@ bool TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked() {
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeSurface;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 16;
   create_res.height = 16;
@@ -6585,7 +6682,7 @@ bool TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes() {
   } cmd_guard{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeTexture;
   create_res.format = kD3dFmtX1R5G5B5;
   create_res.width = 4;
   create_res.height = 1;
@@ -6968,7 +7065,7 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
 
   // Create host-backed src/dst surfaces (portable path: backing_alloc_id==0).
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = 22u; // D3DFMT_X8R8G8B8
   create_src.width = 4;
   create_src.height = 4;
@@ -7173,7 +7270,7 @@ bool TestCopyRects16BitToHostBackedResourceEmitsUpload() {
 
   // Create host-backed src/dst surfaces (portable path: backing_alloc_id==0).
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
@@ -7384,7 +7481,7 @@ bool TestCopyRects16BitToGuestBackedResourceEmitsDirtyRange() {
 
   // Create a host-backed source surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
@@ -7836,7 +7933,7 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   HANDLE shared_handle = nullptr;
 
   D3D9DDIARG_CREATERESOURCE create_shared{};
-  create_shared.type = 0;
+  create_shared.type = kD3dRTypeSurface;
   create_shared.format = 22u; // D3DFMT_X8R8G8B8
   create_shared.width = 32;
   create_shared.height = 32;
@@ -11453,7 +11550,7 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   // Create a tiny host-backed texture so stage0 can select a texture-sampling
   // fixed-function pixel shader.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -12181,7 +12278,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
 
   // Create and bind a small texture at stage0 so stage0 selects the textured PS.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -13170,7 +13267,7 @@ bool TestFixedFuncPsSelectionTextureBoundColorOpDisableIgnoresAlphaTextureUsesCo
   // Create and bind a small texture at stage0 (should still not be sampled when
   // COLOROP=DISABLE).
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -13373,7 +13470,7 @@ bool TestFixedFuncPsSelectionSetTextureUpdatesBoundPsToModulateWithoutDraw() {
   // SetTexture must update the fixed-function PS selection because stage0
   // texturing is now active by default (MODULATE + alpha from texture).
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -13507,7 +13604,7 @@ bool TestFixedFuncPsSelectionUnsetTextureUpdatesBoundPsToColorOnlyWithoutDraw() 
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -13677,7 +13774,7 @@ bool TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -13847,7 +13944,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -14014,7 +14111,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2TextureUsesTextureOnly() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -14181,7 +14278,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2DiffuseColorSelectArg2Texture
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -14356,7 +14453,7 @@ bool TestFixedFuncPsSelectionTextureBoundModulateDiffuseDiffuseUsesColorOnly() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -14535,7 +14632,7 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
 
   // Create and bind a small texture at stage0 (should still not be sampled).
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -14713,7 +14810,7 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpFallsBackToModulate() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -20361,7 +20458,7 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
 
   auto create_surface = [&](uint32_t w, uint32_t h) -> D3DDDI_HRESOURCE {
     D3D9DDIARG_CREATERESOURCE args{};
-    args.type = 0;
+    args.type = kD3dRTypeTexture;
     args.format = 22u; // D3DFMT_X8R8G8B8
     args.width = w;
     args.height = h;
@@ -21040,7 +21137,7 @@ bool TestSetRenderTargetRejectsGaps() {
   cleanup.has_swapchain = true;
 
   D3D9DDIARG_CREATERESOURCE create_rt{};
-  create_rt.type = 0;
+  create_rt.type = kD3dRTypeSurface;
   create_rt.format = 22u; // D3DFMT_X8R8G8B8
   create_rt.width = 16;
   create_rt.height = 16;
@@ -21153,7 +21250,7 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   cleanup.has_device = true;
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  create_res.type = kD3dRTypeSurface;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 16;
   create_res.height = 16;
@@ -23482,7 +23579,7 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
 
   // Create a CPU-only system-memory source surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = 22u; // D3DFMT_X8R8G8B8
   create_src.width = 4;
   create_src.height = 4;
@@ -23731,7 +23828,7 @@ bool TestGuestBackedUpdateSurface16BitEmitsDirtyRangeNotUpload() {
 
   // Create a CPU-only system-memory source surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
@@ -23969,7 +24066,7 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
 
   // Source: system-memory pool texture-like surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeTexture;
   create_src.format = 22u; // D3DFMT_X8R8G8B8
   create_src.width = 4;
   create_src.height = 4;
@@ -24990,6 +25087,7 @@ int main() {
   failures += !aerogpu::TestAdapterMultisampleQualityLevels();
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestCreateResourceRejectsUnknownNonBufferType();
   failures += !aerogpu::TestCreateResourceRejectsNon2dDepth();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroOverflowReturnsOutOfMemory();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
