@@ -222,9 +222,33 @@ bool RunCase(const char* name,
   
   return ok;
 }
- 
+
+bool TestRejectsBcDimensionOverflow() {
+  bool ok = true;
+
+  aerogpu::Texture2dLayout layout{};
+  aerogpu::Texture2dSubresourceLayout sub{};
+
+  // Guard against uint32_t overflow in (w + 3) / 4 block rounding.
+  // UINT32_MAX should produce extremely large block counts, overflowing the 32-bit
+  // RowPitch/SlicePitch fields and therefore failing cleanly.
+  ok &= Check(!aerogpu::calc_texture2d_layout(aerogpu::kD3dFmtDxt1, 0xFFFFFFFFu, 1u, 1u, 1u, &layout),
+              "BC1 layout rejects huge width");
+  ok &= Check(!aerogpu::calc_texture2d_subresource_layout_for_offset(
+                  aerogpu::kD3dFmtDxt1, 0xFFFFFFFFu, 1u, 1u, 1u, 0u, &sub),
+              "BC1 subresource layout rejects huge width");
+
+  ok &= Check(!aerogpu::calc_texture2d_layout(aerogpu::kD3dFmtDxt1, 1u, 0xFFFFFFFFu, 1u, 1u, &layout),
+              "BC1 layout rejects huge height");
+  ok &= Check(!aerogpu::calc_texture2d_subresource_layout_for_offset(
+                  aerogpu::kD3dFmtDxt1, 1u, 0xFFFFFFFFu, 1u, 1u, 0u, &sub),
+              "BC1 subresource layout rejects huge height");
+
+  return ok;
+}
+
 } // namespace
- 
+  
 int main() {
   bool ok = true;
  
@@ -246,6 +270,8 @@ int main() {
   // Uncompressed 16-bit format: validate bytes-per-pixel pitch computation.
   ok &= RunCase("R5G6B5 13x7 mips=4 layers=2", static_cast<D3DDDIFORMAT>(23u), 13, 7, 4, 2);
 
+  ok &= TestRejectsBcDimensionOverflow();
+ 
   return ok ? 0 : 1;
 }
  
