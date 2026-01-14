@@ -400,7 +400,8 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
     mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
-    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+    let fence = u64::from(u32::MAX) + 1;
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -423,7 +424,7 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     let subs = dev.drain_pending_submissions();
     assert_eq!(subs.len(), 1);
     let sub = &subs[0];
-    assert_eq!(sub.signal_fence, 42);
+    assert_eq!(sub.signal_fence, fence);
     assert_eq!(sub.context_id, 7);
     assert_eq!(sub.engine_id, 9);
     assert_eq!(sub.flags, 0);
@@ -433,8 +434,9 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     assert!(dev.drain_pending_submissions().is_empty());
 
     // External executor completes the fence.
-    dev.complete_fence(&mut mem, 42);
-    assert_eq!(dev.regs.completed_fence, 42);
+    dev.complete_fence(&mut mem, fence);
+    assert_eq!(dev.regs.completed_fence, fence);
+    assert!(dev.regs.completed_fence > u64::from(u32::MAX));
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(dev.irq_level());
     assert_eq!(
@@ -443,6 +445,6 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     );
     assert_eq!(
         mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
-        42
+        fence
     );
 }

@@ -1314,6 +1314,124 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 }
 
 #[test]
+fn drain_pending_submissions_and_complete_fence_across_u32_boundary() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        vram_size_bytes: 2 * 1024 * 1024,
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+    };
+
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(cfg);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2);
+
+    // Minimal command stream: header only (no packets).
+    let cmd_gpa = 0x2000u64;
+    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+    let mut stream = vec![0u8; cmd_size_bytes as usize];
+    stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    stream[4..8].copy_from_slice(&dev.regs.abi_version.to_le_bytes());
+    stream[8..12].copy_from_slice(&cmd_size_bytes.to_le_bytes());
+    stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
+    stream[16..20].copy_from_slice(&0u32.to_le_bytes()); // reserved0
+    stream[20..24].copy_from_slice(&0u32.to_le_bytes()); // reserved1
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Simulate a 32-bit WDDM fence wrap (extended into a 64-bit epoch domain by the KMD):
+    //   0xFFFF_FFFF -> 0x1_0000_0000
+    let fence0 = u64::from(u32::MAX);
+    let fence1 = u64::from(u32::MAX) + 1;
+
+    // Submit descriptor at slot 0.
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 7);
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 9);
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence0);
+
+    // Submit descriptor at slot 1.
+    let desc1_gpa = desc0_gpa + u64::from(entry_stride);
+    mem.write_u32(
+        desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 7);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 9);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence1);
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+
+    // Doorbell: submissions become in-flight, but fences do not complete without external completions.
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+
+    let subs = dev.drain_pending_submissions();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(subs[0].signal_fence, fence0);
+    assert_eq!(subs[1].signal_fence, fence1);
+
+    // External executor completes both fences (in order).
+    dev.complete_fence(&mut mem, fence0);
+    assert_eq!(dev.regs.completed_fence, fence0);
+    dev.complete_fence(&mut mem, fence1);
+    assert_eq!(dev.regs.completed_fence, fence1);
+    assert!(dev.regs.completed_fence > u64::from(u32::MAX));
+
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(dev.irq_level());
+
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        fence1
+    );
+}
+
+#[test]
 fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: Some(10),
