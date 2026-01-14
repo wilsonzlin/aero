@@ -2,9 +2,13 @@ import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
 import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
+import { DEFAULT_EXTERNAL_HUB_PORT_COUNT, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../../web/src/usb/uhci_external_hub";
 
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
-  test.setTimeout(45_000);
+  // This spec exercises a full UHCI runtime stack (PCI config, control transfers, interrupt IN/OUT,
+  // and WebUSB proxying) entirely inside browser workers. Some engines (and CI VMs) can be slow
+  // enough that the TD-level polling loops take >20s, so keep the per-test budget generous.
+  test.setTimeout(90_000);
 
   await page.goto(`/`, { waitUntil: "load" });
 
@@ -34,7 +38,8 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
   test.skip(!support.crossOriginIsolated || !support.sharedArrayBuffer, "SharedArrayBuffer requires COOP/COEP headers.");
   test.skip(!support.atomics || !support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
 
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async (opts) => {
+    const { dynamicHubPort, externalHubPortCount } = opts as { dynamicHubPort: number; externalHubPortCount: number };
     const { allocateSharedMemorySegments, createSharedMemoryViews } = await import("/web/src/runtime/shared_layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
 
@@ -56,23 +61,46 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
 
     const ioImported = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
-      const handler = (ev: MessageEvent): void => {
+      let timer = 0;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        ioWorker.removeEventListener("message", messageHandler);
+        ioWorker.removeEventListener("error", errorHandler);
+      };
+      const messageHandler = (ev: MessageEvent): void => {
         const data = ev.data as { type?: unknown; message?: unknown } | undefined;
         if (!data) return;
         if (data.type === "__aero_io_worker_imported") {
-          clearTimeout(timer);
-          ioWorker.removeEventListener("message", handler);
+          cleanup();
           resolve();
           return;
         }
         if (data.type === "__aero_io_worker_import_failed") {
-          clearTimeout(timer);
-          ioWorker.removeEventListener("message", handler);
+          cleanup();
           reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
         }
       };
-      ioWorker.addEventListener("message", handler);
+      const errorHandler = (err: Event) => {
+        cleanup();
+        const e = err as any;
+        const message =
+          typeof e?.message === "string"
+            ? e.message
+            : typeof e?.error?.message === "string"
+              ? e.error.message
+              : String(err);
+        const filename = typeof e?.filename === "string" ? e.filename : "?";
+        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+        const colno = typeof e?.colno === "number" ? e.colno : "?";
+        reject(new Error(`io.worker wrapper error during import: ${message} (${filename}:${lineno}:${colno})`));
+      };
+
+      ioWorker.addEventListener("message", messageHandler);
+      ioWorker.addEventListener("error", errorHandler);
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out waiting for io.worker import marker"));
+      }, 20_000);
     });
 
     let ioReady = false;
@@ -82,6 +110,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const usbActions: unknown[] = [];
     let guestUsbStatus: unknown | null = null;
     let hidSendReport: { deviceId: number; reportType: string; reportId: number; data: number[] } | null = null;
+    let hidAttachResult: { deviceId: number; ok: boolean; error?: string } | null = null;
 
     ioWorker.onmessage = (ev) => {
       const data = ev.data as any;
@@ -119,6 +148,12 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
         };
         return;
       }
+      if (data.type === "hid.attachResult") {
+        const msg = data as { deviceId?: unknown; ok?: unknown; error?: unknown };
+        if (typeof msg.deviceId !== "number" || typeof msg.ok !== "boolean") return;
+        hidAttachResult = { deviceId: msg.deviceId, ok: msg.ok, ...(typeof msg.error === "string" ? { error: msg.error } : {}) };
+        return;
+      }
     };
 
     // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
@@ -152,14 +187,15 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const guestSab = segments.guestMemory.buffer as unknown as SharedArrayBuffer;
 
      const guestWorkerCode = `
-       import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
-       import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND } from "${location.origin}/web/src/runtime/shared_layout.ts";
-       import { AeroIpcIoClient } from "${location.origin}/web/src/io/ipc/aero_ipc_io.ts";
+        import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
+        import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND } from "${location.origin}/web/src/runtime/shared_layout.ts";
+        import { AeroIpcIoClient } from "${location.origin}/web/src/io/ipc/aero_ipc_io.ts";
 
-       let UHCI_BASE = 0;
+        let UHCI_BASE = 0;
+        const HUB_DYNAMIC_PORT = ${dynamicHubPort};
 
-       const PCI_ADDR = 0x0cf8;
-       const PCI_DATA = 0x0cfc;
+        const PCI_ADDR = 0x0cf8;
+        const PCI_DATA = 0x0cfc;
 
        function pciAddr(bus, dev, func, reg) {
          return (0x80000000 | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) | ((func & 0x07) << 8) | (reg & 0xfc)) >>> 0;
@@ -201,12 +237,53 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       const PORTSC_PED = 1 << 2;
 
       const LINK_PTR_T = 1 << 0;
-      const LINK_PTR_Q = 1 << 1;
+       const LINK_PTR_Q = 1 << 1;
+ 
+        const TD_CTRL_NAK = 1 << 19;
+        const TD_CTRL_BITSTUFF = 1 << 17;
+        const TD_CTRL_CRC_TIMEOUT = 1 << 18;
+        const TD_CTRL_BABBLE = 1 << 20;
+        const TD_CTRL_DBUFERR = 1 << 21;
+        const TD_CTRL_STALL = 1 << 22;
+        const TD_CTRL_ACTIVE = 1 << 23;
+        const TD_CTRL_IOC = 1 << 24;
+        const TD_CTRL_ACTLEN_MASK = 0x7ff;
 
-       const TD_CTRL_NAK = 1 << 19;
-       const TD_CTRL_ACTIVE = 1 << 23;
-       const TD_CTRL_IOC = 1 << 24;
-       const TD_CTRL_ACTLEN_MASK = 0x7ff;
+        function assertTdOk(ctrl, context) {
+          const err = ctrl & (TD_CTRL_STALL | TD_CTRL_DBUFERR | TD_CTRL_BABBLE | TD_CTRL_CRC_TIMEOUT | TD_CTRL_BITSTUFF);
+          if (err === 0) return;
+          throw new Error(
+            (context || "TD") +
+              " failed (ctrl=0x" +
+              (ctrl >>> 0).toString(16) +
+              " err=0x" +
+              (err >>> 0).toString(16) +
+              ")",
+          );
+        }
+
+        function findInterruptInEndpoint(configDesc) {
+          const total = ((configDesc[2] ?? 0) | (((configDesc[3] ?? 0) & 0xff) << 8)) >>> 0;
+          const limit = Math.min(total || configDesc.length, configDesc.length);
+          let off = 0;
+          while (off + 2 <= limit) {
+            const len = configDesc[off] ?? 0;
+            const type = configDesc[off + 1] ?? 0;
+            if (len <= 0) break;
+            if (type === 5 && off + 7 <= limit) {
+              const addr = configDesc[off + 2] ?? 0;
+              const attrs = configDesc[off + 3] ?? 0;
+              const max = ((configDesc[off + 4] ?? 0) | (((configDesc[off + 5] ?? 0) & 0xff) << 8)) >>> 0;
+              const isInterrupt = (attrs & 0x03) === 0x03;
+              const isIn = (addr & 0x80) !== 0;
+              if (isInterrupt && isIn) {
+                return { ep: addr & 0x0f, maxPacketSize: max };
+              }
+            }
+            off += len;
+          }
+          return null;
+        }
 
       const TD_TOKEN_DEVADDR_SHIFT = 8;
       const TD_TOKEN_ENDPT_SHIFT = 15;
@@ -275,12 +352,14 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
          io.portWrite(UHCI_BASE + portReg(portIndex), 2, 0);
        }
 
-       function resetPort(io, portIndex) {
-         const reg = portReg(portIndex);
-         io.portWrite(UHCI_BASE + reg, 2, PORTSC_PR);
-         // UHCI model completes reset asynchronously after 50ms (step_frame ticks).
-         sleep(60);
-       }
+        function resetPort(io, portIndex) {
+          const reg = portReg(portIndex);
+          io.portWrite(UHCI_BASE + reg, 2, PORTSC_PR);
+          // UHCI model completes reset asynchronously after ~50ms (step_frame ticks), but some
+          // engines (notably WebKit in CI) can run the IO tick loop with aggressive timer clamping.
+          // Keep this delay conservative so the device has time to re-appear.
+          sleep(200);
+        }
 
        function enablePort(io, portIndex) {
          const reg = portReg(portIndex);
@@ -354,31 +433,43 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
        }
 
        function waitForTdInactive(dv, tdAddr, timeoutMs) {
-         const start = performance.now();
-         while (performance.now() - start < timeoutMs) {
-           const ctrl = readU32(dv, tdAddr + 0x04);
-           if ((ctrl & TD_CTRL_ACTIVE) === 0) return ctrl >>> 0;
-           sleep(1);
-         }
-         throw new Error("timeout waiting for TD to complete");
-       }
+          const start = performance.now();
+          while (performance.now() - start < timeoutMs) {
+            const ctrl = readU32(dv, tdAddr + 0x04);
+            if ((ctrl & TD_CTRL_ACTIVE) === 0) return ctrl >>> 0;
+            sleep(1);
+          }
+          const ctrl = readU32(dv, tdAddr + 0x04);
+          throw new Error(
+            "timeout waiting for TD to complete (td=0x" +
+              (tdAddr >>> 0).toString(16) +
+              " ctrl=0x" +
+              (ctrl >>> 0).toString(16) +
+              " timeoutMs=" +
+              timeoutMs +
+              ")",
+          );
+        }
 
        function runControlIn(io, dv, QH, setup, inLen, devAddr) {
-         const setupBytes = setupPacketBytes(setup);
-         const chain = setupControlInChain(dv, setupBytes, inLen, devAddr);
-         writeU32(dv, QH + 0x04, chain.TD_SETUP);
-         waitForTdInactive(dv, chain.TD_STATUS, 5000);
-         return Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
-       }
-
-       function runControlNoData(io, dv, QH, setup, devAddr) {
-         const setupBytes = setupPacketBytes(setup);
-         const chain = setupControlNoDataChain(dv, setupBytes, devAddr);
-         writeU32(dv, QH + 0x04, chain.TD_SETUP);
-         waitForTdInactive(dv, chain.TD_STATUS, 5000);
-       }
+          const setupBytes = setupPacketBytes(setup);
+          const chain = setupControlInChain(dv, setupBytes, inLen, devAddr);
+          writeU32(dv, QH + 0x04, chain.TD_SETUP);
+          const statusCtrl = waitForTdInactive(dv, chain.TD_STATUS, 15_000);
+          assertTdOk(statusCtrl, "control-in status TD");
+          return Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
+        }
+ 
+        function runControlNoData(io, dv, QH, setup, devAddr) {
+          const setupBytes = setupPacketBytes(setup);
+          const chain = setupControlNoDataChain(dv, setupBytes, devAddr);
+          writeU32(dv, QH + 0x04, chain.TD_SETUP);
+          const statusCtrl = waitForTdInactive(dv, chain.TD_STATUS, 15_000);
+          assertTdOk(statusCtrl, "control-no-data status TD");
+        }
 
         self.onmessage = (ev) => {
+          try {
           const { ioIpc, guestSab, mode, guestBase, guestSize, setup, inLen, forcedPortIndex } = ev.data;
 
          const cmdQ = openRingByKind(ioIpc, IO_IPC_CMD_QUEUE_KIND);
@@ -452,13 +543,18 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
           io.portWrite(UHCI_BASE + REG_FRNUM, 2, 0);
          io.portWrite(UHCI_BASE + REG_FRBASEADD, 4, FRAME_LIST);
          io.portWrite(UHCI_BASE + REG_USBCMD, 2, (USBCMD_RUN | USBCMD_MAXP) >>> 0);
-         const fr0 = io.portRead(UHCI_BASE + REG_FRNUM, 2) & 0xffff;
-         sleep(20);
-         const fr1 = io.portRead(UHCI_BASE + REG_FRNUM, 2) & 0xffff;
-         if (fr0 === fr1) {
-           self.postMessage({ type: "error", message: "UHCI FRNUM did not advance after RUN" });
-           return;
-         }
+          const fr0 = io.portRead(UHCI_BASE + REG_FRNUM, 2) & 0xffff;
+          let fr1 = fr0;
+          const frDeadline = performance.now() + 1000;
+          while (performance.now() < frDeadline) {
+            sleep(10);
+            fr1 = io.portRead(UHCI_BASE + REG_FRNUM, 2) & 0xffff;
+            if (fr1 !== fr0) break;
+          }
+          if (fr0 === fr1) {
+            self.postMessage({ type: "error", message: "UHCI FRNUM did not advance after RUN" });
+            return;
+          }
  
           if (mode === "hidConfig") {
             const first = runControlIn(io, dv, QH, setup, inLen, 0);
@@ -485,26 +581,27 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
             runControlNoData(io, dv, QH, { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_ADDRESS, wValue: 1, wIndex: 0, wLength: 0 }, 0);
             runControlNoData(io, dv, QH, { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 }, 1);
-            // Port numbers are 1-based for hub class requests.
-            runControlNoData(io, dv, QH, { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: 1, wLength: 0 }, 1);
-            runControlNoData(io, dv, QH, { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: 1, wLength: 0 }, 1);
-            sleep(60);
+             // Port numbers are 1-based for hub class requests.
+             runControlNoData(io, dv, QH, { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: HUB_DYNAMIC_PORT, wLength: 0 }, 1);
+             runControlNoData(io, dv, QH, { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: HUB_DYNAMIC_PORT, wLength: 0 }, 1);
+              sleep(200);
 
-            const data = runControlIn(io, dv, QH, setup, inLen, 0);
+             const data = runControlIn(io, dv, QH, setup, inLen, 0);
             self.postMessage({ type: "hid.result", portIndex, data });
             return;
           }
 
-          if (mode === "hidInterruptIn") {
+           if (mode === "hidInterruptIn") {
             const first = runControlIn(io, dv, QH, setup, inLen, 0);
+            let hidConfigDesc = first;
             // Interface descriptor begins at offset 9; bInterfaceClass is at offset 9+5.
             const ifaceClass = first[14] ?? 0;
 
-            const USB_REQUEST_SET_ADDRESS = 0x05;
-            const USB_REQUEST_SET_CONFIGURATION = 0x09;
-            const USB_REQUEST_SET_FEATURE = 0x03;
-            const HUB_PORT_FEATURE_POWER = 8;
-            const HUB_PORT_FEATURE_RESET = 4;
+             const USB_REQUEST_SET_ADDRESS = 0x05;
+             const USB_REQUEST_SET_CONFIGURATION = 0x09;
+             const USB_REQUEST_SET_FEATURE = 0x03;
+             const HUB_PORT_FEATURE_POWER = 8;
+             const HUB_PORT_FEATURE_RESET = 4;
 
             if (ifaceClass === 0x09) {
               // Enumerate the hub at addr0 so the downstream HID device at addr0 becomes reachable.
@@ -522,26 +619,30 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
                 { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
                 1,
               );
-              // Port numbers are 1-based for hub class requests.
-              runControlNoData(
-                io,
-                dv,
-                QH,
-                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: 1, wLength: 0 },
-                1,
-              );
-              runControlNoData(
-                io,
-                dv,
-                QH,
-                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: 1, wLength: 0 },
-                1,
-              );
-              sleep(60);
-            } else if (ifaceClass !== 0x03) {
-              self.postMessage({
-                type: "error",
-                message:
+               // Port numbers are 1-based for hub class requests.
+               runControlNoData(
+                 io,
+                 dv,
+                 QH,
+                 { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: HUB_DYNAMIC_PORT, wLength: 0 },
+                 1,
+               );
+               runControlNoData(
+                 io,
+                 dv,
+                 QH,
+                 { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: HUB_DYNAMIC_PORT, wLength: 0 },
+                 1,
+               );
+                sleep(200);
+
+              // Fetch the downstream HID config descriptor after resetting the dynamic hub port so we can
+              // discover its interrupt endpoint number.
+              hidConfigDesc = runControlIn(io, dv, QH, setup, inLen, 0);
+             } else if (ifaceClass !== 0x03) {
+               self.postMessage({
+                 type: "error",
+                 message:
                   "unexpected USB interface class 0x" +
                   ifaceClass.toString(16) +
                   " (wanted HID=0x03 or Hub=0x09)",
@@ -549,52 +650,64 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
               return;
             }
 
-            // Now enumerate the HID device at address 0.
-            const HID_ADDR = 2;
-            runControlNoData(
-              io,
-              dv,
-              QH,
-              { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_ADDRESS, wValue: HID_ADDR, wIndex: 0, wLength: 0 },
-              0,
-            );
-            runControlNoData(
-              io,
-              dv,
-              QH,
-              { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
-              HID_ADDR,
-            );
+             // Now enumerate the HID device at address 0.
+             const HID_ADDR = 2;
+            const epInfo = findInterruptInEndpoint(hidConfigDesc);
+            if (!epInfo) {
+              self.postMessage({ type: "error", message: "interrupt IN endpoint not found in HID config descriptor" });
+              return;
+            }
+            const intEp = epInfo.ep >>> 0;
+            const intMaxLen = Math.max(1, Math.min(64, epInfo.maxPacketSize >>> 0 || 8));
 
-            // Schedule a single interrupt-IN TD. It should NAK while there are no pending input reports.
-            const TD_INT = 0x3030;
-            const BUF_INT = 0x4200;
-            writeU32(dv, TD_INT + 0x00, LINK_PTR_T);
-            writeU32(dv, TD_INT + 0x04, (TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7ff) >>> 0);
-            writeU32(dv, TD_INT + 0x08, tdToken(PID_IN, HID_ADDR, 1, 8));
-            writeU32(dv, TD_INT + 0x0c, BUF_INT);
-            new Uint8Array(dv.buffer, dv.byteOffset + BUF_INT, 8).fill(0);
-            writeU32(dv, QH + 0x04, TD_INT);
+             runControlNoData(
+               io,
+               dv,
+               QH,
+               { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_ADDRESS, wValue: HID_ADDR, wIndex: 0, wLength: 0 },
+               0,
+             );
+            // Allow the device time to begin responding to the new address.
+            sleep(20);
+             runControlNoData(
+               io,
+               dv,
+               QH,
+               { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
+               HID_ADDR,
+             );
+            sleep(20);
+
+             // Schedule a single interrupt-IN TD. It should NAK while there are no pending input reports.
+             const TD_INT = 0x3030;
+             const BUF_INT = 0x4200;
+             writeU32(dv, TD_INT + 0x00, LINK_PTR_T);
+             writeU32(dv, TD_INT + 0x04, (TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7ff) >>> 0);
+            writeU32(dv, TD_INT + 0x08, tdToken(PID_IN, HID_ADDR, intEp, intMaxLen));
+             writeU32(dv, TD_INT + 0x0c, BUF_INT);
+            new Uint8Array(dv.buffer, dv.byteOffset + BUF_INT, intMaxLen).fill(0);
+             writeU32(dv, QH + 0x04, TD_INT);
 
             const start = performance.now();
             let nakNotified = false;
-            while (performance.now() - start < 10_000) {
-              const ctrl = readU32(dv, TD_INT + 0x04);
-              if (!nakNotified && (ctrl & TD_CTRL_ACTIVE) !== 0 && (ctrl & TD_CTRL_NAK) !== 0) {
-                nakNotified = true;
-                self.postMessage({ type: "hid.interruptNakObserved", ctrl });
-              }
-              if ((ctrl & TD_CTRL_ACTIVE) === 0) break;
-              sleep(1);
-            }
-
-            const ctrlFinal = waitForTdInactive(dv, TD_INT, 10_000);
-            const actLen = ctrlFinal & TD_CTRL_ACTLEN_MASK;
-            const bytes = actLen === 0x7ff ? 0 : (actLen + 1);
-            const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + BUF_INT, bytes));
-            self.postMessage({ type: "hid.interruptResult", portIndex, data, nakObserved: nakNotified, ctrlFinal });
-            return;
-          }
+             while (performance.now() - start < 20_000) {
+               const ctrl = readU32(dv, TD_INT + 0x04);
+               if (!nakNotified && (ctrl & TD_CTRL_ACTIVE) !== 0 && (ctrl & TD_CTRL_NAK) !== 0) {
+                 nakNotified = true;
+                 self.postMessage({ type: "hid.interruptNakObserved", ctrl });
+               }
+               if ((ctrl & TD_CTRL_ACTIVE) === 0) break;
+               sleep(1);
+             }
+ 
+             const ctrlFinal = waitForTdInactive(dv, TD_INT, 20_000);
+             assertTdOk(ctrlFinal, "interrupt-IN TD");
+             const actLen = ctrlFinal & TD_CTRL_ACTLEN_MASK;
+             const bytes = actLen === 0x7ff ? 0 : (actLen + 1);
+             const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + BUF_INT, bytes));
+             self.postMessage({ type: "hid.interruptResult", portIndex, data, nakObserved: nakNotified, ctrlFinal });
+             return;
+           }
 
           if (mode === "hidInterruptOut") {
             const { outData } = ev.data;
@@ -626,22 +739,22 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
                 { bmRequestType: 0x00, bRequest: USB_REQUEST_SET_CONFIGURATION, wValue: 1, wIndex: 0, wLength: 0 },
                 1,
               );
-              // Port numbers are 1-based for hub class requests.
-              runControlNoData(
-                io,
-                dv,
-                QH,
-                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: 1, wLength: 0 },
-                1,
-              );
-              runControlNoData(
-                io,
-                dv,
-                QH,
-                { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: 1, wLength: 0 },
-                1,
-              );
-              sleep(60);
+               // Port numbers are 1-based for hub class requests.
+               runControlNoData(
+                 io,
+                 dv,
+                 QH,
+                 { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_POWER, wIndex: HUB_DYNAMIC_PORT, wLength: 0 },
+                 1,
+               );
+               runControlNoData(
+                 io,
+                 dv,
+                 QH,
+                 { bmRequestType: 0x23, bRequest: USB_REQUEST_SET_FEATURE, wValue: HUB_PORT_FEATURE_RESET, wIndex: HUB_DYNAMIC_PORT, wLength: 0 },
+                 1,
+               );
+                sleep(200);
             } else if (ifaceClass !== 0x03) {
               self.postMessage({
                 type: "error",
@@ -685,10 +798,10 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
             writeU32(dv, QH + 0x04, TD_OUT);
 
-            const ctrlFinal = waitForTdInactive(dv, TD_OUT, 10_000);
-            self.postMessage({ type: "hid.outResult", portIndex, ctrlFinal, outLen });
-            return;
-          }
+             const ctrlFinal = waitForTdInactive(dv, TD_OUT, 20_000);
+             self.postMessage({ type: "hid.outResult", portIndex, ctrlFinal, outLen });
+             return;
+           }
 
           if (mode === "webusbDevice") {
             const setupBytes = setupPacketBytes(setup);
@@ -697,36 +810,105 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
             const start = performance.now();
             let nakNotified = false;
-            while (performance.now() - start < 5000) {
-              const ctrl = readU32(dv, chain.TD_IN + 0x04);
-              if (!nakNotified && (ctrl & TD_CTRL_ACTIVE) !== 0 && (ctrl & TD_CTRL_NAK) !== 0) {
-                const qhElem = readU32(dv, QH + 0x04);
-                nakNotified = true;
-                self.postMessage({ type: "webusb.nakObserved", ctrl, qhElem });
-              }
-              if ((ctrl & TD_CTRL_ACTIVE) === 0) break;
-              sleep(1);
-            }
-
-            waitForTdInactive(dv, chain.TD_STATUS, 5000);
-            const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
-            const inCtrlFinal = readU32(dv, chain.TD_IN + 0x04);
-            const portsc = [readPortsc(io, 0), readPortsc(io, 1)];
-            self.postMessage({ type: "webusb.result", portIndex, data, nakObserved: nakNotified, inCtrlFinal, portsc });
-            return;
-          }
+             while (performance.now() - start < 15_000) {
+               const ctrl = readU32(dv, chain.TD_IN + 0x04);
+               if (!nakNotified && (ctrl & TD_CTRL_ACTIVE) !== 0 && (ctrl & TD_CTRL_NAK) !== 0) {
+                 const qhElem = readU32(dv, QH + 0x04);
+                 nakNotified = true;
+                 self.postMessage({ type: "webusb.nakObserved", ctrl, qhElem });
+               }
+               if ((ctrl & TD_CTRL_ACTIVE) === 0) break;
+               sleep(1);
+             }
+ 
+             waitForTdInactive(dv, chain.TD_STATUS, 15_000);
+             const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
+             const inCtrlFinal = readU32(dv, chain.TD_IN + 0x04);
+             const portsc = [readPortsc(io, 0), readPortsc(io, 1)];
+             self.postMessage({ type: "webusb.result", portIndex, data, nakObserved: nakNotified, inCtrlFinal, portsc });
+             return;
+           }
 
         self.postMessage({ type: "error", message: "unknown mode" });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            self.postMessage({ type: "error", message });
+          }
       };
     `;
 
     const guestUrl = URL.createObjectURL(new Blob([guestWorkerCode], { type: "text/javascript" }));
 
+    const createGuestWorker = () => {
+      // Similar to the io.worker wrapper: WebKit can be flaky when the *entrypoint* module worker is large.
+      // Import the real worker module from a tiny wrapper and wait for a marker before sending messages.
+      const entrypoint = guestUrl;
+      const wrapperUrl = URL.createObjectURL(
+        new Blob(
+          [
+            `\n              (async () => {\n                try {\n                  await import(${JSON.stringify(entrypoint)});\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_imported\" }), 0);\n                } catch (err) {\n                  const msg = err instanceof Error ? err.message : String(err);\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_import_failed\", message: msg }), 0);\n                }\n              })();\n            `,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+
+      const worker = new Worker(wrapperUrl, { type: "module" });
+      const imported = new Promise<void>((resolve, reject) => {
+        let timer = 0;
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          worker.removeEventListener("message", messageHandler);
+          worker.removeEventListener("error", errorHandler);
+        };
+        const messageHandler = (ev: MessageEvent): void => {
+          const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+          if (!data) return;
+          if (data.type === "__aero_guest_worker_imported") {
+            cleanup();
+            resolve();
+            return;
+          }
+          if (data.type === "__aero_guest_worker_import_failed") {
+            cleanup();
+            reject(
+              new Error(
+                `guest worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`,
+              ),
+            );
+          }
+        };
+        const errorHandler = (err: Event) => {
+          cleanup();
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`guest worker wrapper error during import: ${message} (${filename}:${lineno}:${colno})`));
+        };
+
+        worker.addEventListener("message", messageHandler);
+        worker.addEventListener("error", errorHandler);
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out waiting for guest worker import marker"));
+        }, 20_000);
+      });
+
+      return { worker, wrapperUrl, imported };
+    };
+
     const runGuest = async (payload: any): Promise<any> => {
-      const worker = new Worker(guestUrl, { type: "module" });
+      const { worker, wrapperUrl, imported } = createGuestWorker();
       try {
+        await imported;
         return await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error("timeout waiting for guest worker")), 15_000);
+          const timeout = setTimeout(() => reject(new Error("timeout waiting for guest worker")), 30_000);
           worker.onmessage = (ev) => {
             clearTimeout(timeout);
             resolve(ev.data);
@@ -749,6 +931,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
         });
       } finally {
         worker.terminate();
+        URL.revokeObjectURL(wrapperUrl);
       }
     };
 
@@ -842,6 +1025,13 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       },
     ];
 
+    // Ensure the UHCI runtime's external hub (root port 0) has enough downstream ports to host both
+    // the built-in synthetic HID devices (ports 1..4) and dynamic passthrough devices (port 5+).
+    //
+    // Without this, the hub can default to the synthetic-only range and stall on hub-class requests
+    // targeting the dynamic port.
+    ioWorker.postMessage({ type: "hid:attachHub", guestPath: [0], portCount: externalHubPortCount });
+
     ioWorker.postMessage({
       type: "hid.attach",
       deviceId: 1,
@@ -852,6 +1042,11 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       collections,
       hasInterruptOut: true,
     });
+
+    await waitFor(() => hidAttachResult !== null && hidAttachResult.deviceId === 1, 10_000, "hid.attachResult deviceId=1");
+    if (!hidAttachResult.ok) {
+      throw new Error(`hid.attach failed: ${hidAttachResult.error ?? "unknown error"}`);
+    }
 
     const hidResult = await runGuest({
       mode: "hidConfig",
@@ -871,53 +1066,62 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     let hidNakObserved = false;
     let hidInputSent = false;
 
-    const hidWorker = new Worker(guestUrl, { type: "module" });
-    const hidInterruptResultPromise = new Promise<any>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("timeout waiting for hid interrupt guest worker")), 20_000);
-      hidWorker.onmessage = (ev) => {
-        const data = ev.data as any;
-        if (data?.type === "hid.interruptNakObserved") {
-          hidNakObserved = true;
-          if (!hidInputSent) {
-            hidInputSent = true;
-            const payload = new Uint8Array(expectedHidInputReport);
-            ioWorker.postMessage({ type: "hid.inputReport", deviceId: 1, reportId: 0, data: payload }, [payload.buffer]);
+    const { worker: hidWorker, wrapperUrl: hidWrapperUrl, imported: hidImported } = createGuestWorker();
+    let hidInterruptResult: any;
+    try {
+      await hidImported;
+      const hidInterruptResultPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout waiting for hid interrupt guest worker")), 45_000);
+        hidWorker.onmessage = (ev) => {
+          const data = ev.data as any;
+          if (data?.type === "hid.interruptNakObserved") {
+            hidNakObserved = true;
+            if (!hidInputSent) {
+              hidInputSent = true;
+              const payload = new Uint8Array(expectedHidInputReport);
+              ioWorker.postMessage({ type: "hid.inputReport", deviceId: 1, reportId: 0, data: payload }, [payload.buffer]);
+            }
+            return;
           }
-          return;
-        }
-        clearTimeout(timeout);
-        resolve(data);
-      };
-      hidWorker.onerror = (err) => {
-        clearTimeout(timeout);
-        const e = err as any;
-        const message =
-          typeof e?.message === "string"
-            ? e.message
-            : typeof e?.error?.message === "string"
-              ? e.error.message
-              : String(err);
-        const filename = typeof e?.filename === "string" ? e.filename : "?";
-        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
-        const colno = typeof e?.colno === "number" ? e.colno : "?";
-        reject(new Error(`hid interrupt guest worker error: ${message} (${filename}:${lineno}:${colno})`));
-      };
-    });
+          clearTimeout(timeout);
+          resolve(data);
+        };
+        hidWorker.onerror = (err) => {
+          clearTimeout(timeout);
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`hid interrupt guest worker error: ${message} (${filename}:${lineno}:${colno})`));
+        };
+      });
 
-    hidWorker.postMessage({
-      mode: "hidInterruptIn",
-      ioIpc: segments.ioIpc,
-      guestSab,
-      guestBase: views.guestLayout.guest_base,
-      guestSize: views.guestLayout.guest_size,
-      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
-      inLen: 34,
-      forcedPortIndex: 0,
-    });
+      hidWorker.postMessage({
+        mode: "hidInterruptIn",
+        ioIpc: segments.ioIpc,
+        guestSab,
+        guestBase: views.guestLayout.guest_base,
+        guestSize: views.guestLayout.guest_size,
+        setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
+        inLen: 34,
+        forcedPortIndex: 0,
+      });
 
-    const hidInterruptResult = await hidInterruptResultPromise.finally(() => hidWorker.terminate());
+      hidInterruptResult = await hidInterruptResultPromise;
+    } finally {
+      hidWorker.terminate();
+      URL.revokeObjectURL(hidWrapperUrl);
+    }
     if (!hidInputSent) {
-      throw new Error(`hid interrupt test did not observe NAK (hidNakObserved=${hidNakObserved})`);
+      throw new Error(
+        `hid interrupt test did not observe NAK (hidNakObserved=${hidNakObserved}) result=${JSON.stringify(hidInterruptResult)}`,
+      );
     }
 
     // -------------------------
@@ -927,53 +1131,60 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const expectedHidOutputReport = [0x33];
     hidSendReport = null;
 
-    const hidOutWorker = new Worker(guestUrl, { type: "module" });
-    const hidOutResultPromise = new Promise<any>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("timeout waiting for hid OUT guest worker")), 20_000);
-      hidOutWorker.onmessage = (ev) => {
-        clearTimeout(timeout);
-        resolve(ev.data);
+    const { worker: hidOutWorker, wrapperUrl: hidOutWrapperUrl, imported: hidOutImported } = createGuestWorker();
+    let hidOutResult: any;
+    try {
+      await hidOutImported;
+      const hidOutResultPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout waiting for hid OUT guest worker")), 45_000);
+        hidOutWorker.onmessage = (ev) => {
+          clearTimeout(timeout);
+          resolve(ev.data);
+        };
+        hidOutWorker.onerror = (err) => {
+          clearTimeout(timeout);
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`hid OUT guest worker error: ${message} (${filename}:${lineno}:${colno})`));
+        };
+      });
+
+      // Wait for the IO worker to forward `hid.sendReport` (guest->host output report).
+      const waitForSendReport = async () => {
+        const deadline = performance.now() + 10_000;
+        while (!hidSendReport && performance.now() < deadline) {
+          await sleep(5);
+        }
+        if (!hidSendReport) throw new Error("timeout waiting for hid.sendReport");
       };
-      hidOutWorker.onerror = (err) => {
-        clearTimeout(timeout);
-        const e = err as any;
-        const message =
-          typeof e?.message === "string"
-            ? e.message
-            : typeof e?.error?.message === "string"
-              ? e.error.message
-              : String(err);
-        const filename = typeof e?.filename === "string" ? e.filename : "?";
-        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
-        const colno = typeof e?.colno === "number" ? e.colno : "?";
-        reject(new Error(`hid OUT guest worker error: ${message} (${filename}:${lineno}:${colno})`));
-      };
-    });
 
-    // Wait for the IO worker to forward `hid.sendReport` (guest->host output report).
-    const waitForSendReport = async () => {
-      const deadline = performance.now() + 10_000;
-      while (!hidSendReport && performance.now() < deadline) {
-        await sleep(5);
-      }
-      if (!hidSendReport) throw new Error("timeout waiting for hid.sendReport");
-    };
+      hidOutWorker.postMessage({
+        mode: "hidInterruptOut",
+        ioIpc: segments.ioIpc,
+        guestSab,
+        guestBase: views.guestLayout.guest_base,
+        guestSize: views.guestLayout.guest_size,
+        setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
+        inLen: 34,
+        forcedPortIndex: 0,
+        outData: expectedHidOutputReport,
+      });
 
-    hidOutWorker.postMessage({
-      mode: "hidInterruptOut",
-      ioIpc: segments.ioIpc,
-      guestSab,
-      guestBase: views.guestLayout.guest_base,
-      guestSize: views.guestLayout.guest_size,
-      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
-      inLen: 34,
-      forcedPortIndex: 0,
-      outData: expectedHidOutputReport,
-    });
-
-    // Race the guest-side completion with the host-side forwarding.
-    const hidOutResult = await hidOutResultPromise.finally(() => hidOutWorker.terminate());
-    await waitForSendReport();
+      // Race the guest-side completion with the host-side forwarding.
+      hidOutResult = await hidOutResultPromise;
+      await waitForSendReport();
+    } finally {
+      hidOutWorker.terminate();
+      URL.revokeObjectURL(hidOutWrapperUrl);
+    }
 
     ioWorker.postMessage({ type: "hid.detach", deviceId: 1 });
 
@@ -1004,33 +1215,36 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     let nakObserved = false;
     let completionSent = false;
 
-    const webusbWorker = new Worker(guestUrl, { type: "module" });
-    const webusbResultPromise = new Promise<any>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("timeout waiting for webusb guest worker")), 20_000);
-      webusbWorker.onmessage = (ev) => {
-        const data = ev.data as any;
-        if (data?.type === "webusb.nakObserved") {
-          nakObserved = true;
-          return;
-        }
-        clearTimeout(timeout);
-        resolve(data);
-      };
-      webusbWorker.onerror = (err) => {
-        clearTimeout(timeout);
-        const e = err as any;
-        const message =
-          typeof e?.message === "string"
-            ? e.message
-            : typeof e?.error?.message === "string"
-              ? e.error.message
-              : String(err);
-        const filename = typeof e?.filename === "string" ? e.filename : "?";
-        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
-        const colno = typeof e?.colno === "number" ? e.colno : "?";
-        reject(new Error(`webusb guest worker error: ${message} (${filename}:${lineno}:${colno})`));
-      };
-    });
+    const { worker: webusbWorker, wrapperUrl: webusbWrapperUrl, imported: webusbImported } = createGuestWorker();
+    let webusbResult: any;
+    try {
+      await webusbImported;
+      const webusbResultPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout waiting for webusb guest worker")), 45_000);
+        webusbWorker.onmessage = (ev) => {
+          const data = ev.data as any;
+          if (data?.type === "webusb.nakObserved") {
+            nakObserved = true;
+            return;
+          }
+          clearTimeout(timeout);
+          resolve(data);
+        };
+        webusbWorker.onerror = (err) => {
+          clearTimeout(timeout);
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`webusb guest worker error: ${message} (${filename}:${lineno}:${colno})`));
+        };
+      });
 
     const maybeSendCompletion = () => {
       if (completionSent) return;
@@ -1068,7 +1282,11 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       throw new Error(`did not observe NAK+usb.action (nakObserved=${nakObserved} actions=${usbActions.length})`);
     }
 
-    const webusbResult = await webusbResultPromise.finally(() => webusbWorker.terminate());
+      webusbResult = await webusbResultPromise;
+    } finally {
+      webusbWorker.terminate();
+      URL.revokeObjectURL(webusbWrapperUrl);
+    }
     ioWorker.postMessage({ type: "usb.selected", ok: false, error: "test complete" });
 
     URL.revokeObjectURL(guestUrl);
@@ -1086,7 +1304,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       usbActions: usbActions.slice(),
       expectedDeviceDescriptor,
     };
-  });
+  }, { dynamicHubPort: UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT, externalHubPortCount: DEFAULT_EXTERNAL_HUB_PORT_COUNT });
 
   if (result.hidResult?.type === "error") {
     throw new Error(String(result.hidResult.message));
