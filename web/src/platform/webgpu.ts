@@ -1,5 +1,11 @@
 export type RequestWebGpuDeviceOptions = {
   powerPreference?: GPUPowerPreference;
+  /**
+   * Optional callback for WebGPU "uncaptured" errors (validation, pipeline creation, etc).
+   *
+   * When unset, errors are logged to `console.error` so they aren't silently dropped.
+   */
+  onUncapturedError?: (error: unknown) => void;
 };
 
 export type WebGpuDeviceInfo = {
@@ -43,6 +49,31 @@ export async function requestWebGpuDevice(
   const device = await adapter.requestDevice({
     // Keep empty for now (see docstring above).
   });
+
+  // Surface async validation/pipeline errors (which do not always throw) for debugging.
+  const onUncapturedError = options.onUncapturedError ?? ((error) => console.error("[webgpu] uncapturederror", error));
+  const uncapturedHandler = (ev: any) => {
+    try {
+      // Avoid double-reporting when cancelable.
+      (ev as any).preventDefault?.();
+    } catch {
+      // Ignore.
+    }
+    try {
+      onUncapturedError(ev?.error ?? ev);
+    } catch {
+      // Ignore.
+    }
+  };
+  try {
+    if (typeof (device as any).addEventListener === "function") {
+      (device as any).addEventListener("uncapturederror", uncapturedHandler);
+    } else {
+      (device as any).onuncapturederror = uncapturedHandler;
+    }
+  } catch {
+    // Best-effort; ignore.
+  }
 
   return {
     adapter,
