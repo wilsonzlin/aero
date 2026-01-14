@@ -41,7 +41,7 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   `aero_gpu_vga` (VGA + Bochs VBE).
   - When `enable_pc_platform=false`, the VBE LFB MMIO aperture is mapped directly at the configured base.
   - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
-    PCI function (currently `00:0c.0`) and routes the VBE LFB through PCI BAR0 inside the PCI MMIO
+    PCI function (currently `00:0c.0`, `1234:1111`) and routes the VBE LFB through PCI BAR0 inside the PCI MMIO
     window / BAR router. The BAR base is assigned by BIOS POST / the PCI allocator (and may be
     relocated when other PCI devices are present), and the machine mirrors it into the BIOS VBE
     `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.

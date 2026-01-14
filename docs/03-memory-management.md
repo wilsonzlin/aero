@@ -568,8 +568,8 @@ Separately, VBE graphics modes use a linear framebuffer (LFB) at a different phy
   - When `MachineConfig::enable_pc_platform=false`, the canonical machine maps the LFB MMIO aperture
     directly at that physical address.
   - When `MachineConfig::enable_pc_platform=true`, the canonical machine exposes a Bochs/QEMU-compatible
-    “Standard VGA” PCI function (currently `00:0c.0`) and routes the LFB through PCI BAR0 inside the
-    ACPI-reported PCI MMIO window / BAR router. BAR0 is assigned by BIOS POST / the PCI resource
+    “Standard VGA” PCI function (currently `00:0c.0`, `1234:1111`) and routes the LFB through PCI BAR0
+    inside the ACPI-reported PCI MMIO window / BAR router. BAR0 is assigned by BIOS POST / the PCI resource
     allocator (and may be relocated when other PCI devices are present); the machine mirrors the
     assigned BAR base into the BIOS VBE `PhysBasePtr` and the VGA device model.
 - In the intended AeroGPU-owned VGA/VBE path (`MachineConfig::enable_aerogpu=true`), the firmware

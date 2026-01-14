@@ -56,7 +56,7 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display.
   - When `MachineConfig::enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible
-    “Standard VGA” PCI function (currently `00:0c.0`) and routes the VBE linear framebuffer (LFB)
+    “Standard VGA” PCI function (currently `00:0c.0`, `1234:1111`) and routes the VBE linear framebuffer (LFB)
     through its BAR0 inside the PCI MMIO window. BIOS POST / the PCI resource allocator assigns BAR0
     (and may relocate it when other PCI devices are present); `aero_machine` mirrors the chosen BAR
     base into the BIOS VBE `PhysBasePtr` and the `aero_gpu_vga::VgaDevice` LFB base so guests see
