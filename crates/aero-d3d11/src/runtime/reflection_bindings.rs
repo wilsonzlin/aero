@@ -1291,16 +1291,28 @@ mod tests {
         const BYTES_PER_ROW: u32 = TEX_W * 4; // 64 * 4 = 256 (COPY_BYTES_PER_ROW_ALIGNMENT)
 
         pollster::block_on(async {
-            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
-            {
-                Ok(rt) => rt,
+            let (adapter, device, queue) = match new_device_queue_for_tests().await {
+                Ok(v) => v,
                 Err(err) => {
                     skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
                     return;
                 }
             };
-            let device = rt.device();
-            let queue = rt.queue();
+
+            // This test exercises the compute-based GS emulation path, which requires compute and
+            // storage-buffer support.
+            let downlevel = adapter.get_downlevel_capabilities();
+            if !downlevel
+                .flags
+                .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+            {
+                skip_or_panic(module_path!(), "adapter does not support compute shaders");
+                return;
+            }
+            if device.limits().max_storage_buffers_per_shader_stage == 0 {
+                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                return;
+            }
 
             // Build stage-scoped bind group layouts via the same reflection-driven path the D3D11
             // executor uses. The geometry stage is emulated via a compute shader, but its slot
@@ -1326,7 +1338,7 @@ mod tests {
             }];
 
             let info = build_pipeline_bindings_info(
-                device,
+                &device,
                 &mut layout_cache,
                 [
                     ShaderBindingSet::Guest(vs_bindings.as_slice()),
@@ -1572,7 +1584,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut sampler_cache = SamplerCache::new();
             let default_sampler = sampler_cache.get_or_create(
-                device,
+                &device,
                 &wgpu::SamplerDescriptor {
                     label: Some("gs emulation default sampler"),
                     address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -1648,7 +1660,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
             let mut bind_group_cache = BindGroupCache::new(32);
             let bg0 = build_bind_group(
-                device,
+                &device,
                 &mut bind_group_cache,
                 &info.group_layouts[0],
                 &info.group_bindings[0],
@@ -1827,8 +1839,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             }
 
             let center_a = draw_and_sample(
-                device,
-                queue,
+                &device,
+                &queue,
                 &gs_cb0_buffer,
                 &compute_pipeline,
                 bg0.as_ref(),
@@ -1842,8 +1854,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             )
             .await;
             let center_b = draw_and_sample(
-                device,
-                queue,
+                &device,
+                &queue,
                 &gs_cb0_buffer,
                 &compute_pipeline,
                 bg0.as_ref(),
@@ -1881,17 +1893,21 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             };
 
             let device = rt.device();
+            if device.limits().max_storage_buffers_per_shader_stage == 0 {
+                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                return;
+            }
 
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::UNIFORM,
                 mapped_at_creation: false,
             });
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy storage"),
                 size: 256,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             let too_small_uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2188,7 +2204,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::UNIFORM,
                 mapped_at_creation: false,
             });
             let real_uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2206,7 +2222,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy storage"),
                 size: 4,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
@@ -2359,6 +2375,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             };
 
             let device = rt.device();
+            if device.limits().max_storage_buffers_per_shader_stage == 0 {
+                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                return;
+            }
             let storage_align = device.limits().min_storage_buffer_offset_alignment as u64;
             let offset = 4u64;
             if storage_align <= 1 || offset.is_multiple_of(storage_align) {
@@ -3034,13 +3054,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
                 size: 256,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::UNIFORM,
                 mapped_at_creation: false,
             });
             let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy storage"),
                 size: 256,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
