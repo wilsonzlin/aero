@@ -2492,6 +2492,9 @@ mod tests {
     #[test]
     fn vbe_linear_framebuffer_write_shows_up_in_output() {
         let mut dev = VgaDevice::new();
+        // Use a non-default LFB base to ensure the device model doesn't rely on `SVGA_LFB_BASE`
+        // for address translation.
+        dev.set_svga_lfb_base(0xE100_0000);
 
         // 64x64x32bpp, LFB enabled.
         dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
@@ -2505,6 +2508,7 @@ mod tests {
 
         // Write a red pixel at (0,0) in BGRX format.
         let base = dev.lfb_base();
+        assert_eq!(base, 0xE100_0000);
         dev.mem_write_u8(base, 0x00); // B
         dev.mem_write_u8(base + 1, 0x00); // G
         dev.mem_write_u8(base + 2, 0xFF); // R
