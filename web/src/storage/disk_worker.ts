@@ -945,6 +945,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("selected format aerospar but the file does not have an aerospar header");
       }
 
+      if (backend === "idb") {
+        // IndexedDB disks are treated as raw sector images by the runtime disk worker. Formats that
+        // require container parsing (qcow2/vhd/aerospar) are therefore not supported.
+        if (format === "qcow2" || format === "vhd") {
+          throw new Error(`format ${format} is not supported on the IndexedDB backend (use OPFS + import_convert)`);
+        }
+      }
+
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
 

@@ -129,4 +129,12 @@ describe("disk_worker import_file aerospar handling", () => {
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/opfs/i);
   });
+
+  it("rejects qcow2 imports on the IndexedDB backend", async () => {
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "disk.qcow2");
+    const resp = await sendImportFile({ file }, "idb");
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/qcow2/i);
+    expect(String(resp.error?.message ?? "")).toMatch(/indexeddb/i);
+  });
 });

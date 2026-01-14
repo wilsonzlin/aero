@@ -791,6 +791,9 @@ async function openDiskFromMetadata(
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
+  if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") {
+    throw new Error(`unsupported IndexedDB disk format ${localMeta.format} (convert to aerospar first)`);
+  }
   const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
   return {
     disk,
@@ -904,6 +907,9 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
       return { disk: base, readOnly: entry.readOnly, backendSnapshot: backend };
     }
 
+    if (backend.format !== "raw" && backend.format !== "iso" && backend.format !== "unknown") {
+      throw new Error(`unsupported IndexedDB disk format ${backend.format} (convert to aerospar first)`);
+    }
     const disk = await IdbChunkDisk.open(backend.key, backend.sizeBytes);
     return { disk, readOnly: entry.readOnly, backendSnapshot: backend };
   }
