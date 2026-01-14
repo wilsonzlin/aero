@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use aero_d3d11::runtime::tessellator::{
     tri_index_to_vertex_indices_cw, tri_integer_index_count, tri_integer_indices_cw,
     tri_integer_triangle_count, tri_integer_vertex_count, tri_integer_vertex_ijk,
-    tri_integer_vertex_index, TriIntegerBarycentric,
+    tri_integer_vertex_index, tri_vertex_domain_location, TriIntegerBarycentric,
 };
 
 #[test]
@@ -186,6 +186,33 @@ fn triangle_integer_common_levels_match_spec_invariants() {
                 (sum - 1.0).abs() <= EPS,
                 "float barycentrics must sum to 1 (n={n}, v={v}, ijk={ijk:?}, sum={sum})"
             );
+        }
+    }
+}
+
+#[test]
+fn triangle_integer_domain_location_matches_integer_barycentrics() {
+    const EPS: f32 = 1e-5;
+
+    for n in [1u32, 2, 3, 4, 16] {
+        let vc = tri_integer_vertex_count(n);
+        let inv = 1.0 / n as f32;
+
+        for v in 0..vc {
+            let ijk = tri_integer_vertex_ijk(n, v);
+            let loc = tri_vertex_domain_location(n, v);
+            let expected = [
+                ijk.i as f32 * inv,
+                ijk.j as f32 * inv,
+                ijk.k as f32 * inv,
+            ];
+
+            for c in 0..3 {
+                assert!(
+                    (loc[c] - expected[c]).abs() <= EPS,
+                    "domain_location mismatch (n={n} v={v} ijk={ijk:?} loc={loc:?} expected={expected:?})"
+                );
+            }
         }
     }
 }
