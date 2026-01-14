@@ -1879,9 +1879,18 @@ impl XhciController {
         };
         let root_port = slot_ctx.root_hub_port_number();
 
-        if self.find_device_by_topology(root_port, &route).is_none() {
-            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
-        }
+        // Resolve the bound device so we can derive xHC-owned Slot Context fields (speed, address,
+        // slot state).
+        let expected_speed = match self.find_device_by_topology(root_port, &route) {
+            Some(dev) => port::port_speed_id(dev.speed()),
+            None => return CommandCompletion::failure(CommandCompletionCode::ContextStateError),
+        };
+
+        let mut slot_ctx = slot_ctx;
+        // Mirror controller-owned Slot Context fields to better match Address Device semantics.
+        slot_ctx.set_speed(expected_speed);
+        slot_ctx.set_usb_device_address(slot_id);
+        slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
 
         {
             let slot = &mut self.slots[idx];
@@ -1928,7 +1937,14 @@ impl XhciController {
     /// For now, configuring endpoints is equivalent to re-validating that the slot context still
     /// resolves to a reachable device.
     pub fn configure_endpoint(&mut self, slot_id: u8, slot_ctx: SlotContext) -> CommandCompletion {
-        self.address_device(slot_id, slot_ctx)
+        let completion = self.address_device(slot_id, slot_ctx);
+        if completion.completion_code == CommandCompletionCode::Success {
+            let idx = usize::from(slot_id);
+            if let Some(slot) = self.slots.get_mut(idx) {
+                slot.slot_context.set_slot_state(SLOT_STATE_CONFIGURED);
+            }
+        }
+        completion
     }
 
     /// Configure Endpoint using an Input Context pointer in guest memory.

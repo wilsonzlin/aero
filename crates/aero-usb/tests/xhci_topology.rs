@@ -1,6 +1,8 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::xhci::context::{InputContext32, InputControlContext, SlotContext};
+use aero_usb::xhci::context::{
+    InputContext32, InputControlContext, SlotContext, SLOT_STATE_ADDRESSED,
+};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{SetupPacket, UsbHubAttachError, UsbInResult, UsbOutResult};
 
@@ -47,6 +49,13 @@ fn xhci_route_string_binds_device_behind_external_hub() {
 
     let completion = ctrl.address_device_input_context(&mut mem, slot_id, input_ctx_base);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+    assert_eq!(
+        ctrl.slot_state(slot_id)
+            .expect("slot should be enabled")
+            .slot_context()
+            .slot_state(),
+        SLOT_STATE_ADDRESSED
+    );
 
     let dev = ctrl.slot_device_mut(slot_id).expect("slot must be bound");
 
@@ -109,6 +118,13 @@ fn xhci_route_string_binds_device_behind_nested_hubs() {
 
     let completion = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+    assert_eq!(
+        ctrl.slot_state(slot_id)
+            .expect("slot should be enabled")
+            .slot_context()
+            .slot_state(),
+        SLOT_STATE_ADDRESSED
+    );
 
     let dev = ctrl.slot_device_mut(slot_id).expect("slot must be bound");
 
