@@ -2767,6 +2767,8 @@ def main() -> int:
         parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
     if args.udp_port <= 0 or args.udp_port > 65535:
         parser.error("--udp-port must be in the range 1..65535")
+    if args.http_port <= 0 or args.http_port > 65535:
+        parser.error("--http-port must be in the range 1..65535")
 
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:

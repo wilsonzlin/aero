@@ -239,6 +239,34 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 finally:
                     sys.argv = old_argv
 
+    def test_rejects_http_port_out_of_range(self) -> None:
+        h = self.harness
+
+        cases = [
+            (["--http-port", "0"], "--http-port must be in the range 1..65535"),
+            (["--http-port", "-1"], "--http-port must be in the range 1..65535"),
+            (["--http-port", "65536"], "--http-port must be in the range 1..65535"),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

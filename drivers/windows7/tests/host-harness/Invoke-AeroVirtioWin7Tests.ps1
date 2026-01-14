@@ -399,6 +399,10 @@ function Assert-AeroWin7QemuAcceptsVectorsZero {
   }
 }
 
+if ($HttpPort -le 0 -or $HttpPort -gt 65535) {
+  throw "-HttpPort must be in the range 1..65535."
+}
+
 if (-not $DisableUdp) {
   if ($UdpPort -le 0 -or $UdpPort -gt 65535) {
     throw "-UdpPort must be in the range 1..65535."
