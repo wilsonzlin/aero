@@ -330,6 +330,11 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_LD_STRUCTURED => Some("ld_structured"),
         OPCODE_STORE_RAW => Some("store_raw"),
         OPCODE_STORE_STRUCTURED => Some("store_structured"),
+        OPCODE_BFREV => Some("bfrev"),
+        OPCODE_COUNTBITS => Some("countbits"),
+        OPCODE_FIRSTBIT_HI => Some("firstbit_hi"),
+        OPCODE_FIRSTBIT_LO => Some("firstbit_lo"),
+        OPCODE_FIRSTBIT_SHI => Some("firstbit_shi"),
         OPCODE_DCL_THREAD_GROUP => Some("dcl_thread_group"),
         OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
@@ -361,5 +366,14 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_CASE), Some("case"));
         assert_eq!(opcode_name(OPCODE_DEFAULT), Some("default"));
         assert_eq!(opcode_name(OPCODE_ENDSWITCH), Some("endswitch"));
+    }
+
+    #[test]
+    fn opcode_name_includes_bit_utils_ops() {
+        assert_eq!(opcode_name(OPCODE_BFREV), Some("bfrev"));
+        assert_eq!(opcode_name(OPCODE_COUNTBITS), Some("countbits"));
+        assert_eq!(opcode_name(OPCODE_FIRSTBIT_HI), Some("firstbit_hi"));
+        assert_eq!(opcode_name(OPCODE_FIRSTBIT_LO), Some("firstbit_lo"));
+        assert_eq!(opcode_name(OPCODE_FIRSTBIT_SHI), Some("firstbit_shi"));
     }
 }
