@@ -69,6 +69,9 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `D3DFVF_XYZ` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
 - It writes screen-space `XYZRHW` into **stream 0** of the destination layout described by `hVertexDecl`. Declaration
   elements in other streams are ignored when inferring destination stride/offsets.
+  - Destination stride: when `DestStride` is present but 0 (or absent in older header vintages), the UMD infers the
+    effective stride from **stream 0** of `hVertexDecl` when possible, otherwise falling back to the currently-bound stream
+    0 stride.
   - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
     `XYZRHW` (screen space). For `D3DFVF_XYZW*`, the input `w` component is respected.
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.

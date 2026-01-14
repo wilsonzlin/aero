@@ -611,6 +611,9 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into **stream 0** of the
   destination layout described by `hVertexDecl` (declaration elements in other streams are ignored):
+  - Destination stride: some runtimes/header vintages pass `DestStride == 0` (or omit the field entirely). In this case,
+    the UMD infers the effective destination vertex stride from **stream 0** of `hVertexDecl` when possible; if it cannot
+    be inferred, it falls back to the currently-bound stream 0 stride.
   - for `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce
     `XYZRHW` (for `D3DFVF_XYZW*` the input `w` is respected), and
   - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
