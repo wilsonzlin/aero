@@ -6,75 +6,11 @@ fn main() {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     use std::env;
-    use std::fs::OpenOptions;
-    use std::io::{Read, Seek, SeekFrom, Write};
 
+    use aero_storage::FileBackend;
+    use emulator::io::storage::adapters::ByteStorageFromStorageBackend;
     use emulator::io::storage::disk::{ByteStorage, DiskBackend};
     use emulator::io::storage::formats::{aerosprs, SparseDisk};
-    use emulator::io::storage::{DiskError, DiskResult};
-
-    struct FileByteStorage {
-        file: std::fs::File,
-    }
-
-    impl FileByteStorage {
-        fn open_rw(path: &str) -> DiskResult<Self> {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(path)
-                .map_err(|e| DiskError::Io(e.to_string()))?;
-            Ok(Self { file })
-        }
-
-        fn create_truncate(path: &str) -> DiskResult<Self> {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(path)
-                .map_err(|e| DiskError::Io(e.to_string()))?;
-            Ok(Self { file })
-        }
-    }
-
-    impl ByteStorage for FileByteStorage {
-        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-            self.file
-                .seek(SeekFrom::Start(offset))
-                .map_err(|e| DiskError::Io(e.to_string()))?;
-            self.file
-                .read_exact(buf)
-                .map_err(|e| DiskError::Io(e.to_string()))
-        }
-
-        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-            self.file
-                .seek(SeekFrom::Start(offset))
-                .map_err(|e| DiskError::Io(e.to_string()))?;
-            self.file
-                .write_all(buf)
-                .map_err(|e| DiskError::Io(e.to_string()))
-        }
-
-        fn flush(&mut self) -> DiskResult<()> {
-            self.file.flush().map_err(|e| DiskError::Io(e.to_string()))
-        }
-
-        fn len(&mut self) -> DiskResult<u64> {
-            self.file
-                .metadata()
-                .map(|m| m.len())
-                .map_err(|e| DiskError::Io(e.to_string()))
-        }
-
-        fn set_len(&mut self, len: u64) -> DiskResult<()> {
-            self.file
-                .set_len(len)
-                .map_err(|e| DiskError::Io(e.to_string()))
-        }
-    }
 
     fn print_usage() {
         eprintln!("Usage: aerosparse_convert <input.aerosprs> <output.aerospar>");
@@ -94,13 +30,14 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mut input = match FileByteStorage::open_rw(&input_path) {
+    let input_backend = match FileBackend::open_read_only(&input_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to open input: {e}");
             std::process::exit(1);
         }
     };
+    let mut input = ByteStorageFromStorageBackend(input_backend);
 
     let mut magic = [0u8; 8];
     if let Err(e) = input.read_at(0, &mut magic) {
@@ -141,13 +78,14 @@ fn main() {
         1024 * 1024
     };
 
-    let out_storage = match FileByteStorage::create_truncate(&output_path) {
+    let out_backend = match FileBackend::create(&output_path, 0) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to create output: {e}");
             std::process::exit(1);
         }
     };
+    let out_storage = ByteStorageFromStorageBackend(out_backend);
 
     let mut out = match SparseDisk::create(out_storage, 512, total_sectors_512, output_block_size) {
         Ok(d) => d,
