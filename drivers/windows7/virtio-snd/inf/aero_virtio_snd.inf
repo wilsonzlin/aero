@@ -74,8 +74,11 @@ HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 
-; Per-device bring-up toggles (defaults). These are stored under the device
-; instance key's "Device Parameters" hive (IoOpenDeviceRegistryKey(PLUGPLAY_REGKEY_DEVICE)).
+; Per-device bring-up toggles (defaults).
+;
+; These are stored under the device instance’s "Device Parameters" key:
+;   HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\...
+; Find <DeviceInstancePath> via Device Manager → Details → “Device instance path”.
 [AeroVirtioSnd_Parameters_AddReg]
 HKR,Parameters,,0x00000010
 HKR,Parameters,ForceNullBackend,0x00010001,0
