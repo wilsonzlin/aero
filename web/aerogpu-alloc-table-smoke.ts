@@ -9,7 +9,8 @@ import {
   GPU_PROTOCOL_VERSION,
 } from "./src/ipc/gpu-protocol";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "./src/runtime/shared_layout";
+import { createSharedMemoryViews } from "./src/runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
 
 declare global {
   interface Window {
@@ -66,7 +67,16 @@ async function main(): Promise<void> {
 
   try {
     // Allocate small shared guest RAM + control SABs.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 8 });
+    // This harness does not execute the WASM runtime; avoid the full runtime allocator, which reserves
+    // a fixed 128MiB wasm32 runtime region and allocates the large default IO IPC + VRAM buffers.
+    const sharedFramebuffer = new SharedArrayBuffer(8);
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 8 * 1024 * 1024,
+      sharedFramebuffer,
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const worker = new Worker(new URL("./src/workers/gpu.worker.ts", import.meta.url), { type: "module" });
@@ -137,7 +147,7 @@ async function main(): Promise<void> {
     Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
 
     // Provide a tiny placeholder framebuffer; screenshot path uses the last-presented AeroGPU texture.
-    const dummyFramebuffer = new SharedArrayBuffer(8);
+    const dummyFramebuffer = sharedFramebuffer;
 
     worker.postMessage({
       ...GPU_MESSAGE_BASE,
