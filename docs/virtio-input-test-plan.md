@@ -347,15 +347,19 @@ Optional self-hosted CI wrapper:
 - [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml) (`workflow_dispatch`)
   - Use workflow inputs:
     - `qemu_preflight_pci=true` to enable the optional QMP `query-pci` PCI ID preflight (fail fast on missing `REV_01`/wrong IDs)
-    - `with_virtio_input_events=true`
-    - `with_virtio_input_wheel=true`
-    - `with_virtio_input_media_keys=true`
-    - `with_virtio_input_events_extended=true`
-    - `with_virtio_input_tablet_events=true`
-    to enable the optional QMP injection-based end-to-end virtio-input tests.
-    (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-media-keys` for media keys,
-    also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`)
-    for tablet.)
+    - To enable the optional QMP injection-based end-to-end virtio-input tests:
+      - `with_virtio_input_events=true`
+      - `with_virtio_input_wheel=true`
+      - `with_virtio_input_media_keys=true`
+      - `with_virtio_input_events_extended=true`
+      - `with_virtio_input_tablet_events=true`
+      - (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-media-keys` for media keys,
+        also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`)
+        for tablet.)
+    - To enable the optional virtio-blk runtime resize test (`virtio-blk-resize`):
+      - `with_blk_resize=true`
+      - optional: `blk_resize_delta_mib=<N>` to override the default growth delta (MiB)
+      - (Requires a guest image provisioned with `--test-blk-resize` / env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`.)
 
 ### 4.1 Basic invocation (PowerShell)
 
