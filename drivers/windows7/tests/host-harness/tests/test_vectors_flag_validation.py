@@ -298,6 +298,67 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 finally:
                     sys.argv = old_argv
 
+    def test_rejects_http_path_without_leading_slash(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--http-path",
+                "aero-virtio-selftest",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--http-path must start with '/'", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
+    def test_rejects_negative_wav_thresholds_when_verify_enabled(self) -> None:
+        h = self.harness
+
+        cases = [
+            (
+                ["--virtio-snd-wav-peak-threshold", "-1"],
+                "--virtio-snd-wav-peak-threshold must be >= 0",
+            ),
+            (
+                ["--virtio-snd-wav-rms-threshold", "-1"],
+                "--virtio-snd-wav-rms-threshold must be >= 0",
+            ),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        "--with-virtio-snd",
+                        "--virtio-snd-audio-backend",
+                        "wav",
+                        "--virtio-snd-wav-path",
+                        "out.wav",
+                        "--virtio-snd-verify-wav",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

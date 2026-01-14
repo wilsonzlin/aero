@@ -308,6 +308,12 @@ if ($VerifyVirtioSndWav) {
   if ($VirtioSndAudioBackend -ne "wav") {
     throw "-VerifyVirtioSndWav requires -VirtioSndAudioBackend wav."
   }
+  if ($VirtioSndWavPeakThreshold -lt 0) {
+    throw "-VirtioSndWavPeakThreshold must be >= 0."
+  }
+  if ($VirtioSndWavRmsThreshold -lt 0) {
+    throw "-VirtioSndWavRmsThreshold must be >= 0."
+  }
 }
 
 if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
@@ -401,6 +407,10 @@ function Assert-AeroWin7QemuAcceptsVectorsZero {
 
 if ($HttpPort -le 0 -or $HttpPort -gt 65535) {
   throw "-HttpPort must be in the range 1..65535."
+}
+
+if ([string]::IsNullOrEmpty($HttpPath) -or (-not $HttpPath.StartsWith("/"))) {
+  throw "-HttpPath must start with '/'."
 }
 
 if ($MemoryMB -le 0) {

@@ -2789,6 +2789,8 @@ def main() -> int:
         parser.error("--udp-port must be in the range 1..65535")
     if args.http_port <= 0 or args.http_port > 65535:
         parser.error("--http-port must be in the range 1..65535")
+    if not args.http_path.startswith("/"):
+        parser.error("--http-path must start with '/'")
     if args.memory_mb <= 0:
         parser.error("--memory-mb must be a positive integer")
     if args.smp <= 0:
@@ -2809,6 +2811,10 @@ def main() -> int:
             parser.error("--virtio-snd-verify-wav requires --with-virtio-snd/--enable-virtio-snd")
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
+        if int(args.virtio_snd_wav_peak_threshold) < 0:
+            parser.error("--virtio-snd-wav-peak-threshold must be >= 0")
+        if int(args.virtio_snd_wav_rms_threshold) < 0:
+            parser.error("--virtio-snd-wav-rms-threshold must be >= 0")
 
     if args.virtio_transitional and args.enable_virtio_snd:
         parser.error(
