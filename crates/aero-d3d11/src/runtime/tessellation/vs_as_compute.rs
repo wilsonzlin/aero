@@ -984,8 +984,18 @@ fn wgsl_load_attr_fn(attr: &VertexPullingAttribute, loc: u32, target_ty: &str) -
         }
     };
 
-    let (load_fn, load_count, load_scalar) =
-        load_fn_for_format(attr.format.component_type, data_count);
+    // BGRA8 formats need a channel swap (D3D semantics are RGBA). Always use the BGRA loader even
+    // when the vertex shader only consumes a subset of the components (e.g. `vec2<f32>`), so the
+    // `.x/.y` lanes still map to R/G rather than B/G.
+    let is_bgra8 = matches!(attr.dxgi_format, 87 | 91); // DXGI_FORMAT_B8G8R8A8_{UNORM,UNORM_SRGB}
+    let (load_fn, load_count, load_scalar) = if is_bgra8
+        && attr.format.component_type == DxgiFormatComponentType::Unorm8
+        && attr.format.component_count == 4
+    {
+        ("load_attr_b8g8r8a8_unorm", 4, WgslScalarType::F32)
+    } else {
+        load_fn_for_format(attr.format.component_type, data_count)
+    };
     let load_ty = wgsl_type_string(WgslNumericType {
         scalar: load_scalar,
         count: load_count,
@@ -1192,6 +1202,7 @@ fn vs_main(input: VsIn) -> VsOut {
                 shader_location: 0,
                 pulling_slot: 0,
                 offset_bytes: 0,
+                dxgi_format: 24,
                 format: fmt,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 instance_step_rate: 0,
@@ -1230,6 +1241,7 @@ fn vs_main(input: VsIn) -> VsOut {
                 shader_location: 0,
                 pulling_slot: 0,
                 offset_bytes: 0,
+                dxgi_format: 49,
                 format: fmt,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 instance_step_rate: 0,
@@ -1251,6 +1263,45 @@ fn vs_main(input: VsIn) -> VsOut {
         assert!(
             wgsl.contains("load_attr_unorm8x2(0u, addr)"),
             "expected VS-as-compute WGSL to call load_attr_unorm8x2 for loc0, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn vs_as_compute_uses_bgra_loader_for_b8g8r8a8_unorm() {
+        let fmt = crate::input_layout::dxgi_format_info(87).expect("DXGI_FORMAT_B8G8R8A8_UNORM");
+        assert_eq!(fmt.component_type, DxgiFormatComponentType::Unorm8);
+        assert_eq!(fmt.component_count, 4);
+
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot: BTreeMap::from([(0u32, 0u32)]),
+            pulling_slot_to_d3d_slot: vec![0u32],
+            required_strides: vec![0u32],
+            attributes: vec![VertexPullingAttribute {
+                shader_location: 0,
+                pulling_slot: 0,
+                offset_bytes: 0,
+                dxgi_format: 87,
+                format: fmt,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                instance_step_rate: 0,
+            }],
+        };
+
+        let wgsl = build_vs_as_compute_wgsl(
+            &pulling,
+            MINIMAL_VS_WGSL,
+            VsAsComputeConfig {
+                control_point_count: 1,
+                out_reg_count: 1,
+                pos_reg: 0,
+                indexed: false,
+            },
+        )
+        .expect("build WGSL");
+
+        assert!(
+            wgsl.contains("load_attr_b8g8r8a8_unorm(0u, addr)"),
+            "expected VS-as-compute WGSL to call load_attr_b8g8r8a8_unorm for loc0, got:\n{wgsl}"
         );
     }
 

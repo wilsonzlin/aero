@@ -3847,6 +3847,7 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
     // Returns a `vec4<f32>` where missing components are filled with D3D IA defaults.
     //
     // For scalar/vector float formats, D3D fills missing lanes with (0,0,0,1).
+    let is_bgra8 = matches!(attr.dxgi_format, 87 | 91); // DXGI_FORMAT_B8G8R8A8_{UNORM,UNORM_SRGB}
     let load_expr = match attr.format.component_type {
         DxgiFormatComponentType::F32 => match attr.format.component_count {
             1 => "load_attr_f32".to_owned(),
@@ -3898,7 +3899,13 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
         },
         DxgiFormatComponentType::Unorm8 => match attr.format.component_count {
             2 => "load_attr_unorm8x2".to_owned(),
-            4 => "load_attr_unorm8x4".to_owned(),
+            4 => {
+                if is_bgra8 {
+                    "load_attr_b8g8r8a8_unorm".to_owned()
+                } else {
+                    "load_attr_unorm8x4".to_owned()
+                }
+            }
             _ => "load_attr_unorm8x4".to_owned(),
         },
         DxgiFormatComponentType::Snorm8 => match attr.format.component_count {
@@ -4293,6 +4300,7 @@ mod tests {
                 shader_location: 0,
                 pulling_slot: 0,
                 offset_bytes: 0,
+                dxgi_format,
                 format: crate::input_layout::dxgi_format_info(dxgi_format).unwrap(),
                 step_mode,
                 instance_step_rate,
@@ -4318,6 +4326,13 @@ mod tests {
         assert!(
             wgsl.contains("load_attr_unorm8x2"),
             "expected unorm8x2 load to use load_attr_unorm8x2, got:\n{wgsl}"
+        );
+
+        // BGRA unorm8x4 (B8G8R8A8_UNORM_SRGB) should use the BGRA swizzle helper.
+        let wgsl = super::wgsl_load_attr_expanded_fn(&attr(91, wgpu::VertexStepMode::Vertex, 0));
+        assert!(
+            wgsl.contains("load_attr_b8g8r8a8_unorm"),
+            "expected BGRA8 load to use load_attr_b8g8r8a8_unorm, got:\n{wgsl}"
         );
 
         // Instance step-rate division should appear in the generated address calculation.

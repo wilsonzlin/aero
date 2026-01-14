@@ -101,6 +101,11 @@ pub struct VertexPullingAttribute {
     pub pulling_slot: u32,
     /// Offset of this element from the start of the vertex struct (bytes).
     pub offset_bytes: u32,
+    /// Numeric `DXGI_FORMAT` value from the ILAY input layout element.
+    ///
+    /// This is retained so codegen can handle format-specific quirks that can't be expressed purely
+    /// through [`crate::input_layout::DxgiFormatInfo`] metadata (e.g. BGRA channel ordering).
+    pub dxgi_format: u32,
     /// DXGI format metadata used by codegen (component type/lanes).
     pub format: crate::input_layout::DxgiFormatInfo,
     /// 0 = per-vertex, 1 = per-instance.
@@ -178,6 +183,7 @@ impl VertexPullingLayout {
             shader_location: u32,
             d3d_slot: u32,
             offset_bytes: u32,
+            dxgi_format: u32,
             format: crate::input_layout::DxgiFormatInfo,
             step_mode: wgpu::VertexStepMode,
             step_rate: u32,
@@ -253,6 +259,7 @@ impl VertexPullingLayout {
                 shader_location,
                 d3d_slot: elem.input_slot,
                 offset_bytes: offset,
+                dxgi_format: elem.dxgi_format,
                 format: fmt,
                 step_mode,
                 step_rate,
@@ -312,6 +319,7 @@ impl VertexPullingLayout {
                 shader_location: e.shader_location,
                 pulling_slot: *d3d_slot_to_pulling_slot.get(&e.d3d_slot).unwrap(),
                 offset_bytes: e.offset_bytes,
+                dxgi_format: e.dxgi_format,
                 format: e.format,
                 step_mode: e.step_mode,
                 instance_step_rate: e.step_rate,
@@ -435,6 +443,13 @@ impl VertexPullingLayout {
         );
         s.push_str(
             "fn load_attr_unorm8x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let r = f32(w & 0xFFu) / 255.0;\n  let g = f32((w >> 8u) & 0xFFu) / 255.0;\n  let b = f32((w >> 16u) & 0xFFu) / 255.0;\n  let a = f32((w >> 24u) & 0xFFu) / 255.0;\n  return vec4<f32>(r, g, b, a);\n}\n\n",
+        );
+        // BGRA8 vertex formats (D3D format names describe storage order; shader semantics are RGBA).
+        s.push_str(
+            "fn load_attr_b8g8r8a8_unorm(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let v = load_attr_unorm8x4(slot, addr_bytes);\n  return vec4<f32>(v.z, v.y, v.x, v.w);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_b8g8r8a8_unorm_srgb(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  return load_attr_b8g8r8a8_unorm(slot, addr_bytes);\n}\n\n",
         );
         s.push_str(
             "fn load_attr_unorm8x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let r = f32(w & 0xFFu) / 255.0;\n  let g = f32((w >> 8u) & 0xFFu) / 255.0;\n  return vec2<f32>(r, g);\n}\n\n",

@@ -4137,6 +4137,11 @@ impl AerogpuD3d11Executor {
                         "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
                             .to_owned()
                     }
+                    (DxgiFormatComponentType::Unorm8, 4)
+                        if matches!(attr.dxgi_format, 87 | 91) =>
+                    {
+                        "return load_attr_b8g8r8a8_unorm(slot, addr);".to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
                     }
@@ -4630,6 +4635,11 @@ impl AerogpuD3d11Executor {
                     (DxgiFormatComponentType::Unorm8, 2) => {
                         "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
                             .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 4)
+                        if matches!(attr.dxgi_format, 87 | 91) =>
+                    {
+                        "return load_attr_b8g8r8a8_unorm(slot, addr);".to_owned()
                     }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
@@ -5812,6 +5822,11 @@ impl AerogpuD3d11Executor {
                     (DxgiFormatComponentType::F32, 4) => {
                         "return load_attr_f32x4(slot, addr);".to_owned()
                     }
+                    (DxgiFormatComponentType::Unorm8, 4)
+                        if matches!(attr.dxgi_format, 87 | 91) =>
+                    {
+                        "return load_attr_b8g8r8a8_unorm(slot, addr);".to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
                     }
@@ -6207,6 +6222,11 @@ impl AerogpuD3d11Executor {
                     }
                     (DxgiFormatComponentType::F32, 4) => {
                         "return load_attr_f32x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 4)
+                        if matches!(attr.dxgi_format, 87 | 91) =>
+                    {
+                        "return load_attr_b8g8r8a8_unorm(slot, addr);".to_owned()
                     }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
