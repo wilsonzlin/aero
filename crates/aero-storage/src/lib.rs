@@ -15,7 +15,7 @@
 //! ## Example: open with format detection
 //!
 //! ```rust,no_run
-//! use aero_storage::{DiskImage, MemBackend, VirtualDisk};
+//! use aero_storage::{DiskImage, MemBackend, VirtualDisk, SECTOR_SIZE};
 //!
 //! // In production this could be an OPFS backend such as `aero_opfs::OpfsByteStorage` (wasm32).
 //! // IndexedDB-based storage is generally async and is not currently exposed as a sync
@@ -24,7 +24,7 @@
 //! let backend = MemBackend::with_len(1024 * 1024).unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
-//! let mut sector = [0u8; 512];
+//! let mut sector = [0u8; SECTOR_SIZE];
 //! disk.read_sectors(0, &mut sector).unwrap();
 //! ```
 //!
@@ -34,12 +34,12 @@
 //! ```rust,no_run
 //! # #[cfg(not(target_arch = "wasm32"))]
 //! # {
-//! use aero_storage::{DiskImage, FileBackend, VirtualDisk};
+//! use aero_storage::{DiskImage, FileBackend, VirtualDisk, SECTOR_SIZE};
 //!
 //! let backend = FileBackend::open_rw("disk.img").unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
-//! let mut sector = [0u8; 512];
+//! let mut sector = [0u8; SECTOR_SIZE];
 //! disk.read_sectors(0, &mut sector).unwrap();
 //! # }
 //! ```
