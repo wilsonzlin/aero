@@ -3022,6 +3022,14 @@ struct VirtioInputEventsTestResult {
   bool saw_mouse_left_up = false;
   bool saw_mouse_wheel = false;
   bool saw_mouse_hwheel = false;
+  bool saw_mouse_wheel_expected = false;
+  bool saw_mouse_hwheel_expected = false;
+  bool saw_mouse_wheel_unexpected = false;
+  bool saw_mouse_hwheel_unexpected = false;
+  int mouse_wheel_unexpected_last = 0;
+  int mouse_hwheel_unexpected_last = 0;
+  int mouse_wheel_events = 0;
+  int mouse_hwheel_events = 0;
   int mouse_wheel_total = 0;
   int mouse_hwheel_total = 0;
   int keyboard_reports = 0;
@@ -3029,6 +3037,11 @@ struct VirtioInputEventsTestResult {
   std::string reason;
   DWORD win32_error = 0;
 };
+
+// Expected deterministic scroll deltas injected by the host harness when wheel testing is enabled.
+// (The host harness may retry injection a few times, so the guest may observe multiples of these deltas.)
+static constexpr int kExpectedMouseWheelDelta = 1;
+static constexpr int kExpectedMouseHWheelDelta = -2;
 
 struct VirtioInputHidPaths {
   std::wstring keyboard_path;
@@ -3318,10 +3331,24 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   if (wheel != 0) {
     out.saw_mouse_wheel = true;
     out.mouse_wheel_total += wheel;
+    out.mouse_wheel_events++;
+    if (wheel == kExpectedMouseWheelDelta) {
+      out.saw_mouse_wheel_expected = true;
+    } else {
+      out.saw_mouse_wheel_unexpected = true;
+      out.mouse_wheel_unexpected_last = wheel;
+    }
   }
   if (pan != 0) {
     out.saw_mouse_hwheel = true;
     out.mouse_hwheel_total += pan;
+    out.mouse_hwheel_events++;
+    if (pan == kExpectedMouseHWheelDelta) {
+      out.saw_mouse_hwheel_expected = true;
+    } else {
+      out.saw_mouse_hwheel_unexpected = true;
+      out.mouse_hwheel_unexpected_last = pan;
+    }
   }
 
   const bool left = (buttons & 0x01) != 0;
@@ -7843,8 +7870,6 @@ int wmain(int argc, wchar_t** argv) {
     // Optional wheel/hwheel coverage (requires host-side injection via QMP).
     // Keep this separate from the base virtio-input-events result so existing images/harnesses
     // that do not inject scroll events can still pass.
-    constexpr int kExpectedWheelDelta = 1;
-    constexpr int kExpectedHWheelDelta = -2;
     if (!input_events.ok) {
       log.Logf(
           "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|input_events_failed|reason=%s|err=%lu|wheel_total=%d|hwheel_total=%d",
@@ -7859,17 +7884,23 @@ int wmain(int argc, wchar_t** argv) {
           "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=missing_axis|wheel_total=%d|hwheel_total=%d|saw_wheel=%d|saw_hwheel=%d",
           input_events.mouse_wheel_total, input_events.mouse_hwheel_total, input_events.saw_mouse_wheel ? 1 : 0,
           input_events.saw_mouse_hwheel ? 1 : 0);
-    } else if (input_events.mouse_wheel_total == kExpectedWheelDelta &&
-               input_events.mouse_hwheel_total == kExpectedHWheelDelta) {
+    } else if (input_events.saw_mouse_wheel_unexpected || input_events.saw_mouse_hwheel_unexpected) {
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d",
-          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedWheelDelta,
-          kExpectedHWheelDelta);
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=unexpected_delta|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|wheel_events=%d|hwheel_events=%d|wheel_unexpected_last=%d|hwheel_unexpected_last=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedMouseWheelDelta,
+          kExpectedMouseHWheelDelta, input_events.mouse_wheel_events, input_events.mouse_hwheel_events,
+          input_events.mouse_wheel_unexpected_last, input_events.mouse_hwheel_unexpected_last);
+    } else if (input_events.saw_mouse_wheel_expected && input_events.saw_mouse_hwheel_expected) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|wheel_events=%d|hwheel_events=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedMouseWheelDelta,
+          kExpectedMouseHWheelDelta, input_events.mouse_wheel_events, input_events.mouse_hwheel_events);
     } else {
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=delta_mismatch|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d",
-          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedWheelDelta,
-          kExpectedHWheelDelta);
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=delta_mismatch|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|wheel_events=%d|hwheel_events=%d|saw_wheel_expected=%d|saw_hwheel_expected=%d",
+          input_events.mouse_wheel_total, input_events.mouse_hwheel_total, kExpectedMouseWheelDelta,
+          kExpectedMouseHWheelDelta, input_events.mouse_wheel_events, input_events.mouse_hwheel_events,
+          input_events.saw_mouse_wheel_expected ? 1 : 0, input_events.saw_mouse_hwheel_expected ? 1 : 0);
     }
   }
 
