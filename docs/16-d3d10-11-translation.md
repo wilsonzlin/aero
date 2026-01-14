@@ -1643,7 +1643,12 @@ expansion pipeline independent of scalar type.
 **Vertex buffer view (for the final draw):**
 
 The final expansion output buffer (`tess_out_vertices` or `gs_out_vertices`) is consumed by the
-render pipeline by binding it as a WebGPU **vertex buffer**.
+render pipeline either:
+
+- by binding it as a WebGPU **vertex buffer**, or
+- by binding it as a `var<storage, read>` buffer and doing vertex pulling in the passthrough VS.
+
+The rest of this section describes the vertex-buffer strategy.
 
 To match the packed `ExpandedVertex` layout above:
 
@@ -1658,17 +1663,11 @@ To match the packed `ExpandedVertex` layout above:
 This keeps the final draw in the “normal” vertex-input path (no storage-buffer reads in the vertex
 stage), while still being bit-preserving via `bitcast`.
 
-Implementation note: the current in-tree expansion path (including the placeholder prepass and the
-initial GS translator) uses a simpler vertex format (`vec4<f32>` position + one `vec4<f32>` varying)
-and binds it via `VertexFormat::Float32x4` at fixed locations 0/1 (see
-`GEOMETRY_PREPASS_CS_WGSL` and the `expanded_draw_passthrough_vs_wgsl` generator in
-`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-
-The in-tree repo also contains an emulation-only passthrough VS generator that does **storage-buffer
-vertex pulling** from an `ExpandedVertex` record (`pos: vec4<f32>` + `varyings: array<vec4<f32>, 32>`)
-at `@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)` (see
-`generate_passthrough_vs_wgsl` in `crates/aero-d3d11/src/runtime/wgsl_link.rs`). When changing
-expanded-vertex layout conventions, keep both variants consistent or delete the unused one.
+Implementation note: the current in-tree executor uses **storage-buffer vertex pulling** from an
+`ExpandedVertex` record (`pos: vec4<f32>` + `varyings: array<vec4<f32>, 32>`) at
+`@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)` (see `generate_passthrough_vs_wgsl` in
+`crates/aero-d3d11/src/runtime/wgsl_link.rs`). When changing expanded-vertex layout conventions,
+keep the compute prepass output and this passthrough VS generator in sync.
 
 #### 2.3) Indirect draw argument formats
 
@@ -1888,18 +1887,19 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 **Passthrough VS strategy (concrete)**
 
 The final render stage uses a small **passthrough vertex shader** plus the original pixel shader.
-The passthrough VS uses normal WebGPU vertex inputs (no storage-buffer reads in the vertex stage)
-and forwards attributes from the expansion output vertex buffer.
-
 The current in-tree executor generates the passthrough VS WGSL on demand (see
-`expanded_draw_passthrough_vs_wgsl` and `get_or_create_render_pipeline_for_expanded_draw` in
-`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`). Conceptually:
+`generate_passthrough_vs_wgsl` in `crates/aero-d3d11/src/runtime/wgsl_link.rs`). The shader performs
+**storage-buffer vertex pulling** from an `ExpandedVertex` record bound at
+`@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)`. Conceptually:
 
 ```wgsl
-struct VsIn {
-  @location(0) v0: vec4<f32>,
-  @location(1) v1: vec4<f32>,
+struct ExpandedVertex {
+  pos: vec4<f32>,
+  varyings: array<vec4<f32>, 32>,
 };
+
+@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)
+var<storage, read> expanded_vertices: array<ExpandedVertex>;
 
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
@@ -1907,10 +1907,11 @@ struct VsOut {
 };
 
 @vertex
-fn vs_main(input: VsIn) -> VsOut {
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
+  let v = expanded_vertices[vertex_index];
   var out: VsOut;
-  out.pos = input.v0;
-  out.o1 = input.v1;
+  out.pos = v.pos;
+  out.o1 = v.varyings[1u];
   return out;
 }
 ```
@@ -1920,23 +1921,14 @@ Notes:
 - The executor links the expanded VS and the application PS by trimming unused PS inputs / VS
   outputs. If the PS reads a varying location the passthrough VS cannot provide, the draw fails with
   a clear error.
-- This path is limited by WebGPU’s vertex input limits (`max_vertex_attributes` and the highest used
-  `@location`). When exceeded, the executor fails with a clear “GS passthrough” error.
-- The passthrough VS has no bindings; however the render pipeline layout must still include the PS
-  bind group(s) (typically `@group(1)`). Implementations may include an empty `@group(0)` or the
-  original VS layout for cache compatibility, but no VS resources are required by the passthrough VS
-  itself.
-- Implementation note (in-tree executor): render pipelines are often created with a fixed set of
-  bind group layouts `0..=3` to match the stage-scoped binding model. As a result, even if the
-  passthrough VS does not declare any `@group(3)` bindings, the executor may still bind an
-  internal/emulation group at `@group(3)` to satisfy pipeline-layout requirements. Today it binds
-  the expanded vertex buffer at `@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)` (see
-  `crates/aero-d3d11/src/binding_model.rs`), even though the passthrough VS consumes that buffer via
-  normal vertex inputs.
-- Implementation note: the in-tree expansion prepass currently writes `vec4<f32>`
-  attributes (`pos` + `o1`). When switching to the bit-preserving `ExpandedVertex` layout described
-  above, update the passthrough VS template and vertex buffer formats (e.g. use `Uint32x4` +
-  `bitcast`).
+- The baseline expanded vertex record stores `@location(0..31)` varyings
+  (`EXPANDED_VERTEX_MAX_VARYINGS`, currently 32). If a pixel shader reads a higher `@location`, the
+  executor fails pipeline creation with a clear error.
+- Implementation note (in-tree executor): the render pipeline layout must include the reserved
+  internal-emulation bind group (`@group(3)`) so the generated passthrough VS can read the expanded
+  vertex buffer. The executor extends the pipeline layout accordingly (see
+  `extend_pipeline_bindings_for_passthrough_vs` in
+  `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
 #### 2.5) Render-pass splitting constraints
 
