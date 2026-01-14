@@ -431,6 +431,31 @@ mod tests {
     }
 
     #[test]
+    fn mmio64_bar_probe_then_subword_write_uses_programmed_base_not_probe_mask() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x4000,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // Standard BAR size probe: write all-ones dword and read back the size mask (including the
+        // "64-bit BAR" type bits 2:1 = 0b10).
+        compat.write_u32(0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_C004);
+
+        // After probing, subword writes must merge against the programmed base (0), not the probe
+        // response (0xFFFF_C004). Program only the high 16 bits of the low dword.
+        compat.write_u32(0x12, 2, 0xE000);
+        assert_eq!(compat.read_u32(0x10, 4), 0xE000_0004);
+        assert_eq!(compat.read_u32(0x14, 4), 0x0000_0000);
+    }
+
+    #[test]
     fn io_bar_probe_and_subword_write_use_programmed_base_not_probe_mask() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
         cfg.set_bar_definition(0, PciBarDefinition::Io { size: 0x20 });
