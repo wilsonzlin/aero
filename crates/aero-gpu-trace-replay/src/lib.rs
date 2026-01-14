@@ -1658,7 +1658,8 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " stage={stage} start_register={start_register} vec4_count={vec4_count}"
                         );
-                        if stage == 2 && stage_ex != 0 {
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0
+                        {
                             let _ = write!(
                                 line,
                                 " stage_ex={stage_ex} stage_ex_name={}",
@@ -1711,7 +1712,8 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " stage={stage} start_register={start_register} bool_count={bool_count}"
                         );
-                        if stage == 2 && stage_ex != 0 {
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0
+                        {
                             let _ = write!(
                                 line,
                                 " stage_ex={stage_ex} stage_ex_name={}",

@@ -605,7 +605,7 @@ fn decode_known_fields(
             out.insert("stage".into(), json!(stage));
             out.insert("start_register".into(), json!(start_register));
             out.insert("vec4_count".into(), json!(vec4_count));
-            if stage == 2 && stage_ex != 0 {
+            if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }
@@ -653,7 +653,7 @@ fn decode_known_fields(
             out.insert("stage".into(), json!(stage));
             out.insert("start_register".into(), json!(start_register));
             out.insert("bool_count".into(), json!(bool_count));
-            if stage == 2 && stage_ex != 0 {
+            if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }

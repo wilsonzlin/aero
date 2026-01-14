@@ -591,3 +591,43 @@ fn stable_listing_decodes_topology_names_for_adjacency_and_patchlists() {
         "{listing}"
     );
 }
+
+#[test]
+fn stage_ex_fields_are_gated_by_abi_minor() {
+    // Build a fixture stream that contains stage_ex tags (via the modern ABI),
+    // then downgrade the header ABI minor to ensure the decoders do not interpret
+    // reserved fields as stage_ex for older captures.
+    let mut bytes = build_fixture_cmd_stream();
+
+    // Patch header ABI to 1.2 (stage_ex was introduced in 1.3).
+    let abi_version = (1u32 << 16) | 2u32;
+    bytes[4..8].copy_from_slice(&abi_version.to_le_bytes());
+
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed in non-strict mode");
+    assert!(listing.contains("abi=1.2"), "{listing}");
+    assert!(listing.contains("SetTexture"), "{listing}");
+    assert!(
+        !listing.contains("stage_ex="),
+        "stage_ex should be ignored for ABI < 1.3:\n{listing}"
+    );
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+    let records = v["records"].as_array().expect("records array");
+    assert!(!records.is_empty());
+    for rec in records {
+        if rec["type"] != "packet" {
+            continue;
+        }
+        let decoded = rec["decoded"].as_object().expect("decoded object");
+        assert!(
+            !decoded.contains_key("stage_ex") && !decoded.contains_key("stage_ex_name"),
+            "stage_ex should be gated by ABI minor; found keys in {rec}"
+        );
+    }
+}
