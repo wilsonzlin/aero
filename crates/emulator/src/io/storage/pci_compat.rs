@@ -434,4 +434,25 @@ mod tests {
         compat.write_u32(0x12, 2, 0xE000);
         assert_eq!(compat.read_u32(0x10, 4), 0xE000_0001);
     }
+
+    #[test]
+    fn bar_write_that_spans_end_of_bar_window_updates_bar_and_next_reg() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            5,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // 16-bit write at 0x27 touches BAR5 byte3 and config byte 0x28 (Cardbus CIS pointer low).
+        compat.write_u32(0x27, 2, 0xABCD);
+
+        assert_eq!(compat.read_u32(0x24, 4), 0xCD00_0000);
+        assert_eq!(compat.read_u32(0x28, 1), 0xAB);
+        assert_eq!(compat.read_u32(0x27, 2), 0xABCD);
+    }
 }
