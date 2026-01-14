@@ -299,6 +299,76 @@ class QmpMsixParsingTests(unittest.TestCase):
         assert msg is not None
         self.assertTrue(msg.startswith("FAIL: QMP_MSIX_CHECK_UNSUPPORTED:"), msg)
 
+    def test_require_virtio_net_msix_missing_device_token(self) -> None:
+        h = self.harness
+
+        # Query returns devices, but none match the expected virtio-net PCI IDs.
+        query_infos = [
+            h._PciMsixInfo(
+                vendor_id=h._VIRTIO_PCI_VENDOR_ID,
+                device_id=0x9999,
+                bus=0,
+                slot=5,
+                function=0,
+                msix_enabled=True,
+                source="query-pci",
+            )
+        ]
+
+        def stub_collect(_endpoint):
+            return query_infos, [], True, False
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=True,
+                require_virtio_blk_msix=False,
+                require_virtio_snd_msix=False,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_MSIX_NOT_ENABLED:"), msg)
+        self.assertIn("did not find virtio-net", msg)
+
+    def test_require_virtio_blk_msix_missing_device_token(self) -> None:
+        h = self.harness
+
+        # Query returns devices, but none match the expected virtio-blk PCI IDs.
+        query_infos = [
+            h._PciMsixInfo(
+                vendor_id=h._VIRTIO_PCI_VENDOR_ID,
+                device_id=0x9999,
+                bus=0,
+                slot=5,
+                function=0,
+                msix_enabled=True,
+                source="query-pci",
+            )
+        ]
+
+        def stub_collect(_endpoint):
+            return query_infos, [], True, False
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=False,
+                require_virtio_blk_msix=True,
+                require_virtio_snd_msix=False,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_MSIX_NOT_ENABLED:"), msg)
+        self.assertIn("did not find virtio-blk", msg)
+
 
 if __name__ == "__main__":
     unittest.main()
