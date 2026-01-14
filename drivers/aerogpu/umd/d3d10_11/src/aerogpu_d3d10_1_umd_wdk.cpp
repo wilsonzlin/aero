@@ -6229,7 +6229,8 @@ void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice,
   }
 
   cmd->state.depth_enable = depth_enable ? 1u : 0u;
-  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
+  // D3D10/11 semantics: DepthWriteMask is ignored when depth testing is disabled.
+  cmd->state.depth_write_enable = (depth_enable && depth_write_mask) ? 1u : 0u;
   cmd->state.depth_func = D3D10CompareFuncToAerogpu(depth_func);
   cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
   cmd->state.stencil_read_mask = stencil_read_mask;

@@ -684,6 +684,58 @@ bool TestSetNullRasterizerStateEmitsDefaultPacket() {
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
 }
+ 
+bool TestDepthDisableDisablesDepthWrites() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(depth disable)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE desc = {};
+  desc.DepthEnable = 0;
+  desc.DepthWriteMask = 1; // D3D10_DEPTH_WRITE_MASK_ALL
+  desc.DepthFunc = kD3D10CompareGreaterEqual;
+  desc.StencilEnable = 0;
+  desc.StencilReadMask = 0xFFu;
+  desc.StencilWriteMask = 0xFFu;
+
+  TestDepthStencilState dss{};
+  if (!Check(CreateDepthStencilState(&dev, desc, &dss), "CreateDepthStencilState helper (depth disable)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetDepthStencilState(dev.hDevice, dss.hState, /*stencil_ref=*/0u);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetDepthStencilState(depth disabled)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(depth disabled)")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(),
+                              dev.harness.last_stream.size(),
+                              AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_DEPTH_STENCIL_STATE emitted (depth disabled)")) {
+    return false;
+  }
+
+  const auto* cmd =
+      reinterpret_cast<const aerogpu_cmd_set_depth_stencil_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.depth_enable == 0u, "dss.depth_enable == 0")) {
+    return false;
+  }
+  if (!Check(cmd->state.depth_write_enable == 0u, "dss.depth_write_enable forced 0 when depth disabled")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDepthStencilState(dev.hDevice, dss.hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
 
 bool TestSetDepthStencilStateEmitsPacket() {
   TestDevice dev{};
@@ -809,6 +861,7 @@ int main() {
   ok &= TestCreateRasterizerStateRejectsUnsupportedFillMode();
   ok &= TestSetRasterizerStateEmitsPacket();
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
+  ok &= TestDepthDisableDisablesDepthWrites();
   ok &= TestSetDepthStencilStateEmitsPacket();
   ok &= TestSetNullDepthStencilStateEmitsDefaultPacket();
   if (!ok) {
