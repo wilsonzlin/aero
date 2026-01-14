@@ -376,9 +376,8 @@ impl IoSnapshot for XhciController {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        // Snapshot tags must remain stable within a major version. xHCI snapshot version 0.3 used:
-        // - 11: host_controller_error
-        // - 12: ports
+        // Snapshot tags must remain stable within a major version, but early xHCI snapshots had a
+        // brief period where the header version and the tag layout disagreed:
         //
         // Version 0.4 swapped those tags to resolve a collision introduced in 0.3. Some historical
         // snapshots used the 0.4 header while still encoding fields using the 0.3 tag mapping, so:
