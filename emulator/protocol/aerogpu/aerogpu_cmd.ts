@@ -1746,20 +1746,18 @@ export function decodeCmdSetShaderConstantsBPayloadFromPacket(
   const reserved0 = view.getUint32(12, true);
 
   // Payload encoding: `uint32_t data[bool_count]` (one scalar u32 per bool register).
-  const u32CountBig = BigInt(boolCount);
-  const payloadBytesBig = u32CountBig * 4n;
+  const payloadBytesBig = BigInt(boolCount) * 4n;
   const payloadStart = 16;
   const payloadEndBig = BigInt(payloadStart) + payloadBytesBig;
   if (payloadEndBig > BigInt(packet.payload.byteLength)) {
     throw new Error(`SET_SHADER_CONSTANTS_B packet too small for bool_count=${boolCount}`);
   }
-  if (u32CountBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (BigInt(boolCount) > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`SET_SHADER_CONSTANTS_B data too large: bool_count=${boolCount}`);
   }
 
-  const u32Count = Number(u32CountBig);
-  const data = new Uint32Array(u32Count);
-  for (let i = 0; i < u32Count; i++) {
+  const data = new Uint32Array(boolCount);
+  for (let i = 0; i < boolCount; i++) {
     data[i] = view.getUint32(payloadStart + i * 4, true);
   }
 
