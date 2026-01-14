@@ -44,18 +44,23 @@ What exists today (bring-up stage):
 - A minimal **asynchronous schedule** engine (QH/qTD) is implemented for control + bulk transfers.
 - A minimal **periodic schedule** engine (frame list + interrupt QH/qTD) is implemented for interrupt polling.
 - Snapshot/restore is implemented for EHCI controller state and attached USB topology.
-- Companion routing semantics (`CONFIGFLAG` / `PORT_OWNER`) are implemented (no companion controller models yet).
+- Companion routing semantics (`CONFIGFLAG` / `PORT_OWNER`) are implemented. EHCI treats
+  `PORT_OWNER=1` ports as companion-owned/unreachable; full shared-port wiring to UHCI companions is
+  still being integrated.
 
 What is *not* implemented yet (still MVP-relevant):
 
 - Isochronous periodic descriptors (`iTD` / `siTD`) and split/TT behavior.
 - MSI/MSI-X (Aero uses PCI INTx for EHCI).
-- Full UHCI/OHCI companion controller integration (ports can be marked as companion-owned, but the companions themselves are not yet modeled).
+- Full platform wiring for **shared root ports** between EHCI and UHCI companions (routing a single
+  physical device between two PCI functions) is still in progress.
 
 Current code locations:
 
 - Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs, schedule_async.rs, schedule_periodic.rs}`
 - Rust EHCI tests: `crates/aero-usb/tests/ehci*.rs`
+- Shared USB2 port mux model (EHCI↔UHCI routing building block): `crates/aero-usb/src/usb2_port.rs`
+  (+ `crates/aero-usb/tests/usb2_companion_routing.rs`)
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
 - Native PCI device wrapper (MMIO BAR + IRQ + DMA gating): `crates/devices/src/usb/ehci.rs`
 
@@ -497,6 +502,10 @@ In Aero’s EHCI model:
   - Reset/enable/suspend/resume state is dropped when the port is handed off.
 - Any ownership change (`CONFIGFLAG` transition or `PORT_OWNER` toggle) asserts `USBSTS.PCD` so the
   guest sees a port change interrupt when `USBINTR.PCD` is enabled.
+
+Separate (but related): `aero_usb::usb2_port::Usb2PortMux` can model a **single physical USB 2.0
+root port** shared between an EHCI controller and a UHCI companion, and is used by unit tests as a
+building block for future platform wiring (`crates/aero-usb/tests/usb2_companion_routing.rs`).
 
 ### Planned integration with UHCI companions
 
