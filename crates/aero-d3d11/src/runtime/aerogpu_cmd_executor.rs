@@ -13507,6 +13507,203 @@ mod tests {
     }
 
     #[test]
+    fn depth_only_pipeline_trims_pixel_shader_outputs() {
+        // Regression test: depth-only passes may still use a pixel shader that declares color
+        // outputs (common for reusable D3D shaders). D3D discards those writes when no RTVs are
+        // bound; WebGPU requires the pipeline + shader interfaces to be compatible.
+        //
+        // Ensure pipeline creation succeeds even when trimming removes *all* color outputs.
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Depth stencil.
+            const DS: u32 = 100;
+            let ds_tex = exec.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("depth_only_pipeline_trims_pixel_shader_outputs DS"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let ds_view = ds_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            exec.resources.textures.insert(
+                DS,
+                Texture2dResource {
+                    texture: ds_tex,
+                    view: ds_view,
+                    desc: Texture2dDesc {
+                        width: 1,
+                        height: 1,
+                        mip_level_count: 1,
+                        array_layers: 1,
+                        format: wgpu::TextureFormat::Depth32Float,
+                    },
+                    format_u32: aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat::D32Float as u32,
+                    backing: None,
+                    row_pitch_bytes: 0,
+                    dirty: false,
+                    guest_backing_is_current: true,
+                    host_shadow: None,
+                },
+            );
+
+            // Dummy vertex buffer required to activate the GS passthrough vertex path (avoids
+            // needing an input layout for this unit test).
+            const VB: u32 = 101;
+            let vb = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("depth_only_pipeline_trims_pixel_shader_outputs vb"),
+                size: 16,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            exec.resources.buffers.insert(
+                VB,
+                BufferResource {
+                    buffer: vb,
+                    size: 16,
+                    gpu_size: 16,
+                    usage: wgpu::BufferUsages::VERTEX,
+                    backing: None,
+                    dirty: None,
+                },
+            );
+
+            const VS: u32 = 102;
+            const PS: u32 = 103;
+
+            // VS is only used for signature checks in the GS-emulation path; it doesn't need any
+            // varyings for this test.
+            let vs_wgsl = r#"
+                struct VsOut {
+                    @builtin(position) pos: vec4<f32>,
+                };
+
+                @vertex
+                fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+                    _ = index;
+                    var out: VsOut;
+                    out.pos = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            // Pixel shader declares a color output even though no RTVs are bound (depth-only pass).
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(0) o0: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            let (vs_hash, _vs_module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Vertex),
+                vs_wgsl,
+                Some("depth only mrt trim VS"),
+            );
+            exec.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl_hash: vs_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "vs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: vs_wgsl.to_owned(),
+                },
+            );
+
+            let (ps_hash, _ps_module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Pixel),
+                fs_wgsl,
+                Some("depth only mrt trim PS"),
+            );
+            exec.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Pixel,
+                    wgsl_hash: ps_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "fs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: fs_wgsl.to_owned(),
+                },
+            );
+
+            exec.state.vs = Some(VS);
+            exec.state.ps = Some(PS);
+            // Treat a bound CS as "GS emulation active" so the pipeline builder uses the internal
+            // passthrough VS and doesn't require an input layout.
+            exec.state.cs = Some(1);
+            exec.state.vertex_buffers[0] = Some(VertexBufferBinding {
+                buffer: VB,
+                stride_bytes: 16,
+                offset_bytes: 0,
+            });
+            exec.state.render_targets.clear();
+            exec.state.depth_stencil = Some(DS);
+
+            let layout_key = PipelineLayoutKey::empty();
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("depth only mrt trim pipeline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let res = super::get_or_create_render_pipeline_for_state(
+                &exec.device,
+                &mut exec.pipeline_cache,
+                &pipeline_layout,
+                &mut exec.resources,
+                &exec.state,
+                layout_key,
+            );
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating depth-only pipeline: {err:?}"
+            );
+            let (key, _pipeline, _mapping) =
+                res.expect("depth-only pipeline creation should succeed with trimmed PS outputs");
+
+            // Ensure trimming produced a distinct PS hash (we should drop the @location(0) output).
+            assert_ne!(
+                key.fragment_shader, ps_hash,
+                "expected depth-only pipeline to use a trimmed PS variant"
+            );
+        });
+    }
+
+    #[test]
     fn set_shader_constants_f_marks_encoder_has_commands() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
