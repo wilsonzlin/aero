@@ -402,6 +402,12 @@ typedef struct SELECTED_DEVICE {
     DWORD desired_access;
     DWORD index;
     WCHAR *path;
+    WCHAR instance_id[512];
+    int instance_id_valid;
+    WCHAR device_desc[256];
+    int device_desc_valid;
+    WCHAR service[256];
+    int service_valid;
     HIDD_ATTRIBUTES attr;
     int attr_valid;
     HIDP_CAPS caps;
@@ -1184,6 +1190,15 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     wprintf(L"  \"path\": ");
     json_print_string_w(dev ? dev->path : NULL);
     wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w((dev && dev->instance_id_valid) ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w((dev && dev->device_desc_valid) ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w((dev && dev->service_valid) ? dev->service : NULL);
+    wprintf(L",\n");
     wprintf(L"  \"vid\": ");
     if (dev && dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.VendorID);
@@ -1602,6 +1617,15 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     wprintf(L",\n");
     wprintf(L"  \"path\": ");
     json_print_string_w(dev ? dev->path : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w((dev && dev->instance_id_valid) ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w((dev && dev->device_desc_valid) ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w((dev && dev->service_valid) ? dev->service : NULL);
     wprintf(L",\n");
     wprintf(L"  \"vid\": ");
     if (dev && dev->attr_valid) {
@@ -2391,6 +2415,15 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     wprintf(L"  \"path\": ");
     json_print_string_w(dev->path);
     wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w(dev->instance_id_valid ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w(dev->device_desc_valid ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w(dev->service_valid ? dev->service : NULL);
+    wprintf(L",\n");
     wprintf(L"  \"vid\": ");
     if (dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.VendorID);
@@ -2635,6 +2668,15 @@ static void print_reset_counters_json(const SELECTED_DEVICE *dev, int reset_ok, 
     wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
     wprintf(L"  \"path\": ");
     json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w(dev->instance_id_valid ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w(dev->device_desc_valid ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w(dev->service_valid ? dev->service : NULL);
     wprintf(L",\n");
     wprintf(L"  \"vid\": ");
     if (dev->attr_valid) {
@@ -3713,6 +3755,12 @@ typedef struct SELFTEST_DEVICE_INFO {
     DWORD index;
     DWORD desired_access;
     WCHAR *path;
+    WCHAR instance_id[512];
+    int instance_id_valid;
+    WCHAR device_desc[256];
+    int device_desc_valid;
+    WCHAR service[256];
+    int service_valid;
     HIDD_ATTRIBUTES attr;
     int attr_valid;
     HIDP_CAPS caps;
@@ -3785,6 +3833,12 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info, co
     wprintf(L"\"writeAccess\":%ls,", ((info->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
     wprintf(L"\"path\":");
     json_print_string_w(info->path);
+    wprintf(L",\"instanceId\":");
+    json_print_string_w(info->instance_id_valid ? info->instance_id : NULL);
+    wprintf(L",\"deviceDesc\":");
+    json_print_string_w(info->device_desc_valid ? info->device_desc : NULL);
+    wprintf(L",\"service\":");
+    json_print_string_w(info->service_valid ? info->service : NULL);
     wprintf(L",\"vid\":");
     if (info->attr_valid) {
         wprintf(L"%u", (unsigned)info->attr.VendorID);
@@ -3944,6 +3998,7 @@ static int run_selftest_json(const OPTIONS *opt)
     for (;;) {
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        SP_DEVINFO_DATA dev_data;
         HANDLE handle = INVALID_HANDLE_VALUE;
         DWORD desired_access = 0;
         HIDD_ATTRIBUTES attr;
@@ -3968,6 +4023,12 @@ static int run_selftest_json(const OPTIONS *opt)
         int manufacturer_valid = 0;
         int product_valid = 0;
         int serial_valid = 0;
+        WCHAR instance_id[512];
+        int instance_id_valid = 0;
+        WCHAR device_desc[256];
+        int device_desc_valid = 0;
+        WCHAR service[256];
+        int service_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -3988,10 +4049,30 @@ static int run_selftest_json(const OPTIONS *opt)
             break;
         }
         detail->cbSize = sizeof(*detail);
-        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+        ZeroMemory(&dev_data, sizeof(dev_data));
+        dev_data.cbSize = sizeof(dev_data);
+        ZeroMemory(instance_id, sizeof(instance_id));
+        ZeroMemory(device_desc, sizeof(device_desc));
+        ZeroMemory(service, sizeof(service));
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, &dev_data)) {
             free(detail);
             iface_index++;
             continue;
+        }
+
+        if (SetupDiGetDeviceInstanceIdW(devinfo, &dev_data, instance_id, (DWORD)(sizeof(instance_id) / sizeof(instance_id[0])), NULL)) {
+            instance_id[(sizeof(instance_id) / sizeof(instance_id[0])) - 1] = L'\0';
+            instance_id_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_DEVICEDESC, NULL, (PBYTE)device_desc,
+                                              (DWORD)sizeof(device_desc), NULL)) {
+            device_desc[(sizeof(device_desc) / sizeof(device_desc[0])) - 1] = L'\0';
+            device_desc_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_SERVICE, NULL, (PBYTE)service,
+                                              (DWORD)sizeof(service), NULL)) {
+            service[(sizeof(service) / sizeof(service[0])) - 1] = L'\0';
+            service_valid = 1;
         }
 
         handle = open_hid_path(detail->DevicePath, &desired_access);
@@ -4065,6 +4146,12 @@ static int run_selftest_json(const OPTIONS *opt)
             kbd.index = iface_index;
             kbd.desired_access = desired_access;
             kbd.path = wcsdup_heap(detail->DevicePath);
+            memcpy(kbd.instance_id, instance_id, sizeof(instance_id));
+            kbd.instance_id_valid = instance_id_valid;
+            memcpy(kbd.device_desc, device_desc, sizeof(device_desc));
+            kbd.device_desc_valid = device_desc_valid;
+            memcpy(kbd.service, service, sizeof(service));
+            kbd.service_valid = service_valid;
             kbd.attr = attr;
             kbd.attr_valid = attr_valid;
             kbd.caps = caps;
@@ -4094,6 +4181,12 @@ static int run_selftest_json(const OPTIONS *opt)
             mouse.index = iface_index;
             mouse.desired_access = desired_access;
             mouse.path = wcsdup_heap(detail->DevicePath);
+            memcpy(mouse.instance_id, instance_id, sizeof(instance_id));
+            mouse.instance_id_valid = instance_id_valid;
+            memcpy(mouse.device_desc, device_desc, sizeof(device_desc));
+            mouse.device_desc_valid = device_desc_valid;
+            memcpy(mouse.service, service, sizeof(service));
+            mouse.service_valid = service_valid;
             mouse.attr = attr;
             mouse.attr_valid = attr_valid;
             mouse.caps = caps;
@@ -4123,6 +4216,12 @@ static int run_selftest_json(const OPTIONS *opt)
             tablet.index = iface_index;
             tablet.desired_access = desired_access;
             tablet.path = wcsdup_heap(detail->DevicePath);
+            memcpy(tablet.instance_id, instance_id, sizeof(instance_id));
+            tablet.instance_id_valid = instance_id_valid;
+            memcpy(tablet.device_desc, device_desc, sizeof(device_desc));
+            tablet.device_desc_valid = device_desc_valid;
+            memcpy(tablet.service, service, sizeof(service));
+            tablet.service_valid = service_valid;
             tablet.attr = attr;
             tablet.attr_valid = attr_valid;
             tablet.caps = caps;
@@ -4500,6 +4599,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     for (;;) {
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        SP_DEVINFO_DATA dev_data;
         HANDLE handle = INVALID_HANDLE_VALUE;
         DWORD desired_access = 0;
         HIDD_ATTRIBUTES attr;
@@ -4518,6 +4618,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int is_mouse = 0;
         int is_consumer = 0;
         int is_tablet = 0;
+        WCHAR instance_id[512];
+        int instance_id_valid = 0;
+        WCHAR device_desc[256];
+        int device_desc_valid = 0;
+        WCHAR service[256];
+        int service_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -4556,7 +4662,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
 
         detail->cbSize = sizeof(*detail);
-        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+        ZeroMemory(&dev_data, sizeof(dev_data));
+        dev_data.cbSize = sizeof(dev_data);
+        ZeroMemory(instance_id, sizeof(instance_id));
+        ZeroMemory(device_desc, sizeof(device_desc));
+        ZeroMemory(service, sizeof(service));
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, &dev_data)) {
             if (opt != NULL && opt->quiet) {
                 fwprintf(stderr, L"[%lu] SetupDiGetDeviceInterfaceDetail failed\n", iface_index);
                 print_last_error_file_w(stderr, L"SetupDiGetDeviceInterfaceDetail");
@@ -4567,6 +4678,21 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             free(detail);
             iface_index++;
             continue;
+        }
+
+        if (SetupDiGetDeviceInstanceIdW(devinfo, &dev_data, instance_id, (DWORD)(sizeof(instance_id) / sizeof(instance_id[0])), NULL)) {
+            instance_id[(sizeof(instance_id) / sizeof(instance_id[0])) - 1] = L'\0';
+            instance_id_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_DEVICEDESC, NULL, (PBYTE)device_desc,
+                                              (DWORD)sizeof(device_desc), NULL)) {
+            device_desc[(sizeof(device_desc) / sizeof(device_desc[0])) - 1] = L'\0';
+            device_desc_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_SERVICE, NULL, (PBYTE)service,
+                                              (DWORD)sizeof(service), NULL)) {
+            service[(sizeof(service) / sizeof(service[0])) - 1] = L'\0';
+            service_valid = 1;
         }
 
         handle = open_hid_path(detail->DevicePath, &desired_access);
@@ -4779,6 +4905,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 out->desired_access = desired_access;
                 out->index = iface_index;
                 out->path = wcsdup_heap(detail->DevicePath);
+                memcpy(out->instance_id, instance_id, sizeof(instance_id));
+                out->instance_id_valid = instance_id_valid;
+                memcpy(out->device_desc, device_desc, sizeof(device_desc));
+                out->device_desc_valid = device_desc_valid;
+                memcpy(out->service, service, sizeof(service));
+                out->service_valid = service_valid;
                 out->attr = attr;
                 out->attr_valid = attr_valid;
                 out->caps = caps;
@@ -4804,6 +4936,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 out->desired_access = desired_access;
                 out->index = iface_index;
                 out->path = wcsdup_heap(detail->DevicePath);
+                memcpy(out->instance_id, instance_id, sizeof(instance_id));
+                out->instance_id_valid = instance_id_valid;
+                memcpy(out->device_desc, device_desc, sizeof(device_desc));
+                out->device_desc_valid = device_desc_valid;
+                memcpy(out->service, service, sizeof(service));
+                out->service_valid = service_valid;
                 out->attr = attr;
                 out->attr_valid = attr_valid;
                 out->caps = caps;
@@ -4824,6 +4962,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
                 fallback_any.desired_access = desired_access;
                 fallback_any.index = iface_index;
                 fallback_any.path = wcsdup_heap(detail->DevicePath);
+                memcpy(fallback_any.instance_id, instance_id, sizeof(instance_id));
+                fallback_any.instance_id_valid = instance_id_valid;
+                memcpy(fallback_any.device_desc, device_desc, sizeof(device_desc));
+                fallback_any.device_desc_valid = device_desc_valid;
+                memcpy(fallback_any.service, service, sizeof(service));
+                fallback_any.service_valid = service_valid;
                 fallback_any.attr = attr;
                 fallback_any.attr_valid = attr_valid;
                 fallback_any.caps = caps;
@@ -4840,6 +4984,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             out->desired_access = desired_access;
             out->index = iface_index;
             out->path = wcsdup_heap(detail->DevicePath);
+            memcpy(out->instance_id, instance_id, sizeof(instance_id));
+            out->instance_id_valid = instance_id_valid;
+            memcpy(out->device_desc, device_desc, sizeof(device_desc));
+            out->device_desc_valid = device_desc_valid;
+            memcpy(out->service, service, sizeof(service));
+            out->service_valid = service_valid;
             out->attr = attr;
             out->attr_valid = attr_valid;
             out->caps = caps;
@@ -4859,6 +5009,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             fallback_virtio.desired_access = desired_access;
             fallback_virtio.index = iface_index;
             fallback_virtio.path = wcsdup_heap(detail->DevicePath);
+            memcpy(fallback_virtio.instance_id, instance_id, sizeof(instance_id));
+            fallback_virtio.instance_id_valid = instance_id_valid;
+            memcpy(fallback_virtio.device_desc, device_desc, sizeof(device_desc));
+            fallback_virtio.device_desc_valid = device_desc_valid;
+            memcpy(fallback_virtio.service, service, sizeof(service));
+            fallback_virtio.service_valid = service_valid;
             fallback_virtio.attr = attr;
             fallback_virtio.attr_valid = attr_valid;
             fallback_virtio.caps = caps;
@@ -4872,6 +5028,12 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             fallback_any.desired_access = desired_access;
             fallback_any.index = iface_index;
             fallback_any.path = wcsdup_heap(detail->DevicePath);
+            memcpy(fallback_any.instance_id, instance_id, sizeof(instance_id));
+            fallback_any.instance_id_valid = instance_id_valid;
+            memcpy(fallback_any.device_desc, device_desc, sizeof(device_desc));
+            fallback_any.device_desc_valid = device_desc_valid;
+            memcpy(fallback_any.service, service, sizeof(service));
+            fallback_any.service_valid = service_valid;
             fallback_any.attr = attr;
             fallback_any.attr_valid = attr_valid;
             fallback_any.caps = caps;
@@ -5957,6 +6119,15 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
     wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
     wprintf(L"  \"path\": ");
     json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w(dev->instance_id_valid ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w(dev->device_desc_valid ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w(dev->service_valid ? dev->service : NULL);
     wprintf(L",\n");
     wprintf(L"  \"vid\": ");
     if (dev->attr_valid) {
@@ -7578,6 +7749,15 @@ int wmain(int argc, wchar_t **argv)
     if (!opt.quiet) {
         wprintf(L"\nSelected device:\n");
         wprintf(L"  Path: %ls\n", dev.path ? dev.path : L"<null>");
+        if (dev.instance_id_valid) {
+            wprintf(L"  InstanceId: %ls\n", dev.instance_id);
+        }
+        if (dev.device_desc_valid) {
+            wprintf(L"  DeviceDesc: %ls\n", dev.device_desc);
+        }
+        if (dev.service_valid) {
+            wprintf(L"  Service: %ls\n", dev.service);
+        }
         if (dev.attr_valid) {
             wprintf(L"  VID:PID %04X:%04X (ver %04X)\n", dev.attr.VendorID, dev.attr.ProductID,
                     dev.attr.VersionNumber);

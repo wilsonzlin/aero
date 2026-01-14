@@ -125,6 +125,12 @@ The JSON output is a single array on stdout. Each entry has:
 If the interface could not be opened, most fields will be `null` and `openErr` will contain the Win32 error code from
 `CreateFile`.
 
+`instanceId`/`deviceDesc`/`service` come from SetupDi/PnP:
+
+- `instanceId` — Device Instance ID (stable identifier used by Device Manager)
+- `deviceDesc` — Device description string (Device Manager “Device description”)
+- `service` — bound service name (driver service key)
+
 Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
 
 ```bat
@@ -169,9 +175,9 @@ The JSON output is an object with:
 - `keyboard`, `mouse`, `tablet` (object or null; `tablet` is null unless `--tablet` is used)
 - `failures` (array)
 
-Each device object includes the selected HID interface metadata (index/path, VID/PID/Version, `isVirtio`/`kind`, strings
-when available, report byte sizes/descriptor lengths, and desired access) plus the optional collection descriptor fields
-below.
+Each device object includes the selected HID interface metadata (index/path/instance ID, Device Manager description,
+service name, VID/PID/Version, `isVirtio`/`kind`, strings when available, report byte sizes/descriptor lengths, and desired
+access) plus the optional collection descriptor fields below.
 
 The JSON output includes additional fields for the optional collection descriptor check:
   - `collectionDescLen`, `collectionDescIoctl`, `collectionDescErr`
@@ -297,10 +303,10 @@ machine-readable JSON object on stdout:
 - `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
-The JSON output (for `--state-json`, `--interrupt-info-json`, `--counters-json`, and `--get-log-mask --json` /
-`--set-log-mask --json`) also includes the selected HID interface metadata:
+The JSON output (for `--state-json`, `--interrupt-info-json`, `--counters-json`, `--reset-counters --json`, and
+`--get-log-mask --json` / `--set-log-mask --json`) also includes the selected HID interface metadata:
 
-- `index`, `path`
+- `index`, `path`, `instanceId`, `deviceDesc`, `service`
 - `vid`/`pid`/`ver`, `isVirtio`
 - `usagePage`/`usage`, `kind`
 - `manufacturer`/`product`/`serial` strings (when available)
