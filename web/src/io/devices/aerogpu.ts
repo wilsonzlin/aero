@@ -484,7 +484,8 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
 
     // Resolve the cursor surface backing store: VRAM aperture or guest RAM.
     let baseOffset: number | null = null;
-    let source: "ram" | "vram" | null = null;
+    // Always either RAM or VRAM when a plan is returned.
+    let source: "ram" | "vram" = "ram";
     const vram = this.#vramU8;
     if (vram && this.#vramSizeBytes > 0) {
       const base = BigInt(this.#vramBasePaddr >>> 0);
