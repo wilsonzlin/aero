@@ -130,6 +130,24 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_snd_buffer_limits)
 
+    def test_virtio_snd_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-virtio-snd",
+            "--enable-virtio-snd",
+            "--require-virtio-snd",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.enable_virtio_snd)
+
     def test_virtio_blk_reset_aliases_set_flag(self) -> None:
         for flag in (
             "--with-blk-reset",

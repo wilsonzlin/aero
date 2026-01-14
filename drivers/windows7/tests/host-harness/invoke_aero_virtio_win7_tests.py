@@ -3895,6 +3895,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--with-virtio-snd",
+        "--require-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
         action="store_true",

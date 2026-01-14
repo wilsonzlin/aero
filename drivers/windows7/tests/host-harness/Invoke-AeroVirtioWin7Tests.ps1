@@ -163,7 +163,7 @@ param(
   # Note: The guest image must be provisioned with `--test-input-events` (or env var equivalent) so the
   # guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents")]
+  [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents", "RequireVirtioInputEvents")]
   [switch]$WithInputEvents,
 
   # If set, require the guest virtio-input-leds marker to PASS. This validates the virtio-input statusq output path
@@ -185,7 +185,7 @@ param(
   # Note: The guest image must be provisioned with `--test-input-media-keys` (or env var equivalent) so the
   # guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys")]
+  [Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys", "RequireVirtioInputMediaKeys")]
   [switch]$WithInputMediaKeys,
 
   # If set, require the guest virtio-input-led marker (keyboard LED output -> statusq) to PASS.
@@ -193,7 +193,7 @@ param(
   # Note: The guest image must be provisioned with `--test-input-led` (or env var equivalent) so the
   # guest selftest emits the marker.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputLed", "EnableVirtioInputLed")]
+  [Alias("WithVirtioInputLed", "EnableVirtioInputLed", "RequireVirtioInputLed")]
   [switch]$WithInputLed,
 
   # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel/vscroll + hscroll/hwheel; with
@@ -201,7 +201,7 @@ param(
   # require the guest virtio-input-wheel marker to PASS.
   # This implies -WithInputEvents.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputWheel", "EnableVirtioInputWheel")]
+  [Alias("WithVirtioInputWheel", "EnableVirtioInputWheel", "RequireVirtioInputWheel")]
   [switch]$WithInputWheel,
 
   # If set, also inject and require additional virtio-input end-to-end markers:
@@ -225,7 +225,7 @@ param(
   # (or env var equivalent, e.g. AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or
   # AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1) so the guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents", "WithTabletEvents", "EnableTabletEvents")]
+  [Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents", "RequireVirtioInputTabletEvents", "WithTabletEvents", "EnableTabletEvents")]
   [switch]$WithInputTabletEvents,
 
   # If set, attach a virtio-tablet-pci device in addition to the virtio keyboard/mouse.
@@ -381,7 +381,7 @@ param(
   # virtio-snd PCI device is missing or the test was disabled. When -WithVirtioSnd is enabled, the harness
   # requires virtio-snd, virtio-snd-capture, and virtio-snd-duplex to PASS.
   [Parameter(Mandatory = $false)]
-  [Alias("EnableVirtioSnd")]
+  [Alias("EnableVirtioSnd", "RequireVirtioSnd")]
   [switch]$WithVirtioSnd,
 
   # If set, require the guest virtio-snd-buffer-limits marker to PASS.
