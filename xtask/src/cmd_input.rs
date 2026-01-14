@@ -46,7 +46,7 @@ Usage:
 Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
-     --test ehci_snapshot_roundtrip --test usb2_companion_routing --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
+     --test ehci_snapshot_roundtrip --test usb2_companion_routing --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke --test xhci_controller_webusb_ep0
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test uhci_snapshot
      --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
@@ -123,6 +123,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "hid_usage_consumer_fixture",
             "--test",
             "xhci_enum_smoke",
+            "--test",
+            "xhci_controller_webusb_ep0",
         ]);
         runner.run_step("Rust: cargo test -p aero-usb --locked (focused)", &mut cmd)?;
     }
