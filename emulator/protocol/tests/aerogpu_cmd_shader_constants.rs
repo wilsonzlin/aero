@@ -102,6 +102,7 @@ fn decode_set_shader_constants_b_decodes_payload_and_allows_trailing_bytes() {
         push_u32(&mut payload, v);
     }
     // Forward-compat: append unknown trailing bytes.
+    push_u32(&mut payload, 0xDEAD_BEEFu32);
     push_u32(&mut payload, 0xC0FF_EE00u32);
 
     let packet = build_packet(AerogpuCmdOpcode::SetShaderConstantsB, payload);
