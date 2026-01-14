@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use aero_d3d11::runtime::tessellator::{
     tri_index_to_vertex_indices_cw, tri_integer_index_count, tri_integer_indices_cw,
-    tri_integer_vertex_count, tri_integer_vertex_ijk, tri_integer_vertex_index,
-    TriIntegerBarycentric,
+    tri_integer_triangle_count, tri_integer_vertex_count, tri_integer_vertex_ijk,
+    tri_integer_vertex_index, TriIntegerBarycentric,
 };
 
 #[test]
@@ -16,6 +16,15 @@ fn triangle_integer_counts_match_formulas() {
         let ic = tri_integer_index_count(n);
         let ic_expected = ((n as u64) * (n as u64) * 3) as u32;
         assert_eq!(ic, ic_expected, "index_count formula mismatch for n={n}");
+
+        let tc = tri_integer_triangle_count(n);
+        let tc_expected = ((n as u64) * (n as u64)) as u32;
+        assert_eq!(tc, tc_expected, "triangle_count formula mismatch for n={n}");
+        assert_eq!(
+            ic,
+            tc * 3,
+            "index_count must equal triangle_count*3 for n={n}"
+        );
     }
 }
 

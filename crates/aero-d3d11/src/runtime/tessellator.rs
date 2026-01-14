@@ -246,6 +246,10 @@ fn tri_integer_index_count(level: u32) -> u32 {{
   return tri_index_count(level);
 }}
 
+fn tri_integer_triangle_count(level: u32) -> u32 {{
+  return tri_integer_index_count(level) / 3u;
+}}
+
 fn tri_integer_row_start(level: u32, i: u32) -> u32 {{
   let l = tri_clamp_level(level);
   return tri_vertex_index(l, i, 0u);
@@ -322,6 +326,14 @@ pub fn tri_integer_vertex_count(n: u32) -> u32 {
 pub fn tri_integer_index_count(n: u32) -> u32 {
     let n = n as u64;
     (n * n * 3) as u32
+}
+
+/// Triangle count for integer-partitioned triangle domain with tess factor `n`.
+///
+/// `T(n) = n²`.
+pub fn tri_integer_triangle_count(n: u32) -> u32 {
+    let n = n as u64;
+    (n * n) as u32
 }
 
 /// Starting vertex index of integer barycentric row `i` (`i = 0..=n`).
@@ -516,6 +528,7 @@ fn main() {{
   let _tri = tri_index_to_vertex_indices(4u, 0u);
   let _vc_i = tri_integer_vertex_count(4u);
   let _ic_i = tri_integer_index_count(4u);
+  let _tc_i = tri_integer_triangle_count(4u);
   let _ijk = tri_integer_vertex_ijk(4u, 0u);
   let _row = tri_integer_row_start(4u, 0u);
   let _vid = tri_integer_vertex_index_from_ijk(4u, _ijk);
