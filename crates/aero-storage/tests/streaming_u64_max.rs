@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{StreamingCacheBackend, StreamingDisk, StreamingDiskConfig};
+use aero_storage::{StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, DEFAULT_SECTOR_SIZE};
 use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -169,7 +169,7 @@ async fn streaming_disk_handles_u64_max_total_size_without_overflow() {
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
     config.cache_backend = StreamingCacheBackend::Directory;
-    config.options.chunk_size = 512;
+    config.options.chunk_size = DEFAULT_SECTOR_SIZE;
     config.options.read_ahead_chunks = 0;
     config.options.max_retries = 1;
     config.options.max_concurrent_fetches = 1;
@@ -180,7 +180,7 @@ async fn streaming_disk_handles_u64_max_total_size_without_overflow() {
     disk.read_at(total_size - 1, &mut buf).await.unwrap();
     assert_eq!(buf[0], 0xAB);
 
-    let chunk_start = total_size - (total_size % 512);
+    let chunk_start = total_size - (total_size % DEFAULT_SECTOR_SIZE);
     let expected = format!("bytes={chunk_start}-{}", total_size - 1);
     let seen = counters
         .last_range_header

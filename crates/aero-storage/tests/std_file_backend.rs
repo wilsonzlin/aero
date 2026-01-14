@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{DiskError, StdFileBackend, StorageBackend};
+use aero_storage::{DiskError, StdFileBackend, StorageBackend, SECTOR_SIZE};
 
 use std::fs::OpenOptions;
 use std::io::Write as _;
@@ -30,7 +30,7 @@ fn std_file_backend_sparse_large_offset_write() {
     let mut backend = StdFileBackend::from_file(file);
 
     let write_offset = 8 * 1024 * 1024; // 8 MiB hole before the write
-    let data = vec![0x5Au8; 512];
+    let data = vec![0x5Au8; SECTOR_SIZE];
     backend.write_at(write_offset, &data).unwrap();
 
     // File should grow to the end of the written region.
