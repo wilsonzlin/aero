@@ -2514,46 +2514,52 @@ export class WorkerCoordinator {
         return;
       }
 
-      const bootConfigMsg = data as unknown;
-      if (bootConfigMsg && typeof bootConfigMsg === "object" && (bootConfigMsg as { type?: unknown }).type === "machineCpu.bootConfig") {
+      const sideChannelMsg = data as unknown;
+      if (sideChannelMsg && typeof sideChannelMsg === "object") {
         // Treat postMessage payloads as untrusted and ignore inherited values (prototype pollution).
-        const rec = bootConfigMsg as Record<string, unknown>;
-        const bootDrive = Object.prototype.hasOwnProperty.call(rec, "bootDrive") ? rec.bootDrive : undefined;
-        const cdBootDrive = Object.prototype.hasOwnProperty.call(rec, "cdBootDrive") ? rec.cdBootDrive : undefined;
-        const bootFromCdIfPresent = Object.prototype.hasOwnProperty.call(rec, "bootFromCdIfPresent") ? rec.bootFromCdIfPresent : undefined;
-        if (
-          typeof bootDrive === "number" &&
-          Number.isFinite(bootDrive) &&
-          Number.isSafeInteger(bootDrive) &&
-          bootDrive >= 0 &&
-          bootDrive <= 0xff &&
-          typeof cdBootDrive === "number" &&
-          Number.isFinite(cdBootDrive) &&
-          Number.isSafeInteger(cdBootDrive) &&
-          cdBootDrive >= 0 &&
-          cdBootDrive <= 0xff &&
-          typeof bootFromCdIfPresent === "boolean"
-        ) {
-          this.machineCpuBootConfig = { bootDrive, cdBootDrive, bootFromCdIfPresent };
-        }
-        return;
-      }
+        const rec = sideChannelMsg as Record<string, unknown>;
+        const type = Object.prototype.hasOwnProperty.call(rec, "type") ? rec.type : undefined;
 
-      const bootDeviceMsg = data as Partial<{ type: unknown; bootDevice: unknown }>;
-      if (bootDeviceMsg?.type === "machineCpu.bootDeviceSelected") {
-        const bootDevice = bootDeviceMsg.bootDevice;
-        if (bootDevice === "hdd" || bootDevice === "cdrom") {
-          const prev = this.bootDisks ?? emptySetBootDisksMessage();
-          this.bootDisks = { ...prev, bootDevice };
+        if (type === "machineCpu.bootConfig") {
+          const bootDrive = Object.prototype.hasOwnProperty.call(rec, "bootDrive") ? rec.bootDrive : undefined;
+          const cdBootDrive = Object.prototype.hasOwnProperty.call(rec, "cdBootDrive") ? rec.cdBootDrive : undefined;
+          const bootFromCdIfPresent = Object.prototype.hasOwnProperty.call(rec, "bootFromCdIfPresent")
+            ? rec.bootFromCdIfPresent
+            : undefined;
+          if (
+            typeof bootDrive === "number" &&
+            Number.isFinite(bootDrive) &&
+            Number.isSafeInteger(bootDrive) &&
+            bootDrive >= 0 &&
+            bootDrive <= 0xff &&
+            typeof cdBootDrive === "number" &&
+            Number.isFinite(cdBootDrive) &&
+            Number.isSafeInteger(cdBootDrive) &&
+            cdBootDrive >= 0 &&
+            cdBootDrive <= 0xff &&
+            typeof bootFromCdIfPresent === "boolean"
+          ) {
+            this.machineCpuBootConfig = { bootDrive, cdBootDrive, bootFromCdIfPresent };
+          }
+          return;
         }
-        return;
-      }
-      if (bootDeviceMsg?.type === "machineCpu.bootDeviceActive") {
-        const bootDevice = bootDeviceMsg.bootDevice;
-        if (bootDevice === "hdd" || bootDevice === "cdrom") {
-          this.machineCpuActiveBootDevice = bootDevice;
+
+        if (type === "machineCpu.bootDeviceSelected") {
+          const bootDevice = Object.prototype.hasOwnProperty.call(rec, "bootDevice") ? rec.bootDevice : undefined;
+          if (bootDevice === "hdd" || bootDevice === "cdrom") {
+            const prev = this.bootDisks ?? emptySetBootDisksMessage();
+            this.bootDisks = { ...prev, bootDevice };
+          }
+          return;
         }
-        return;
+
+        if (type === "machineCpu.bootDeviceActive") {
+          const bootDevice = Object.prototype.hasOwnProperty.call(rec, "bootDevice") ? rec.bootDevice : undefined;
+          if (bootDevice === "hdd" || bootDevice === "cdrom") {
+            this.machineCpuActiveBootDevice = bootDevice;
+          }
+          return;
+        }
       }
     }
 
