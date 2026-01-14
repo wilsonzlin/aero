@@ -1549,12 +1549,66 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         kind = VioInputDeviceKindUnknown;
         strictIdName = TRUE;
 
-        if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard")) {
+        if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard") ||
+            (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Keyboard"))) {
             kind = VioInputDeviceKindKeyboard;
-        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse")) {
+        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse") ||
+                   (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Mouse"))) {
             kind = VioInputDeviceKindMouse;
-        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
+        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet") ||
+                   (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Tablet"))) {
             kind = VioInputDeviceKindTablet;
+        } else if (compatDeviceKind) {
+            /*
+             * Compat mode: if ID_NAME isn't one of the known strings, try to infer
+             * the device kind from EV_BITS(types). This supports non-Aero virtio-input
+             * frontends that expose different ID_NAME values.
+             */
+            UCHAR typesBits[128];
+            UCHAR typesSize;
+            BOOLEAN hasAbs;
+            BOOLEAN hasRel;
+            BOOLEAN hasKey;
+
+            RtlZeroMemory(typesBits, sizeof(typesBits));
+            typesSize = 0;
+            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, typesBits, sizeof(typesBits), &typesSize);
+            if (NT_SUCCESS(status) && typesSize != 0) {
+                hasAbs = VioInputBitmapTestBit(typesBits, VIRTIO_INPUT_EV_ABS) ? TRUE : FALSE;
+                hasRel = VioInputBitmapTestBit(typesBits, VIRTIO_INPUT_EV_REL) ? TRUE : FALSE;
+                hasKey = VioInputBitmapTestBit(typesBits, VIRTIO_INPUT_EV_KEY) ? TRUE : FALSE;
+
+                if (hasAbs) {
+                    kind = VioInputDeviceKindTablet;
+                } else if (hasRel) {
+                    kind = VioInputDeviceKindMouse;
+                } else if (hasKey) {
+                    kind = VioInputDeviceKindKeyboard;
+                }
+
+                if (kind != VioInputDeviceKindUnknown) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "compat: inferred device kind %s from EV_BITS(types) for ID_NAME='%s'\n",
+                        VioInputDeviceKindToString(kind),
+                        name);
+                }
+            }
+            if (!NT_SUCCESS(status) || typesSize == 0) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: EV_BITS(types) query failed while inferring device kind: %!STATUS!\n",
+                    status);
+            }
+
+            if (kind == VioInputDeviceKindUnknown) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "compat: unsupported ID_NAME: '%s' (expected 'Aero Virtio *' or 'QEMU Virtio *')\n",
+                    name);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
         } else {
             /*
              * Optional: accept absolute-pointer devices (virtio-tablet) even when
