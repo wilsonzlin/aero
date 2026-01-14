@@ -1550,6 +1550,21 @@ Unlock:
   }
   dirty->resource_handle = res->handle;
   dirty->reserved0 = 0;
+  // Host-side executors validate RESOURCE_DIRTY_RANGE against the protocol-visible
+  // resource size (CREATE_TEXTURE2D layouts), not the raw WDDM allocation size.
+  // When the Win7 runtime reports a larger Pitch than our protocol layout, the
+  // "last row span" in the guest allocation can exceed `res->storage.size()`;
+  // clamp so the dirty range is always within protocol bounds.
+  const uint64_t protocol_size = static_cast<uint64_t>(res->storage.size());
+  if (dirty_offset > protocol_size) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  dirty_end = std::min(dirty_end, protocol_size);
+  if (dirty_end < dirty_offset) {
+    SetError(hDevice, E_FAIL);
+    return;
+  }
   dirty->offset_bytes = dirty_offset;
   dirty->size_bytes = dirty_end - dirty_offset;
 }
@@ -4307,7 +4322,6 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
   if (res->mapped_write && res->mapped_size != 0) {
     uint64_t upload_offset = res->mapped_offset;
     uint64_t upload_size_storage = res->mapped_size;
-    uint64_t upload_size_dirty = res->mapped_size;
     bool emit_ok = true;
     if (res->kind == ResourceKind::Buffer) {
       const uint64_t end = res->mapped_offset + res->mapped_size;
@@ -4319,36 +4333,6 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
         upload_offset = res->mapped_offset & ~3ull;
         const uint64_t upload_end = AlignUpU64(end, 4);
         upload_size_storage = upload_end - upload_offset;
-        upload_size_dirty = upload_size_storage;
-      }
-    } else if (res->kind == ResourceKind::Texture2D && res->backing_alloc_id != 0) {
-      if (subresource >= res->tex2d_subresources.size()) {
-        SetError(hDevice, E_INVALIDARG);
-        emit_ok = false;
-      }
-      if (emit_ok) {
-        const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[subresource];
-        const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-        if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-          SetError(hDevice, E_INVALIDARG);
-          emit_ok = false;
-        } else {
-          const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : sub_layout.row_pitch_bytes;
-          const uint64_t alloc_size =
-              res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : resource_total_bytes(dev, res);
-          uint32_t row_bytes = 0;
-          if (!ValidateTexture2DRowSpan(aer_fmt, sub_layout, pitch, alloc_size, &row_bytes)) {
-            SetError(hDevice, E_INVALIDARG);
-            emit_ok = false;
-          } else {
-            upload_offset = sub_layout.offset_bytes;
-            upload_size_storage = sub_layout.size_bytes;
-            // Mark the full address span that covers the last row's texel bytes when stepping by Pitch.
-            upload_size_dirty =
-                static_cast<uint64_t>(row_bytes) +
-                static_cast<uint64_t>(sub_layout.rows_in_layout - 1u) * static_cast<uint64_t>(pitch);
-          }
-        }
       }
     }
 
@@ -4380,7 +4364,11 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
           cmd->resource_handle = res->handle;
           cmd->reserved0 = 0;
           cmd->offset_bytes = upload_offset;
-          cmd->size_bytes = upload_size_dirty;
+          // Host-side executors validate dirty ranges against the protocol-visible
+          // texture size (CREATE_TEXTURE2D layouts). Avoid using the runtime
+          // Pitch-derived span (`upload_size_dirty`), which can exceed the protocol
+          // layout when the WDDM allocation pitch differs.
+          cmd->size_bytes = upload_size_storage;
         }
       } else {
         EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size_storage);
