@@ -48,6 +48,8 @@ typedef int32_t LONG;
 #endif
 typedef int64_t LONGLONG;
 typedef uint64_t ULONGLONG;
+typedef uintptr_t ULONG_PTR;
+typedef uintptr_t UINT_PTR;
 typedef unsigned int UINT;
 typedef uint8_t UINT8;
 typedef uint16_t UINT16;
@@ -213,6 +215,7 @@ static __forceinline void ExQueueWorkItem(_Inout_ PWORK_QUEUE_ITEM Item, _In_ WO
 static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return _InterlockedIncrement(addend); }
 static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return _InterlockedDecrement(addend); }
 static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value) { return _InterlockedExchange(target, value); }
+static __forceinline LONGLONG InterlockedExchange64(volatile LONGLONG *target, LONGLONG value) { return _InterlockedExchange64(target, value); }
 static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
 {
     return _InterlockedCompareExchange(dest, exchange, comparand);
@@ -230,6 +233,12 @@ static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value)
     *target = value;
     return old;
 }
+static __forceinline LONGLONG InterlockedExchange64(volatile LONGLONG *target, LONGLONG value)
+{
+    LONGLONG old = *target;
+    *target = value;
+    return old;
+}
 static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
 {
     LONG old = *dest;
@@ -242,6 +251,10 @@ static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG e
 static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return __sync_add_and_fetch(addend, 1); }
 static __forceinline LONG InterlockedDecrement(volatile LONG *addend) { return __sync_sub_and_fetch(addend, 1); }
 static __forceinline LONG InterlockedExchange(volatile LONG *target, LONG value) { return __sync_lock_test_and_set(target, value); }
+static __forceinline LONGLONG InterlockedExchange64(volatile LONGLONG *target, LONGLONG value)
+{
+    return __sync_lock_test_and_set(target, value);
+}
 static __forceinline LONG InterlockedCompareExchange(volatile LONG *dest, LONG exchange, LONG comparand)
 {
     return __sync_val_compare_and_swap(dest, comparand, exchange);

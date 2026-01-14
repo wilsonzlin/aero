@@ -38,6 +38,7 @@ SOURCES= \
     virtiosnd_control_proto.c \
     virtiosnd_contract.c \
     virtiosnd_dma.c \
+    virtiosnd_eventq.c \
     virtiosnd_queue_split.c \
     virtiosnd_tx.c \
     virtiosnd_rx.c \

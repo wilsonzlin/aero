@@ -118,6 +118,16 @@ add_executable(virtiosnd_event_proto_tests
 target_link_libraries(virtiosnd_event_proto_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_event_proto_tests COMMAND virtiosnd_event_proto_tests)
 
+add_executable(virtiosnd_eventq_drain_tests
+    test_eventq_drain.c
+    ${VIRTIOSND_SRC}/virtio_snd_proto.c
+    ${VIRTIOSND_SRC}/virtiosnd_eventq.c
+    ${VIRTIOSND_SRC}/virtiosnd_jack.c
+)
+
+target_link_libraries(virtiosnd_eventq_drain_tests PRIVATE virtiosnd_host_shim)
+add_test(NAME virtiosnd_eventq_drain_tests COMMAND virtiosnd_eventq_drain_tests)
+
 # Existing scatter/gather core tests (host-buildable).
 if (NOT TARGET virtiosnd_sg_tests)
     add_executable(virtiosnd_sg_tests

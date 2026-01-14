@@ -627,6 +627,11 @@ typedef struct _VIRTIOSND_EVENTQ_POLL_CONTEXT {
     ULONGLONG RepostMask;
 } VIRTIOSND_EVENTQ_POLL_CONTEXT, *PVIRTIOSND_EVENTQ_POLL_CONTEXT;
 
+static BOOLEAN VirtIoSndEventqSignalStreamNotificationThunk(_In_opt_ void* Context, _In_ ULONG StreamId)
+{
+    return VirtIoSndEventqSignalStreamNotificationEvent((PVIRTIOSND_DEVICE_EXTENSION)Context, StreamId);
+}
+
 static VOID
 VirtIoSndHwDrainEventqUsed(
     _In_ USHORT QueueIndex,
@@ -636,18 +641,8 @@ VirtIoSndHwDrainEventqUsed(
 {
     PVIRTIOSND_EVENTQ_POLL_CONTEXT ctx;
     PVIRTIOSND_DEVICE_EXTENSION dx;
-    ULONG_PTR poolBase;
-    ULONG_PTR poolEnd;
-    ULONG_PTR cookiePtr;
-    ULONG_PTR off;
-    NTSTATUS status;
-    EVT_VIRTIOSND_EVENTQ_EVENT* cb;
-    void* cbCtx;
-    KIRQL oldIrql;
-    PUCHAR bufVa;
-    BOOLEAN haveEvent;
-    ULONG evtType;
-    ULONG evtData;
+    VIRTIOSND_EVENTQ_CALLBACK_STATE cb;
+    VIRTIOSND_EVENTQ_PERIOD_STATE period;
 
     UNREFERENCED_PARAMETER(QueueIndex);
 
@@ -661,171 +656,30 @@ VirtIoSndHwDrainEventqUsed(
         return;
     }
 
-    /*
-     * Contract v1 defines no *required* event messages; ignore contents. Still drain used
-     * entries to avoid ring space leaks if a future device emits events (or a
-     * buggy device completes event buffers).
-     */
-    if (Cookie == NULL) {
-        return;
-    }
+    cb.Lock = &dx->EventqLock;
+    cb.Callback = &dx->EventqCallback;
+    cb.CallbackContext = &dx->EventqCallbackContext;
+    cb.CallbackInFlight = &dx->EventqCallbackInFlight;
 
-    if (dx->Removed) {
-        /*
-         * On surprise removal avoid MMIO accesses; do not repost/kick.
-         * Best-effort draining is still useful to keep queue state consistent.
-         */
-        return;
-    }
+    RtlZeroMemory(&period, sizeof(period));
+    period.SignalStreamNotification = VirtIoSndEventqSignalStreamNotificationThunk;
+    period.SignalStreamNotificationContext = dx;
+    period.PcmPeriodSeq = dx->PcmPeriodSeq;
+    period.PcmLastPeriodEventTime100ns = dx->PcmLastPeriodEventTime100ns;
+    period.StreamCount = (ULONG)RTL_NUMBER_OF(dx->PcmPeriodSeq);
 
-    if (dx->EventqBufferPool.Va == NULL || dx->EventqBufferPool.DmaAddr == 0 || dx->EventqBufferPool.Size == 0) {
-        return;
-    }
-
-    poolBase = (ULONG_PTR)dx->EventqBufferPool.Va;
-    poolEnd = poolBase + (ULONG_PTR)dx->EventqBufferPool.Size;
-    cookiePtr = (ULONG_PTR)Cookie;
-
-    if (cookiePtr < poolBase || cookiePtr >= poolEnd) {
-        return;
-    }
-
-    /* Ensure cookie points at the start of one of our fixed-size buffers. */
-    off = cookiePtr - poolBase;
-    if ((off % (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE) != 0) {
-        return;
-    }
-
-    if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
-        return;
-    }
-
-    /*
-     * Defer reposting until after the used ring is drained.
-     *
-     * If a device floods events and completes a buffer immediately after it is
-     * reposted, reposting within the drain loop can cause an unbounded loop at
-     * DISPATCH_LEVEL. By deferring, each poll invocation drains at most the
-     * fixed outstanding buffer pool.
-     */
-    {
-        const ULONG idx = (ULONG)(off / (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE);
-        if (idx < 64u) {
-            ctx->RepostMask |= (1ull << idx);
-        }
-    }
-
-    /*
-     * Best-effort parse events so polling-only mode still observes jack
-     * plug/unplug state changes.
-     *
-     * This mirrors the INTx DPC eventq parsing path but must remain optional:
-     * contract v1 defines no required event messages.
-     */
-    InterlockedIncrement(&dx->EventqStats.Completions);
-
-    haveEvent = FALSE;
-    evtType = 0;
-    evtData = 0;
-
-    bufVa = (PUCHAR)dx->EventqBufferPool.Va + off;
-
-    /*
-     * Validate UsedLen before parsing: it must never exceed the posted writable
-     * buffer size. Treat oversized completions as malformed and ignore them.
-     */
-    if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
-        /* Malformed completion; ignore payload. */
-    } else if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
-        const UINT32 cappedLen = UsedLen; /* already validated against buffer size */
-        VIRTIO_SND_EVENT_PARSED evt;
-
-        /* Ensure device DMA writes are visible before inspecting the buffer. */
-        KeMemoryBarrier();
-
-        status = VirtioSndParseEvent(bufVa, cappedLen, &evt);
-        if (NT_SUCCESS(status)) {
-            haveEvent = TRUE;
-            evtType = evt.Type;
-            evtData = evt.Data;
-            InterlockedIncrement(&dx->EventqStats.Parsed);
-
-            switch (evt.Kind) {
-            case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
-                InterlockedIncrement(&dx->EventqStats.JackConnected);
-                {
-                    BOOLEAN changed = VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, TRUE);
-                    VirtIoSndTopology_UpdateJackStateEx(evt.Data, TRUE, changed);
-                }
-                break;
-            case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
-                InterlockedIncrement(&dx->EventqStats.JackDisconnected);
-                {
-                    BOOLEAN changed = VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, FALSE);
-                    VirtIoSndTopology_UpdateJackStateEx(evt.Data, FALSE, changed);
-                }
-                break;
-            case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
-                InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
-                /*
-                 * Diagnostic bookkeeping:
-                 * Track a per-stream PERIOD_ELAPSED sequence + timestamp so
-                 * telemetry/diagnostics can correlate WaveRT behavior with eventq
-                 * delivery.
-                 */
-                if (evt.Data < RTL_NUMBER_OF(dx->PcmPeriodSeq)) {
-                    (VOID)InterlockedIncrement(&dx->PcmPeriodSeq[evt.Data]);
-                    (VOID)InterlockedExchange64(&dx->PcmLastPeriodEventTime100ns[evt.Data], (LONGLONG)KeQueryInterruptTime());
-                }
-                break;
-            case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
-                InterlockedIncrement(&dx->EventqStats.PcmXrun);
-                break;
-            case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
-                InterlockedIncrement(&dx->EventqStats.CtlNotify);
-                break;
-            default:
-                InterlockedIncrement(&dx->EventqStats.UnknownType);
-                break;
-            }
-        }
-    } else if (UsedLen != 0) {
-        InterlockedIncrement(&dx->EventqStats.ShortBuffers);
-    }
-
-    /* Best-effort dispatch to the optional higher-level callback (WaveRT). */
-    if (haveEvent && dx->Started) {
-        cb = NULL;
-        cbCtx = NULL;
-        KeAcquireSpinLock(&dx->EventqLock, &oldIrql);
-        cb = dx->EventqCallback;
-        cbCtx = dx->EventqCallbackContext;
-        /*
-         * Bump the in-flight counter while still holding EventqLock so that a
-         * concurrent callback teardown (clearing the callback and waiting for
-         * EventqCallbackInFlight==0) cannot race with us between releasing the
-         * lock and incrementing the counter.
-         */
-        if (cb != NULL) {
-            InterlockedIncrement(&dx->EventqCallbackInFlight);
-        }
-        KeReleaseSpinLock(&dx->EventqLock, oldIrql);
-
-        if (cb != NULL) {
-            cb(cbCtx, evtType, evtData);
-            InterlockedDecrement(&dx->EventqCallbackInFlight);
-        } else if (evtType == VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED) {
-            /*
-             * Optional pacing signal (polling-only mode):
-             * If WaveRT registered a notification event object for this stream,
-             * signal it best-effort. If a higher-level callback is registered,
-             * it will queue the WaveRT DPC which signals the event after updating
-             * PacketCount; avoid double-signaling by only doing this when no
-             * callback is present.
-             */
-            (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evtData);
-        }
-    }
+    (VOID)VirtIoSndEventqHandleUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT],
+                                   &dx->EventqBufferPool,
+                                   &dx->EventqStats,
+                                   &dx->JackState,
+                                   &cb,
+                                   &period,
+                                   dx->Started,
+                                   dx->Removed,
+                                   Cookie,
+                                   UsedLen,
+                                   /*EnableDebugLogs=*/FALSE,
+                                   &ctx->RepostMask);
 }
 
 _Use_decl_annotations_
