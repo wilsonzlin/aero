@@ -694,6 +694,11 @@ pub struct AeroGpuMmioDevice {
     // ---------------------------------------------------------------------
     pending_fence_completions: VecDeque<PendingFenceCompletion>,
     backend_completed_fences: HashSet<u64>,
+    /// Fence completions reported while PCI bus mastering (COMMAND.BME) is disabled.
+    ///
+    /// These completions are drained once DMA is permitted again so callers do not need to
+    /// re-report completions after toggling BME.
+    pending_backend_fence_completions: VecDeque<u64>,
     fence_page_dirty: bool,
 
     // ---------------------------------------------------------------------
@@ -842,6 +847,7 @@ impl Default for AeroGpuMmioDevice {
 
             pending_fence_completions: VecDeque::new(),
             backend_completed_fences: HashSet::new(),
+            pending_backend_fence_completions: VecDeque::new(),
             fence_page_dirty: false,
 
             submission_bridge_enabled: false,
@@ -1001,7 +1007,9 @@ impl AeroGpuMmioDevice {
             return;
         }
         if !self.bus_master_enabled() {
-            // Mirror device DMA gating: fence page/IRQ forward progress is undefined without BME.
+            // Mirror device DMA gating: without BME, the device must not perform DMA (fence page
+            // updates). Queue the completion and apply it once DMA is permitted again.
+            self.pending_backend_fence_completions.push_back(fence);
             return;
         }
 
@@ -1450,6 +1458,7 @@ impl AeroGpuMmioDevice {
         self.ring_reset_pending_dma = false;
         self.pending_fence_completions.clear();
         self.backend_completed_fences.clear();
+        self.pending_backend_fence_completions.clear();
         self.fence_page_dirty = false;
         self.pending_submissions.clear();
         self.pending_submissions_bytes = 0;
@@ -1577,9 +1586,18 @@ impl AeroGpuMmioDevice {
             .map(|clock| clock.now_ns())
             .unwrap_or(self.now_ns);
 
-        // Poll backend completions before ticking vblank so vsync-paced fences can complete on the
-        // current vblank edge when ready.
         if dma_enabled {
+            // Drain any external completions that arrived while DMA was disabled. This ensures the
+            // host does not need to re-send fence completions after toggling COMMAND.BME.
+            if !self.pending_backend_fence_completions.is_empty() {
+                while let Some(fence) = self.pending_backend_fence_completions.pop_front() {
+                    self.backend_completed_fences.insert(fence);
+                }
+                self.process_pending_fences_on_doorbell();
+            }
+
+            // Poll backend completions before ticking vblank so vsync-paced fences can complete on
+            // the current vblank edge when ready.
             self.poll_backend_completions(mem);
         }
 
@@ -1603,6 +1621,7 @@ impl AeroGpuMmioDevice {
             self.error_count = 0;
             self.pending_fence_completions.clear();
             self.backend_completed_fences.clear();
+            self.pending_backend_fence_completions.clear();
             self.pending_submissions.clear();
             self.pending_submissions_bytes = 0;
             self.fence_page_dirty = true;

@@ -254,7 +254,8 @@ fn aerogpu_complete_fence_is_gated_on_pci_bus_master_enable() {
     assert_eq!(subs.len(), 1);
     assert_eq!(subs[0].signal_fence, signal_fence);
 
-    // Disable PCI bus mastering before reporting completion: the device should ignore it (no DMA).
+    // Disable PCI bus mastering before reporting completion: the device must not perform DMA, but
+    // it should also not require the host to re-report the completion once DMA is enabled again.
     set_aerogpu_bus_master(&mut m, false);
     m.aerogpu_complete_fence(signal_fence);
     m.poll_pci_intx_lines();
@@ -265,9 +266,9 @@ fn aerogpu_complete_fence_is_gated_on_pci_bus_master_enable() {
         "expected AeroGPU INTx to remain deasserted while BME is disabled"
     );
 
-    // Re-enable bus mastering and complete again: should now publish the fence and assert IRQ.
+    // Re-enable bus mastering and tick the device: the queued completion should now apply.
     set_aerogpu_bus_master(&mut m, true);
-    m.aerogpu_complete_fence(signal_fence);
+    m.process_aerogpu();
     m.poll_pci_intx_lines();
 
     assert_eq!(read_completed_fence(&mut m, bar0_base), signal_fence);
