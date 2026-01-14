@@ -213,6 +213,7 @@ Test pointers:
 - [`crates/aero-devices-gpu/tests/aerogpu_executor_decode.rs`](../../crates/aero-devices-gpu/tests/aerogpu_executor_decode.rs)
 - [`crates/aero-devices-gpu/tests/aerogpu_pci_device.rs`](../../crates/aero-devices-gpu/tests/aerogpu_pci_device.rs)
 - [`crates/aero-devices-gpu/tests/vram_bar1.rs`](../../crates/aero-devices-gpu/tests/vram_bar1.rs)
+- Feature-gated wgpu end-to-end: [`crates/aero-devices-gpu/tests/aerogpu_end_to_end.rs`](../../crates/aero-devices-gpu/tests/aerogpu_end_to_end.rs) (run with `cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end`)
 
 ### Host-side processors/executors (wgpu/WebGPU)
 
