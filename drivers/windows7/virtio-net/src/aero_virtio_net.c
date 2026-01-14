@@ -1571,10 +1571,6 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 }
 
-static __forceinline USHORT AerovNetReadBe16(_In_reads_bytes_(2) const UCHAR* Buf) {
-  return (USHORT)(((USHORT)Buf[0] << 8) | (USHORT)Buf[1]);
-}
-
 static ULONG AerovNetChecksumAdd(_In_ ULONG Sum, _In_reads_bytes_(Len) const UCHAR* Buf, _In_ ULONG Len) {
   ULONG I;
 
