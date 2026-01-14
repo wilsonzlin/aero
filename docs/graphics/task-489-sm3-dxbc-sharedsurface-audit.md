@@ -62,6 +62,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_loop_wgsl --locked
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_semantic_locations.rs`
 - `crates/aero-d3d9/tests/sm3_wgsl_semantic_locations.rs`
+- `crates/aero-d3d9/src/vertex/location_map.rs` (unit tests for `AdaptiveLocationMap` determinism + edge cases)
 - `crates/aero-gpu/tests/aerogpu_d3d9_semantic_locations.rs`
 - `tests/d3d9_vertex_input.rs` (integration coverage via `aero-d3d9` test harness wiring)
 
@@ -69,6 +70,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_loop_wgsl --locked
 ```bash
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_semantic_locations --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_semantic_locations --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --lib vertex::location_map --locked
 bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_vertex_input --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_semantic_locations --locked
 ```
