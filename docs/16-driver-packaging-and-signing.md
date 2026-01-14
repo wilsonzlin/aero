@@ -119,7 +119,7 @@ The script will copy the requested `WdfCoInstaller*.dll` into `out/packages/<dri
 CI validates the current toolchain’s behaviour in `ci/validate-toolchain.ps1` by:
 
 - generating a dummy driver package (INF + SYS),
-- adding an *unreferenced* extra file under a subdirectory (e.g. `tools/win7_dbgctl/bin/aero_inf2cat_extra_tool.exe`),
+- adding an *unreferenced* extra file under a subdirectory (e.g. `tools/extra/aero_inf2cat_extra_tool.exe`),
 - running `Inf2Cat /os:7_X86,7_X64`,
 - dumping the resulting `.cat` and checking whether the extra filename appears in the catalog’s member list.
 
@@ -130,7 +130,7 @@ The workflow logs print a stable summary line:
 
 **Practical rule:** treat the staged package directory as immutable after catalog generation. If you add, modify, or post-process any files that are hashed into the catalog, you must regenerate and re-sign the `.cat`.
 
-For packaged helper tools (for example `aerogpu_dbgctl.exe` staged under `tools/win7_dbgctl/bin/`), ensure they are built/copied into the staging directory **before** running `ci/make-catalogs.ps1`.
+For packaged helper tools (for example `aerogpu_dbgctl.exe` staged as `tools/aerogpu_dbgctl.exe`), ensure they are built/copied into the staging directory **before** running `ci/make-catalogs.ps1`.
 
 Signing is handled by `ci/sign-drivers.ps1` (which uses `signtool` to sign `.sys` drivers and `.cat` catalogs):
 

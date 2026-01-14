@@ -42,7 +42,11 @@ cargo run -p device-contract-validator --locked
 
 ## Optional `tools\` directory (extra utilities)
 
-Guest Tools media can optionally ship additional **guest-side utilities** (for example `aerogpu_dbgctl.exe` or other debugging/selftest binaries) without placing them inside any driver package directory.
+Guest Tools media can optionally ship additional **guest-side utilities** (debugging, selftests, diagnostics) under `tools\...` without placing them inside any driver package directory.
+
+Note: the AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongside the AeroGPU driver package (not under `tools\`):
+
+- `drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe`
 
 If the input Guest Tools tree contains a `tools\` directory, `tools/packaging/aero_packager` will package it recursively into the ISO/zip under `tools\...`.
 

@@ -176,7 +176,7 @@ CI’s Win7 toolchain smoke test (`ci/validate-toolchain.ps1`) includes a minima
 - `INF2CAT_UNREFERENCED_FILE_HASHED=0`: unreferenced extra files are not cataloged.
 - `INF2CAT_UNREFERENCED_FILE_HASHED=1`: unreferenced extra files are cataloged.
 
-Practical rule: treat staged package directories as immutable after `ci/make-catalogs.ps1` runs. For packaged helper tools (for example `aerogpu_dbgctl.exe` under `tools/win7_dbgctl/bin/`), build/copy them into the staging directory *before* catalog generation.
+Practical rule: treat staged package directories as immutable after `ci/make-catalogs.ps1` runs. For packaged helper tools (for example `aerogpu_dbgctl.exe` staged as `tools/aerogpu_dbgctl.exe`), build/copy them into the staging directory *before* catalog generation.
 
 And verifies:
 

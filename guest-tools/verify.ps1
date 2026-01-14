@@ -4287,8 +4287,8 @@ try {
     $summary = ""
     $details = @()
 
-    # Template: drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
-    $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
+    # Template: drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe
+    $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe'
 
     $data = @{
         enabled = $RunDbgctl
