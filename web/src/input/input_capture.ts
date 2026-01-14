@@ -205,6 +205,7 @@ export class InputCapture {
   private touchMaxDistSq = 0;
   private touchHadMultiTouch = false;
   private readonly touchPointers = new Map<number, { x: number; y: number }>();
+  private prevCanvasTouchAction: string | null = null;
 
   private latencyLogLastMs = 0;
   private latencyLogCount = 0;
@@ -948,6 +949,15 @@ export class InputCapture {
     this.canvas.addEventListener('contextmenu', this.handleContextMenu);
 
     if (this.enableTouchFallback) {
+      // Pointer Events rely on CSS `touch-action` to control default panning/zooming behavior.
+      // Set it to `none` while capture is active to ensure touch drag is delivered as pointer/touch
+      // events and does not scroll the page.
+      const style = (this.canvas as any).style as Partial<CSSStyleDeclaration> | undefined;
+      if (style && typeof style.touchAction === "string") {
+        this.prevCanvasTouchAction = style.touchAction;
+        style.touchAction = "none";
+      }
+
       // Touch fallback. Prefer Pointer Events when available (better multi-touch semantics), but
       // fall back to Touch Events for older/restricted environments.
       if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
@@ -971,6 +981,14 @@ export class InputCapture {
   stop(): void {
     if (this.flushTimer === null) {
       return;
+    }
+
+    if (this.enableTouchFallback) {
+      const style = (this.canvas as any).style as Partial<CSSStyleDeclaration> | undefined;
+      if (style && typeof style.touchAction === "string" && this.prevCanvasTouchAction !== null) {
+        style.touchAction = this.prevCanvasTouchAction;
+      }
+      this.prevCanvasTouchAction = null;
     }
 
     this.hasFocus = false;
