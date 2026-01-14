@@ -73,6 +73,7 @@ export function mountStatusPanel(
         },
         bootDisks: coordinator.getBootDisks(),
         machineCpuActiveBootDevice: coordinator.getMachineCpuActiveBootDevice(),
+        machineCpuBootConfig: coordinator.getMachineCpuBootConfig(),
       },
       null,
       2,
