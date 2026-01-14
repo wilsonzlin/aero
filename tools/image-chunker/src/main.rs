@@ -3500,6 +3500,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_http_bytes_with_retry_retries_on_truncated_body() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind test listener")?;
+        let addr = listener.local_addr().context("get listener addr")?;
+
+        let requests = Arc::new(AtomicU64::new(0));
+        let requests_for_server = Arc::clone(&requests);
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    accept = listener.accept() => {
+                        let (mut socket, _) = accept?;
+                        let mut buf = [0u8; 1024];
+                        let _ = socket.read(&mut buf).await?;
+
+                        let n = requests_for_server.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            // Declare Content-Length=2 but only send 1 byte, causing the client to
+                            // error while reading the body.
+                            socket
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\no")
+                                .await?;
+                        } else {
+                            socket
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                                .await?;
+                        }
+                        socket.shutdown().await?;
+                        if n >= 1 {
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        });
+
+        let url: reqwest::Url = format!("http://{addr}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download with retry")?;
+        assert_eq!(bytes.as_slice(), b"ok");
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after truncated body"
+        );
+
+        let _ = shutdown_tx.send(());
+        handle
+            .await
+            .map_err(|err| anyhow!("test server panicked: {err}"))??;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn download_http_bytes_with_retry_rejects_unexpected_content_encoding() -> Result<()> {
         let (base_url, shutdown_tx, handle) = start_test_http_server(Arc::new(|_req| {
             (
@@ -3638,6 +3701,67 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_optional_with_retry_retries_on_truncated_body() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind test listener")?;
+        let addr = listener.local_addr().context("get listener addr")?;
+
+        let requests = Arc::new(AtomicU64::new(0));
+        let requests_for_server = Arc::clone(&requests);
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    accept = listener.accept() => {
+                        let (mut socket, _) = accept?;
+                        let mut buf = [0u8; 1024];
+                        let _ = socket.read(&mut buf).await?;
+
+                        let n = requests_for_server.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            socket
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\no")
+                                .await?;
+                        } else {
+                            socket
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                                .await?;
+                        }
+                        socket.shutdown().await?;
+                        if n >= 1 {
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        });
+
+        let url: reqwest::Url = format!("http://{addr}/meta.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_optional_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download optional with retry")?;
+        assert_eq!(bytes.as_deref(), Some(b"ok".as_ref()));
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after truncated body"
+        );
+
+        let _ = shutdown_tx.send(());
+        handle
+            .await
+            .map_err(|err| anyhow!("test server panicked: {err}"))??;
         Ok(())
     }
 
