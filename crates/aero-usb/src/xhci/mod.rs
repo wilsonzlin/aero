@@ -1078,6 +1078,12 @@ impl XhciController {
             }
             Err(code) => code,
         };
+        if code == CompletionCode::Success {
+            // If the endpoint was previously queued for execution (e.g. because the transfer ring had
+            // more TRBs ready), stop should unschedule it immediately so it does not consume
+            // per-tick doorbell budget while stopped.
+            self.clear_endpoint_pending(slot_id, endpoint_id);
+        }
 
         // xHCI completion events retain the original slot ID for endpoint commands.
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
@@ -1909,6 +1915,11 @@ impl XhciController {
             }
         }
 
+        // Stop should immediately unschedule the endpoint if it was previously queued (e.g. because
+        // the transfer ring had more TRBs ready). This prevents stopped endpoints from consuming
+        // per-tick doorbell budget.
+        self.clear_endpoint_pending(slot_id, endpoint_id);
+
         CommandCompletion::success(slot_id)
     }
 
@@ -2115,6 +2126,19 @@ impl XhciController {
             self.active_endpoint_pending[idx] = [false; 32];
         }
         self.active_endpoints.retain(|ep| ep.slot_id != slot_id);
+    }
+
+    fn clear_endpoint_pending(&mut self, slot_id: u8, endpoint_id: u8) {
+        if slot_id == 0 || endpoint_id == 0 || endpoint_id > 31 {
+            return;
+        }
+        let slot_idx = usize::from(slot_id);
+        let ep_idx = endpoint_id as usize;
+        if slot_idx < self.active_endpoint_pending.len() && ep_idx < 32 {
+            self.active_endpoint_pending[slot_idx][ep_idx] = false;
+        }
+        self.active_endpoints
+            .retain(|ep| ep.slot_id != slot_id || ep.endpoint_id != endpoint_id);
     }
 
     /// Handle a device endpoint doorbell write.
