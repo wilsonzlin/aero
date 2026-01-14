@@ -53,8 +53,11 @@ Note: for `TEX1` fixed-function FVFs, `TEXCOORD0` may be declared as `float1/2/3
 The fixed-function fallback uses the first two components as `(u, v)` (`float1` implies `v=0`; extra components are ignored).
 Multiple texture coordinate sets still require user shaders (layout translation is supported; fixed-function shading is not).
 
-Exception: patch rendering (`DrawRectPatch` / `DrawTriPatch`) requires at least two texture-coordinate components and rejects
-`D3DFVF_TEXCOORDSIZE1(0)` (`float1`) with `D3DERR_INVALIDCALL`, since the CPU tessellation path writes only `(u, v)` pairs.
+Note: patch rendering (`DrawRectPatch` / `DrawTriPatch`) consumes `TEXCOORD0` with the same bring-up conventions as the
+fixed-function fallback path:
+
+- `float1`: uses `.x` as `u` and treats `v = 0`
+- `float2/float3/float4`: uses `.xy` as `(u, v)` (extra components are ignored)
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 

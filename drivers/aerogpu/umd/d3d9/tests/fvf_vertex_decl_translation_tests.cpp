@@ -473,10 +473,10 @@ bool TestSetFvfTexcoordSizeBits() {
   // SetFVF should bind an internal vertex declaration matching the FVF's
   // D3DFVF_TEXCOORDSIZE* encoding (input layout translation for user shaders).
   //
-  // Note: the fixed-function fallback path uses TEXCOORD0.xy as (u, v) for TEX1
-  // FVFs and therefore accepts float1/2/3/4. Patch tessellation is the stricter
-  // case: it requires at least float2 (float1 is rejected) since it needs both
-  // (u, v).
+  // Note: both fixed-function draws and patch tessellation consume `TEXCOORD0`
+  // using the conventional D3D9 semantics:
+  // - `float1`: uses `.x` as `u` and treats `v = 0`
+  // - `float2/float3/float4`: uses `.xy` as `(u, v)` (extra components are ignored)
   const uint32_t kFvfA = kD3dFvfXyzRhw | kD3dFvfDiffuse | D3dFvfTexCoordSize3(0); // TEX0 unused; size bits ignored
   const uint32_t kFvfB = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1 | D3dFvfTexCoordSize1(0); // TEX0=float1
   const uint32_t kFvfC = kD3dFvfXyzRhw | kD3dFvfTex1 | D3dFvfTexCoordSize3(0);                  // TEX0=float3

@@ -472,6 +472,35 @@ struct VertexXyzrhwTex1 {
   float v;
 };
 
+struct VertexXyzrhwTex1F1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+};
+
+struct VertexXyzrhwTex1F3 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+  float v;
+  float w;
+};
+
+struct VertexXyzrhwTex1F4 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+  float v;
+  float w;
+  float q;
+};
+
 struct VertexXyzDiffuse {
   float x;
   float y;
@@ -523,6 +552,32 @@ struct VertexXyzTex1 {
   float z;
   float u;
   float v;
+};
+
+struct VertexXyzTex1F1 {
+  float x;
+  float y;
+  float z;
+  float u;
+};
+
+struct VertexXyzTex1F3 {
+  float x;
+  float y;
+  float z;
+  float u;
+  float v;
+  float w;
+};
+
+struct VertexXyzTex1F4 {
+  float x;
+  float y;
+  float z;
+  float u;
+  float v;
+  float w;
+  float q;
 };
 
 struct VertexXyzNormal {
@@ -2604,6 +2659,382 @@ bool TestFixedfuncTex1SupportsTexcoordSizeBits() {
           return false;
         }
         if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "PS contains mul (XYZ)")) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool TestFixedfuncTex1NoDiffuseSupportsTexcoordSizeBits() {
+  struct Case {
+    const char* name = nullptr;
+    uint32_t tex0_size_bits = 0;
+    uint8_t decl_type = kD3dDeclTypeFloat2;
+    // For XYZRHW | TEX1 draws.
+    const void* tri_xyzrhw = nullptr;
+    uint32_t stride_xyzrhw = 0;
+    // For XYZ | TEX1 draws.
+    const void* tri_xyz = nullptr;
+    uint32_t stride_xyz = 0;
+  };
+
+  const VertexXyzrhwTex1F1 tri_xyzrhw_f1[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.5f},
+  };
+  const VertexXyzrhwTex1F3 tri_xyzrhw_f3[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.25f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.25f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.25f},
+  };
+  const VertexXyzrhwTex1F4 tri_xyzrhw_f4[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.25f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.25f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.25f, 1.0f},
+  };
+
+  const VertexXyzTex1F1 tri_xyz_f1[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f},
+  };
+  const VertexXyzTex1F3 tri_xyz_f3[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 0.25f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.25f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.25f},
+  };
+  const VertexXyzTex1F4 tri_xyz_f4[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 0.25f, 1.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.25f, 1.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.25f, 1.0f},
+  };
+
+  const Case cases[] = {
+      {"texcoord0_float1",
+       kD3dFvfTexCoordSize1_0,
+       kD3dDeclTypeFloat1,
+       tri_xyzrhw_f1,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwTex1F1)),
+       tri_xyz_f1,
+       static_cast<uint32_t>(sizeof(VertexXyzTex1F1))},
+      {"texcoord0_float3",
+       kD3dFvfTexCoordSize3_0,
+       kD3dDeclTypeFloat3,
+       tri_xyzrhw_f3,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwTex1F3)),
+       tri_xyz_f3,
+       static_cast<uint32_t>(sizeof(VertexXyzTex1F3))},
+      {"texcoord0_float4",
+       kD3dFvfTexCoordSize4_0,
+       kD3dDeclTypeFloat4,
+       tri_xyzrhw_f4,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwTex1F4)),
+       tri_xyz_f4,
+       static_cast<uint32_t>(sizeof(VertexXyzTex1F4))},
+  };
+
+  for (const auto& c : cases) {
+    // -------------------------------------------------------------------------
+    // XYZRHW | TEX1 with non-default TEXCOORDSIZE0
+    // -------------------------------------------------------------------------
+    {
+      CleanupDevice cleanup;
+      if (!CreateDevice(&cleanup)) {
+        return false;
+      }
+
+      auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+      if (!Check(dev != nullptr, "device pointer")) {
+        return false;
+      }
+
+      const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+        HRESULT hr2 = S_OK;
+        if (cleanup.device_funcs.pfnSetTextureStageState) {
+          hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+        } else {
+          hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+        }
+        return Check(hr2 == S_OK, msg);
+      };
+
+      dev->cmd.reset();
+
+      const uint32_t fvf = kFvfXyzrhwTex1 | c.tex0_size_bits;
+      HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+      if (!Check(hr == S_OK, c.name)) {
+        return false;
+      }
+
+      VertexDecl* expected_decl = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+        if (!Check(it != dev->fvf_vertex_decl_cache.end(), "custom FVF decl cached (XYZRHW|TEX1)")) {
+          return false;
+        }
+        expected_decl = it->second;
+        if (!Check(expected_decl != nullptr, "custom FVF decl non-null (XYZRHW|TEX1)")) {
+          return false;
+        }
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl bound (XYZRHW|TEX1)")) {
+          return false;
+        }
+      }
+
+      const D3DVERTEXELEMENT9_COMPAT expected_blob[] = {
+          {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+          {0, 16, c.decl_type, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+      };
+      if (!Check(expected_decl->blob.size() == sizeof(expected_blob), "custom decl blob size (XYZRHW|TEX1)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(expected_decl->blob.data(), expected_blob, sizeof(expected_blob)) == 0,
+                 "custom decl blob matches expected layout (XYZRHW|TEX1)")) {
+        return false;
+      }
+
+      D3DDDI_HRESOURCE hTex{};
+      if (!CreateDummyTexture(&cleanup, &hTex)) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+      if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+        return false;
+      }
+
+      // Ensure a known stage0 state (modulate texture with vertex diffuse; VS supplies white diffuse).
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorOp,
+                                kD3dTopModulate,
+                                "XYZRHW|TEX1: SetTextureStageState(COLOROP=MODULATE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorArg1,
+                                kD3dTaTexture,
+                                "XYZRHW|TEX1: SetTextureStageState(COLORARG1=TEXTURE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorArg2,
+                                kD3dTaDiffuse,
+                                "XYZRHW|TEX1: SetTextureStageState(COLORARG2=DIFFUSE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssAlphaOp,
+                                kD3dTopSelectArg1,
+                                "XYZRHW|TEX1: SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssAlphaArg1,
+                                kD3dTaTexture,
+                                "XYZRHW|TEX1: SetTextureStageState(ALPHAARG1=TEXTURE) succeeds")) {
+        return false;
+      }
+
+      hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+          cleanup.hDevice,
+          D3DDDIPT_TRIANGLELIST,
+          /*primitive_count=*/1,
+          c.tri_xyzrhw,
+          c.stride_xyzrhw);
+      if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|TEX1 custom TEXCOORDSIZE0)")) {
+        std::fprintf(stderr, "FAIL: %s: DrawPrimitiveUP(XYZRHW|TEX1) hr=0x%08x\n", c.name, static_cast<unsigned>(hr));
+        return false;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZRHW|TEX1)")) {
+          return false;
+        }
+        if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "fixedfunc_vs_tex1_nodiffuse created")) {
+          return false;
+        }
+        if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "XYZRHW|TEX1 binds nodiffuse passthrough VS")) {
+          return false;
+        }
+        if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosWhiteTex1),
+                   "XYZRHW|TEX1 VS bytecode matches kVsPassthroughPosWhiteTex1")) {
+          return false;
+        }
+        if (!Check(dev->ps != nullptr, "PS bound (XYZRHW|TEX1)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "PS contains texld (XYZRHW|TEX1)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "PS contains mul (XYZRHW|TEX1)")) {
+          return false;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // XYZ | TEX1 WVP path with non-default TEXCOORDSIZE0
+    // -------------------------------------------------------------------------
+    {
+      CleanupDevice cleanup;
+      if (!CreateDevice(&cleanup)) {
+        return false;
+      }
+
+      auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+      if (!Check(dev != nullptr, "device pointer")) {
+        return false;
+      }
+
+      const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+        HRESULT hr2 = S_OK;
+        if (cleanup.device_funcs.pfnSetTextureStageState) {
+          hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+        } else {
+          hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+        }
+        return Check(hr2 == S_OK, msg);
+      };
+
+      dev->cmd.reset();
+
+      const uint32_t fvf = kFvfXyzTex1 | c.tex0_size_bits;
+      HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+      if (!Check(hr == S_OK, c.name)) {
+        return false;
+      }
+
+      VertexDecl* expected_decl = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+        if (!Check(it != dev->fvf_vertex_decl_cache.end(), "custom FVF decl cached (XYZ|TEX1)")) {
+          return false;
+        }
+        expected_decl = it->second;
+        if (!Check(expected_decl != nullptr, "custom FVF decl non-null (XYZ|TEX1)")) {
+          return false;
+        }
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl bound (XYZ|TEX1)")) {
+          return false;
+        }
+      }
+
+      const D3DVERTEXELEMENT9_COMPAT expected_blob[] = {
+          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+          {0, 12, c.decl_type, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+      };
+      if (!Check(expected_decl->blob.size() == sizeof(expected_blob), "custom decl blob size (XYZ|TEX1)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(expected_decl->blob.data(), expected_blob, sizeof(expected_blob)) == 0,
+                 "custom decl blob matches expected layout (XYZ|TEX1)")) {
+        return false;
+      }
+
+      // Ensure a stable WVP (identity) so the WVP path can't observe uninitialized transforms.
+      if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+        return false;
+      }
+      D3DMATRIX identity{};
+      identity.m[0][0] = 1.0f;
+      identity.m[1][1] = 1.0f;
+      identity.m[2][2] = 1.0f;
+      identity.m[3][3] = 1.0f;
+      hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+      if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+      if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+      if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+        return false;
+      }
+
+      D3DDDI_HRESOURCE hTex{};
+      if (!CreateDummyTexture(&cleanup, &hTex)) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+      if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+        return false;
+      }
+
+      // Ensure a known stage0 state (modulate texture with vertex diffuse; VS supplies white diffuse).
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorOp,
+                                kD3dTopModulate,
+                                "XYZ|TEX1: SetTextureStageState(COLOROP=MODULATE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorArg1,
+                                kD3dTaTexture,
+                                "XYZ|TEX1: SetTextureStageState(COLORARG1=TEXTURE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssColorArg2,
+                                kD3dTaDiffuse,
+                                "XYZ|TEX1: SetTextureStageState(COLORARG2=DIFFUSE) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssAlphaOp,
+                                kD3dTopSelectArg1,
+                                "XYZ|TEX1: SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0,
+                                kD3dTssAlphaArg1,
+                                kD3dTaTexture,
+                                "XYZ|TEX1: SetTextureStageState(ALPHAARG1=TEXTURE) succeeds")) {
+        return false;
+      }
+
+      hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+          cleanup.hDevice,
+          D3DDDIPT_TRIANGLELIST,
+          /*primitive_count=*/1,
+          c.tri_xyz,
+          c.stride_xyz);
+      if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|TEX1 custom TEXCOORDSIZE0)")) {
+        std::fprintf(stderr, "FAIL: %s: DrawPrimitiveUP(XYZ|TEX1) hr=0x%08x\n", c.name, static_cast<unsigned>(hr));
+        return false;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZ|TEX1)")) {
+          return false;
+        }
+        if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "fixedfunc_vs_xyz_tex1 created")) {
+          return false;
+        }
+        if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "XYZ|TEX1 binds WVP VS")) {
+          return false;
+        }
+        if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
+                   "XYZ|TEX1 VS bytecode matches kVsTransformPosWhiteTex1")) {
+          return false;
+        }
+        if (!Check(dev->ps != nullptr, "PS bound (XYZ|TEX1)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "PS contains texld (XYZ|TEX1)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "PS contains mul (XYZ|TEX1)")) {
           return false;
         }
       }
@@ -8417,6 +8848,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncTex1SupportsTexcoordSizeBits()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncTex1NoDiffuseSupportsTexcoordSizeBits()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl()) {
