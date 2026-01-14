@@ -14101,10 +14101,10 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   std::memcpy(&z0, payload + 8, sizeof(float));
   std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - tri[0].x) < 1e-6f, "PS-only XYZ UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - tri[0].x) < 1e-6f, "PS-only XYZ UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - tri[0].y) < 1e-6f, "PS-only XYZ UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - tri[0].y) < 1e-6f, "PS-only XYZ UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - tri[0].z) < 1e-6f, "PS-only XYZ UP: z0 preserved")) {
@@ -15185,10 +15185,10 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   std::memcpy(&z0, payload + 8, sizeof(float));
   std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ UP: z0 preserved")) {
@@ -16077,10 +16077,10 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 UP: z preserved")) {
@@ -16378,10 +16378,10 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 SetTransform: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 SetTransform: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 SetTransform: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 SetTransform: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 SetTransform: z0 preserved")) {
@@ -16680,10 +16680,10 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 clobber: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 clobber: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 clobber: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 clobber: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 clobber: z0 preserved")) {
@@ -16923,10 +16923,10 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 Indexed UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 Indexed UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 Indexed UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 Indexed UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 Indexed UP: z preserved")) {
@@ -17144,10 +17144,10 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   std::memcpy(&z0, payload + 8, sizeof(float));
   std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ SetTransform: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ SetTransform: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ SetTransform: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ SetTransform: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ SetTransform: z0 preserved")) {
@@ -17425,10 +17425,10 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "StateBlock XYZ|TEX1: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "StateBlock XYZ|TEX1: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "StateBlock XYZ|TEX1: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "StateBlock XYZ|TEX1: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "StateBlock XYZ|TEX1: z preserved")) {
@@ -22253,10 +22253,10 @@ bool TestFvfXyzTex1DrawPrimitiveUpDoesNotConvertVertices() {
   std::memcpy(&u0, vb_upload.data() + 12, sizeof(float));
   std::memcpy(&v0, vb_upload.data() + 16, sizeof(float));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 UP: z preserved")) {
@@ -22477,10 +22477,10 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   std::memcpy(&z0, payload + 8, sizeof(float));
   std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ UP: z0 preserved")) {
@@ -26310,10 +26310,10 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
  
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: x0 is not CPU-converted")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: x0 preserved (no CPU conversion)")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: y0 is not CPU-converted")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: y0 preserved (no CPU conversion)")) {
     return false;
   }
   if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: z0 preserved")) {
