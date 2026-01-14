@@ -209,7 +209,13 @@ cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000
 
 # Optional: same dictionary for WGSL generation fuzzer
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
- 
+  
+# D3D9 legacy token stream parser + disassembly formatting
+cd fuzz && cargo fuzz run fuzz_d3d9_shader_parse -- -runs=10000
+
+# Optional: use the bundled dictionary to help libFuzzer find DXBC/version tokens faster
+cd fuzz && cargo fuzz run fuzz_d3d9_shader_parse -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_shader_parse.dict
+  
 # Networking (quick sanity)
 cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
 cd fuzz && cargo fuzz run fuzz_net_stack_outbound_ethernet -- -runs=1000
