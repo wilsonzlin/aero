@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodePackedBytes, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, decodePackedBytes, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture.releaseAllKeys", () => {
   it("emits the full PrintScreen break scancode sequence on releaseAllKeys", () => {
@@ -43,12 +43,10 @@ describe("InputCapture.releaseAllKeys", () => {
       expect(posted).toHaveLength(1);
 
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
-      expect(words[0] >>> 0).toBe(5);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(5);
 
-      const base = 2;
-      const types = [0, 1, 2, 3, 4].map((i) => words[base + i * 4] >>> 0);
-      expect(types).toEqual([
+      expect(events.map((e) => e.type)).toEqual([
         InputEventType.KeyHidUsage,
         InputEventType.KeyScancode,
         InputEventType.KeyScancode,
@@ -57,23 +55,21 @@ describe("InputCapture.releaseAllKeys", () => {
       ]);
 
       // Keydown scancode make: E0 12 E0 7C.
-      const makePacked = words[base + 1 * 4 + 2] >>> 0;
-      const makeLen = words[base + 1 * 4 + 3] >>> 0;
+      const makePacked = events[1]!.a;
+      const makeLen = events[1]!.b;
       expect(decodePackedBytes(makePacked, makeLen)).toEqual([0xe0, 0x12, 0xe0, 0x7c]);
 
       // releaseAllKeys scancode break: E0 F0 7C E0 F0 12 (split across 4+2 bytes).
-      const brk1Packed = words[base + 2 * 4 + 2] >>> 0;
-      const brk1Len = words[base + 2 * 4 + 3] >>> 0;
-      const brk2Packed = words[base + 3 * 4 + 2] >>> 0;
-      const brk2Len = words[base + 3 * 4 + 3] >>> 0;
+      const brk1Packed = events[2]!.a;
+      const brk1Len = events[2]!.b;
+      const brk2Packed = events[3]!.a;
+      const brk2Len = events[3]!.b;
       expect(decodePackedBytes(brk1Packed, brk1Len)).toEqual([0xe0, 0xf0, 0x7c, 0xe0]);
       expect(decodePackedBytes(brk2Packed, brk2Len)).toEqual([0xf0, 0x12]);
 
       // HID usage: PrintScreen is 0x46.
-      const hidDownPacked = words[base + 0 * 4 + 2] >>> 0;
-      expect(hidDownPacked).toBe(0x46 | (1 << 8));
-      const hidUpPacked = words[base + 4 * 4 + 2] >>> 0;
-      expect(hidUpPacked).toBe(0x46);
+      expect(events[0]!.a >>> 0).toBe(0x46 | (1 << 8));
+      expect(events[4]!.a >>> 0).toBe(0x46);
     });
   });
 
@@ -115,12 +111,10 @@ describe("InputCapture.releaseAllKeys", () => {
       expect(posted).toHaveLength(1);
 
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
-      expect(words[0] >>> 0).toBe(4);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(4);
 
-      const base = 2;
-      const types = [0, 1, 2, 3].map((i) => words[base + i * 4] >>> 0);
-      expect(types).toEqual([
+      expect(events.map((e) => e.type)).toEqual([
         InputEventType.KeyHidUsage,
         InputEventType.KeyScancode,
         InputEventType.KeyScancode,
@@ -128,18 +122,16 @@ describe("InputCapture.releaseAllKeys", () => {
       ]);
 
       // Keydown scancode make: E1 14 77 E1 F0 14 F0 77 (split across 4+4 bytes).
-      const make1Packed = words[base + 1 * 4 + 2] >>> 0;
-      const make1Len = words[base + 1 * 4 + 3] >>> 0;
-      const make2Packed = words[base + 2 * 4 + 2] >>> 0;
-      const make2Len = words[base + 2 * 4 + 3] >>> 0;
+      const make1Packed = events[1]!.a;
+      const make1Len = events[1]!.b;
+      const make2Packed = events[2]!.a;
+      const make2Len = events[2]!.b;
       expect(decodePackedBytes(make1Packed, make1Len)).toEqual([0xe1, 0x14, 0x77, 0xe1]);
       expect(decodePackedBytes(make2Packed, make2Len)).toEqual([0xf0, 0x14, 0xf0, 0x77]);
 
       // HID usage: Pause is 0x48.
-      const hidDownPacked = words[base + 0 * 4 + 2] >>> 0;
-      expect(hidDownPacked).toBe(0x48 | (1 << 8));
-      const hidUpPacked = words[base + 3 * 4 + 2] >>> 0;
-      expect(hidUpPacked).toBe(0x48);
+      expect(events[0]!.a >>> 0).toBe(0x48 | (1 << 8));
+      expect(events[3]!.a >>> 0).toBe(0x48);
     });
   });
 });
