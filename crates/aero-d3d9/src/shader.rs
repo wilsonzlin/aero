@@ -1549,6 +1549,43 @@ pub fn generate_wgsl_with_options(
                     i += 3;
                     continue;
                 }
+
+                // If the first instruction inside the `if` block is a derivative op (`dsx`/`dsy`)
+                // or implicit-derivative texture sample (`texld`), emit it outside the `if` via
+                // `select` and keep the remaining control flow intact. This covers multi-statement
+                // blocks where only the first op needs to be in uniform control flow.
+                if i + 1 < ir.ops.len()
+                    && matches!(ir.ops[i].op, Op::If | Op::Ifc)
+                    && matches!(ir.ops[i + 1].op, Op::Texld | Op::Dsx | Op::Dsy)
+                {
+                    if let Some(cond) =
+                        if_condition_expr(&ir.ops[i], &ir.const_defs_f32, const_base)
+                    {
+                        if try_emit_uniform_control_flow_predicated_op_assignment(
+                            &mut wgsl,
+                            indent,
+                            &cond,
+                            &ir.ops[i + 1],
+                            &ir.const_defs_f32,
+                            const_base,
+                            ir.version.stage,
+                            &ir.sampler_texture_types,
+                        ) {
+                            emit_inst(
+                                &mut wgsl,
+                                &mut indent,
+                                &ir.ops[i],
+                                &ir.const_defs_f32,
+                                const_base,
+                                ir.version.stage,
+                                &ir.sampler_texture_types,
+                            );
+                            // Skip the hoisted op inside the `if` block.
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
                 emit_inst(
                     &mut wgsl,
                     &mut indent,
@@ -1726,6 +1763,42 @@ fn if_condition_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn try_emit_uniform_control_flow_predicated_op_assignment(
+    wgsl: &mut String,
+    indent: usize,
+    pred: &str,
+    op: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> bool {
+    if stage != ShaderStage::Pixel {
+        return false;
+    }
+    let dst = match op.dst {
+        Some(dst) => dst,
+        None => return false,
+    };
+    let new_value = match op.op {
+        Op::Dsx | Op::Dsy => derivative_expr(op, const_defs_f32, const_base, op.op),
+        Op::Texld => texld_sample_expr(
+            op,
+            const_defs_f32,
+            const_base,
+            stage,
+            sampler_texture_types,
+        ),
+        _ => return false,
+    };
+
+    let dst_name = reg_var_name(dst.reg);
+    let expr = format!("select({dst_name}, {new_value}, {pred})");
+    emit_assign(wgsl, indent, dst, &expr);
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
 fn try_emit_uniform_control_flow_if_single_op(
     wgsl: &mut String,
     indent: usize,
@@ -1753,27 +1826,16 @@ fn try_emit_uniform_control_flow_if_single_op(
         Some(cond) => cond,
         None => return false,
     };
-    let dst = match body.dst {
-        Some(dst) => dst,
-        None => return false,
-    };
-
-    let new_value = match body.op {
-        Op::Dsx | Op::Dsy => derivative_expr(body, const_defs_f32, const_base, body.op),
-        Op::Texld => texld_sample_expr(
-            body,
-            const_defs_f32,
-            const_base,
-            stage,
-            sampler_texture_types,
-        ),
-        _ => return false,
-    };
-
-    let dst_name = reg_var_name(dst.reg);
-    let expr = format!("select({dst_name}, {new_value}, {cond})");
-    emit_assign(wgsl, indent, dst, &expr);
-    true
+    try_emit_uniform_control_flow_predicated_op_assignment(
+        wgsl,
+        indent,
+        &cond,
+        body,
+        const_defs_f32,
+        const_base,
+        stage,
+        sampler_texture_types,
+    )
 }
 
 fn emit_inst(
