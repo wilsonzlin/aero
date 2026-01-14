@@ -1,5 +1,5 @@
 use crate::corpus::{InstructionTemplate, TestCase};
-use crate::{CpuState, ExecOutcome, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use crate::{CpuState, ExecOutcome, FLAG_AF, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 use iced_x86::{Formatter, OpKind, Register};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -545,6 +545,7 @@ fn format_state_diff(out: &mut String, expected: &CpuState, actual: &CpuState, f
         ("AF", FLAG_AF),
         ("ZF", FLAG_ZF),
         ("SF", FLAG_SF),
+        ("DF", FLAG_DF),
         ("OF", FLAG_OF),
     ] {
         if (flags_mask & bit) == 0 {
@@ -576,6 +577,7 @@ fn format_flags(rflags: u64, mask: u64) -> String {
         ("AF", FLAG_AF),
         ("ZF", FLAG_ZF),
         ("SF", FLAG_SF),
+        ("DF", FLAG_DF),
         ("OF", FLAG_OF),
     ] {
         if (mask & bit) == 0 {
