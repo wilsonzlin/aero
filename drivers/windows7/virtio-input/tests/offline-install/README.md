@@ -14,6 +14,7 @@ test images where you want input working immediately).
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 > - Optional legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
 >   - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
+>   - includes the same HWID list as `aero_virtio_input.inf` (including the strict generic fallback `PCI\VEN_1AF4&DEV_1052&REV_01`)
 >   - outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), expected to stay in sync with `aero_virtio_input.inf`
 >     (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`)
 >   - disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (overlapping INF binding can be confusing)
