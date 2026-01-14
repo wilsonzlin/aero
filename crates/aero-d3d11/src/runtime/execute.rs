@@ -2447,7 +2447,7 @@ fn expand_indexed_strip_to_list(
 
     match index_binding.format {
         wgpu::IndexFormat::Uint16 => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 bail!("index buffer slice is not a multiple of 2 bytes");
             }
             for chunk in bytes.chunks_exact(2) {
@@ -2460,7 +2460,7 @@ fn expand_indexed_strip_to_list(
             }
         }
         wgpu::IndexFormat::Uint32 => {
-            if bytes.len() % 4 != 0 {
+            if !bytes.len().is_multiple_of(4) {
                 bail!("index buffer slice is not a multiple of 4 bytes");
             }
             for chunk in bytes.chunks_exact(4) {

@@ -309,7 +309,6 @@ pub fn tri_integer_indices_cw(n: u32) -> Vec<u32> {
                 // Base (CCW) order: (i+1,j), (i+1,j+1), (i,j+1).
                 let a = b;
                 let b = tri_vertex_index(n, i + 1, j + 1);
-                let c = c;
                 out.extend_from_slice(&[a, c, b]);
             }
         }
