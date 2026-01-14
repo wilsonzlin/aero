@@ -725,7 +725,48 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(Array.from(c1.data)).toEqual(Array.from(vramU8.subarray(64)));
   });
 
-  it("restores reserved BAR1 VRAM blobs via WorkerVmSnapshot builder (restore path) without forwarding", async () => {
+  it("restores reserved BAR1 VRAM blobs via WorkerVmSnapshot builder (restore path) without forwarding (reserved wins over gpu.vram)", async () => {
+    const makeVramChunk = (data: Uint8Array, chunkIndex = 0): Uint8Array => {
+      const headerBytes = 24;
+      const out = new Uint8Array(headerBytes + data.byteLength);
+      // "AERO"
+      out[0] = 0x41;
+      out[1] = 0x45;
+      out[2] = 0x52;
+      out[3] = 0x4f;
+      // version=1
+      out[4] = 0x01;
+      out[5] = 0x00;
+      // flags=chunkIndex
+      out[6] = chunkIndex & 0xff;
+      out[7] = (chunkIndex >>> 8) & 0xff;
+      // magic u32 (0x01415256)
+      out[8] = 0x56;
+      out[9] = 0x52;
+      out[10] = 0x41;
+      out[11] = 0x01;
+      // total_len=u32, offset=u32, len=u32
+      const totalLen = data.byteLength >>> 0;
+      out[12] = totalLen & 0xff;
+      out[13] = (totalLen >>> 8) & 0xff;
+      out[14] = (totalLen >>> 16) & 0xff;
+      out[15] = (totalLen >>> 24) & 0xff;
+      // offset=0
+      out[16] = 0;
+      out[17] = 0;
+      out[18] = 0;
+      out[19] = 0;
+      // len=totalLen
+      out[20] = totalLen & 0xff;
+      out[21] = (totalLen >>> 8) & 0xff;
+      out[22] = (totalLen >>> 16) & 0xff;
+      out[23] = (totalLen >>> 24) & 0xff;
+      out.set(data, headerBytes);
+      return out;
+    };
+
+    const gpuVramBlob = makeVramChunk(new Uint8Array(16).fill(0xaa));
+
     class FakeBuilder {
       constructor(_guestBase: number, _guestSize: number) {
         // ignore
@@ -735,6 +776,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
           cpu: new Uint8Array([0xaa]),
           mmu: new Uint8Array([0xbb]),
           devices: [
+            { id: VM_SNAPSHOT_DEVICE_ID_GPU_VRAM, version: 1, flags: 0, data: gpuVramBlob },
             { id: IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE, version: 1, flags: 0, data: new Uint8Array([1, 2, 3, 4]) },
             { id: 123, version: 1, flags: 0, data: new Uint8Array([0xde, 0xad]) },
           ],
