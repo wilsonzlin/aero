@@ -45,6 +45,7 @@ import { removeOpfsEntry } from "../platform/opfs";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType, type RemoteCacheStatus } from "./remote_cache_manager";
 import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
+import { readResponseBytesWithLimit } from "./response_json.ts";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -96,6 +97,33 @@ function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boole
   return true;
 }
 
+async function fetchRemoteRangeBytes(
+  url: string,
+  range: { start: number; endInclusive: number },
+  opts: { label: string },
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (range.start < 0 || range.endInclusive < range.start) return new Uint8Array() as Uint8Array<ArrayBuffer>;
+  // Treat remote reads as untrusted: never allow Range fallbacks to full representations.
+  const resp = await fetch(url, { method: "GET", headers: { Range: `bytes=${range.start}-${range.endInclusive}` } });
+  try {
+    if (resp.status !== 206) {
+      throw new Error(`${opts.label} Range request failed (status=${resp.status})`);
+    }
+    const expectedLen = range.endInclusive - range.start + 1;
+    const bytes = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: opts.label });
+    if (bytes.byteLength !== expectedLen) {
+      throw new Error(`${opts.label} Range response length mismatch (expected=${expectedLen} actual=${bytes.byteLength})`);
+    }
+    return bytes;
+  } finally {
+    try {
+      await resp.body?.cancel();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function looksLikeQcow2FromFile(file: File): Promise<boolean> {
   // See Rust `detect_format` logic: magic + plausible version, treat truncated qcow2 as qcow2 so
   // callers surface corruption errors instead of silently treating the header bytes as raw.
@@ -110,6 +138,28 @@ async function looksLikeQcow2FromFile(file: File): Promise<boolean> {
   const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
   const version = dv.getUint32(4, false);
   return version === 2 || version === 3;
+}
+
+function looksLikeQcow2PrefixBytes(prefix: Uint8Array, fileSize: number): boolean {
+  if (fileSize < 4) return false;
+  if (!bytesEqualPrefix(prefix, QCOW2_MAGIC)) return false;
+  if (fileSize < 72) return true;
+  if (prefix.byteLength < 8) return true;
+  const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  const version = dv.getUint32(4, false);
+  return version === 2 || version === 3;
+}
+
+function looksLikeAerosparPrefixBytes(prefix: Uint8Array): boolean {
+  if (prefix.byteLength < AEROSPARSE_MAGIC.length) return false;
+  for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
+    if (prefix[i] !== AEROSPARSE_MAGIC[i]) return false;
+  }
+  // Magic matched. Treat truncated headers as aerosparse so callers surface corruption errors.
+  if (prefix.byteLength < 12) return true;
+  const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  const version = dv.getUint32(8, true);
+  return version === 1;
 }
 
 function looksLikeVhdFooterBytes(footerBytes: Uint8Array, fileSize: number): boolean {
@@ -1057,11 +1107,50 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         hasOwnProp(payload, "name") && payload.name
           ? String(payload.name)
           : parsed.pathname.split("/").filter(Boolean).pop() || "remote.img";
-      const format = inferFormatFromFileName(filename);
+      let format = inferFormatFromFileName(filename);
       if (format === "qcow2" || format === "vhd" || format === "aerospar") {
         throw new Error(`Remote format ${format} is not supported for streaming mounts (use a raw .img or .iso).`);
       }
-      const kind = inferKindFromFileName(filename);
+      let kind = inferKindFromFileName(filename);
+
+      // Defensive: content sniffing to avoid treating container formats as raw sector disks. This
+      // prevents leaking qcow2/vhd/aerosparse headers/allocation tables to the guest when the URL
+      // is mislabelled (e.g. a qcow2 file served as `.img`).
+      //
+      // Note: We only *detect* ISO9660 by content when the file extension is ambiguous. ISO images
+      // can use UDF/other layouts, so we still allow explicit `.iso` URLs even without a `CD001`
+      // signature.
+      const headerProbe = await fetchRemoteRangeBytes(url, { start: 0, endInclusive: Math.min(probe.size - 1, 63) }, { label: "remote disk header probe" });
+      if (looksLikeAerosparPrefixBytes(headerProbe)) {
+        throw new Error("Remote disk appears to be in aerospar format; streaming mounts require a raw .img or .iso");
+      }
+      if (looksLikeQcow2PrefixBytes(headerProbe, probe.size)) {
+        throw new Error("Remote disk appears to be in qcow2 format; streaming mounts require a raw .img or .iso");
+      }
+
+      const footerProbe = await fetchRemoteRangeBytes(
+        url,
+        { start: probe.size - 512, endInclusive: probe.size - 1 },
+        { label: "remote disk footer probe" },
+      );
+      if (looksLikeVhdFooterBytes(footerProbe, probe.size)) {
+        throw new Error("Remote disk appears to be in VHD format; streaming mounts require a raw .img or .iso");
+      }
+
+      if (format !== "iso") {
+        const ISO_PVD_SIG_OFFSET = 0x8001;
+        if (probe.size >= ISO_PVD_SIG_OFFSET + 5) {
+          const sig = await fetchRemoteRangeBytes(
+            url,
+            { start: ISO_PVD_SIG_OFFSET, endInclusive: ISO_PVD_SIG_OFFSET + 5 - 1 },
+            { label: "remote disk ISO9660 probe" },
+          );
+          if (bytesEqualPrefix(sig, ISO9660_PVD_MAGIC)) {
+            format = "iso";
+            kind = "cd";
+          }
+        }
+      }
 
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format === "iso" ? "iso" : "raw");

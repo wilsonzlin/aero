@@ -4,6 +4,18 @@ import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_o
 
 let probeSize = 1024 * 512;
 
+const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+function stubFetch(value: unknown): void {
+  Object.defineProperty(globalThis, "fetch", { value, configurable: true, enumerable: true, writable: true });
+}
+function restoreFetch(): void {
+  if (originalFetchDescriptor) {
+    Object.defineProperty(globalThis, "fetch", originalFetchDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis as unknown as { fetch?: unknown }, "fetch");
+  }
+}
+
 vi.mock("../platform/remote_disk", () => ({
   probeRemoteDisk: async () => ({
     size: probeSize,
@@ -25,6 +37,7 @@ afterEach(() => {
   restoreOpfs?.();
   restoreOpfs = null;
   probeSize = 1024 * 512;
+  restoreFetch();
 
   if (!hadOriginalSelf) {
     Reflect.deleteProperty(globalThis as unknown as { self?: unknown }, "self");
@@ -126,5 +139,87 @@ describe("disk_worker add_remote validation", () => {
     });
     expect(resp.ok).toBe(false);
     expect(resp.error?.message).toMatch(/safe integer/i);
+  });
+
+  it("rejects remote qcow2 images by content sniffing", async () => {
+    const bytesForRange = (start: number, len: number): Uint8Array => {
+      const out = new Uint8Array(len);
+      if (start === 0 && len >= 8) {
+        // qcow2 magic + version 3 (big-endian)
+        out.set([0x51, 0x46, 0x49, 0xfb, 0x00, 0x00, 0x00, 0x03], 0);
+      }
+      return out;
+    };
+
+    stubFetch(async (_input: any, init?: any) => {
+      const rangeHeader = init?.headers?.Range ?? init?.headers?.range ?? "";
+      const m = /bytes=(\d+)-(\d+)/.exec(String(rangeHeader));
+      const start = m ? Number(m[1]) : 0;
+      const end = m ? Number(m[2]) : 0;
+      const len = end - start + 1;
+      const body = bytesForRange(start, len);
+      return new Response(body, {
+        status: 206,
+        headers: {
+          "content-length": String(body.byteLength),
+          "content-range": `bytes ${start}-${end}/${probeSize}`,
+        },
+      });
+    });
+
+    const resp = await sendAddRemote({ url: "https://example.invalid/disk.img" });
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/qcow2/i);
+  });
+
+  it("adds raw remote disks when bytes do not look like a container", async () => {
+    stubFetch(async (_input: any, init?: any) => {
+      const rangeHeader = init?.headers?.Range ?? init?.headers?.range ?? "";
+      const m = /bytes=(\d+)-(\d+)/.exec(String(rangeHeader));
+      const start = m ? Number(m[1]) : 0;
+      const end = m ? Number(m[2]) : 0;
+      const len = end - start + 1;
+      const body = new Uint8Array(len);
+      return new Response(body, {
+        status: 206,
+        headers: {
+          "content-length": String(body.byteLength),
+          "content-range": `bytes ${start}-${end}/${probeSize}`,
+        },
+      });
+    });
+
+    const resp = await sendAddRemote({ url: "https://example.invalid/disk.img" });
+    expect(resp.ok).toBe(true);
+    expect(resp.result?.format).toBe("raw");
+    expect(resp.result?.kind).toBe("hdd");
+  });
+
+  it("auto-detects ISO9660 for remote .img URLs", async () => {
+    const ISO_PVD_SIG_OFFSET = 0x8001;
+
+    stubFetch(async (_input: any, init?: any) => {
+      const rangeHeader = init?.headers?.Range ?? init?.headers?.range ?? "";
+      const m = /bytes=(\d+)-(\d+)/.exec(String(rangeHeader));
+      const start = m ? Number(m[1]) : 0;
+      const end = m ? Number(m[2]) : 0;
+      const len = end - start + 1;
+      const body = new Uint8Array(len);
+      if (start === ISO_PVD_SIG_OFFSET && len === 5) {
+        body.set([0x43, 0x44, 0x30, 0x30, 0x31], 0); // "CD001"
+      }
+      return new Response(body, {
+        status: 206,
+        headers: {
+          "content-length": String(body.byteLength),
+          "content-range": `bytes ${start}-${end}/${probeSize}`,
+        },
+      });
+    });
+
+    const resp = await sendAddRemote({ url: "https://example.invalid/disk.img" });
+    expect(resp.ok).toBe(true);
+    expect(resp.result?.format).toBe("iso");
+    expect(resp.result?.kind).toBe("cd");
   });
 });
