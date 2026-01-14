@@ -21,6 +21,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_usb::MemoryBus;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::xhci::XhciController;
 use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT};
@@ -40,6 +41,12 @@ const XHCI_MAX_ROUTE_TIER_COUNT: usize = XHCI_ROUTE_STRING_MAX_DEPTH;
 // Defensive cap for host-provided snapshot payloads. This is primarily to keep the JS→WASM copy
 // bounded for `restore_state(bytes: &[u8])` parameters.
 const MAX_XHCI_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum number of 1ms frames processed per `step_frames` call.
+///
+/// `step_frames` is called from JS/TS glue code; while the guest cannot influence this directly,
+/// a host-side bug (or malicious embedder) could pass a huge value and stall the WASM worker for a
+/// long time. Clamp to a deterministic constant so `step_frames(u32::MAX)` is always bounded.
+const MAX_XHCI_STEP_FRAMES_PER_CALL: u32 = 10_000;
 // Reserve the 2nd xHCI root port for the WebUSB passthrough device.
 //
 // This keeps the port assignment stable across snapshots and matches the UHCI bridge's convention
@@ -267,6 +274,7 @@ impl XhciControllerBridge {
     /// - When BME is clear, the controller still advances internal timers (e.g. port reset timers)
     ///   but does not perform any DMA.
     pub fn step_frames(&mut self, frames: u32) {
+        let frames = frames.min(MAX_XHCI_STEP_FRAMES_PER_CALL);
         if frames == 0 {
             return;
         }

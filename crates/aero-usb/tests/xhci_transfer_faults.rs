@@ -107,6 +107,32 @@ fn xhci_transfer_executor_halts_on_all_ones_trb_fetch() {
 }
 
 #[test]
+fn xhci_transfer_executor_halts_on_self_referential_link_trb() {
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
+
+    let mut mem = SparseMem::default();
+    // Malformed ring: a Link TRB that points to itself without toggling cycle.
+    write_trb(&mut mem, RING_BASE, make_link_trb(RING_BASE, true, false));
+
+    exec.add_endpoint(0x81, RING_BASE);
+    exec.tick_1ms(&mut mem);
+
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].completion_code, CompletionCode::TrbError);
+    assert_eq!(events[0].trb_ptr, RING_BASE);
+    assert!(exec.endpoint_state(0x81).unwrap().halted);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
+
+    exec.tick_1ms(&mut mem);
+    assert!(exec.take_events().is_empty());
+}
+
+#[test]
 fn xhci_transfer_executor_halts_on_excessive_link_trbs() {
     let keyboard = UsbHidKeyboardHandle::new();
     let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
@@ -136,8 +162,8 @@ fn xhci_transfer_executor_halts_on_overlong_td_chain() {
 
     let mut mem = SparseMem::default();
 
-    // MAX_TD_TRBS is 64; chain 64 TRBs with CH=1 so the TD never terminates.
-    for i in 0..64u64 {
+    // MAX_TD_TRBS is 64; chain more than that with CH=1 so the TD never terminates.
+    for i in 0..65u64 {
         let addr = RING_BASE + i * 16;
         write_trb(&mut mem, addr, make_normal_trb(0x2000, 8, true, true));
     }

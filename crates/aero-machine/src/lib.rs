@@ -2207,7 +2207,6 @@ impl PciDevice for EhciPciConfigDevice {
         &mut self.cfg
     }
 }
-
 struct XhciPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }

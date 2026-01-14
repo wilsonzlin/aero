@@ -94,6 +94,11 @@ const COMPLETION_CODE_SUCCESS: u8 = 1;
 const MAX_TRBS_PER_TICK: usize = 256;
 const RING_STEP_BUDGET: usize = 64;
 const MAX_CONTROL_DATA_LEN: usize = 64 * 1024;
+/// Maximum number of command TRBs processed per `process_command_ring` call.
+///
+/// This keeps command processing bounded even if a host integration accidentally calls the method
+/// with an extremely large `max_trbs` value.
+const MAX_COMMAND_TRBS_PER_CALL: usize = 256;
 const TRB_CTRL_IDT: u32 = 1 << 6;
 
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
@@ -803,10 +808,14 @@ impl XhciController {
         mem: &mut M,
         max_trbs: usize,
     ) -> bool {
+        if self.host_controller_error {
+            return true;
+        }
         let Some(mut cursor) = self.command_ring else {
             return true;
         };
 
+        let max_trbs = max_trbs.min(MAX_COMMAND_TRBS_PER_CALL);
         for _ in 0..max_trbs {
             match cursor.poll(mem, COMMAND_RING_STEP_BUDGET) {
                 RingPoll::Ready(item) => self.handle_command(mem, item.paddr, item.trb),
@@ -815,8 +824,8 @@ impl XhciController {
                     return true;
                 }
                 RingPoll::Err(_) => {
-                    // Malformed guest ring pointers/TRBs should surface as a sticky host controller
-                    // error so we stop processing further commands.
+                    // Malformed guest ring pointers/TRBs (e.g. Link TRB loops) should surface as a
+                    // sticky host controller error so we stop processing further commands.
                     self.host_controller_error = true;
                     self.command_ring = Some(cursor);
                     return true;
@@ -1895,6 +1904,23 @@ impl XhciController {
     /// This marks the endpoint as active. [`XhciController::tick`] will process pending work.
     pub fn ring_doorbell(&mut self, slot_id: u8, endpoint_id: u8) {
         let endpoint_id = endpoint_id & 0x1f;
+        // Ignore doorbells for halted/stopped endpoints so guests cannot keep re-queueing work for a
+        // ring we have already faulted.
+        const EP_STATE_HALTED: u8 = 2;
+        const EP_STATE_STOPPED: u8 = 3;
+        if endpoint_id != 0 {
+            if let Some(slot) = self.slots.get(usize::from(slot_id)) {
+                if slot.enabled {
+                    let idx = usize::from(endpoint_id.saturating_sub(1));
+                    if let Some(ctx) = slot.endpoint_contexts.get(idx) {
+                        let state = ctx.endpoint_state();
+                        if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         let entry = ActiveEndpoint {
             slot_id,
             endpoint_id,
@@ -2670,7 +2696,8 @@ impl XhciController {
             // Keep the endpoint active if the next TRB is ready (or we're waiting on an inflight
             // device completion).
             let keep_active = exec.endpoint_state(ep_addr).is_some_and(|st| {
-                !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
+                !st.halted
+                    && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
             });
 
             self.transfer_executors[slot_idx] = Some(exec);
@@ -2680,6 +2707,15 @@ impl XhciController {
             } else {
                 EndpointOutcome::done(trbs_consumed)
             };
+        }
+
+        // If an endpoint is Stopped/Halted, ignore doorbells and do not touch its transfer ring.
+        // (This also prevents retrying a known-malformed ring forever.)
+        const EP_STATE_HALTED: u8 = 2;
+        const EP_STATE_STOPPED: u8 = 3;
+        let ep_state = slot.endpoint_contexts[0].endpoint_state();
+        if ep_state == EP_STATE_HALTED || ep_state == EP_STATE_STOPPED {
+            return EndpointOutcome::idle();
         }
 
         let Some(committed_ring) = slot.transfer_rings[0] else {
@@ -2699,6 +2735,7 @@ impl XhciController {
         let mut events: Vec<Trb> = Vec::new();
         let mut trbs_consumed = 0usize;
         let mut keep_active = false;
+        let mut halt_endpoint = false;
 
         {
             let Some(device) = self.slot_device_mut(slot_id) else {
@@ -2715,7 +2752,18 @@ impl XhciController {
                         break;
                     }
                     RingPoll::Err(_) => {
+                        // Malformed ring (e.g. Link TRB loop). Halt the endpoint so we don't spend
+                        // `RING_STEP_BUDGET` work on the same broken pointer forever.
+                        halt_endpoint = true;
                         keep_active = false;
+                        events.push(make_transfer_event_trb(
+                            slot_id,
+                            endpoint_id,
+                            ring.dequeue_ptr(),
+                            CompletionCode::TrbError,
+                            0,
+                        ));
+                        control_td = ControlTdState::default();
                         break;
                     }
                 };
@@ -2748,6 +2796,15 @@ impl XhciController {
                         control_td.completion_code = completion;
 
                         if ring.consume().is_err() {
+                            halt_endpoint = true;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                CompletionCode::TrbError,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
                             keep_active = false;
                             break;
                         }
@@ -2769,6 +2826,15 @@ impl XhciController {
                         if requested_len > MAX_CONTROL_DATA_LEN {
                             let completion = CompletionCode::TrbError;
                             if ring.consume().is_err() {
+                                halt_endpoint = true;
+                                events.push(make_transfer_event_trb(
+                                    slot_id,
+                                    endpoint_id,
+                                    trb_paddr,
+                                    CompletionCode::TrbError,
+                                    0,
+                                ));
+                                control_td = ControlTdState::default();
                                 keep_active = false;
                                 break;
                             }
@@ -2873,6 +2939,15 @@ impl XhciController {
                         control_td.completion_code = completion;
 
                         if ring.consume().is_err() {
+                            halt_endpoint = true;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                CompletionCode::TrbError,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
                             keep_active = false;
                             break;
                         }
@@ -2940,6 +3015,15 @@ impl XhciController {
                         };
 
                         if ring.consume().is_err() {
+                            halt_endpoint = true;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                CompletionCode::TrbError,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
                             keep_active = false;
                             break;
                         }
@@ -2961,6 +3045,15 @@ impl XhciController {
                     // Unsupported transfer TRBs: consume and ignore so the ring continues.
                     _ => {
                         if ring.consume().is_err() {
+                            halt_endpoint = true;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                CompletionCode::TrbError,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
                             keep_active = false;
                             break;
                         }
@@ -2984,6 +3077,15 @@ impl XhciController {
                 Some(start) => Some(start),
                 None => Some(ring),
             };
+            if halt_endpoint {
+                let mut ctx = slot.endpoint_contexts[0];
+                ctx.set_endpoint_state(EP_STATE_HALTED);
+                slot.endpoint_contexts[0] = ctx;
+                if slot.device_context_ptr != 0 {
+                    let dev_ctx = DeviceContext32::new(slot.device_context_ptr);
+                    let _ = dev_ctx.write_endpoint_context(mem, endpoint_id, &ctx);
+                }
+            }
         }
         if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
             if control_td.td_start.is_some() {

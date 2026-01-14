@@ -52,6 +52,19 @@ const EP_STATE_STOPPED: u32 = 3;
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
 
+/// Maximum number of command ring TRBs processed per `process()` call.
+///
+/// This is a deterministic safety bound so callers cannot accidentally pass an enormous `max_trbs`
+/// and stall the emulator/worker thread.
+const MAX_COMMAND_TRBS_PER_CALL: usize = 256;
+
+/// Maximum number of consecutive Link TRBs we will follow while processing a command ring.
+///
+/// A pathological guest can create Link-TRB loops (including self-referential links) which would
+/// otherwise cause the controller to spend its full per-call budget repeatedly without making
+/// forward progress.
+const MAX_CONSECUTIVE_LINK_TRBS: usize = 64;
+
 /// Command ring state (dequeue pointer + cycle state).
 #[derive(Clone, Copy, Debug)]
 pub struct CommandRing {
@@ -248,6 +261,9 @@ impl CommandRingProcessor {
             return;
         }
 
+        let max_trbs = max_trbs.min(MAX_COMMAND_TRBS_PER_CALL);
+        let mut consecutive_link_trbs = 0usize;
+
         for _ in 0..max_trbs {
             let trb_addr = self.command_ring.dequeue_ptr;
             let trb = match self.read_trb(mem, trb_addr) {
@@ -265,12 +281,18 @@ impl CommandRingProcessor {
 
             match trb.trb_type() {
                 TrbType::Link => {
+                    consecutive_link_trbs = consecutive_link_trbs.saturating_add(1);
+                    if consecutive_link_trbs > MAX_CONSECUTIVE_LINK_TRBS {
+                        self.host_controller_error = true;
+                        return;
+                    }
                     if !self.handle_link_trb(mem, trb_addr, trb) {
                         self.host_controller_error = true;
                         return;
                     }
                 }
                 TrbType::EnableSlotCommand => {
+                    consecutive_link_trbs = 0;
                     let (code, slot_id) = self.handle_enable_slot(mem);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
                     if !self.advance_cmd_dequeue() {
@@ -279,6 +301,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::DisableSlotCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_disable_slot(mem, slot_id);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -288,6 +311,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::NoOpCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     self.emit_command_completion(mem, trb_addr, CompletionCode::Success, slot_id);
                     if !self.advance_cmd_dequeue() {
@@ -296,6 +320,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::AddressDeviceCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_address_device(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -305,6 +330,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::ConfigureEndpointCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_configure_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -314,6 +340,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::EvaluateContextCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_evaluate_context(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -323,6 +350,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::StopEndpointCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_stop_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -332,6 +360,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::ResetEndpointCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_reset_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -341,6 +370,7 @@ impl CommandRingProcessor {
                     }
                 }
                 TrbType::SetTrDequeuePointerCommand => {
+                    consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_set_tr_dequeue_pointer(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
@@ -350,6 +380,7 @@ impl CommandRingProcessor {
                     }
                 }
                 _ => {
+                    consecutive_link_trbs = 0;
                     // Unsupported command. Spec would typically return TRB Error.
                     let slot_id = trb.slot_id();
                     self.emit_command_completion(mem, trb_addr, CompletionCode::TrbError, slot_id);
@@ -452,7 +483,6 @@ impl CommandRingProcessor {
             None => false,
         }
     }
-
     fn alloc_device_address(&mut self) -> Option<u8> {
         for _ in 0..127 {
             let addr = self.next_device_address;
@@ -468,9 +498,13 @@ impl CommandRingProcessor {
         self.slots.iter().flatten().any(|slot| slot.address == addr)
     }
 
-    fn handle_link_trb(&mut self, _mem: &mut dyn MemoryBus, _addr: u64, trb: Trb) -> bool {
-        let target = trb.pointer();
-        if (target & 0xF) != 0 {
+    fn handle_link_trb(&mut self, _mem: &mut dyn MemoryBus, addr: u64, trb: Trb) -> bool {
+        let target = trb.link_segment_ptr();
+        if target == 0 {
+            return false;
+        }
+        if target == addr && !trb.link_toggle_cycle() {
+            // Self-referential link TRB without cycle toggle would never make forward progress.
             return false;
         }
         if !self.check_range(target, TRB_LEN as u64) {

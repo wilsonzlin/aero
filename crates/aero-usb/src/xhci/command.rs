@@ -112,6 +112,16 @@ impl Slot {
 }
 
 const DEFAULT_RING_STEP_BUDGET: usize = 64;
+/// Maximum number of command TRBs processed per `process_command_ring` call.
+///
+/// This is a deterministic bound against guests that craft command rings which never go empty
+/// (e.g. by reusing cycle bits) and against host callers accidentally passing huge budgets.
+const MAX_COMMAND_TRBS_PER_CALL: usize = 256;
+
+/// Maximum number of transfer TRBs consumed per `ring_doorbell` call.
+///
+/// This keeps doorbell processing bounded even if the ring is (maliciously) never empty.
+const MAX_TRANSFER_TRBS_PER_DOORBELL: usize = 256;
 
 /// A small, deterministic endpoint-management executor.
 ///
@@ -173,7 +183,7 @@ impl XhciEndpointManager {
         mem: &mut M,
         ring: &mut RingCursor,
     ) {
-        loop {
+        for _ in 0..MAX_COMMAND_TRBS_PER_CALL {
             match ring.poll(mem, DEFAULT_RING_STEP_BUDGET) {
                 RingPoll::Ready(item) => self.execute_command_trb(item.trb, item.paddr),
                 RingPoll::NotReady => break,
@@ -226,7 +236,7 @@ impl XhciEndpointManager {
                 return;
             }
 
-            loop {
+            for _ in 0..MAX_TRANSFER_TRBS_PER_DOORBELL {
                 match ep.ring.poll(mem, DEFAULT_RING_STEP_BUDGET) {
                     RingPoll::Ready(item) => {
                         // Keep the in-memory endpoint context in sync with the dequeue pointer.

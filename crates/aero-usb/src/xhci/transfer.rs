@@ -721,21 +721,40 @@ struct Ep0RingState {
     cycle: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ep0RingError {
+    AddressOverflow,
+    InvalidLinkTarget,
+    LinkLoop,
+}
+
 impl Ep0RingState {
     fn peek<M: MemoryBus + ?Sized>(&self, mem: &mut M) -> Option<XhciTrb> {
         let trb = read_xhci_trb(mem, self.dequeue);
         (trb.cycle() == self.cycle).then_some(trb)
     }
 
-    fn consume(&mut self, trb: &XhciTrb) {
+    fn consume(&mut self, trb: &XhciTrb) -> Result<(), Ep0RingError> {
         if matches!(trb.trb_type(), XhciTrbType::Link) {
-            self.dequeue = trb.link_segment_ptr();
+            let target = trb.link_segment_ptr();
+            if target == 0 {
+                return Err(Ep0RingError::InvalidLinkTarget);
+            }
+            if target == self.dequeue && !trb.link_toggle_cycle() {
+                // A self-referential link TRB without cycle toggle would never make progress.
+                return Err(Ep0RingError::LinkLoop);
+            }
+            self.dequeue = target;
             if trb.link_toggle_cycle() {
                 self.cycle = !self.cycle;
             }
         } else {
-            self.dequeue = self.dequeue.wrapping_add(TRB_SIZE);
+            self.dequeue = self
+                .dequeue
+                .checked_add(TRB_SIZE)
+                .ok_or(Ep0RingError::AddressOverflow)?;
         }
+        Ok(())
     }
 }
 
@@ -776,6 +795,7 @@ struct ControlEndpoint {
     max_packet_size: u16,
     retry_at_ms: u64,
     doorbell_pending: bool,
+    faulted: bool,
     state: ControlEp0State,
 }
 
@@ -786,11 +806,15 @@ impl ControlEndpoint {
             max_packet_size: max_packet_size.max(1),
             retry_at_ms: 0,
             doorbell_pending: false,
+            faulted: false,
             state: ControlEp0State::ExpectSetup,
         }
     }
 
     fn has_pending_work(&self) -> bool {
+        if self.faulted {
+            return false;
+        }
         self.doorbell_pending || !matches!(self.state, ControlEp0State::ExpectSetup)
     }
 
@@ -823,6 +847,28 @@ impl ControlEndpoint {
         self.state = ControlEp0State::ExpectSetup;
     }
 
+    fn fault_ring<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        events: &mut Option<EventRing>,
+        trb_addr: u64,
+        endpoint_id: u8,
+        slot_id: u8,
+    ) {
+        Self::push_event(
+            events,
+            mem,
+            trb_addr,
+            CompletionCode::TrbError,
+            0,
+            endpoint_id,
+            slot_id,
+        );
+        self.faulted = true;
+        self.doorbell_pending = false;
+        self.reset_to_setup();
+    }
+
     fn skip_until_status_or_empty<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {
         let mut iterations = 0usize;
         while iterations < 32 {
@@ -831,7 +877,9 @@ impl ControlEndpoint {
                 break;
             };
             let ty = trb.trb_type();
-            self.ring.consume(&trb);
+            if self.ring.consume(&trb).is_err() {
+                break;
+            }
             if matches!(ty, XhciTrbType::StatusStage) {
                 break;
             }
@@ -850,6 +898,9 @@ impl ControlEndpoint {
         if now_ms < self.retry_at_ms {
             return;
         }
+        if self.faulted {
+            return;
+        }
 
         let mut processed_any = false;
 
@@ -865,7 +916,10 @@ impl ControlEndpoint {
 
             // Link TRBs are transparent to the endpoint state machine.
             if matches!(trb.trb_type(), XhciTrbType::Link) {
-                self.ring.consume(&trb);
+                if self.ring.consume(&trb).is_err() {
+                    self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                    break;
+                }
                 processed_any = true;
                 continue;
             }
@@ -883,7 +937,10 @@ impl ControlEndpoint {
                             endpoint_id,
                             slot_id,
                         );
-                        self.ring.consume(&trb);
+                        if self.ring.consume(&trb).is_err() {
+                            self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                            break;
+                        }
                         processed_any = true;
                         continue;
                     }
@@ -903,7 +960,10 @@ impl ControlEndpoint {
                                     slot_id,
                                 );
                             }
-                            self.ring.consume(&trb);
+                            if self.ring.consume(&trb).is_err() {
+                                self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                                break;
+                            }
                             self.state = ControlEp0State::ExpectDataOrStatus;
                             processed_any = true;
                         }
@@ -921,7 +981,10 @@ impl ControlEndpoint {
                                 endpoint_id,
                                 slot_id,
                             );
-                            self.ring.consume(&trb);
+                            if self.ring.consume(&trb).is_err() {
+                                self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                                break;
+                            }
                             self.skip_until_status_or_empty(mem);
                             self.reset_to_setup();
                             processed_any = true;
@@ -936,7 +999,10 @@ impl ControlEndpoint {
                                 endpoint_id,
                                 slot_id,
                             );
-                            self.ring.consume(&trb);
+                            if self.ring.consume(&trb).is_err() {
+                                self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                                break;
+                            }
                             self.skip_until_status_or_empty(mem);
                             self.reset_to_setup();
                             processed_any = true;
@@ -992,7 +1058,10 @@ impl ControlEndpoint {
                             endpoint_id,
                             slot_id,
                         );
-                        self.ring.consume(&trb);
+                        if self.ring.consume(&trb).is_err() {
+                            self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                            break;
+                        }
                         self.reset_to_setup();
                         processed_any = true;
                     }
@@ -1135,7 +1204,10 @@ impl ControlEndpoint {
                         );
                         // Consume the DATA TRB and any following STATUS TRB so the ring can
                         // continue.
-                        self.ring.consume(&trb);
+                        if self.ring.consume(&trb).is_err() {
+                            self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                            break;
+                        }
                         self.skip_until_status_or_empty(mem);
                         self.reset_to_setup();
                         processed_any = true;
@@ -1166,7 +1238,10 @@ impl ControlEndpoint {
 
                     // DATA stage completed (possibly short). Advance past the DATA TRB and proceed
                     // to STATUS.
-                    self.ring.consume(&trb);
+                    if self.ring.consume(&trb).is_err() {
+                        self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                        break;
+                    }
                     self.state = ControlEp0State::ExpectStatus {
                         expected_data_len,
                         actual_data_len,
@@ -1202,7 +1277,10 @@ impl ControlEndpoint {
                             endpoint_id,
                             slot_id,
                         );
-                        self.ring.consume(&trb);
+                        if self.ring.consume(&trb).is_err() {
+                            self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                            break;
+                        }
                         self.reset_to_setup();
                         processed_any = true;
                     }
@@ -1268,7 +1346,10 @@ impl ControlEndpoint {
                     };
 
                     // Consume the status TRB regardless of success/error.
-                    self.ring.consume(&trb);
+                    if self.ring.consume(&trb).is_err() {
+                        self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                        break;
+                    }
 
                     // xHCI Transfer Event TRBs report the number of bytes remaining for the TD.
                     let remaining_len = expected_data_len.saturating_sub(*actual_data_len);
