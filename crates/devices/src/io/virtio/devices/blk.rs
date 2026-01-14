@@ -1,5 +1,10 @@
 #![allow(deprecated)]
 
+//! Legacy virtio-blk device implementation.
+//!
+//! This module is part of `aero_devices::io::virtio`, which is a legacy virtio implementation kept
+//! for backwards compatibility. New code should use the canonical `aero_virtio` crate instead.
+
 use crate::io::virtio::core::{
     DescChain, GuestMemory, VirtQueue, VirtQueueError, VIRTQ_DESC_F_WRITE,
 };
