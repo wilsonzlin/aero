@@ -283,6 +283,68 @@ mod wasm {
             // Keep the closure alive until after the stream has been created/closed.
             drop(closure);
         }
+
+        #[wasm_bindgen_test(async)]
+        async fn create_writable_stream_invalid_state_maps_to_in_use_without_fallback() {
+            if !is_opfs_supported() {
+                return;
+            }
+
+            let real = match open_file(&unique_path("create-writable-in-use"), true).await {
+                Ok(f) => f,
+                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+                Err(e) => panic!("open_file failed: {e:?}"),
+            };
+
+            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
+                .expect("FileSystemFileHandle.createWritable should exist");
+            let create_writable: Function = create_writable
+                .dyn_into()
+                .expect("FileSystemFileHandle.createWritable should be a function");
+
+            let called_no_args = Rc::new(Cell::new(false));
+
+            // Wrap a real file handle but have the options call return a rejected Promise with an
+            // `InvalidStateError`, which should map to `DiskError::InUse` and *not* trigger the
+            // no-args fallback.
+            let wrapper = Object::new();
+            let real_clone = real.clone();
+            let create_writable_clone = create_writable.clone();
+            let called_no_args_c = called_no_args.clone();
+
+            let closure = Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                if opts.is_undefined() {
+                    called_no_args_c.set(true);
+                    let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                    promise.dyn_into::<Promise>()
+                } else {
+                    Ok(Promise::reject(&dom_exception(
+                        "InvalidStateError",
+                        "file is in use",
+                    )))
+                }
+            }) as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+
+            Reflect::set(
+                &wrapper,
+                &JsValue::from_str("createWritable"),
+                closure.as_ref(),
+            )
+            .expect("set wrapper.createWritable");
+            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
+
+            let err = match create_writable_stream(&wrapper, true).await {
+                Ok(_) => panic!("expected InvalidStateError to map to InUse"),
+                Err(e) => e,
+            };
+            assert!(matches!(err, DiskError::InUse), "got {err:?}");
+            assert!(
+                !called_no_args.get(),
+                "no-args fallback should not be attempted for InvalidStateError"
+            );
+
+            drop(closure);
+        }
     }
 
     async fn await_promise(promise: Promise) -> core::result::Result<JsValue, DiskError> {
