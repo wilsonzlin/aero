@@ -306,6 +306,9 @@ fn decodes_geometry_shader_emit_cut_stream_variants() {
 #[test]
 fn gs_opcode_constants_match_d3d10_tokenized_format() {
     // Keep these in sync with `d3d10tokenizedprogramformat.h` (`D3D10_SB_OPCODE_TYPE`).
+    assert_eq!(OPCODE_DCL_GS_INPUT_PRIMITIVE, 0x10c);
+    assert_eq!(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 0x10d);
+    assert_eq!(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 0x10e);
     assert_eq!(OPCODE_EMIT_STREAM, 0x41);
     assert_eq!(OPCODE_CUT_STREAM, 0x42);
     assert_eq!(OPCODE_EMIT, 0x43);
