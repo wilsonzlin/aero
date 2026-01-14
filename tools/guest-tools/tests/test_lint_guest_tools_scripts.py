@@ -940,6 +940,38 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing cleanupstorage force gate error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_allows_cleanupstorage_alias_flags(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(
+                "\n".join(
+                    [
+                        "testsigning.enabled-by-aero.txt",
+                        "nointegritychecks.enabled-by-aero.txt",
+                        "storage-preseed.skipped.txt",
+                        "installed-media.txt",
+                        r'if /i "%%~A"=="/cleanup-storage" set "ARG_CLEANUP_STORAGE=1"',
+                        r'if /i "%%~A"=="/cleanup-storage-force" set "ARG_CLEANUP_STORAGE_FORCE=1"',
+                        ":maybe_cleanup_storage_preseed",
+                        'if "%ARG_FORCE%"=="1" if "%ARG_CLEANUP_STORAGE_FORCE%"=="0" (',
+                        "  exit /b 0",
+                        ")",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertEqual(errs, [], msg="expected no lint errors. Errors:\n" + "\n".join(errs))
+
 
 if __name__ == "__main__":
     unittest.main()

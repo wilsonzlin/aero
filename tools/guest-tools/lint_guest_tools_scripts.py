@@ -250,11 +250,13 @@ def _has_cleanupstorage_force_gate(text: str) -> bool:
     csf_var = r"(?:%ARG_CLEANUP_STORAGE_FORCE%|!ARG_CLEANUP_STORAGE_FORCE!)"
 
     # Require a "force-mode gate" that exits early unless cleanupstorageforce is set.
-    m = re.search(
+    return re.search(
         rf'(?is)if\s+"{af_var}"\s*==\s*"1"\s+if\s+not\s+"{csf_var}"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0',
         block,
-    )
-    return m is not None
+    ) is not None or re.search(
+        rf'(?is)if\s+"{af_var}"\s*==\s*"1"\s+if\s+"{csf_var}"\s*==\s*"0"\s*\(.*?exit\s+/b\s+0',
+        block,
+    ) is not None
 
 
 def _read_text(path: Path) -> str:
@@ -627,11 +629,19 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Uninstaller parses /cleanupstorage and /cleanupstorageforce flags",
             expected_hint='ARG_CLEANUP_STORAGE=1 and ARG_CLEANUP_STORAGE_FORCE=1 assignments in arg parsing',
-            predicate=_all_regex(
-                [
-                    r'(?i)/cleanupstorage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
-                    r'(?i)/cleanupstorageforce"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
-                ]
+            predicate=lambda text: (
+                _any_regex(
+                    [
+                        r'(?i)/cleanupstorage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
+                        r'(?i)/cleanup-storage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
+                    ]
+                )(text)
+                and _any_regex(
+                    [
+                        r'(?i)/cleanupstorageforce"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
+                        r'(?i)/cleanup-storage-force"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
+                    ]
+                )(text)
             ),
         ),
         Invariant(
