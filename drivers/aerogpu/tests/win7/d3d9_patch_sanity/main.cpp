@@ -255,7 +255,9 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
                              (unsigned long)caps.DevCaps,
                              (double)caps.MaxNpatchTessellationLevel);
 
-  const bool caps_tri = (caps.DevCaps & D3DDEVCAPS_NPATCHES) != 0 && caps.MaxNpatchTessellationLevel > 0.0f;
+  // D3D9 "RT patches" cover both rectangular and triangular high-order surfaces
+  // (DrawRectPatch / DrawTriPatch).
+  const bool caps_tri = (caps.DevCaps & D3DDEVCAPS_RTPATCHES) != 0 && caps.MaxNpatchTessellationLevel > 0.0f;
   const bool caps_rect = (caps.DevCaps & D3DDEVCAPS_RTPATCHES) != 0 && caps.MaxNpatchTessellationLevel > 0.0f;
   if (!caps_tri && !caps_rect) {
     aerogpu_test::PrintfStdout("INFO: %s: patch caps not advertised; skipping", kTestName);
@@ -471,7 +473,7 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
 
     ran_any = true;
   } else {
-    aerogpu_test::PrintfStdout("INFO: %s: NPATCHES caps not advertised; skipping tri patch", kTestName);
+    aerogpu_test::PrintfStdout("INFO: %s: RTPATCHES caps not advertised; skipping tri patch", kTestName);
   }
 
   if (caps_rect) {
