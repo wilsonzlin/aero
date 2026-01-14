@@ -254,9 +254,7 @@ impl AeroGpuExecutor {
         }
 
         while self.pending_submissions.len() >= MAX_PENDING_SUBMISSIONS
-            || self
-                .pending_submissions_bytes
-                .saturating_add(sub_bytes)
+            || self.pending_submissions_bytes.saturating_add(sub_bytes)
                 > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES
         {
             let Some(dropped) = self.pending_submissions.pop_front() else {
@@ -264,7 +262,8 @@ impl AeroGpuExecutor {
                 break;
             };
             let dropped_bytes = Self::submission_payload_len_bytes(&dropped);
-            self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_sub(dropped_bytes);
+            self.pending_submissions_bytes =
+                self.pending_submissions_bytes.saturating_sub(dropped_bytes);
 
             let fence = dropped.signal_fence;
             if fence != 0 && fence > regs.completed_fence {
@@ -277,9 +276,7 @@ impl AeroGpuExecutor {
             }
         }
 
-        self.pending_submissions_bytes = self
-            .pending_submissions_bytes
-            .saturating_add(sub_bytes);
+        self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(sub_bytes);
         self.pending_submissions.push_back(submission);
     }
 
@@ -1817,7 +1814,8 @@ mod tests {
         }
 
         let ring_size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
         let mut regs = AeroGpuRegs {
             ring_gpa,
             ring_size_bytes,

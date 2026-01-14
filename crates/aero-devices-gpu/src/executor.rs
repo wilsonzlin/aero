@@ -243,9 +243,7 @@ impl AeroGpuExecutor {
         // Keep the pending submissions queue bounded so hostile/buggy guests can't cause
         // unbounded host allocations in the external-backend (WASM bridge) path.
         while self.pending_submissions.len() >= MAX_PENDING_SUBMISSIONS
-            || self
-                .pending_submissions_bytes
-                .saturating_add(sub_bytes)
+            || self.pending_submissions_bytes.saturating_add(sub_bytes)
                 > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES
         {
             let Some(dropped) = self.pending_submissions.pop_front() else {
@@ -253,7 +251,8 @@ impl AeroGpuExecutor {
                 break;
             };
             let dropped_bytes = Self::submission_payload_len_bytes(&dropped);
-            self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_sub(dropped_bytes);
+            self.pending_submissions_bytes =
+                self.pending_submissions_bytes.saturating_sub(dropped_bytes);
 
             let fence = dropped.signal_fence;
             if fence != 0 && fence > regs.completed_fence {
@@ -267,9 +266,7 @@ impl AeroGpuExecutor {
             }
         }
 
-        self.pending_submissions_bytes = self
-            .pending_submissions_bytes
-            .saturating_add(sub_bytes);
+        self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(sub_bytes);
         self.pending_submissions.push_back(submission);
     }
 
@@ -980,10 +977,10 @@ impl AeroGpuExecutor {
                                 }
                                 self.complete_fence(regs, mem, desc.signal_fence);
                             }
-                         } else {
-                             // No in-process backend: surface the decoded submission to the caller
-                             // (WASM bridge) so it can be executed externally and later completed via
-                             // `complete_fence`.
+                        } else {
+                            // No in-process backend: surface the decoded submission to the caller
+                            // (WASM bridge) so it can be executed externally and later completed via
+                            // `complete_fence`.
                             //
                             // Some guest drivers may emit submissions with duplicate fences (including
                             // fence values that have already completed) for best-effort internal work.
@@ -991,10 +988,10 @@ impl AeroGpuExecutor {
                             // carry important side effects (e.g. shared-surface release), so always
                             // queue them for external execution.
                             self.push_pending_submission(regs, mem, submit);
-                         }
-                     }
-                 }
-             }
+                        }
+                    }
+                }
+            }
 
             if self.cfg.keep_last_submissions > 0 {
                 if self.last_submissions.len() == self.cfg.keep_last_submissions {
@@ -2032,7 +2029,8 @@ mod tests {
         }
 
         let ring_size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
         let mut regs = AeroGpuRegs {
             ring_gpa,
             ring_size_bytes,
