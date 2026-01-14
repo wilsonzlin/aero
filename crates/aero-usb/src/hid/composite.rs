@@ -1912,6 +1912,23 @@ mod tests {
     }
 
     #[test]
+    fn configuration_does_not_replay_unconfigured_mouse_wheel2() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.mouse_wheel2(5, 7);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+
+        configure(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
     fn configuration_enqueues_held_mouse_button_state() {
         let mut dev = UsbCompositeHidInputHandle::new();
         dev.mouse_button_event(0x01, true);

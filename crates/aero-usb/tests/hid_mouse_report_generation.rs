@@ -217,6 +217,20 @@ fn mouse_wheel2_splits_large_deltas_into_multiple_reports() {
 }
 
 #[test]
+fn configuration_does_not_replay_unconfigured_wheel_events() {
+    let mut mouse = UsbHidMouse::new();
+
+    mouse.wheel2(5, 7);
+    assert!(poll_interrupt_in(&mut mouse).is_none());
+
+    configure_mouse(&mut mouse);
+    assert!(
+        poll_interrupt_in(&mut mouse).is_none(),
+        "wheel input injected before configuration should not be replayed after configuration"
+    );
+}
+
+#[test]
 fn mouse_wheel_is_ignored_in_boot_protocol() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);
