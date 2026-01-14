@@ -92,8 +92,11 @@ The virtio-snd specification defines `eventq` (queue index `1`) for asynchronous
 Contract v1 does **not** define any required event messages (see `docs/windows7-virtio-driver-contract.md` §3.4.2.1).
 
 By default, Aero’s virtio-snd device model does not emit any `eventq` messages unless the host explicitly queues them (for example
-via `VirtioSnd::queue_event(...)` / `VirtioSnd::queue_jack_event(...)`). The browser/WASM runtime uses this to emit microphone jack
-connect/disconnect events when the mic capture ring is attached/detached (`VirtioSndPciBridge::set_mic_ring_buffer`).
+via `VirtioSnd::queue_event(...)` / `VirtioSnd::queue_jack_event(...)`). The browser/WASM runtime uses this to emit jack
+connect/disconnect events when host audio backends are attached/detached:
+
+- Speaker jack (`jack_id = 0`): AudioWorklet output ring attach/detach (`VirtioSndPciBridge::set_audio_ring_buffer`)
+- Microphone jack (`jack_id = 1`): mic capture ring attach/detach (`VirtioSndPciBridge::set_mic_ring_buffer`)
 
 Even when no events are emitted:
 
