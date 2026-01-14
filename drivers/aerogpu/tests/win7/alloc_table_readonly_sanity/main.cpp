@@ -329,6 +329,27 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
     }
   }
 
+  // Optional: snapshot QUERY_PERF alloc-table counters so we can validate they increase after our submission.
+  bool have_perf_alloc_table = false;
+  uint64_t alloc_table_count_before = 0;
+  uint64_t alloc_table_entries_before = 0;
+  uint64_t alloc_table_readonly_entries_before = 0;
+  {
+    aerogpu_escape_query_perf_out qperf;
+    NTSTATUS st_perf = 0;
+    if (aerogpu_test::kmt::AerogpuQueryPerf(&kmt, adapter, &qperf, &st_perf)) {
+      const bool have_alloc_table =
+          (qperf.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                                sizeof(qperf.alloc_table_readonly_entries));
+      if (have_alloc_table) {
+        have_perf_alloc_table = true;
+        alloc_table_count_before = (uint64_t)qperf.alloc_table_count;
+        alloc_table_entries_before = (uint64_t)qperf.alloc_table_entries;
+        alloc_table_readonly_entries_before = (uint64_t)qperf.alloc_table_readonly_entries;
+      }
+    }
+  }
+
   const uint32_t tail_before = (uint32_t)before.tail;
 
   // Trigger a GPU->CPU readback (GetRenderTargetData) which should emit a COPY_TEXTURE2D WRITEBACK_DST submission
@@ -550,6 +571,56 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
       (unsigned long)entry_count,
       (unsigned long)readonly_count,
       (unsigned long)writable_count);
+
+  if (have_perf_alloc_table) {
+    aerogpu_escape_query_perf_out qperf_after;
+    NTSTATUS st_perf_after = 0;
+    if (aerogpu_test::kmt::AerogpuQueryPerf(&kmt, adapter, &qperf_after, &st_perf_after)) {
+      const bool have_alloc_table =
+          (qperf_after.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                                       sizeof(qperf_after.alloc_table_readonly_entries));
+      if (have_alloc_table) {
+        const uint64_t count_after = (uint64_t)qperf_after.alloc_table_count;
+        const uint64_t entries_after = (uint64_t)qperf_after.alloc_table_entries;
+        const uint64_t readonly_entries_after = (uint64_t)qperf_after.alloc_table_readonly_entries;
+
+        const uint64_t delta_count =
+            (count_after >= alloc_table_count_before) ? (count_after - alloc_table_count_before) : 0;
+        const uint64_t delta_entries =
+            (entries_after >= alloc_table_entries_before) ? (entries_after - alloc_table_entries_before) : 0;
+        const uint64_t delta_readonly = (readonly_entries_after >= alloc_table_readonly_entries_before)
+                                            ? (readonly_entries_after - alloc_table_readonly_entries_before)
+                                            : 0;
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: perf alloc_table delta: count=%I64u entries=%I64u readonly_entries=%I64u",
+            kTestName,
+            (unsigned long long)delta_count,
+            (unsigned long long)delta_entries,
+            (unsigned long long)delta_readonly);
+
+        if (delta_count < 1) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("expected alloc_table_count to increase after submission, delta=%I64u",
+                               (unsigned long long)delta_count);
+        }
+        if (delta_entries < (uint64_t)hdr->entry_count) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("expected alloc_table_entries to increase by at least %lu, delta=%I64u",
+                               (unsigned long)hdr->entry_count,
+                               (unsigned long long)delta_entries);
+        }
+        if (delta_readonly < (uint64_t)readonly_count) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("expected alloc_table_readonly_entries to increase by at least %lu, delta=%I64u",
+                               (unsigned long)readonly_count,
+                               (unsigned long long)delta_readonly);
+        }
+      }
+    }
+  }
 
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
