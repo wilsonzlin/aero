@@ -65,7 +65,7 @@ fn aerogpu_snapshot_preserves_doorbell_pending_latch() {
     };
 
     let mut m = Machine::new(cfg.clone()).unwrap();
-    let bdf = m.aerogpu().expect("expected AeroGPU device present");
+    let bdf = m.aerogpu_bdf().expect("expected AeroGPU device present");
     enable_pci_command_bits(&mut m, bdf, (1 << 1) | (1 << 2)); // COMMAND.MEM + COMMAND.BME
     let bar0 = m
         .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)
@@ -139,7 +139,7 @@ fn aerogpu_snapshot_preserves_pending_submission_and_fence_queue_for_bridge_mode
     };
 
     let mut m = Machine::new(cfg.clone()).unwrap();
-    let bdf = m.aerogpu().expect("expected AeroGPU device present");
+    let bdf = m.aerogpu_bdf().expect("expected AeroGPU device present");
     enable_pci_command_bits(&mut m, bdf, (1 << 1) | (1 << 2)); // COMMAND.MEM + COMMAND.BME
     let bar0 = m
         .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)

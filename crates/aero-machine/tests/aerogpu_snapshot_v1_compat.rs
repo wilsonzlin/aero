@@ -243,7 +243,9 @@ fn aerogpu_snapshot_v1_is_still_restorable_for_backward_compat() {
     };
 
     let mut vm = Machine::new(cfg.clone()).unwrap();
-    let bdf = vm.aerogpu().expect("AeroGPU device should be present");
+    let bdf = vm
+        .aerogpu_bdf()
+        .expect("AeroGPU device should be present");
     let bar0 = vm
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");
@@ -346,7 +348,7 @@ fn aerogpu_snapshot_v1_is_still_restorable_for_backward_compat() {
     assert_eq!(restored.active_scanout_source(), ScanoutSource::Wddm);
 
     let bdf = restored
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU device should be present");
     let bar0 = restored
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)

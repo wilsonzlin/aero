@@ -31,7 +31,7 @@ fn enabling_scanout_does_not_retroactively_catch_up_vblank_ticks() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    let bdf = m.aerogpu().expect("AeroGPU device should be present");
+    let bdf = m.aerogpu_bdf().expect("AeroGPU device should be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");

@@ -371,7 +371,7 @@ fn bios_vbe_sync_mode_and_lfb_base() {
             m.reset();
             let expected_phys_base_ptr = if enable_aerogpu {
                 // Phase 2: AeroGPU-owned boot display. LFB base should be derived from BAR1.
-                let aerogpu_bdf = m.aerogpu().expect("aerogpu enabled implies device present");
+                let aerogpu_bdf = m.aerogpu_bdf().expect("aerogpu enabled implies device present");
                 let bar1_base = m
                     .pci_bar_base(aerogpu_bdf, 1)
                     .expect("aerogpu BAR1 base should be assigned");
