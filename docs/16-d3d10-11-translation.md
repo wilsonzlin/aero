@@ -1154,11 +1154,16 @@ If you change the required scratch layouts/bindings, update the allocator usage 
 
 **Scratch allocations:**
 
-1. **VS-out (`vs_out`)**
-    - Purpose: stores vertex shader outputs (control points) for the draw, consumable by HS/GS.
+1. **VS-out (`vs_out_regs`)**
+    - Purpose: stores vertex shader output **registers** (control points) for the draw, consumable by
+      HS/GS.
     - Usage: `STORAGE` (written/read by compute).
-    - Layout: `array<ExpandedVertex>` (see below).
-    - Element count: `input_vertex_invocations * instance_count`.
+    - Layout: register buffer (`array<vec4<f32>>`), using a per-invocation stride in registers:
+      - `vs_out_base = vs_out_index * VS_OUT_STRIDE`
+      - output register `r` is stored at `vs_out_regs.data[vs_out_base + r]`
+    - Total register count: `input_vertex_invocations * instance_count * VS_OUT_STRIDE`.
+    - Note: `VS_OUT_STRIDE` is derived from the VS output signature (max output register index + 1),
+      not from the final PS-linked varying count.
 
 2. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
     - Purpose: stores post-DS vertices + tessellator-generated indices (triangle list for tri/quad
@@ -1314,7 +1319,7 @@ raw 32-bit lanes:
 One concrete layout:
 
 ```wgsl
-// One entry per expanded vertex (post-VS, post-DS, or post-GS depending on which scratch buffer).
+// One entry per expanded vertex in the final *renderable* stream (typically post-DS or post-GS).
 struct ExpandedVertex {
   pos_bits: vec4<u32>;
   varyings: array<vec4<u32>, VARYING_COUNT>;
@@ -1426,7 +1431,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - IA vertex buffers + index buffer (internal bind group)
       - VS resources (still `@group(0)`; this is the existing stage-scoped VS bind group)
       - Draw parameters (first/vertex/index, base vertex, instance info)
-    - Output: `vs_out[i] = ExpandedVertex` for each input control point.
+    - Output: `vs_out_regs` register buffer for each input vertex invocation:
+      - `vs_out_base = vs_out_index * VS_OUT_STRIDE`
+      - `vs_out_regs.data[vs_out_base + r] = o_r` (for each VS output register `r`)
     - Dispatch mapping (recommended):
       - Use a 2D grid:
         - `global_invocation_id.x` = `vinv` in `0..input_vertex_invocations`
@@ -1443,7 +1450,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 2. **Tessellation (optional): HS/DS emulation**
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
     - HS patch-constant pass (per patch):
-      - Reads control points from `vs_out`.
+      - Reads control points from `vs_out_regs`.
       - Let `patch_instance_id = instance_id * patch_count + patch_id` (see `tess_patch_state`
         indexing rule).
         - If using a flattened dispatch where `global_invocation_id.x` is `patch_instance_id`, derive:
@@ -1478,8 +1485,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Dispatch mapping:
         - one workgroup, one active lane (`@workgroup_size(1)`; `global_invocation_id.x == 0`).
     - HS control-point pass (per patch control point):
-      - Reads control points from `vs_out`.
-      - Writes HS output control points to scratch (may be in-place in `vs_out` for bring-up).
+      - Reads control points from `vs_out_regs`.
+      - Writes HS output control points to scratch (may be in-place in `vs_out_regs` for bring-up).
       - System values mapping (recommended):
         - `SV_OutputControlPointID = control_point_id`
         - `SV_PrimitiveID = patch_instance_id`
@@ -1489,7 +1496,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           - `global_invocation_id.y` = `patch_instance_id` (`0..(patch_count * instance_count)`)
         - Early-return if `control_point_id >= control_points`.
         - Derive `patch_id`/`instance_id` from `patch_instance_id` as described above when indexing
-          per-instance `vs_out` inputs.
+          per-instance `vs_out_regs` inputs.
     - Tessellator + DS evaluation:
       - Generates tessellated domain points and evaluates DS.
       - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
@@ -1521,7 +1528,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
-    - Reads primitive inputs from the previous stage output (`vs_out` for no tessellation,
+    - Reads primitive inputs from the previous stage output (`vs_out_regs` for no tessellation,
       otherwise `tess_out_vertices` + `tess_out_indices`).
     - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
       before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
@@ -1650,7 +1657,7 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(257..=264)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
 - `@binding(265)`: `IndexPullingParams` (uniform; indexed draws only; optional helper binding)
 - `@binding(266)`: index buffer as read-only storage (`array<u32>` words; indexed draws only; absent → dummy)
-- `@binding(267)`: `vs_out` (read_write storage)
+- `@binding(267)`: `vs_out_regs` (read_write storage; VS stage IO register buffer)
 - `@binding(268)`: `tess_out_vertices` (read_write storage)
 - `@binding(269)`: `tess_out_indices` (read_write storage)
 - `@binding(270)`: `gs_out_vertices` (read_write storage)
