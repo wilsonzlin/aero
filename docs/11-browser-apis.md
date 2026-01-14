@@ -106,7 +106,7 @@ WebUSB (`navigator.usb`) enables direct access to USB peripherals from the brows
 - **Secure context:** requires `https://` (or `http://localhost`).
 - **User activation:** `navigator.usb.requestDevice()` requires **transient user activation** and must be called directly from a user gesture handler on the **main thread**.
 - **Workers:** user activation does **not** propagate across `postMessage()` to workers, so a “click → postMessage → worker calls `requestDevice()`” flow will fail.
-- **Runtime support:** WebUSB passthrough is currently implemented for the legacy browser runtime (`vmRuntime=legacy`), where guest USB controller/device models live in the I/O worker. In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (no guest USB stack), so passthrough is not yet available.
+- **Runtime support:** WebUSB passthrough is currently implemented for the legacy browser runtime (`vmRuntime=legacy`), where guest USB controller/device models live in the I/O worker. In `vmRuntime=machine`, guest USB device models live inside the canonical `api.Machine` owned by the machine CPU worker and the I/O worker runs in host-only stub mode, so passthrough is not yet available.
 - **Canonical stack selection:** for the browser runtime, the canonical USB stack is `aero-usb` + `aero-wasm` + `web/`; see [ADR 0015](./adr/0015-canonical-usb-stack.md).
 - **UHCI passthrough mapping:** for the guest UHCI TD ↔ WebUSB transfer mapping (including “TD-level NAK while pending”), see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - **Troubleshooting:** for `requestDevice()` / `open()` / `claimInterface()` failures (protected interface classes, WinUSB/udev permissions, etc.), see [`docs/webusb.md`](./webusb.md).
@@ -146,7 +146,7 @@ WebHID (`navigator.hid`) enables direct access to HID-class devices from the bro
 - **Secure context:** requires `https://` (or `http://localhost`).
 - **User activation:** requesting a device requires a user gesture on the main thread (similar to WebUSB).
 - **Report descriptor access:** WebHID does **not** expose the raw HID report descriptor bytes. It only provides a structured view (collections/reports/items), so Aero must synthesize a report descriptor when it needs byte-accurate HID descriptors for a Windows 7 guest.
-- **Runtime support:** WebHID passthrough is currently implemented for the legacy browser runtime (`vmRuntime=legacy`) via the I/O worker USB/HID stack. In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (no guest USB stack), so passthrough is not yet available.
+- **Runtime support:** WebHID passthrough is currently implemented for the legacy browser runtime (`vmRuntime=legacy`) via the I/O worker USB/HID stack. In `vmRuntime=machine`, guest USB device models live inside the canonical `api.Machine` owned by the machine CPU worker and the I/O worker runs in host-only stub mode, so passthrough is not yet available.
 - **Main↔worker proxying (Aero runtime):** WebHID handles are main-thread-only, so the production runtime forwards report traffic to the I/O worker:
   - Default path: typed `postMessage` (`hid.inputReport`, `hid.sendReport`, `hid.getFeatureReport`, `hid.featureReportResult`).
   - Fast path (when `crossOriginIsolated` and SAB/Atomics are available): SharedArrayBuffer rings (`hid.ring.init` for input reports, `hid.ringAttach` for output/feature reports). On detected ring corruption either side can send `hid.ringDetach` to disable the SAB fast paths and fall back to `postMessage`.
