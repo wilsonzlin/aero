@@ -174,6 +174,25 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_manifest_alias_endpoint_works() {
+    let (app, _dir, expected_manifest) = setup_app(None).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
     let (app, _dir, expected_manifest) = setup_app(None).await;
 
@@ -317,6 +336,25 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn versioned_chunked_manifest_alias_endpoint_works() {
+    let (app, _dir, expected_manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -818,6 +856,41 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
         "same-site"
     );
 
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"ab");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_endpoints_ignore_range_headers() {
+    let (app, _dir, expected_manifest) = setup_app(None).await;
+
+    // Even if a client sends `Range`, chunked delivery should not turn into a 206 response.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .header(header::RANGE, "bytes=0-0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .header(header::RANGE, "bytes=0-0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"ab");
 }
