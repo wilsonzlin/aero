@@ -67,17 +67,20 @@ impl<Cpu> Default for WasmBackend<Cpu> {
 
 impl<Cpu> WasmBackend<Cpu> {
     #[must_use]
+    #[track_caller]
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(WasmtimeBackend::new())))
     }
 
     #[must_use]
+    #[track_caller]
     pub fn with_memory_pages(memory_pages: u32, cpu_ptr: i32) -> Self {
         Self(Rc::new(RefCell::new(
             WasmtimeBackend::new_with_memory_pages(memory_pages, cpu_ptr),
         )))
     }
 
+    #[track_caller]
     pub fn add_compiled_block(&mut self, wasm_bytes: &[u8]) -> u32 {
         self.0.borrow_mut().add_compiled_block(wasm_bytes)
     }
@@ -129,6 +132,7 @@ where
 ///
 /// The returned handle is *not* installed into `runtime`; callers should pass it to
 /// [`JitRuntime::install_handle`].
+#[track_caller]
 pub fn compile_and_install<Cpu, C>(
     backend: &mut WasmBackend<Cpu>,
     runtime: &JitRuntime<WasmBackend<Cpu>, C>,
@@ -150,6 +154,7 @@ where
 
 /// Same as [`compile_and_install`], but allows selecting Tier-1 WASM codegen options (e.g. enabling
 /// the inline-TLB fast-path).
+#[track_caller]
 pub fn compile_and_install_with_options<Cpu, C>(
     backend: &mut WasmBackend<Cpu>,
     runtime: &JitRuntime<WasmBackend<Cpu>, C>,
@@ -165,4 +170,21 @@ where
         .with_wasm_options(options)
         .compile_handle(runtime, entry_rip, bitness)
         .expect("Tier-1 compilation failed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn wasm_backend_with_memory_pages_panics_at_call_site_on_negative_cpu_ptr() {
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _backend = WasmBackend::<()>::with_memory_pages(1, -1);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
 }

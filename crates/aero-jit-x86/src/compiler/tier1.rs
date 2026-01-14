@@ -33,6 +33,7 @@ pub struct Tier1Compilation {
 }
 
 /// Compile a single basic block starting at `entry_rip` into a standalone WASM module.
+#[track_caller]
 pub fn compile_tier1_block<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
@@ -44,6 +45,7 @@ pub fn compile_tier1_block<B: Tier1Bus>(
 
 /// Compile a single basic block starting at `entry_rip` into a standalone WASM module, using the
 /// provided Tier-1 WASM codegen options.
+#[track_caller]
 pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
@@ -113,4 +115,34 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
         wasm_bytes,
         exit_to_interpreter,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[derive(Default)]
+    struct DummyBus;
+
+    impl Tier1Bus for DummyBus {
+        fn read_u8(&self, _addr: u64) -> u8 {
+            0
+        }
+
+        fn write_u8(&mut self, _addr: u64, _value: u8) {}
+    }
+
+    #[test]
+    fn compile_tier1_block_panics_at_call_site_on_invalid_bitness() {
+        let bus = DummyBus::default();
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = compile_tier1_block(&bus, 0, 0, BlockLimits::default());
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
 }

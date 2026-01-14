@@ -180,12 +180,14 @@ impl<Cpu> WasmtimeBackend<Cpu> {
 
     /// Create a backend with a fixed 128KiB linear memory (two WASM pages).
     #[must_use]
+    #[track_caller]
     pub fn new() -> Self {
         Self::new_with_memory_pages(2, Self::DEFAULT_CPU_PTR)
     }
 
     /// Create a backend with a configurable memory size and `cpu_ptr` base.
     #[must_use]
+    #[track_caller]
     pub fn new_with_memory_pages(memory_pages: u32, cpu_ptr: i32) -> Self {
         // Explicitly enable WebAssembly SIMD so the same backend can execute future tier-1 blocks
         // that make use of SIMD ops.
@@ -341,6 +343,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     /// Instantiate a Tier-1 block WASM module and append it to the internal table.
     ///
     /// Returns the table index used by `JitRuntime` and [`Self::execute`].
+    #[track_caller]
     pub fn add_compiled_block(&mut self, wasm_bytes: &[u8]) -> u32 {
         let module = Module::new(&self.engine, wasm_bytes).expect("compile wasm module");
         let instance = self
