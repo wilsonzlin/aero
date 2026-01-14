@@ -373,7 +373,10 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 ### virtio-blk MSI/MSI-X interrupt mode (guest-observed, optional)
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-blk interrupt mode/vectors:
-`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/SKIP|mode=intx/msix/unknown|messages=<n>|config_vector=<n>|queue_vector=<n>`.
+
+If the virtio-blk miniport interrupt diagnostics are unavailable (e.g. older miniport contract / truncated IOCTL payload),
+the marker is emitted as `SKIP|reason=...|...`.
 
 When `--require-virtio-blk-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 The **PowerShell** harness does the same when `-RequireVirtioBlkMsix` is set.
@@ -406,7 +409,7 @@ Newer virtio-blk miniport builds expose StorPort recovery counters via the minip
 The guest selftest emits a dedicated machine-readable marker when the IOCTL payload includes the counter region
 (the optional `capacity_change_events` field may be reported as `not_supported` on older miniport builds):
 
-`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n\|not_supported>`
 
 If the payload is too short (older miniport contract / truncated), it emits:
 
@@ -414,7 +417,7 @@ If the payload is too short (older miniport contract / truncated), it emits:
 
 For log scraping, the host harness mirrors the last observed guest marker into a stable host marker:
 
-`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n\|not_supported>`
 
 Newer miniport builds may also report timeout/error recovery activity counters (`ResetDetected` → `HwResetBus`) via the
 same IOCTL contract. When present, the guest selftest emits:
