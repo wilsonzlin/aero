@@ -36,13 +36,15 @@
 //! or operand shape is rejected by translation.
 
 use core::fmt;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::binding_model::{BINDING_BASE_CBUFFER, BIND_GROUP_INTERNAL_EMULATION};
+use crate::binding_model::{
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BIND_GROUP_INTERNAL_EMULATION,
+};
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl,
-    Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
+    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4CmpOp,
+    Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
@@ -376,6 +378,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     let mut gs_instance_count: Option<u32> = None;
     let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
     let mut cbuffer_decls: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut texture2d_decls: BTreeSet<u32> = BTreeSet::new();
+    let mut sampler_decls: BTreeSet<u32> = BTreeSet::new();
+    let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
@@ -396,6 +401,24 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     .entry(*slot)
                     .and_modify(|existing| *existing = (*existing).max(*reg_count))
                     .or_insert(*reg_count);
+            }
+            Sm4Decl::Sampler { slot } => {
+                sampler_decls.insert(*slot);
+            }
+            Sm4Decl::ResourceTexture2D { slot } => {
+                texture2d_decls.insert(*slot);
+            }
+            Sm4Decl::ResourceBuffer { slot, stride, kind } => {
+                // Ignore duplicate declarations as long as they agree on buffer kind, keeping the
+                // largest stride.
+                srv_buffer_decls
+                    .entry(*slot)
+                    .and_modify(|(existing_kind, existing_stride)| {
+                        if *existing_kind == *kind {
+                            *existing_stride = (*existing_stride).max(*stride);
+                        }
+                    })
+                    .or_insert((*kind, *stride));
             }
             Sm4Decl::InputSiv {
                 reg,
@@ -450,6 +473,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     let mut max_output_reg: i32 = -1;
     let mut max_gs_input_reg: i32 = -1;
     let mut used_cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut used_textures: BTreeSet<u32> = BTreeSet::new();
+    let mut used_samplers: BTreeSet<u32> = BTreeSet::new();
+    let mut used_srv_buffers: BTreeSet<u32> = BTreeSet::new();
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
@@ -765,6 +791,235 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     )?;
                 }
             }
+            Sm4Inst::Sample {
+                dst,
+                coord,
+                texture,
+                sampler,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    coord,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "sample",
+                    &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
+                )?;
+                if !texture2d_decls.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample",
+                        msg: format!(
+                            "texture t{} used by sample is missing a dcl_resource_texture2d declaration",
+                            texture.slot
+                        ),
+                    });
+                }
+                if !sampler_decls.contains(&sampler.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample",
+                        msg: format!(
+                            "sampler s{} used by sample is missing a dcl_sampler declaration",
+                            sampler.slot
+                        ),
+                    });
+                }
+                if used_srv_buffers.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            texture.slot
+                        ),
+                    });
+                }
+                used_textures.insert(texture.slot);
+                used_samplers.insert(sampler.slot);
+            }
+            Sm4Inst::SampleL {
+                dst,
+                coord,
+                texture,
+                sampler,
+                lod,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [coord, lod] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "sample_l",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if !texture2d_decls.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample_l",
+                        msg: format!(
+                            "texture t{} used by sample_l is missing a dcl_resource_texture2d declaration",
+                            texture.slot
+                        ),
+                    });
+                }
+                if !sampler_decls.contains(&sampler.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample_l",
+                        msg: format!(
+                            "sampler s{} used by sample_l is missing a dcl_sampler declaration",
+                            sampler.slot
+                        ),
+                    });
+                }
+                if used_srv_buffers.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "sample_l",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            texture.slot
+                        ),
+                    });
+                }
+                used_textures.insert(texture.slot);
+                used_samplers.insert(sampler.slot);
+            }
+            Sm4Inst::Ld {
+                dst,
+                coord,
+                texture,
+                lod,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [coord, lod] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "ld",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if !texture2d_decls.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld",
+                        msg: format!(
+                            "texture t{} used by ld is missing a dcl_resource_texture2d declaration",
+                            texture.slot
+                        ),
+                    });
+                }
+                if used_srv_buffers.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            texture.slot
+                        ),
+                    });
+                }
+                used_textures.insert(texture.slot);
+            }
+            Sm4Inst::LdRaw { dst, addr, buffer } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    addr,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "ld_raw",
+                    &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
+                )?;
+                if !srv_buffer_decls.contains_key(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_raw",
+                        msg: format!(
+                            "buffer t{} used by ld_raw is missing a dcl_resource_buffer declaration",
+                            buffer.slot
+                        ),
+                    });
+                }
+                if used_textures.contains(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_raw",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            buffer.slot
+                        ),
+                    });
+                }
+                used_srv_buffers.insert(buffer.slot);
+            }
+            Sm4Inst::LdStructured {
+                dst,
+                index,
+                offset,
+                buffer,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [index, offset] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "ld_structured",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if !srv_buffer_decls.contains_key(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_structured",
+                        msg: format!(
+                            "buffer t{} used by ld_structured is missing a dcl_resource_buffer declaration",
+                            buffer.slot
+                        ),
+                    });
+                }
+                if used_textures.contains(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_structured",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            buffer.slot
+                        ),
+                    });
+                }
+                used_srv_buffers.insert(buffer.slot);
+            }
             Sm4Inst::Emit { stream } => {
                 if *stream != 0 {
                     return Err(GsTranslateError::UnsupportedStream {
@@ -832,6 +1087,11 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("struct ExpandedVertexBuffer { data: array<ExpandedVertex> };");
     w.line("struct U32Buffer { data: array<u32> };");
     w.line("struct Vec4F32Buffer { data: array<vec4<f32>> };");
+    if !used_srv_buffers.is_empty() {
+        // Match the storage-buffer wrapper used by the signature-driven shader translator
+        // (`shader_translate.rs`) so SRV buffer semantics stay consistent across translation paths.
+        w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+    }
     w.line("");
 
     // Match `runtime/indirect_args.rs` (`DrawIndexedIndirectArgs`).
@@ -903,6 +1163,36 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("@group(0) @binding(4) var<uniform> params: GsPrepassParams;");
     w.line("@group(0) @binding(5) var<storage, read> gs_inputs: Vec4F32Buffer;");
     w.line("");
+
+    // D3D stage-ex resources (GS/HS/DS) live in group 3 so we can stay within WebGPU's baseline
+    // `maxBindGroups >= 4` guarantee.
+    for &slot in &used_textures {
+        w.line(&format!(
+            "@group({}) @binding({}) var t{slot}: texture_2d<f32>;",
+            BIND_GROUP_INTERNAL_EMULATION,
+            BINDING_BASE_TEXTURE + slot
+        ));
+    }
+    for &slot in &used_srv_buffers {
+        w.line(&format!(
+            "@group({}) @binding({}) var<storage, read> t{slot}: AeroStorageBufferU32;",
+            BIND_GROUP_INTERNAL_EMULATION,
+            BINDING_BASE_TEXTURE + slot
+        ));
+    }
+    if !used_textures.is_empty() || !used_srv_buffers.is_empty() {
+        w.line("");
+    }
+    for &slot in &used_samplers {
+        w.line(&format!(
+            "@group({}) @binding({}) var s{slot}: sampler;",
+            BIND_GROUP_INTERNAL_EMULATION,
+            BINDING_BASE_SAMPLER + slot
+        ));
+    }
+    if !used_samplers.is_empty() {
+        w.line("");
+    }
 
     // GS input helper (v#[]).
     w.line("fn gs_load_input(prim_id: u32, reg: u32, vertex: u32) -> vec4<f32> {");
@@ -1651,6 +1941,145 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 let rhs = maybe_saturate(dst.saturate, format!("max(({a}), ({b}))"));
                 emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
             }
+            Sm4Inst::Sample {
+                dst,
+                coord,
+                texture,
+                sampler,
+            } => {
+                let coord = emit_src_vec4(inst_index, "sample", coord, &input_sivs)?;
+                // The translated GS prepass always runs as a compute shader, so use explicit LOD
+                // sampling to keep the generated WGSL valid outside the fragment stage.
+                let rhs = format!(
+                    "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
+                    texture.slot, sampler.slot
+                );
+                let rhs = maybe_saturate(dst.saturate, rhs);
+                emit_write_masked(&mut w, inst_index, "sample", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::SampleL {
+                dst,
+                coord,
+                texture,
+                sampler,
+                lod,
+            } => {
+                let coord = emit_src_vec4(inst_index, "sample_l", coord, &input_sivs)?;
+                let lod_vec = emit_src_vec4(inst_index, "sample_l", lod, &input_sivs)?;
+                let rhs = format!(
+                    "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
+                    texture.slot, sampler.slot
+                );
+                let rhs = maybe_saturate(dst.saturate, rhs);
+                emit_write_masked(&mut w, inst_index, "sample_l", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Ld {
+                dst,
+                coord,
+                texture,
+                lod,
+            } => {
+                // SM4 `ld` (e.g. `Texture2D.Load`) consumes integer texel coordinates and an
+                // integer mip level. Interpret the source lanes strictly as integer bits.
+                let coord_i = emit_src_vec4_i32(inst_index, "ld", coord, &input_sivs)?;
+                let x = format!("({coord_i}).x");
+                let y = format!("({coord_i}).y");
+                let lod_i = emit_src_vec4_i32(inst_index, "ld", lod, &input_sivs)?;
+                let lod_scalar = format!("({lod_i}).x");
+                let rhs = format!(
+                    "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
+                    texture.slot
+                );
+                let rhs = maybe_saturate(dst.saturate, rhs);
+                emit_write_masked(&mut w, inst_index, "ld", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::LdRaw { dst, addr, buffer } => {
+                // Raw buffer loads operate on byte offsets. Model buffers as a storage `array<u32>`
+                // and derive a word index from the byte address.
+                let addr_u32 = emit_src_scalar_u32_addr(inst_index, "ld_raw", addr, &input_sivs)?;
+                let base_name = format!("ld_raw_base{inst_index}");
+                w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
+
+                let mask_bits = dst.mask.0 & 0xF;
+                let load_lane = |bit: u8, offset: u32| {
+                    if (mask_bits & bit) != 0 {
+                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                    } else {
+                        "0u".to_owned()
+                    }
+                };
+
+                let u_name = format!("ld_raw_u{inst_index}");
+                w.line(&format!(
+                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                    load_lane(1, 0),
+                    load_lane(2, 1),
+                    load_lane(4, 2),
+                    load_lane(8, 3),
+                ));
+                let f_name = format!("ld_raw_f{inst_index}");
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
+
+                let rhs = maybe_saturate(dst.saturate, f_name);
+                emit_write_masked(&mut w, inst_index, "ld_raw", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::LdStructured {
+                dst,
+                index,
+                offset,
+                buffer,
+            } => {
+                // Structured SRV loads read 1–4 consecutive `u32` words from a byte offset within
+                // the element.
+                let Some((kind, stride)) = srv_buffer_decls.get(&buffer.slot).copied() else {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "ld_structured",
+                    });
+                };
+                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "ld_structured",
+                    });
+                }
+
+                let index_u32 =
+                    emit_src_scalar_u32_addr(inst_index, "ld_structured", index, &input_sivs)?;
+                let offset_u32 =
+                    emit_src_scalar_u32_addr(inst_index, "ld_structured", offset, &input_sivs)?;
+                let base_name = format!("ld_struct_base{inst_index}");
+                w.line(&format!(
+                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                ));
+
+                let mask_bits = dst.mask.0 & 0xF;
+                let load_lane = |bit: u8, offset: u32| {
+                    if (mask_bits & bit) != 0 {
+                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                    } else {
+                        "0u".to_owned()
+                    }
+                };
+
+                let u_name = format!("ld_struct_u{inst_index}");
+                w.line(&format!(
+                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                    load_lane(1, 0),
+                    load_lane(2, 1),
+                    load_lane(4, 2),
+                    load_lane(8, 3),
+                ));
+                let f_name = format!("ld_struct_f{inst_index}");
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
+
+                let rhs = maybe_saturate(dst.saturate, f_name);
+                emit_write_masked(&mut w, inst_index, "ld_structured", dst.reg, dst.mask, rhs)?;
+            }
             Sm4Inst::Emit { stream: _ } => {
                 w.line(&format!("gs_emit({gs_emit_args}); // emit"));
             }
@@ -2065,6 +2494,18 @@ fn emit_src_vec4_u32(
     }
     expr = apply_modifier_u32(expr, src.modifier);
     Ok(expr)
+}
+
+fn emit_src_scalar_u32_addr(
+    inst_index: usize,
+    opcode: &'static str,
+    src: &crate::sm4_ir::SrcOperand,
+    input_sivs: &HashMap<u32, InputSivInfo>,
+) -> Result<String, GsTranslateError> {
+    // Match `shader_translate.rs`: address operands are consumed as raw integer bits; any float→int
+    // numeric conversion must be expressed explicitly in DXBC.
+    let u = emit_src_vec4_u32(inst_index, opcode, src, input_sivs)?;
+    Ok(format!("({u}).x"))
 }
 
 fn emit_src_vec4_i32(

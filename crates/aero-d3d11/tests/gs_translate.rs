@@ -4,10 +4,13 @@ use aero_d3d11::runtime::gs_translate::{
 };
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
+use aero_d3d11::binding_model::{
+    BIND_GROUP_INTERNAL_EMULATION, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
+};
 use aero_d3d11::{
-    DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
-    ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
-    SrcKind, SrcOperand, Swizzle, WriteMask,
+    BufferKind, BufferRef, DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile,
+    RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module,
+    Sm4Program, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
@@ -253,6 +256,143 @@ fn gs_translate_packed_rejects_location_0() {
     let err = translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[0])
         .expect_err("expected location 0 to be rejected (reserved for position)");
     assert_eq!(err, GsTranslateError::InvalidVaryingLocation { loc: 0 });
+}
+
+#[test]
+fn sm4_gs_sample_emits_group3_texture_and_sampler_decls() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ResourceTexture2D { slot: 0 },
+            Sm4Decl::Sampler { slot: 0 },
+        ],
+        instructions: vec![
+            // Position (o0) must be initialized before emit.
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0, 0, 0, 0x3f800000]), // (0,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            // Sample into o1.
+            Sm4Inst::Sample {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                coord: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f000000, 0x3e800000, 0, 0]), // (0.5, 0.25, 0, 0)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+                texture: TextureRef { slot: 0 },
+                sampler: SamplerRef { slot: 0 },
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var t0: texture_2d<f32>;",
+            BINDING_BASE_TEXTURE
+        )),
+        "expected group(3) texture declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var s0: sampler;",
+            BINDING_BASE_SAMPLER
+        )),
+        "expected group(3) sampler declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("textureSampleLevel(t0, s0"),
+        "expected sample to lower to textureSampleLevel in WGSL:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_ld_raw_emits_group3_srv_buffer_decl() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ResourceBuffer {
+                slot: 1,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdRaw {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                addr: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                buffer: BufferRef { slot: 1 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("struct AeroStorageBufferU32 { data: array<u32> };"),
+        "expected AeroStorageBufferU32 wrapper struct in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var<storage, read> t1: AeroStorageBufferU32;",
+            BINDING_BASE_TEXTURE + 1
+        )),
+        "expected group(3) SRV buffer declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("t1.data[ld_raw_base"),
+        "expected ld_raw lowering to index t1.data:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
 }
 
 #[test]
