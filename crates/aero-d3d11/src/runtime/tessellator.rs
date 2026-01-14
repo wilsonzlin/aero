@@ -449,8 +449,8 @@ mod tests {
     use naga::valid::{Capabilities, ValidationFlags, Validator};
 
     #[test]
-    fn counts_levels_1_through_5() {
-        for level in 1..=5u32 {
+    fn counts_levels_1_through_5_and_16() {
+        for level in [1u32, 2, 3, 4, 5, 16] {
             let expected_vtx = (level + 1) * (level + 2) / 2;
             let expected_idx = level * level * 3;
             assert_eq!(tri_vertex_count(level), expected_vtx, "level={level}");
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn domain_locations_are_barycentric_and_in_range() {
         const EPS: f32 = 1e-6;
-        for level in 1..=5u32 {
+        for level in [1u32, 2, 3, 4, 5, 16] {
             let vtx_count = tri_vertex_count(level);
             for v in 0..vtx_count {
                 let loc = tri_vertex_domain_location(level, v);
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn indices_are_in_bounds_and_unique_per_level() {
-        for level in 1..=5u32 {
+        for level in [1u32, 2, 3, 4, 5, 16] {
             let vtx_count = tri_vertex_count(level);
             let tri_count = level * level;
             assert_eq!(
