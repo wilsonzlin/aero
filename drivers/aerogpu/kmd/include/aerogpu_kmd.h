@@ -475,6 +475,12 @@ typedef struct _AEROGPU_ADAPTER {
 
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;
+    /*
+     * Adapter-global open refcount table for shared allocations (share_token -> open_count).
+     *
+     * Protected by AllocationsLock. Nodes are allocated from ShareTokenRefLookaside outside the
+     * lock to keep spin lock hold times low.
+     */
     LIST_ENTRY ShareTokenRefs;
     NPAGED_LOOKASIDE_LIST ShareTokenRefLookaside;
     /*
