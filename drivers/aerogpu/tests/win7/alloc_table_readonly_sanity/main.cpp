@@ -40,14 +40,39 @@ static int WaitForGpuEventQuery(const char* test_name, IDirect3DDevice9Ex* dev, 
   return 0;
 }
 
-static bool CmdStreamHasWritebackCopy(const unsigned char* data, uint32_t bytes) {
-  if (!data || bytes < sizeof(struct aerogpu_cmd_stream_header)) {
+static bool CmdStreamHasWritebackCopyReadGpa(const D3DKMT_FUNCS* kmt,
+                                             D3DKMT_HANDLE adapter,
+                                             unsigned long long cmd_gpa,
+                                             uint32_t cmd_size_bytes,
+                                             NTSTATUS* out_status) {
+  if (out_status) {
+    *out_status = 0;
+  }
+  if (!kmt || !adapter || cmd_gpa == 0 || cmd_size_bytes < sizeof(struct aerogpu_cmd_stream_header)) {
+    if (out_status) {
+      *out_status = aerogpu_test::kmt::kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  // Read and validate the stream header first to determine the total size.
+  aerogpu_escape_read_gpa_inout read;
+  NTSTATUS st = 0;
+  const uint32_t first_read =
+      (cmd_size_bytes < AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) ? cmd_size_bytes : AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  if (!aerogpu_test::kmt::AerogpuReadGpa(kmt, adapter, cmd_gpa, first_read, &read, &st)) {
+    if (out_status) {
+      *out_status = st;
+    }
+    return false;
+  }
+  if (read.bytes_copied < sizeof(struct aerogpu_cmd_stream_header)) {
     return false;
   }
 
   aerogpu_cmd_stream_header sh;
   ZeroMemory(&sh, sizeof(sh));
-  memcpy(&sh, data, sizeof(sh));
+  memcpy(&sh, read.data, sizeof(sh));
   if (sh.magic != AEROGPU_CMD_STREAM_MAGIC) {
     return false;
   }
@@ -55,29 +80,91 @@ static bool CmdStreamHasWritebackCopy(const unsigned char* data, uint32_t bytes)
     return false;
   }
 
-  uint32_t offset = sizeof(struct aerogpu_cmd_stream_header);
   uint32_t stream_size = sh.size_bytes;
-  // READ_GPA is bounded; tolerate truncated streams when scanning for COPY_* WRITEBACK_DST.
-  if (stream_size > bytes) {
-    stream_size = bytes;
+  if (stream_size > cmd_size_bytes) {
+    // Be conservative: treat cmd_size_bytes (from ring desc) as an upper bound.
+    stream_size = cmd_size_bytes;
   }
-  while (offset + sizeof(struct aerogpu_cmd_hdr) <= stream_size) {
-    aerogpu_cmd_hdr hdr;
-    ZeroMemory(&hdr, sizeof(hdr));
-    memcpy(&hdr, data + offset, sizeof(hdr));
-    if (hdr.size_bytes < sizeof(struct aerogpu_cmd_hdr) || (hdr.size_bytes & 3u) != 0) {
+
+  uint32_t base_offset = 0;
+  uint32_t cursor = 0;
+  std::vector<unsigned char> buf;
+  buf.reserve(AEROGPU_DBGCTL_READ_GPA_MAX_BYTES * 2);
+  buf.insert(buf.end(), read.data, read.data + read.bytes_copied);
+
+  // Start parsing after the stream header.
+  cursor = (uint32_t)sizeof(struct aerogpu_cmd_stream_header);
+
+  auto ReadMore = [&]() -> bool {
+    const uint32_t abs_read_start = base_offset + (uint32_t)buf.size();
+    if (abs_read_start >= stream_size) {
       return false;
     }
-    const uint32_t end = offset + hdr.size_bytes;
-    if (end > stream_size) {
-      // Truncated packet; stop scanning.
+    uint32_t to_read = stream_size - abs_read_start;
+    if (to_read > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+      to_read = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+    }
+    if (to_read == 0) {
+      return false;
+    }
+    NTSTATUS st2 = 0;
+    if (!aerogpu_test::kmt::AerogpuReadGpa(kmt, adapter, cmd_gpa + abs_read_start, to_read, &read, &st2)) {
+      if (out_status) {
+        *out_status = st2;
+      }
+      return false;
+    }
+    if (read.bytes_copied == 0) {
+      return false;
+    }
+    buf.insert(buf.end(), read.data, read.data + read.bytes_copied);
+    return true;
+  };
+
+  // Stream parse loop: parse command packets in order, reading additional bytes via READ_GPA as needed.
+  for (;;) {
+    // Stop if we would read past the end of the declared stream.
+    if (base_offset + cursor >= stream_size) {
       break;
+    }
+    if (base_offset + cursor + sizeof(struct aerogpu_cmd_hdr) > stream_size) {
+      break;
+    }
+
+    // Ensure we have a full packet header available in the local buffer.
+    if (cursor + sizeof(struct aerogpu_cmd_hdr) > buf.size()) {
+      if (!ReadMore()) {
+        break;
+      }
+      continue;
+    }
+
+    aerogpu_cmd_hdr hdr;
+    ZeroMemory(&hdr, sizeof(hdr));
+    memcpy(&hdr, &buf[cursor], sizeof(hdr));
+    if (hdr.size_bytes < sizeof(struct aerogpu_cmd_hdr) || (hdr.size_bytes & 3u) != 0) {
+      // Invalid packet; treat as no-match for this descriptor.
+      return false;
+    }
+
+    const uint32_t abs_end = base_offset + cursor + hdr.size_bytes;
+    if (abs_end > stream_size) {
+      // Truncated/invalid packet; stop scanning.
+      break;
+    }
+
+    // Ensure we have the full packet payload available.
+    if (cursor + hdr.size_bytes > buf.size()) {
+      if (!ReadMore()) {
+        break;
+      }
+      continue;
     }
 
     if (hdr.opcode == AEROGPU_CMD_COPY_BUFFER) {
       if (hdr.size_bytes >= sizeof(struct aerogpu_cmd_copy_buffer)) {
         aerogpu_cmd_copy_buffer cmd;
-        memcpy(&cmd, data + offset, sizeof(cmd));
+        memcpy(&cmd, &buf[cursor], sizeof(cmd));
         if ((cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0) {
           return true;
         }
@@ -85,14 +172,21 @@ static bool CmdStreamHasWritebackCopy(const unsigned char* data, uint32_t bytes)
     } else if (hdr.opcode == AEROGPU_CMD_COPY_TEXTURE2D) {
       if (hdr.size_bytes >= sizeof(struct aerogpu_cmd_copy_texture2d)) {
         aerogpu_cmd_copy_texture2d cmd;
-        memcpy(&cmd, data + offset, sizeof(cmd));
+        memcpy(&cmd, &buf[cursor], sizeof(cmd));
         if ((cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0) {
           return true;
         }
       }
     }
 
-    offset = end;
+    cursor += hdr.size_bytes;
+
+    // Trim fully-parsed bytes to keep memory bounded even for larger command streams.
+    if (cursor >= AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+      buf.erase(buf.begin(), buf.begin() + cursor);
+      base_offset += cursor;
+      cursor = 0;
+    }
   }
 
   return false;
@@ -336,18 +430,12 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
     // Ensure this is a writeback submission by scanning the command stream for COPY_* WRITEBACK_DST.
     // This should correspond to GetRenderTargetData's copy path when transfer is supported.
     if (cur.cmd_gpa != 0 && cur.cmd_size_bytes != 0) {
-      aerogpu_escape_read_gpa_inout cmd_read;
       NTSTATUS st2 = 0;
-      const uint32_t cmd_read_bytes =
-          (cur.cmd_size_bytes < AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) ? cur.cmd_size_bytes : AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
-      if (aerogpu_test::kmt::AerogpuReadGpa(&kmt, adapter, cur.cmd_gpa, cmd_read_bytes, &cmd_read, &st2)) {
-        if (cmd_read.bytes_copied >= sizeof(struct aerogpu_cmd_stream_header) &&
-            CmdStreamHasWritebackCopy((const unsigned char*)cmd_read.data, (uint32_t)cmd_read.bytes_copied)) {
-          d = cur;
-          ring_index = idx;
-          found_desc = true;
-          break;
-        }
+      if (CmdStreamHasWritebackCopyReadGpa(&kmt, adapter, cur.cmd_gpa, (uint32_t)cur.cmd_size_bytes, &st2)) {
+        d = cur;
+        ring_index = idx;
+        found_desc = true;
+        break;
       }
     }
   }
