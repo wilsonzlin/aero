@@ -872,6 +872,10 @@ Notes:
 
 - Verification requires the **guest virtio-snd driver** to be installed, and the guest selftest must not skip virtio-snd
   via `--disable-snd`. (When a virtio-snd PCI device is present, the selftest runs playback automatically.)
+- Ensure the guest virtio-snd driver is not running with the silent null backend enabled (`ForceNullBackend=1`), or wav
+  verification will observe silence. Clear it under the virtio-snd device instance registry key:
+  - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` = `0` (`REG_DWORD`)
+  - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
 - The harness attempts to shut QEMU down **gracefully** (via QMP) so the `wav` audio backend can flush/finalize the RIFF
   header before verification. If QEMU is killed hard, the `data` chunk size may be left as a placeholder (often `0`), and
   verification may fail or need to fall back to best-effort recovery.
