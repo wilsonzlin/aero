@@ -5,6 +5,9 @@ For AeroGPU, the PCI **Vendor ID / Device ID pair is part of the ABI contract**:
 a Windows driver should only bind to a device model that implements the matching
 MMIO + ring protocol.
 
+For the repo-wide “what’s implemented vs what’s missing (Win7 UX)” checklist, see:
+[`docs/graphics/status.md`](../graphics/status.md).
+
 ## Current status in `aero_machine::Machine`
 
 The canonical full-system machine (`crates/aero-machine`, `aero_machine::Machine`) reserves
