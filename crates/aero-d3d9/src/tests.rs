@@ -3068,6 +3068,21 @@ fn rejects_out_of_range_sampler_register_legacy_translator() {
 }
 
 #[test]
+fn rejects_malformed_lrp_with_too_few_operands_legacy_translator() {
+    // ps_3_0 lrp with a bogus instruction length nibble (only dst + 2 src operands).
+    // This should be rejected instead of panicking later in WGSL generation.
+    let mut out = vec![0xFFFF0300];
+    out.push(0x0012 | (4u32 << 24)); // opcode=0x12, total length=4 tokens (opcode + 3 params)
+    out.push(enc_dst(0, 0, 0xF)); // r0
+    out.push(enc_src(2, 0, 0xE4)); // c0
+    out.push(enc_src(2, 1, 0xE4)); // c1 (missing c2)
+    out.push(0x0000FFFF);
+
+    let err = shader::parse(&to_bytes(&out)).unwrap_err();
+    assert!(matches!(err, shader::ShaderError::UnexpectedEof), "{err:?}");
+}
+
+#[test]
 fn dxbc_container_rejects_excessive_chunk_count() {
     use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
 

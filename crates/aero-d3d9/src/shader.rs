@@ -826,11 +826,36 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Sne
             | Op::Frc
             | Op::Pow => {
-                if params.len() < 2 {
+                let required_params = match op {
+                    // dst + 1 src
+                    Op::Mov | Op::Exp | Op::Log | Op::Rcp | Op::Rsq | Op::Frc => 2,
+                    // dst + 2 src
+                    Op::Add
+                    | Op::Sub
+                    | Op::Mul
+                    | Op::Min
+                    | Op::Max
+                    | Op::Slt
+                    | Op::Sge
+                    | Op::Seq
+                    | Op::Sne
+                    | Op::Dp3
+                    | Op::Dp4
+                    | Op::Pow => 3,
+                    // dst + 3 src
+                    Op::Mad | Op::Lrp | Op::Cmp | Op::Dp2Add => 4,
+                    _ => unreachable!("arithmetic op matched above"),
+                };
+
+                // The legacy translator only supports single-token operands. Malformed shaders can
+                // (intentionally or accidentally) encode an operand count that is smaller than what
+                // the opcode requires, which would later cause panics in code generation. Treat
+                // this as a truncated instruction stream.
+                if params.len() < required_params {
                     return Err(ShaderError::UnexpectedEof);
                 }
                 let dst = decode_dst(params[0])?;
-                let src = params[1..]
+                let src = params[1..required_params]
                     .iter()
                     .map(|t| decode_src(*t))
                     .collect::<Result<Vec<_>, _>>()?;
