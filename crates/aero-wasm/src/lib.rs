@@ -3072,9 +3072,11 @@ impl Machine {
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        let disk = aero_opfs::OpfsSendDisk::open_existing(&path).await.map_err(|e| {
-            opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
-        })?;
+        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+            .await
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
+            })?;
         self.inner
             .attach_install_media_iso(Box::new(disk))
             .map_err(js_error)
