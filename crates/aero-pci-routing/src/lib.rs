@@ -15,7 +15,12 @@
 //!
 //! The resulting PIRQ index (0..3 for A..D) is then mapped to a platform Global System Interrupt
 //! (GSI) via the caller-provided `pirq_to_gsi` table.
-//!
+
+/// Default PC-compatible PIRQ[A-D] -> GSI mapping.
+///
+/// This matches the common legacy routing used by QEMU-style PC platforms where PCI INTx ends up on
+/// IRQ/GSI 10-13.
+pub const DEFAULT_PIRQ_TO_GSI: [u32; 4] = [10, 11, 12, 13];
 /// Computes the PIRQ index (0 = A, 1 = B, 2 = C, 3 = D) for a device/pin pair.
 #[inline]
 pub const fn pirq_index(device: u8, pin_index: u8) -> u8 {
@@ -67,7 +72,7 @@ mod tests {
 
     #[test]
     fn gsi_and_irq_line_helpers_follow_pirq_map() {
-        let map = [10, 11, 12, 13];
+        let map = DEFAULT_PIRQ_TO_GSI;
 
         assert_eq!(gsi_for_intx(map, 0, 0), 10);
         assert_eq!(gsi_for_intx(map, 1, 0), 11);

@@ -463,7 +463,7 @@ impl Default for BiosConfig {
             enable_acpi: true,
             acpi_placement,
             // Match the default routing in `aero_acpi::AcpiConfig`.
-            pirq_to_gsi: [10, 11, 12, 13],
+            pirq_to_gsi: aero_pci_routing::DEFAULT_PIRQ_TO_GSI,
             vbe_lfb_base: None,
             boot_order: vec![BiosBootDevice::Hdd],
             cd_boot_drive: 0xE0,

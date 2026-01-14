@@ -85,7 +85,7 @@ impl Default for PciIntxRouterConfig {
     fn default() -> Self {
         // Match a typical PC-compatible setup where PCI INTx ends up on IRQ/GSI 10-13.
         Self {
-            pirq_to_gsi: [10, 11, 12, 13],
+            pirq_to_gsi: pci_routing::DEFAULT_PIRQ_TO_GSI,
         }
     }
 }

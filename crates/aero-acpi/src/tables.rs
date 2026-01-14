@@ -155,7 +155,7 @@ impl Default for AcpiConfig {
             pcie_end_bus: 0xFF,
 
             // Match the default routing in `devices::pci::irq_router::PciIntxRouterConfig`.
-            pirq_to_gsi: [10, 11, 12, 13],
+            pirq_to_gsi: pci_routing::DEFAULT_PIRQ_TO_GSI,
         }
     }
 }
