@@ -7420,15 +7420,9 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_dsv_res = nullptr;
   dev->viewport_width = 0;
   dev->viewport_height = 0;
-  auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!rt_cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  EmitSetRenderTargetsLocked(dev);
+  if (dev->cmd.error() != aerogpu::CmdStreamError::kOk) {
     return;
-  }
-  rt_cmd->color_count = 0;
-  rt_cmd->depth_stencil = 0;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    rt_cmd->colors[i] = 0;
   }
 
   dev->current_vs = 0;
