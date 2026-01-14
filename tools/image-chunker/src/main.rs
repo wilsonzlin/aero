@@ -789,11 +789,10 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     }
 
     let elapsed = started_at.elapsed();
-    println!(
-        "Checked {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?} (failures: {failure_count})"
-    );
-
     if failure_count > 0 {
+        println!(
+            "Checked {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?} (failures: {failure_count})"
+        );
         if !samples.is_empty() {
             eprintln!("First {} failures:", samples.len());
             for failure in &samples {
@@ -806,6 +805,10 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
             .unwrap_or("unknown error");
         bail!("verification failed with {failure_count} failures (first: {first})");
     }
+
+    println!(
+        "Verified {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?}"
+    );
     Ok(())
 }
 
