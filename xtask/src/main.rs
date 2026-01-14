@@ -130,6 +130,8 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         check,
     )?;
 
+    // Legacy BIOS interrupt sanity boot sector (`int_sanity.asm`), kept in-repo to avoid requiring
+    // an assembler in CI.
     ensure_file(
         &boot_fixtures_dir.join("int_sanity.bin"),
         &fixture_sources::int_sanity::BIN,
@@ -149,6 +151,9 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         &realmode_vbe_test,
         check,
     )?;
+
+    // QEMU differential-test boot sector (`tools/qemu_diff/boot/boot.S`), committed and
+    // regenerated here so `qemu_diff` does not need an assembler toolchain in CI.
     ensure_file(
         &root.join("tools/qemu_diff/boot/boot.bin"),
         &fixture_sources::qemu_diff_boot::BIN,
