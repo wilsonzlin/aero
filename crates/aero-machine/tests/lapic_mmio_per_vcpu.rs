@@ -1,4 +1,62 @@
 use aero_machine::{Machine, MachineConfig};
+use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
+
+fn assert_ioapic_delivers_to_apic(
+    interrupts: &Rc<RefCell<PlatformInterrupts>>,
+    cpu_count: u8,
+    dest_apic_id: u8,
+    vector: u8,
+) {
+    let gsi = 1u32;
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // GSI1 -> vector, level-triggered, unmasked, destination APIC ID `dest_apic_id`.
+        program_ioapic_entry(
+            &mut *ints,
+            gsi,
+            u32::from(vector) | (1 << 15),
+            u32::from(dest_apic_id) << 24,
+        );
+
+        ints.raise_irq(InterruptInput::Gsi(gsi));
+    }
+
+    assert_eq!(
+        interrupts.borrow().get_pending_for_apic(dest_apic_id),
+        Some(vector)
+    );
+    for apic_id in 0..cpu_count {
+        if apic_id == dest_apic_id {
+            continue;
+        }
+        assert_eq!(interrupts.borrow().get_pending_for_apic(apic_id), None);
+    }
+
+    // Typical level-triggered behavior: device deasserts the line before EOI.
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.acknowledge_for_apic(dest_apic_id, vector);
+        ints.lower_irq(InterruptInput::Gsi(gsi));
+        ints.eoi_for_apic(dest_apic_id, vector);
+    }
+
+    for apic_id in 0..cpu_count {
+        assert_eq!(interrupts.borrow().get_pending_for_apic(apic_id), None);
+    }
+}
 
 #[test]
 fn lapic_mmio_is_routed_per_vcpu() {
@@ -39,6 +97,9 @@ fn lapic_mmio_cpu_ids_persist_after_machine_reset() {
         assert_eq!(id, cpu as u32);
     }
 
+    let interrupts = m.platform_interrupts().unwrap();
+    assert_ioapic_delivers_to_apic(&interrupts, 4, 3, 0x44);
+
     // Ensure that `Machine::reset()` does not accidentally collapse a multi-LAPIC topology back to a
     // single BSP-only interrupt complex.
     m.reset();
@@ -47,4 +108,7 @@ fn lapic_mmio_cpu_ids_persist_after_machine_reset() {
         let id = m.read_lapic_u32(cpu, 0x20) >> 24;
         assert_eq!(id, cpu as u32);
     }
+
+    let interrupts = m.platform_interrupts().unwrap();
+    assert_ioapic_delivers_to_apic(&interrupts, 4, 3, 0x44);
 }
