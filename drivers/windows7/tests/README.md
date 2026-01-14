@@ -164,6 +164,8 @@ Note:
   selftest with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`). This is useful when
   running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors` or per-device `--virtio-<dev>-vectors`)
   or when validating MSI/MSI-X support.
+  - If you provision the guest via `host-harness/New-AeroWin7TestImage.ps1`, bake this into the scheduled task with
+    `-ExpectBlkMsi` (adds `--expect-blk-msi`).
 - virtio-snd is optional. When a supported virtio-snd PCI function is detected, the selftest exercises playback
   automatically (even without `--test-snd`). Use `--require-snd` / `--test-snd` to make missing virtio-snd fail the
   overall selftest, and `--disable-snd` to force skipping playback + capture.
