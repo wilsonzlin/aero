@@ -502,6 +502,9 @@ describe("InputCapture buffer recycling", () => {
       expect(buckets.size).toBe(8);
       // The newest buckets should remain present after eviction.
       expect(buckets.has(1024 + 99)).toBe(true);
+      // The oldest buckets should have been evicted.
+      expect(buckets.has(1024)).toBe(false);
+      expect(buckets.has(1024 + 91)).toBe(false);
     });
   });
 
