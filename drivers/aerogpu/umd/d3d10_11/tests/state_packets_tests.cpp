@@ -18,6 +18,16 @@ constexpr uint32_t kD3D10CullFront = 2;
 constexpr uint32_t kD3D10CompareGreaterEqual = 7;
 constexpr uint32_t kD3D10DepthWriteMaskZero = 0;
 
+// Legacy constant names used by older versions of this test. Prefer the shared
+// `kD3d*` constants from `aerogpu_d3d10_blend_state_validate.h`, but keep these
+// aliases so the intent is obvious (they mirror the D3D10 enum names).
+constexpr uint32_t kD3D10BlendBlendFactor = kD3dBlendBlendFactor;
+constexpr uint32_t kD3D10BlendInvBlendFactor = kD3dBlendInvBlendFactor;
+constexpr uint32_t kD3D10BlendOpSubtract = kD3dBlendOpSubtract;
+constexpr uint32_t kD3D10BlendSrcAlpha = kD3dBlendSrcAlpha;
+constexpr uint32_t kD3D10BlendInvSrcAlpha = kD3dBlendInvSrcAlpha;
+constexpr uint32_t kD3D10BlendOpAdd = kD3dBlendOpAdd;
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
