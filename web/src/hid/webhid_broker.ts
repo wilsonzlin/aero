@@ -7,6 +7,7 @@ import {
   computeFeatureReportPayloadByteLengths,
   computeInputReportPayloadByteLengths,
   computeMaxOutputReportBytesOnWire,
+  computeOutputReportPayloadByteLengths,
 } from "./hid_report_sizes";
 import {
   isHidAttachResultMessage,
@@ -145,6 +146,9 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
+// WebHID output/feature reports can be transferred over the control endpoint (SET_REPORT / GET_REPORT),
+// whose `wLength` field is a 16-bit unsigned integer.
+const UNKNOWN_SEND_REPORT_HARD_CAP_BYTES = 0xffff;
 
 function toU32OrZero(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -204,6 +208,8 @@ export class WebHidBroker {
   readonly #inputReportSizeWarned = new Set<string>();
   readonly #featureReportExpectedPayloadBytes = new Map<number, Map<number, number>>();
   readonly #featureReportSizeWarned = new Set<string>();
+  readonly #outputReportExpectedPayloadBytes = new Map<number, Map<number, number>>();
+  readonly #sendReportSizeWarned = new Set<string>();
   #inputReportTruncated = 0;
   #inputReportPadded = 0;
   #inputReportHardCapped = 0;
@@ -677,9 +683,41 @@ export class WebHidBroker {
           const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
           const reportId = rec.reportId >>> 0;
           this.#enqueueDeviceSend(deviceId, () => {
+            const srcLen = payload.byteLength;
+            const expected = (reportType === "feature"
+              ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
+              : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
+
+            let destLen: number;
+            if (expected !== undefined) {
+              destLen = expected;
+              if (srcLen > expected) {
+                this.#warnSendReportSizeOnce(
+                  deviceId,
+                  reportType,
+                  reportId,
+                  "truncated",
+                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+                );
+              } else if (srcLen < expected) {
+                this.#warnSendReportSizeOnce(
+                  deviceId,
+                  reportType,
+                  reportId,
+                  "padded",
+                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+                );
+              }
+            } else {
+              destLen = srcLen;
+            }
+
             // Copy the report payload out of the ring immediately so it can't be overwritten by
             // subsequent producer writes while we are awaiting an in-flight WebHID send.
-            const data = ensureArrayBufferBacked(payload);
+            const copyLen = Math.min(srcLen, destLen);
+            const src = payload.subarray(0, copyLen);
+            const data = new Uint8Array(destLen);
+            data.set(src);
             return async () => {
               if (attachPromise) {
                 try {
@@ -762,6 +800,8 @@ export class WebHidBroker {
       this.#inputReportExpectedPayloadBytes.set(deviceId, inputReportPayloadBytes);
       const featureReportPayloadBytes = computeFeatureReportPayloadByteLengths(collections);
       this.#featureReportExpectedPayloadBytes.set(deviceId, featureReportPayloadBytes);
+      const outputReportPayloadBytes = computeOutputReportPayloadByteLengths(collections);
+      this.#outputReportExpectedPayloadBytes.set(deviceId, outputReportPayloadBytes);
 
       const attachMsg: HidAttachMessage = {
         type: "hid.attach",
@@ -1051,6 +1091,7 @@ export class WebHidBroker {
     this.#lastInputReportInfo.delete(deviceId);
     this.#inputReportExpectedPayloadBytes.delete(deviceId);
     this.#featureReportExpectedPayloadBytes.delete(deviceId);
+    this.#outputReportExpectedPayloadBytes.delete(deviceId);
     const pendingAttach = this.#pendingAttachResults.get(deviceId);
     if (pendingAttach) {
       this.#pendingAttachResults.delete(deviceId);
@@ -1068,6 +1109,11 @@ export class WebHidBroker {
     for (const key of this.#featureReportSizeWarned) {
       if (key.startsWith(`${deviceId}:`)) {
         this.#featureReportSizeWarned.delete(key);
+      }
+    }
+    for (const key of this.#sendReportSizeWarned) {
+      if (key.startsWith(`${deviceId}:`)) {
+        this.#sendReportSizeWarned.delete(key);
       }
     }
 
@@ -1110,6 +1156,13 @@ export class WebHidBroker {
     console.warn(message);
   }
 
+  #warnSendReportSizeOnce(deviceId: number, reportType: "output" | "feature", reportId: number, kind: string, message: string): void {
+    const key = `${deviceId}:${reportType}:${reportId}:${kind}`;
+    if (this.#sendReportSizeWarned.has(key)) return;
+    this.#sendReportSizeWarned.add(key);
+    console.warn(message);
+  }
+
   #handleSendReportRequest(msg: HidSendReportMessage): void {
     // The worker prefers the SharedArrayBuffer output ring, but can fall back to structured
     // `hid.sendReport` messages when the ring is full or the payload is too large. Because the
@@ -1149,7 +1202,54 @@ export class WebHidBroker {
     const reportId = msg.reportId >>> 0;
     const payload = msg.data;
     this.#enqueueDeviceSend(deviceId, () => {
-      const data = ensureArrayBufferBacked(payload);
+      const srcLen = payload.byteLength;
+      const expected = (reportType === "feature"
+        ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
+        : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
+
+      let data: Uint8Array<ArrayBuffer>;
+      if (expected !== undefined) {
+        if (srcLen === expected) {
+          data = ensureArrayBufferBacked(payload);
+        } else {
+          if (srcLen > expected) {
+            this.#warnSendReportSizeOnce(
+              deviceId,
+              reportType,
+              reportId,
+              "truncated",
+              `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+            );
+          } else {
+            this.#warnSendReportSizeOnce(
+              deviceId,
+              reportType,
+              reportId,
+              "padded",
+              `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+            );
+          }
+          const copyLen = Math.min(srcLen, expected);
+          const src = payload.subarray(0, copyLen);
+          const out = new Uint8Array(expected);
+          out.set(src);
+          data = out as Uint8Array<ArrayBuffer>;
+        }
+      } else if (srcLen > UNKNOWN_SEND_REPORT_HARD_CAP_BYTES) {
+        this.#warnSendReportSizeOnce(
+          deviceId,
+          reportType,
+          reportId,
+          "hardCap",
+          `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_SEND_REPORT_HARD_CAP_BYTES}`,
+        );
+        const src = payload.subarray(0, UNKNOWN_SEND_REPORT_HARD_CAP_BYTES);
+        const out = new Uint8Array(UNKNOWN_SEND_REPORT_HARD_CAP_BYTES);
+        out.set(src);
+        data = out as Uint8Array<ArrayBuffer>;
+      } else {
+        data = ensureArrayBufferBacked(payload);
+      }
       return async () => {
         if (attachPromise) {
           try {

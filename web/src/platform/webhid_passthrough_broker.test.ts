@@ -302,6 +302,158 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(forwarded).toHaveLength(1);
   });
 
+  it("clamps oversized output report payloads to the expected report size before calling sendReport", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [
+            {
+              reportId: 3,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 3,
+        data: huge.buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(3);
+      const sent = bufferSourceToBytes(device.sendReport.mock.calls[0]![1]);
+      expect(sent.byteLength).toBe(4);
+      expect(Array.from(sent)).toEqual([1, 2, 3, 4]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("zero-pads short output report payloads to the expected report size before calling sendReport", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [
+            {
+              reportId: 3,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 3,
+        data: new Uint8Array([9, 8]).buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(3);
+      const sent = bufferSourceToBytes(device.sendReport.mock.calls[0]![1]);
+      expect(Array.from(sent)).toEqual([9, 8, 0, 0]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("clamps oversized feature report payloads to the expected report size before calling sendFeatureReport", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [
+            {
+              reportId: 4,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3, 4], 0);
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "feature",
+        reportId: 4,
+        data: huge.buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+      expect(device.sendFeatureReport.mock.calls[0]![0]).toBe(4);
+      const sent = bufferSourceToBytes(device.sendFeatureReport.mock.calls[0]![1]);
+      expect(sent.byteLength).toBe(4);
+      expect(Array.from(sent)).toEqual([1, 2, 3, 4]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("handles hid:getFeatureReport from the worker and responds with hid:featureReportResult", async () => {
     const device = new FakeHidDevice();
     const target = new TestTarget();

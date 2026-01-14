@@ -1060,6 +1060,78 @@ describe("hid/WebHidBroker", () => {
     expect(device.sendFeatureReport).toHaveBeenCalledWith(8, Uint8Array.of(10));
   });
 
+  it("clamps mismatched hid.sendReport payload sizes to the expected report size", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    try {
+      const port = new FakePort();
+      port.onPost = (msg) => {
+        if ((msg as { type?: unknown }).type === "hid.attach") {
+          const deviceId = (msg as { deviceId: number }).deviceId;
+          port.emit({ type: "hid.attachResult", deviceId, ok: true });
+        }
+      };
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [
+            {
+              reportId: 7,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+          featureReports: [
+            {
+              reportId: 8,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024);
+      huge.set([1, 2, 3, 4], 0);
+
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 7, data: huge });
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "feature", reportId: 8, data: Uint8Array.of(9, 8) });
+
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(7);
+      const outputData = device.sendReport.mock.calls[0]![1] as BufferSource;
+      const outputBytes =
+        outputData instanceof ArrayBuffer
+          ? new Uint8Array(outputData)
+          : new Uint8Array(outputData.buffer, outputData.byteOffset, outputData.byteLength);
+      expect(Array.from(outputBytes)).toEqual([1, 2, 3, 4]);
+
+      expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+      expect(device.sendFeatureReport.mock.calls[0]![0]).toBe(8);
+      const featureData = device.sendFeatureReport.mock.calls[0]![1] as BufferSource;
+      const featureBytes =
+        featureData instanceof ArrayBuffer
+          ? new Uint8Array(featureData)
+          : new Uint8Array(featureData.buffer, featureData.byteOffset, featureData.byteLength);
+      expect(Array.from(featureBytes)).toEqual([9, 8, 0, 0]);
+
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      broker.destroy();
+      warn.mockRestore();
+    }
+  });
+
   it("drains the SAB output ring when handling hid.sendReport messages to preserve report ordering", async () => {
     vi.useFakeTimers();
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
