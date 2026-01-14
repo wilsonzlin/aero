@@ -32,19 +32,25 @@ fn criterion_config() -> Criterion {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn bench_tier0_rep_movsb(c: &mut Criterion) {
-    const CODE_ADDR: u64 = 0x0000;
+    const CODE_MOVSB_ADDR: u64 = 0x0000;
+    const CODE_STOSB_ADDR: u64 = 0x0100;
     const SRC_ADDR: u64 = 0x10_000;
     const DST_ADDR: u64 = 0x20_000;
     const LEN: usize = 64 * 1024;
 
     // rep movsb
-    let mut code = vec![0xF3, 0xA4];
+    let mut code_movsb = vec![0xF3, 0xA4];
     // Padding so instruction fetch always has lookahead bytes.
-    code.extend(std::iter::repeat_n(0x90, 16));
+    code_movsb.extend(std::iter::repeat_n(0x90, 16));
+
+    // rep stosb
+    let mut code_stosb = vec![0xF3, 0xAA];
+    code_stosb.extend(std::iter::repeat_n(0x90, 16));
 
     let bus_len = (DST_ADDR + LEN as u64 + 0x1000) as usize;
     let mut bus_base = FlatTestBus::new(bus_len);
-    bus_base.load(CODE_ADDR, &code);
+    bus_base.load(CODE_MOVSB_ADDR, &code_movsb);
+    bus_base.load(CODE_STOSB_ADDR, &code_stosb);
 
     // Deterministic source pattern (one-time init).
     let mut src = Vec::with_capacity(LEN);
@@ -58,7 +64,7 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
 
     // Sanity-check once outside measurement: should complete without assist/exception.
     let mut state_long = CpuState::new(CpuMode::Long);
-    state_long.set_rip(CODE_ADDR);
+    state_long.set_rip(CODE_MOVSB_ADDR);
     state_long.gpr[gpr::RSI] = SRC_ADDR;
     state_long.gpr[gpr::RDI] = DST_ADDR;
     state_long.gpr[gpr::RCX] = LEN as u64;
@@ -68,7 +74,7 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
     assert_eq!(bus_long.read_u8(DST_ADDR).unwrap(), src[0]);
 
     let mut state_32 = CpuState::new(CpuMode::Bit32);
-    state_32.set_rip(CODE_ADDR);
+    state_32.set_rip(CODE_MOVSB_ADDR);
     state_32.gpr[gpr::RSI] = SRC_ADDR;
     state_32.gpr[gpr::RDI] = DST_ADDR;
     state_32.gpr[gpr::RCX] = LEN as u64;
@@ -80,7 +86,7 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(LEN as u64));
     group.bench_function("rep_movsb_64kib", |b| {
         b.iter(|| {
-            state_long.set_rip(CODE_ADDR);
+            state_long.set_rip(CODE_MOVSB_ADDR);
             state_long.rflags = RFLAGS_RESERVED1;
             state_long.lazy_flags = Default::default();
             state_long.gpr[gpr::RSI] = SRC_ADDR;
@@ -94,10 +100,38 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
     });
     group.bench_function("rep_movsb_64kib_32", |b| {
         b.iter(|| {
-            state_32.set_rip(CODE_ADDR);
+            state_32.set_rip(CODE_MOVSB_ADDR);
             state_32.rflags = RFLAGS_RESERVED1;
             state_32.lazy_flags = Default::default();
             state_32.gpr[gpr::RSI] = SRC_ADDR;
+            state_32.gpr[gpr::RDI] = DST_ADDR;
+            state_32.gpr[gpr::RCX] = LEN as u64;
+
+            let res = run_batch(black_box(&mut state_32), black_box(&mut bus_32), 1);
+            debug_assert!(matches!(res.exit, BatchExit::Completed));
+            black_box(res.executed);
+        });
+    });
+    group.bench_function("rep_stosb_64kib", |b| {
+        b.iter(|| {
+            state_long.set_rip(CODE_STOSB_ADDR);
+            state_long.rflags = RFLAGS_RESERVED1;
+            state_long.lazy_flags = Default::default();
+            state_long.gpr[gpr::RAX] = 0x5A; // AL
+            state_long.gpr[gpr::RDI] = DST_ADDR;
+            state_long.gpr[gpr::RCX] = LEN as u64;
+
+            let res = run_batch(black_box(&mut state_long), black_box(&mut bus_long), 1);
+            debug_assert!(matches!(res.exit, BatchExit::Completed));
+            black_box(res.executed);
+        });
+    });
+    group.bench_function("rep_stosb_64kib_32", |b| {
+        b.iter(|| {
+            state_32.set_rip(CODE_STOSB_ADDR);
+            state_32.rflags = RFLAGS_RESERVED1;
+            state_32.lazy_flags = Default::default();
+            state_32.gpr[gpr::RAX] = 0x5A; // AL
             state_32.gpr[gpr::RDI] = DST_ADDR;
             state_32.gpr[gpr::RCX] = LEN as u64;
 
