@@ -81,7 +81,7 @@ Drivers MUST bind on Vendor/Device ID and MUST assume the **modern** virtio-pci 
 
 #### 1.1.2 Subsystem IDs (Aero-specific)
 
-Subsystem Device IDs are used to distinguish device variants (for example, virtio-input keyboard vs mouse).
+Subsystem Device IDs are used to distinguish device variants (for example, virtio-input keyboard vs mouse vs tablet).
 
 | Device instance | Subsystem Device ID |
 |----------------|---------------------|
@@ -90,6 +90,7 @@ Subsystem Device IDs are used to distinguish device variants (for example, virti
 | virtio-snd     | `0x0019` |
 | virtio-input (keyboard) | `0x0010` |
 | virtio-input (mouse)    | `0x0011` |
+| virtio-input (tablet)   | `0x0012` |
 
 Drivers MUST NOT rely on these subsystem IDs for correctness; they exist to aid debugging and optional device matching.
 
