@@ -225,7 +225,16 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         runner.run_step(
             "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked",
             &mut cmd,
-        )?;
+        )
+        .map_err(|err| match err {
+            XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
+                XtaskError::Message(
+                    "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
+                        .to_string(),
+                )
+            }
+            other => other,
+        })?;
     }
 
     if opts.rust_only {

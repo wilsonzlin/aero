@@ -51,6 +51,13 @@ fn input_with_wasm_rust_only_runs_aero_wasm_integration_tests() {
     said_with_wasm_rust_only_runs_aero_wasm_integration_tests().expect("test should succeed");
 }
 
+/// Verify `cargo xtask input --wasm --rust-only` reports a helpful error when `wasm-pack` is missing.
+#[test]
+#[cfg(unix)]
+fn input_wasm_reports_missing_wasm_pack() {
+    said_wasm_reports_missing_wasm_pack().expect("test should succeed");
+}
+
 #[cfg(unix)]
 fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -356,6 +363,33 @@ fn said_with_wasm_rust_only_runs_aero_wasm_integration_tests(
             "expected `{expected}` in aero-wasm argv; argv={cargo_wasm:?}"
         );
     }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn said_wasm_reports_missing_wasm_pack() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let bin_dir = tmp.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    let log_path = tmp.path().join("argv.log");
+
+    write_fake_argv_logger(&bin_dir.join("cargo"), "cargo")?;
+    write_fake_argv_logger(&bin_dir.join("node"), "node")?;
+
+    // Do not provide a wasm-pack stub, and avoid inheriting the real PATH, so wasm-pack is
+    // guaranteed to be missing for this test even on developer machines.
+    let path = bin_dir.display().to_string();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["input", "--wasm", "--rust-only"])
+        .env("AERO_XTASK_TEST_LOG", &log_path)
+        .env("PATH", path)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("missing required command: wasm-pack"))
+        .stderr(predicates::str::contains("Install wasm-pack"));
 
     Ok(())
 }
