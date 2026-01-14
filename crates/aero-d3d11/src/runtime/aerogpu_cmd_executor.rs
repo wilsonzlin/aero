@@ -3014,6 +3014,18 @@ impl AerogpuD3d11Executor {
             todo!("tessellation (HS/DS) compute expansion is not implemented yet");
         }
 
+        // Tessellation draws require both HS and DS to be bound. Until we support a fallback path
+        // (e.g. forwarding the control mesh when DS is missing), validate this up front so the
+        // emulation prepass doesn't run with an incomplete pipeline.
+        if self.state.hs.is_some() || self.state.ds.is_some() {
+            if self.state.hs.is_none() {
+                bail!("tessellation draw requires a hull shader (HS) to be bound");
+            }
+            if self.state.ds.is_none() {
+                bail!("tessellation draw requires a domain shader (DS) to be bound");
+            }
+        }
+
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
