@@ -89,5 +89,30 @@ describe("gpu/test-card", () => {
       // Non-marker pixels still follow the card definition (magenta with vertical alpha gradient).
       expect(getPixelRgba(rgba, width, 0, 1)).toEqual([255, 0, 255, 128]);
     });
+
+    it("handles width=2 (half <= 1 grayscale path) without throwing", () => {
+      const width = 2;
+      const height = 3;
+
+      expect(() => createGpuColorTestCardRgba8Linear(width, height)).not.toThrow();
+      const rgba = createGpuColorTestCardRgba8Linear(width, height);
+
+      // Left half has only one column when width=2 (half=floor(2/2)=1). The ramp degenerates to t=0.
+      expect(getPixelRgba(rgba, width, 0, 1)).toEqual([0, 0, 0, 255]);
+
+      // Right half remains magenta with vertical alpha gradient.
+      expect(getPixelRgba(rgba, width, 1, 1)).toEqual([255, 0, 255, 128]);
+    });
+
+    it("handles zero-sized dimensions without throwing", () => {
+      expect(() => createGpuColorTestCardRgba8Linear(0, 0)).not.toThrow();
+      expect(createGpuColorTestCardRgba8Linear(0, 0)).toHaveLength(0);
+
+      expect(() => createGpuColorTestCardRgba8Linear(0, 5)).not.toThrow();
+      expect(createGpuColorTestCardRgba8Linear(0, 5)).toHaveLength(0);
+
+      expect(() => createGpuColorTestCardRgba8Linear(5, 0)).not.toThrow();
+      expect(createGpuColorTestCardRgba8Linear(5, 0)).toHaveLength(0);
+    });
   });
 });
