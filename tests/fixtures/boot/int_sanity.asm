@@ -3,13 +3,13 @@ ORG 0x7C00
 
 ; Synthetic boot sector historically used by BIOS interrupt integration tests.
 ;
-; This `.asm` is kept as documentation; CI does **not** require `nasm`.
-; The canonical, deterministic generator is `cargo xtask fixtures` (see also:
-; `scripts/build-int-sanity-bootsector.sh`).
-;
 ; It exercises a small subset of BIOS interrupts and writes observable results
 ; into low RAM so the host-side test harness can assert behaviour without a
 ; full CPU emulator.
+;
+; This `.asm` is kept as documentation; CI does **not** require `nasm`.
+; The canonical, deterministic generator is `cargo xtask fixtures` (see also:
+; `scripts/build-int-sanity-bootsector.sh`).
 
 start:
     mov ax, 0
