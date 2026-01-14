@@ -1828,8 +1828,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
                     })?;
 
-                    // Optional: validate the legacy filename alias INF (if present). It should remain in sync
-                    // with the canonical INF from the first section header (`[Version]`) onward (different filename only).
+                    // Optional: validate the legacy alias INF (if present). This alias is kept for
+                    // compatibility with workflows that reference `virtio-input.inf` and should remain
+                    // functionally identical to the canonical INF.
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),

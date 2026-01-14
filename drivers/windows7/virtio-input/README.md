@@ -108,23 +108,21 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (revision-gated `REV_01`):
 
-- `inf/aero_virtio_input.inf` (keyboard/mouse; **SUBSYS-only**):
+- `inf/aero_virtio_input.inf` (keyboard/mouse):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no SUBSYS; shown as **Aero VirtIO Input Device**)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
-- Optional legacy alias `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable; do **not** ship/install alongside `aero_virtio_input.inf`):
-  - Adds an opt-in revision-gated generic fallback HWID for environments that do not expose the Aero subsystem IDs:
-    - `PCI\VEN_1AF4&DEV_1052&REV_01`
+- Optional legacy filename alias: `inf/virtio-input.inf.disabled` (rename to `inf/virtio-input.inf` to enable; do **not** ship/install alongside `aero_virtio_input.inf`)
 
 The subsystem-gated IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
-Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
+Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). Devices that match
+only the generic fallback entry appear as **Aero VirtIO Input Device**.
 
 `inf/virtio-input.inf.disabled` is a legacy filename alias for workflows that still reference `virtio-input.inf`.
-Rename it to `virtio-input.inf` to enable it. The alias INF is allowed to differ in the models sections to add the opt-in
-generic fallback HWID; outside of the models sections it is expected to stay in sync with `inf/aero_virtio_input.inf` (see
-`scripts/check-inf-alias.py`). Do **not** ship/install it alongside `aero_virtio_input.inf` — they overlap on the same
-keyboard/mouse HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
+Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` —
+they match the same HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
 
 The INFs do **not** match:
 
