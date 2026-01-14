@@ -6823,6 +6823,14 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
     }
   } else if (op == STATUS_PARTIAL_COPY) {
     PrintNtStatus(L"read-gpa partial copy", f, op);
+  } else if (copied != want) {
+    // Defensively treat short reads as an error even if the KMD reports STATUS_SUCCESS.
+    fwprintf(stderr,
+             L"read-gpa short read: gpa=0x%I64x requested=%lu got=%lu\n",
+             (unsigned long long)gpa,
+             (unsigned long)want,
+             (unsigned long)copied);
+    return 2;
   }
 
   if (copied != 0) {
