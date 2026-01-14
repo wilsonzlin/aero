@@ -752,6 +752,8 @@ impl AeroGpuExecutor {
                         PendingFenceKind::Immediate
                     };
 
+                    let submission_failed = !decode_errors.is_empty();
+                    let mut inserted_new_fence = false;
                     if desc.signal_fence > regs.completed_fence {
                         let already_completed =
                             self.completed_before_submit.remove(&desc.signal_fence);
@@ -765,6 +767,7 @@ impl AeroGpuExecutor {
                         match self.in_flight.entry(desc.signal_fence) {
                             Entry::Vacant(v) => {
                                 v.insert(incoming);
+                                inserted_new_fence = true;
                             }
                             Entry::Occupied(mut o) => {
                                 // Win7 KMD internal submissions (e.g. RELEASE_SHARED_SURFACE) can
@@ -787,6 +790,16 @@ impl AeroGpuExecutor {
                         }
                     }
 
+                    // Malformed submissions must not deadlock the guest: treat them as failed and
+                    // complete the fence immediately (deferred mode) rather than waiting for any
+                    // backend/external executor.
+                    //
+                    // Note: only auto-complete on the first entry for a given fence. Duplicate
+                    // fence values may accompany real work that must still wait for completion.
+                    if submission_failed && inserted_new_fence {
+                        self.complete_fence(regs, mem, desc.signal_fence);
+                    }
+
                     // Avoid cloning potentially large command streams unless we are also retaining
                     // a submission record for debugging (`keep_last_submissions`).
                     let submit_cmd_stream = if self.cfg.keep_last_submissions > 0 {
@@ -804,28 +817,32 @@ impl AeroGpuExecutor {
                         alloc_table,
                     };
 
-                    if self.backend_configured {
-                        if self.backend.submit(mem, submit).is_err() {
-                            regs.stats.gpu_exec_errors =
-                                regs.stats.gpu_exec_errors.saturating_add(1);
-                            regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
-                            // If the backend rejects the submission, still unblock the fence.
-                            if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
-                                entry.vblank_ready = true;
+                    // Do not forward malformed submissions into backends: they cannot be executed
+                    // reliably and have already been treated as failed above.
+                    if !submission_failed {
+                        if self.backend_configured {
+                            if self.backend.submit(mem, submit).is_err() {
+                                regs.stats.gpu_exec_errors =
+                                    regs.stats.gpu_exec_errors.saturating_add(1);
+                                regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
+                                // If the backend rejects the submission, still unblock the fence.
+                                if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
+                                    entry.vblank_ready = true;
+                                }
+                                self.complete_fence(regs, mem, desc.signal_fence);
                             }
-                            self.complete_fence(regs, mem, desc.signal_fence);
+                        } else {
+                            // No in-process backend: surface the decoded submission to the caller
+                            // (WASM bridge) so it can be executed externally and later completed via
+                            // `complete_fence`.
+                            //
+                            // Some guest drivers may emit submissions with duplicate fences (including
+                            // fence values that have already completed) for best-effort internal work.
+                            // Even if such submissions do not advance the completed fence, they can
+                            // carry important side effects (e.g. shared-surface release), so always
+                            // queue them for external execution.
+                            self.pending_submissions.push_back(submit);
                         }
-                    } else {
-                        // No in-process backend: surface the decoded submission to the caller
-                        // (WASM bridge) so it can be executed externally and later completed via
-                        // `complete_fence`.
-                        //
-                        // Some guest drivers may emit submissions with duplicate fences (including
-                        // fence values that have already completed) for best-effort internal work.
-                        // Even if such submissions do not advance the completed fence, they can
-                        // carry important side effects (e.g. shared-surface release), so always
-                        // queue them for external execution.
-                        self.pending_submissions.push_back(submit);
                     }
                 }
             }
@@ -1470,6 +1487,18 @@ mod tests {
         size_bytes
     }
 
+    fn write_invalid_cmd_stream_header(mem: &mut dyn MemoryBus, gpa: u64) -> u32 {
+        let size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+        // Wrong magic triggers `AeroGpuCmdStreamDecodeError::BadHeader`.
+        mem.write_u32(gpa, AEROGPU_CMD_STREAM_MAGIC ^ 1);
+        mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
+        mem.write_u32(gpa + 8, size_bytes);
+        mem.write_u32(gpa + 12, 0);
+        mem.write_u32(gpa + 16, 0);
+        mem.write_u32(gpa + 20, 0);
+        size_bytes
+    }
+
     #[test]
     fn fence_completions_advance_monotonically_and_raise_irq_on_advances() {
         let mut mem = Bus::new(0x4000);
@@ -1597,6 +1626,48 @@ mod tests {
         exec.complete_fence(&mut regs, &mut mem, fence);
         assert_eq!(regs.completed_fence, fence);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+
+    #[test]
+    fn deferred_mode_auto_completes_malformed_submissions() {
+        let mut mem = Bus::new(0x8000);
+        let ring_gpa = 0x1000u64;
+        let cmd_gpa = 0x3000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 1);
+
+        let fence = 7u64;
+        let cmd_size_bytes = write_invalid_cmd_stream_header(&mut mem, cmd_gpa);
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc_with_cmd(&mut mem, desc_gpa, fence, 0, cmd_gpa, cmd_size_bytes);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE | irq_bits::ERROR,
+            ..Default::default()
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        assert_eq!(regs.completed_fence, fence);
+        assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+        assert!(exec.drain_pending_submissions().is_empty());
     }
 
     #[test]
