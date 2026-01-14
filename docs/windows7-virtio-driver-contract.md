@@ -856,6 +856,13 @@ The guest MAY send output/LED events via `statusq`.
 - The device MUST consume and complete all `statusq` descriptors.
 - The device MAY ignore the contents (LEDs need not be modeled in contract v1).
 
+End-to-end validation (non-normative):
+
+- The in-tree Win7 guest selftest contains an optional keyboard LED/statusq smoke test (`virtio-input-led`) which sends HID
+  LED output reports (CapsLock/NumLock/ScrollLock) and verifies that `statusq` submissions are consumed/completed.
+  - Guest flag: `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`)
+  - Host harness enforcement: PowerShell `-WithInputLed` / Python `--with-input-led`
+
 ### 3.4 virtio-snd (audio)
 
 #### 3.4.1 PCI IDs
