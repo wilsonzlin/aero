@@ -1836,7 +1836,35 @@ static std::optional<DWORD> QueryRegDword(HKEY key, const wchar_t* value_name) {
   return data;
 }
 
-static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev, const wchar_t* value_name) {
+enum class VirtioSndToggleRegSource : DWORD {
+  DeviceParametersSubkey = 0,
+  DeviceKeyRoot = 1,
+  DriverParametersSubkey = 2,
+  DriverKeyRoot = 3,
+};
+
+static const char* VirtioSndToggleRegSourceToString(VirtioSndToggleRegSource source) {
+  switch (source) {
+    case VirtioSndToggleRegSource::DeviceParametersSubkey:
+      return "device_parameters";
+    case VirtioSndToggleRegSource::DeviceKeyRoot:
+      return "device_root";
+    case VirtioSndToggleRegSource::DriverParametersSubkey:
+      return "driver_parameters";
+    case VirtioSndToggleRegSource::DriverKeyRoot:
+      return "driver_root";
+    default:
+      return "unknown";
+  }
+}
+
+struct RegDwordLookup {
+  DWORD value = 0;
+  bool from_parameters_subkey = false;
+};
+
+static std::optional<RegDwordLookup> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
+                                                            const wchar_t* value_name) {
   if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
 
   HKEY root = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_QUERY_VALUE);
@@ -1851,21 +1879,21 @@ static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_
     RegCloseKey(params);
     if (value.has_value()) {
       RegCloseKey(root);
-      return value;
+      return RegDwordLookup{*value, true};
     }
   }
 
   if (auto value = QueryRegDword(root, value_name)) {
     RegCloseKey(root);
-    return value;
+    return RegDwordLookup{*value, false};
   }
 
   RegCloseKey(root);
   return std::nullopt;
 }
 
-static std::optional<DWORD> QueryDeviceDriverRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
-                                                      const wchar_t* value_name) {
+static std::optional<RegDwordLookup> QueryDeviceDriverRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
+                                                               const wchar_t* value_name) {
   if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
 
   HKEY root = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_QUERY_VALUE);
@@ -1880,13 +1908,13 @@ static std::optional<DWORD> QueryDeviceDriverRegDword(HDEVINFO devinfo, SP_DEVIN
     RegCloseKey(params);
     if (value.has_value()) {
       RegCloseKey(root);
-      return value;
+      return RegDwordLookup{*value, true};
     }
   }
 
   if (auto value = QueryRegDword(root, value_name)) {
     RegCloseKey(root);
-    return value;
+    return RegDwordLookup{*value, false};
   }
 
   RegCloseKey(root);
@@ -1912,7 +1940,9 @@ struct VirtioSndPciDevice {
   bool has_rev_01 = false;
   bool is_transitional = false;
   std::optional<DWORD> force_null_backend;
+  std::optional<VirtioSndToggleRegSource> force_null_backend_source;
   std::optional<DWORD> allow_polling_only;
+  std::optional<VirtioSndToggleRegSource> allow_polling_only_source;
 };
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
@@ -2033,14 +2063,26 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
       snd.matching_device_id = *match;
     }
     if (auto force = QueryDeviceDevRegDword(devinfo, &dev, L"ForceNullBackend")) {
-      snd.force_null_backend = *force;
+      snd.force_null_backend = force->value;
+      snd.force_null_backend_source = force->from_parameters_subkey
+                                          ? VirtioSndToggleRegSource::DeviceParametersSubkey
+                                          : VirtioSndToggleRegSource::DeviceKeyRoot;
     } else if (auto force = QueryDeviceDriverRegDword(devinfo, &dev, L"ForceNullBackend")) {
-      snd.force_null_backend = *force;
+      snd.force_null_backend = force->value;
+      snd.force_null_backend_source = force->from_parameters_subkey
+                                          ? VirtioSndToggleRegSource::DriverParametersSubkey
+                                          : VirtioSndToggleRegSource::DriverKeyRoot;
     }
     if (auto allow = QueryDeviceDevRegDword(devinfo, &dev, L"AllowPollingOnly")) {
-      snd.allow_polling_only = *allow;
+      snd.allow_polling_only = allow->value;
+      snd.allow_polling_only_source = allow->from_parameters_subkey
+                                          ? VirtioSndToggleRegSource::DeviceParametersSubkey
+                                          : VirtioSndToggleRegSource::DeviceKeyRoot;
     } else if (auto allow = QueryDeviceDriverRegDword(devinfo, &dev, L"AllowPollingOnly")) {
-      snd.allow_polling_only = *allow;
+      snd.allow_polling_only = allow->value;
+      snd.allow_polling_only_source = allow->from_parameters_subkey
+                                          ? VirtioSndToggleRegSource::DriverParametersSubkey
+                                          : VirtioSndToggleRegSource::DriverKeyRoot;
     }
 
     ULONG status = 0;
@@ -2067,12 +2109,18 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
         log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
       }
       if (snd.force_null_backend.has_value()) {
-        log.Logf("virtio-snd: detected PCI device ForceNullBackend=%lu",
-                 static_cast<unsigned long>(*snd.force_null_backend));
+        log.Logf("virtio-snd: detected PCI device ForceNullBackend=%lu source=%s",
+                 static_cast<unsigned long>(*snd.force_null_backend),
+                 snd.force_null_backend_source.has_value()
+                     ? VirtioSndToggleRegSourceToString(*snd.force_null_backend_source)
+                     : "unknown");
       }
       if (snd.allow_polling_only.has_value()) {
-        log.Logf("virtio-snd: detected PCI device AllowPollingOnly=%lu",
-                 static_cast<unsigned long>(*snd.allow_polling_only));
+        log.Logf("virtio-snd: detected PCI device AllowPollingOnly=%lu source=%s",
+                 static_cast<unsigned long>(*snd.allow_polling_only),
+                 snd.allow_polling_only_source.has_value()
+                     ? VirtioSndToggleRegSourceToString(*snd.allow_polling_only_source)
+                     : "unknown");
       }
     }
     const std::wstring expected_service = snd.is_transitional && !snd.is_modern
@@ -10127,16 +10175,32 @@ int wmain(int argc, wchar_t** argv) {
         }
 
         bool force_null_backend = false;
+        std::string force_null_backend_pnp_id;
+        std::string force_null_backend_source = "unknown";
         for (const auto& dev : snd_pci) {
           if (dev.force_null_backend.has_value() && *dev.force_null_backend != 0) {
             force_null_backend = true;
+            if (!dev.instance_id.empty()) {
+              force_null_backend_pnp_id = WideToUtf8(dev.instance_id);
+            }
+            if (dev.force_null_backend_source.has_value()) {
+              force_null_backend_source =
+                  VirtioSndToggleRegSourceToString(*dev.force_null_backend_source);
+            }
             break;
           }
         }
 
         if (force_null_backend) {
-          log.LogLine(
-              "virtio-snd: ForceNullBackend=1 set; virtio transport disabled (host wav capture will be silent)");
+          if (!force_null_backend_pnp_id.empty()) {
+            log.Logf(
+                "virtio-snd: ForceNullBackend=1 set (pnp_id=%s source=%s); virtio transport disabled (host wav capture will be silent)",
+                force_null_backend_pnp_id.c_str(), force_null_backend_source.c_str());
+          } else {
+            log.Logf(
+                "virtio-snd: ForceNullBackend=1 set (source=%s); virtio transport disabled (host wav capture will be silent)",
+                force_null_backend_source.c_str());
+          }
 
           if (want_snd_playback) {
             log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend%s", snd_irq_fields.c_str());
