@@ -28,7 +28,7 @@ namespace aerogpu {
 // Do NOT derive `share_token` from the numeric value of the user-mode shared `HANDLE`:
 // for real NT handles the numeric value is process-local (commonly different after
 // `DuplicateHandle`), and even token-style shared handles must not be treated as a
-// stable protocol key.
+// stable protocol key (and should not be passed to `CloseHandle`).
 class ShareTokenAllocator {
  public:
   ShareTokenAllocator() = default;
