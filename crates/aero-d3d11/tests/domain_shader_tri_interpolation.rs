@@ -5,6 +5,7 @@ use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
     Sm4Program, Swizzle, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 use anyhow::{anyhow, Context, Result};
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -18,32 +19,7 @@ const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 const D3D_NAME_DOMAIN_LOCATION: u32 = 12;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
-    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks");
-    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_len;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor as u32);
-        cursor += 8 + data.len();
-    }
-    let total_size = cursor as u32;
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-    }
-    bytes
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 fn sig_param(name: &str, index: u32, register: u32, mask: u8) -> DxbcSignatureParameter {
@@ -61,39 +37,21 @@ fn sig_param(name: &str, index: u32, register: u32, mask: u8) -> DxbcSignaturePa
 }
 
 fn build_signature_chunk(params: &[DxbcSignatureParameter]) -> Vec<u8> {
-    // Same layout as D3D10+ signature chunks:
-    // header: u32 param_count, u32 param_offset
-    // table entries: 24 bytes each
-    let param_count = u32::try_from(params.len()).expect("too many signature params");
-    let header_len = 8usize;
-    let entry_size = 24usize;
-    let table_len = params.len() * entry_size;
-
-    let mut strings = Vec::<u8>::new();
-    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
-    for p in params {
-        name_offsets.push((header_len + table_len + strings.len()) as u32);
-        strings.extend_from_slice(p.semantic_name.as_bytes());
-        strings.push(0);
-    }
-
-    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
-
-    for (p, &name_off) in params.iter().zip(name_offsets.iter()) {
-        bytes.extend_from_slice(&name_off.to_le_bytes());
-        bytes.extend_from_slice(&p.semantic_index.to_le_bytes());
-        bytes.extend_from_slice(&p.system_value_type.to_le_bytes());
-        bytes.extend_from_slice(&p.component_type.to_le_bytes());
-        bytes.extend_from_slice(&p.register.to_le_bytes());
-        bytes.push(p.mask);
-        bytes.push(p.read_write_mask);
-        bytes.push(p.stream);
-        bytes.push(p.min_precision);
-    }
-    bytes.extend_from_slice(&strings);
-    bytes
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.semantic_name.as_str(),
+            semantic_index: p.semantic_index,
+            system_value_type: p.system_value_type,
+            component_type: p.component_type,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.read_write_mask,
+            stream: u32::from(p.stream),
+            min_precision: u32::from(p.min_precision),
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
