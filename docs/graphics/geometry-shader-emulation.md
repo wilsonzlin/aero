@@ -239,14 +239,16 @@ Current limitations (high-level):
 Test pointers:
 
 - End-to-end translated GS execution:
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`
- - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
 - Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
@@ -473,6 +475,7 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
@@ -487,6 +490,7 @@ cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs
 ```
 
