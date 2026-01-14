@@ -86,7 +86,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_semantic_l
 **Implementation (key files):**
 - `crates/aero-dxbc/src/{dxbc.rs,lib.rs,rdef.rs,ctab.rs,signature.rs,test_utils.rs}`
 - `crates/aero-d3d9/src/dxbc.rs` (uses `aero_dxbc::DxbcFile` for container parsing)
-- `crates/aero-d3d9-shader/src/lib.rs` (now a thin `pub use aero_dxbc;` wrapper)
+- (No separate wrapper crate) other crates should depend on `crates/aero-dxbc/` directly for DXBC parsing.
 
 **Implementing commits (high-signal):**
 - `2bb1bbca` — `refactor(d3d9): reuse aero-dxbc for shader bytecode extraction`
