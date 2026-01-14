@@ -2824,6 +2824,141 @@ bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   return true;
 }
 
+bool TestApplyStateBlockViewportEmitsSetViewport() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp_a{};
+  vp_a.X = 0.0f;
+  vp_a.Y = 0.0f;
+  vp_a.Width = 256.0f;
+  vp_a.Height = 512.0f;
+  vp_a.MinZ = 0.0f;
+  vp_a.MaxZ = 1.0f;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_a);
+  if (!Check(hr == S_OK, "SetViewport(A)")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp_b{};
+  vp_b.X = 10.0f;
+  vp_b.Y = 20.0f;
+  vp_b.Width = 300.0f;
+  vp_b.Height = 400.0f;
+  vp_b.MinZ = 0.25f;
+  vp_b.MaxZ = 0.75f;
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(SetViewport(B))")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_b);
+  if (!Check(hr == S_OK, "SetViewport(B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(SetViewport(B))")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  // Restore viewport A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_a);
+  if (!Check(hr == S_OK, "SetViewport(A) restore before apply")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(SetViewport(B))")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock viewport)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    DeleteSb();
+    return false;
+  }
+
+  bool saw_viewport = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VIEWPORT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_viewport)) {
+      continue;
+    }
+    const auto* vp = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+    if (vp->x_f32 == F32Bits(vp_b.X) &&
+        vp->y_f32 == F32Bits(vp_b.Y) &&
+        vp->width_f32 == F32Bits(vp_b.Width) &&
+        vp->height_f32 == F32Bits(vp_b.Height) &&
+        vp->min_depth_f32 == F32Bits(vp_b.MinZ) &&
+        vp->max_depth_f32 == F32Bits(vp_b.MaxZ)) {
+      saw_viewport = true;
+      break;
+    }
+  }
+  if (!Check(saw_viewport, "ApplyStateBlock emits SET_VIEWPORT with expected values")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->viewport.X == vp_b.X &&
+                   dev->viewport.Y == vp_b.Y &&
+                   dev->viewport.Width == vp_b.Width &&
+                   dev->viewport.Height == vp_b.Height &&
+                   dev->viewport.MinZ == vp_b.MinZ &&
+                   dev->viewport.MaxZ == vp_b.MaxZ,
+               "ApplyStateBlock updates cached viewport state")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestApplyStateBlockToleratesUnsupportedTextureStageState() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -19438,6 +19573,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockViewportEmitsSetViewport()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockToleratesUnsupportedTextureStageState()) {
