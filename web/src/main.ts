@@ -4072,6 +4072,24 @@ function renderAudioPanel(): HTMLElement {
     }
   }
 
+  function snapshotConfigForExport(): Record<string, unknown> {
+    try {
+      const cfg = configManager.getState();
+      const effective = { ...cfg.effective } as Record<string, unknown>;
+      if (typeof effective.l2TunnelToken === "string" && effective.l2TunnelToken.length) {
+        effective.l2TunnelToken = "<redacted>";
+      }
+      return {
+        effective,
+        lockedKeys: Array.from(cfg.lockedKeys),
+        issues: cfg.issues,
+        capabilities: cfg.capabilities,
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   const exportMetricsButton = el("button", {
     text: "Export audio metrics (json)",
     onclick: () => {
@@ -4101,6 +4119,7 @@ function renderAudioPanel(): HTMLElement {
           },
           microphone: snapshotMicAttachment(),
           workers: snapshotWorkerCoordinator(),
+          config: snapshotConfigForExport(),
         };
 
         downloadJson(report, `aero-audio-metrics-${ts}.json`);
@@ -4204,6 +4223,7 @@ function renderAudioPanel(): HTMLElement {
           },
           microphone: snapshotMicAttachment(),
           workers: snapshotWorkerCoordinator(),
+          config: snapshotConfigForExport(),
         };
 
         const entries: Array<{ path: string; data: Uint8Array }> = [
@@ -4217,26 +4237,10 @@ function renderAudioPanel(): HTMLElement {
         // useful when QA runs are executed with URL overrides / deployment configs and we need to
         // reproduce the exact worker/runtime setup.
         try {
-          const cfg = configManager.getState();
-          const effective = { ...cfg.effective } as Record<string, unknown>;
-          if (typeof effective.l2TunnelToken === "string" && effective.l2TunnelToken.length) {
-            effective.l2TunnelToken = "<redacted>";
-          }
+          const cfg = snapshotConfigForExport();
           entries.push({
             path: `${dir}/aero-config.json`,
-            data: encoder.encode(
-              JSON.stringify(
-                {
-                  timeIso,
-                  effective,
-                  lockedKeys: Array.from(cfg.lockedKeys),
-                  issues: cfg.issues,
-                  capabilities: cfg.capabilities,
-                },
-                null,
-                2,
-              ),
-            ),
+            data: encoder.encode(JSON.stringify({ timeIso, ...cfg }, null, 2)),
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
