@@ -27,7 +27,7 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   and `Machine::display_present()`
   will prefer the WDDM-programmed scanout framebuffer once scanout0 has been **claimed** (valid config +
   `SCANOUT0_ENABLE=1`). After claim, WDDM scanout remains authoritative until the guest disables
-  scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Clearing `SCANOUT0_ENABLE=0` releases WDDM ownership
+  scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Writing `SCANOUT0_ENABLE=0` releases WDDM ownership
   and allows falling back to the legacy VGA/VBE sources.
 
   Concretely:
