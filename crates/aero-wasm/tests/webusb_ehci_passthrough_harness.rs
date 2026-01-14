@@ -40,7 +40,9 @@ fn webusb_ehci_harness_action_ids_monotonic_across_detach_attach() {
         "expected drain_actions to return null when the device is detached"
     );
 
-    harness.attach_device().expect("attach_device ok (reattach)");
+    harness
+        .attach_device()
+        .expect("attach_device ok (reattach)");
     harness
         .cmd_get_device_descriptor()
         .expect("cmd_get_device_descriptor ok (reattach)");
@@ -65,7 +67,9 @@ fn webusb_ehci_harness_action_ids_monotonic_across_controller_detach_attach() {
 
     harness.detach_controller();
     harness.attach_controller();
-    harness.attach_device().expect("attach_device ok (after reattach)");
+    harness
+        .attach_device()
+        .expect("attach_device ok (after reattach)");
 
     harness
         .cmd_get_device_descriptor()
@@ -77,4 +81,3 @@ fn webusb_ehci_harness_action_ids_monotonic_across_controller_detach_attach() {
         "expected action ids to be monotonic across controller detach/attach (first={first_id}, second={second_id})"
     );
 }
-

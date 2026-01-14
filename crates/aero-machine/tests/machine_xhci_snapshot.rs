@@ -58,7 +58,10 @@ fn xhci_snapshot_roundtrips_xhci_state_and_uhci_tick_remainder() {
     src.io_write(A20_GATE_PORT, 1, 0x02);
 
     let bar4_base = uhci_bar4_base(&src);
-    assert_ne!(bar4_base, 0, "UHCI BAR4 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar4_base, 0,
+        "UHCI BAR4 base should be assigned by BIOS POST"
+    );
     let base = u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16");
 
     // Start the controller (USBCMD.RS).
@@ -69,7 +72,10 @@ fn xhci_snapshot_roundtrips_xhci_state_and_uhci_tick_remainder() {
     );
 
     let bar0_base = xhci_bar0_base(&src);
-    assert_ne!(bar0_base, 0, "xHCI BAR0 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "xHCI BAR0 base should be assigned by BIOS POST"
+    );
 
     let fr0 = src.io_read(base + uhci_regs::REG_FRNUM, 2) as u16;
     let mf0 = (src.read_physical_u32(bar0_base + xhci_regs::REG_MFINDEX) & 0x3fff) as u16;
@@ -125,7 +131,8 @@ fn xhci_snapshot_roundtrips_xhci_state_and_uhci_tick_remainder() {
         bar4_base_restored, 0,
         "UHCI BAR4 base should be assigned by BIOS POST"
     );
-    let base_restored = u16::try_from(bar4_base_restored).expect("UHCI BAR4 base should fit in u16");
+    let base_restored =
+        u16::try_from(bar4_base_restored).expect("UHCI BAR4 base should fit in u16");
 
     let bar0_base_restored = xhci_bar0_base(&restored);
     assert_ne!(
@@ -169,7 +176,9 @@ fn xhci_restore_errors_when_snapshot_contains_xhci_state_but_xhci_disabled() {
     assert!(
         matches!(
             err,
-            snapshot::SnapshotError::Corrupt("snapshot contains xHCI state but enable_xhci is false")
+            snapshot::SnapshotError::Corrupt(
+                "snapshot contains xHCI state but enable_xhci is false"
+            )
         ),
         "unexpected error: {err:?}"
     );

@@ -384,4 +384,3 @@ fn aerogpu_cmd_gs_emulation_passthrough_vs_uses_storage_buffer_vertex_pulling() 
         assert_all_pixels_eq(&pixels, [255, 0, 0, 255]);
     });
 }
-
