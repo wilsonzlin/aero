@@ -1005,7 +1005,10 @@ struct aerogpu_cmd_set_constant_buffers {
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_constant_buffers) == 24);
 
 /*
- * Shader resource buffer binding entry for SET_SHADER_RESOURCE_BUFFERS.
+ * Buffer SRV binding entry for SET_SHADER_RESOURCE_BUFFERS.
+ *
+ * `size_bytes == 0` means "use the remaining bytes of the buffer starting at
+ * offset_bytes" (D3D11-style "whole resource" default).
  */
 #pragma pack(push, 1)
 struct aerogpu_shader_resource_buffer_binding {
@@ -1040,14 +1043,17 @@ struct aerogpu_cmd_set_shader_resource_buffers {
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_resource_buffers) == 24);
 
 /*
- * Unordered access buffer binding entry for SET_UNORDERED_ACCESS_BUFFERS.
+ * Buffer UAV binding entry for SET_UNORDERED_ACCESS_BUFFERS.
+ *
+ * `initial_count` follows D3D11 semantics: `0xFFFFFFFF` means "keep current UAV
+ * counter value" (do not reset).
  */
 #pragma pack(push, 1)
 struct aerogpu_unordered_access_buffer_binding {
   aerogpu_handle_t buffer; /* 0 = unbound */
   uint32_t offset_bytes;
   uint32_t size_bytes;
-  uint32_t initial_count; /* reserved for now */
+  uint32_t initial_count;
 };
 #pragma pack(pop)
 

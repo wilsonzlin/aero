@@ -335,23 +335,23 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, start_slot);
   PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, buffer_count);
   PRINT_OFF("aerogpu_cmd_set_constant_buffers", struct aerogpu_cmd_set_constant_buffers, reserved0);
-
+  
   PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, buffer);
   PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, offset_bytes);
   PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, size_bytes);
   PRINT_OFF("aerogpu_shader_resource_buffer_binding", struct aerogpu_shader_resource_buffer_binding, reserved0);
-
+  
   PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, hdr);
   PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, shader_stage);
   PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, start_slot);
   PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, buffer_count);
   PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, reserved0);
-
+  
   PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, buffer);
   PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, offset_bytes);
   PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, size_bytes);
   PRINT_OFF("aerogpu_unordered_access_buffer_binding", struct aerogpu_unordered_access_buffer_binding, initial_count);
-
+  
   PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, hdr);
   PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, shader_stage);
   PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, start_slot);
@@ -380,7 +380,7 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, first_index);
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, base_vertex);
   PRINT_OFF("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed, first_instance);
-
+  
   PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, hdr);
   PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, group_count_x);
   PRINT_OFF("aerogpu_cmd_dispatch", struct aerogpu_cmd_dispatch, group_count_y);

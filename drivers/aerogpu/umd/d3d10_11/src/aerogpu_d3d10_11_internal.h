@@ -223,7 +223,7 @@ inline uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
   }
 }
 
-inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
+inline uint32_t bind_flags_to_usage_flags_for_buffer(uint32_t bind_flags) {
   uint32_t usage = AEROGPU_RESOURCE_USAGE_NONE;
   if (bind_flags & kD3D11BindVertexBuffer) {
     usage |= AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
@@ -233,9 +233,6 @@ inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
   }
   if (bind_flags & kD3D11BindConstantBuffer) {
     usage |= AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER;
-  }
-  if (bind_flags & kD3D11BindShaderResource) {
-    usage |= AEROGPU_RESOURCE_USAGE_TEXTURE;
   }
   if (bind_flags & (kD3D11BindShaderResource | kD3D11BindUnorderedAccess)) {
     usage |= AEROGPU_RESOURCE_USAGE_STORAGE;
@@ -247,6 +244,28 @@ inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
     usage |= AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL;
   }
   return usage;
+}
+
+inline uint32_t bind_flags_to_usage_flags_for_texture(uint32_t bind_flags) {
+  // Textures must always advertise TEXTURE usage regardless of bind flags.
+  uint32_t usage = AEROGPU_RESOURCE_USAGE_TEXTURE;
+  if (bind_flags & kD3D11BindRenderTarget) {
+    usage |= AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
+  }
+  if (bind_flags & kD3D11BindDepthStencil) {
+    usage |= AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL;
+  }
+  return usage;
+}
+
+// Legacy helper used by older portable D3D10/11 UMD codepaths.
+//
+// Historically, these UMDs set `AEROGPU_RESOURCE_USAGE_TEXTURE` for textures
+// explicitly when emitting CREATE_TEXTURE2D. Keep this helper as "buffer-style"
+// usage mapping so buffers do not pick up TEXTURE usage when `bind_flags`
+// contains D3D11_BIND_SHADER_RESOURCE.
+inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
+  return bind_flags_to_usage_flags_for_buffer(bind_flags);
 }
 
 inline uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
@@ -610,6 +629,9 @@ struct Resource {
 
   // Buffer fields.
   uint64_t size_bytes = 0;
+  // Structure byte stride for structured buffers (D3D11_BUFFER_DESC::StructureByteStride).
+  // 0 means "not a structured buffer / unknown".
+  uint32_t structure_stride_bytes = 0;
 
   // Texture2D fields.
   uint32_t width = 0;
@@ -769,12 +791,14 @@ struct Device {
   Resource* current_dsv_resource = nullptr;
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srvs{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_cs_srvs{};
   std::array<Resource*, kMaxConstantBufferSlots> current_vs_cbs{};
   std::array<Resource*, kMaxConstantBufferSlots> current_ps_cbs{};
+  std::array<Resource*, kMaxConstantBufferSlots> current_cs_cbs{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
-  aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_cs = 0;
+  aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
   InputLayout* current_input_layout_obj = nullptr;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
@@ -785,11 +809,21 @@ struct Device {
   aerogpu_handle_t vs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t cs_srvs[kMaxShaderResourceSlots] = {};
-  aerogpu_handle_t cs_srv_buffers[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t cs_samplers[kMaxSamplerSlots] = {};
-  aerogpu_handle_t cs_uav_buffers[kMaxUavSlots] = {};
+
+  // Buffer SRV bindings (structured/raw buffers).
+  aerogpu_shader_resource_buffer_binding vs_srv_buffers[kMaxShaderResourceSlots] = {};
+  aerogpu_shader_resource_buffer_binding ps_srv_buffers[kMaxShaderResourceSlots] = {};
+  aerogpu_shader_resource_buffer_binding cs_srv_buffers[kMaxShaderResourceSlots] = {};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srv_buffers{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srv_buffers{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_cs_srv_buffers{};
+
+  // Compute UAV buffer bindings.
+  aerogpu_unordered_access_buffer_binding cs_uavs[kMaxUavSlots] = {};
+  std::array<Resource*, kMaxUavSlots> current_cs_uavs{};
 
   // Minimal software-state tracking for the Win7 guest tests. This allows the
   // UMD to produce correct staging readback results even when the submission
