@@ -477,6 +477,34 @@ static void test_ipv6_vlan_udp_checksum_only(void)
     assert(info.L4Protocol == 17);
 }
 
+static void test_ipv6_qinq_udp_checksum_only(void)
+{
+    uint8_t pkt[22 + 40 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth_qinq(pkt, 0x86DD);
+    build_ipv6_udp(pkt + 22, 0);
+    build_udp_header(pkt + 22 + 40);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.HdrLen == 0);
+    assert(hdr.GsoSize == 0);
+    assert(hdr.CsumStart == (uint16_t)(22 + 40));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 17);
+}
+
 static void test_ipv4_vlan_tcp_checksum_only(void)
 {
     uint8_t pkt[18 + 20 + 20];
@@ -794,6 +822,31 @@ static void test_ipv6_qinq_tcp_lso(void)
     assert(hdr.HdrLen == (uint16_t)(22 + 40 + 20));
     assert(hdr.GsoSize == 1440);
     assert(hdr.CsumStart == (uint16_t)(22 + 40));
+    assert(hdr.CsumOffset == 16);
+}
+
+static void test_ipv6_vlan_tcp_lso(void)
+{
+    uint8_t pkt[18 + 40 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth_vlan(pkt, 0x86DD);
+    build_ipv6_tcp(pkt + 18, 4000);
+    build_tcp_header(pkt + 18 + 40);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6);
+    assert(hdr.HdrLen == (uint16_t)(18 + 40 + 20));
+    assert(hdr.GsoSize == 1440);
+    assert(hdr.CsumStart == (uint16_t)(18 + 40));
     assert(hdr.CsumOffset == 16);
 }
 
@@ -1118,6 +1171,7 @@ int main(void)
     test_ipv6_hopbyhop_udp_checksum_only();
     test_ipv6_vlan_tcp_checksum_only();
     test_ipv6_vlan_udp_checksum_only();
+    test_ipv6_qinq_udp_checksum_only();
     test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_vlan_udp_checksum_only();
     test_ipv4_qinq_udp_checksum_only();
@@ -1131,6 +1185,7 @@ int main(void)
     test_ipv4_tcp_options_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_qinq_tcp_lso();
+    test_ipv6_vlan_tcp_lso();
     test_ipv6_tcp_lso();
     test_ipv6_hopbyhop_tcp_lso();
     test_ipv6_tcp_lso_ecn_when_cwr_and_enabled();
