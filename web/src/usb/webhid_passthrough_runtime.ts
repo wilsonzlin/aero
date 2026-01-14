@@ -188,7 +188,18 @@ export class WebHidPassthroughRuntime {
           const view = event.data;
           if (!(view instanceof DataView)) return;
 
-          const reportId = (typeof event.reportId === "number" ? event.reportId : 0) >>> 0;
+          const rawReportId = (event as unknown as { reportId?: unknown }).reportId;
+          if (
+            rawReportId !== undefined &&
+            (typeof rawReportId !== "number" || !Number.isInteger(rawReportId) || rawReportId < 0 || rawReportId > 0xff)
+          ) {
+            warnOnce(
+              "invalidReportId",
+              `[webhid] inputreport has invalid reportId=${String(rawReportId)}; dropping`,
+            );
+            return;
+          }
+          const reportId = (rawReportId === undefined ? 0 : rawReportId) >>> 0;
           const srcLen = view.byteLength;
           const expected = expectedInputPayloadBytes.get(reportId);
           let destLen: number;

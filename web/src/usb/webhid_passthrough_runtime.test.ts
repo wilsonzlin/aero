@@ -285,6 +285,36 @@ describe("WebHidPassthroughRuntime", () => {
     }
   });
 
+  it("drops inputreport events with invalid reportId values before forwarding to push_input_report", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+
+      const push = vi.fn();
+      const bridge: WebHidPassthroughBridgeLike = {
+        push_input_report: push,
+        drain_next_output_report: vi.fn(() => null),
+        configured: vi.fn(() => true),
+        free: vi.fn(),
+      };
+
+      const runtime = new WebHidPassthroughRuntime({
+        createBridge: () => bridge,
+        pollIntervalMs: 0,
+      });
+      await runtime.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.dispatchInputReport(-1, huge);
+
+      expect(push).toHaveBeenCalledTimes(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("invalid reportId"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("drains output reports and calls the correct WebHID send method", async () => {
     const device = new FakeHidDevice();
 
