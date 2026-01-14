@@ -282,8 +282,17 @@ export class HidReportRing {
 
       // Not enough contiguous bytes for a header; skip to the wrap boundary.
       if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        if (remaining > used) {
+          // Corruption; do not advance head.
+          return null;
+        }
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
+      }
+
+      if (used < HID_REPORT_RECORD_HEADER_BYTES) {
+        // Corruption; do not read past `tail`.
+        return null;
       }
 
       const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
@@ -291,6 +300,10 @@ export class HidReportRing {
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
       if (reportTypeRaw === HidReportType.WrapMarker) {
+        if (remaining > used) {
+          // Corruption; do not advance head.
+          return null;
+        }
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
@@ -307,6 +320,10 @@ export class HidReportRing {
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > remaining) {
         // Corruption; do not advance head.
+        return null;
+      }
+      if (total > used) {
+        // Corruption; do not read past `tail`.
         return null;
       }
 
@@ -341,15 +358,19 @@ export class HidReportRing {
 
       // Not enough contiguous bytes for a header; skip to the wrap boundary.
       if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        if (remaining > used) throw hidReportRingCorruption("head/tail inconsistent (incomplete wrap padding)");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
+
+      if (used < HID_REPORT_RECORD_HEADER_BYTES) throw hidReportRingCorruption("head/tail inconsistent (incomplete record header)");
 
       const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
       if (reportTypeRaw === HidReportType.WrapMarker) {
+        if (remaining > used) throw hidReportRingCorruption("head/tail inconsistent (wrap marker beyond tail)");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
@@ -398,15 +419,19 @@ export class HidReportRing {
       const remaining = this.#cap - headIndex;
 
       if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        if (remaining > used) return false; // corruption
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
+
+      if (used < HID_REPORT_RECORD_HEADER_BYTES) return false; // corruption
 
       const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
       if (reportTypeRaw === HidReportType.WrapMarker) {
+        if (remaining > used) return false; // corruption
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
@@ -422,6 +447,7 @@ export class HidReportRing {
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > remaining) return false;
+      if (total > used) return false; // corruption
 
       const deviceId = this.#view.getUint32(headIndex + 0, true) >>> 0;
       const payloadStart = headIndex + HID_REPORT_RECORD_HEADER_BYTES;
@@ -450,15 +476,19 @@ export class HidReportRing {
       const remaining = this.#cap - headIndex;
 
       if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        if (remaining > used) throw hidReportRingCorruption("head/tail inconsistent (incomplete wrap padding)");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
+
+      if (used < HID_REPORT_RECORD_HEADER_BYTES) throw hidReportRingCorruption("head/tail inconsistent (incomplete record header)");
 
       const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
       if (reportTypeRaw === HidReportType.WrapMarker) {
+        if (remaining > used) throw hidReportRingCorruption("head/tail inconsistent (wrap marker beyond tail)");
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }

@@ -286,4 +286,31 @@ describe("HidReportRing", () => {
 
     expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/unknown report type tag/);
   });
+
+  it("does not advance head when skipping to wrap boundary would exceed tail", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    // headIndex=28 => remaining=4 (<header), tailIndex=30 => used=2 (<remaining).
+    Atomics.store(ctrl, 0, 28);
+    Atomics.store(ctrl, 1, 30);
+
+    expect(ring.pop()).toBeNull();
+    expect(Atomics.load(ctrl, 0) >>> 0).toBe(28);
+    expect(ring.isCorrupt()).toBe(true);
+  });
+
+  it("popOrThrow throws when skipping to wrap boundary would exceed tail", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 28);
+    Atomics.store(ctrl, 1, 30);
+
+    expect(() => ring.popOrThrow()).toThrow(/incomplete wrap padding/);
+  });
 });
