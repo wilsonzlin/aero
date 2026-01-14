@@ -482,7 +482,7 @@ fn aerosparse_rejects_table_entry_before_data_region() {
     backend.set_len(header.data_offset + block_size).unwrap();
     backend.write_at(0, &bad_header.encode()).unwrap();
     backend
-        .write_at(AEROSPAR_HEADER_SIZE, &512u64.to_le_bytes())
+        .write_at(AEROSPAR_HEADER_SIZE, &(SECTOR as u64).to_le_bytes())
         .unwrap();
 
     match AeroSparseDisk::open(backend) {

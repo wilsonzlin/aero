@@ -132,9 +132,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[tokio::test(flavor = "current_thread")]
 async fn rejects_manifests_with_unreasonably_large_chunk_index_width() {
-    let total_size = 512usize;
+    let total_size = SECTOR_SIZE;
     let image: Vec<u8> = vec![0u8; total_size];
-    let chunk_size = 512u64;
+    let chunk_size = SECTOR_SIZE as u64;
     let total_size_u64 = image.len() as u64;
     let chunk_count = total_size_u64.div_ceil(chunk_size);
 
@@ -176,7 +176,7 @@ async fn rejects_manifests_with_unreasonably_large_chunk_index_width() {
 #[tokio::test(flavor = "current_thread")]
 async fn rejects_manifests_with_zero_total_size() {
     let image: Vec<u8> = Vec::new();
-    let chunk_size = 512u64;
+    let chunk_size = SECTOR_SIZE as u64;
     let manifest = serde_json::json!({
         "schema": "aero.chunked-disk-image.v1",
         "version": "zero-total-size",
@@ -214,9 +214,9 @@ async fn rejects_manifests_with_zero_total_size() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn rejects_manifests_with_too_small_chunk_index_width() {
-    let total_size = 512usize * 11;
+    let total_size = SECTOR_SIZE * 11;
     let image: Vec<u8> = vec![0u8; total_size];
-    let chunk_size = 512u64;
+    let chunk_size = SECTOR_SIZE as u64;
     let total_size_u64 = image.len() as u64;
     let chunk_count = total_size_u64.div_ceil(chunk_size);
 

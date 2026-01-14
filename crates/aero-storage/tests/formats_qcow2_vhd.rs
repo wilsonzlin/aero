@@ -2090,7 +2090,7 @@ fn vhd_dynamic_write_updates_single_bitmap_byte() {
     // - BAT at 1536 (padded to 512 bytes)
     // - first allocated block placed at the old footer offset: 2048
     // - bitmap size is 512 bytes, so data starts at 2560.
-    let block_start = 512u64 + 1024u64 + 512u64;
+    let block_start = (SECTOR_SIZE as u64) + 1024 + (SECTOR_SIZE as u64);
 
     // Write to sector 1, which is in the already-allocated block and will require flipping a
     // bitmap bit. The bitmap update should write back only the single changed bitmap byte.
@@ -2122,7 +2122,7 @@ fn vhd_dynamic_failed_bitmap_write_rolls_back_cached_bit() {
     // - BAT at 1536 (padded to 512 bytes)
     // - first allocated block placed at the old footer offset: 2048
     // - bitmap size is 512 bytes, so data starts at 2560.
-    let block_start = 512u64 + 1024u64 + 512u64;
+    let block_start = (SECTOR_SIZE as u64) + 1024 + (SECTOR_SIZE as u64);
 
     // Fail specifically the 1-byte bitmap write at the start of the bitmap.
     let backend = FailOnWriteBackend::new(backend, block_start, 1);
