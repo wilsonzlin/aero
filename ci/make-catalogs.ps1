@@ -662,6 +662,20 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
     Copy-Item -Path (Join-Path -Path $buildOutDir -ChildPath '*') -Destination $packageDir -Recurse -Force -ErrorAction Stop
 
+    # Some driver build systems emit/stage INF files into the build output directory. CI packaging
+    # must ignore those and only stage INF(s) selected from the source tree (via ci-package.json
+    # infFiles or auto-discovery) plus any explicitly-staged additional INF(s). Leaving build-output
+    # INFs in the package defeats infFiles disambiguation and can cause Inf2Cat to catalog (and
+    # later Guest Tools to stage) unintended INFs.
+    $buildOutputInfFiles = @(
+      Get-ChildItem -LiteralPath $packageDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { [string]::Equals([IO.Path]::GetExtension($_.Name), '.inf', [System.StringComparison]::OrdinalIgnoreCase) }
+    )
+    if ($buildOutputInfFiles.Count -gt 0) {
+      $buildOutputInfFiles | Remove-Item -Force -ErrorAction Stop
+    }
+    Write-Host "     Removed $($buildOutputInfFiles.Count) build-output INF file(s) from staged package."
+
     if ($arch -eq 'x64' -and $manifest.Wow64Files -and $manifest.Wow64Files.Count -gt 0) {
       $x86OsListForArch = $osByArch['x86']
       if (-not $x86OsListForArch -or $x86OsListForArch.Count -eq 0) {
@@ -821,6 +835,45 @@ Remediation:
 - Remove private key / certificate material from the driver build outputs so it is not copied into out/packages/**.
 - If you need CI signing keys, provide them to the signing step via CI secrets (see ci/sign-drivers.ps1: AERO_DRIVER_PFX_BASE64/AERO_DRIVER_PFX_PASSWORD), not via driver package contents.
 "@
+    }
+
+    # Guardrail: after all staging/copying, ensure there are no unexpected INF files in the staged
+    # package. Inf2Cat catalogs every INF it sees under the package directory; extra INFs can cause
+    # incorrect catalog contents and nondeterministic PnP binding if Guest Tools stages all INFs.
+    $allStagedInfFiles = @(
+      Get-ChildItem -LiteralPath $packageDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { [string]::Equals([IO.Path]::GetExtension($_.Name), '.inf', [System.StringComparison]::OrdinalIgnoreCase) } |
+        Sort-Object -Property FullName
+    )
+
+    $stagedInfSet = @{}
+    foreach ($infPath in $stagedInfPaths) {
+      if ([string]::IsNullOrWhiteSpace($infPath)) { continue }
+      $full = [System.IO.Path]::GetFullPath($infPath)
+      $stagedInfSet[$full.ToLowerInvariant()] = $true
+    }
+
+    $extraInfPaths = @()
+    foreach ($infFile in $allStagedInfFiles) {
+      $full = [System.IO.Path]::GetFullPath($infFile.FullName)
+      if (-not $stagedInfSet.ContainsKey($full.ToLowerInvariant())) {
+        $extraInfPaths += $infFile.FullName
+      }
+    }
+
+    if ($extraInfPaths.Count -gt 0) {
+      $extraInfFormatted = ($extraInfPaths | Sort-Object | ForEach-Object { "  - $_" }) -join "`n"
+      throw @"
+Staged package '$packageDir' contains extra INF file(s) that were not selected for packaging:
+$extraInfFormatted
+
+Only INFs selected via ci-package.json 'infFiles' (or auto-discovered from the driver source tree) and INFs explicitly staged via ci-package.json 'additionalFiles' are allowed.
+"@
+    }
+
+    Write-Host "     Final staged INF file(s): $($allStagedInfFiles.Count)"
+    foreach ($infFile in $allStagedInfFiles) {
+      Write-Host "       - $($infFile.FullName)"
     }
 
     if ($stampInfs) {
