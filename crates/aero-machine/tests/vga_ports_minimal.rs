@@ -100,7 +100,9 @@ fn vga_ports_minimal_semantics() {
         m.io_write(0x3C0, 1, 0x11);
 
         // Reading input status should reset the attribute flip-flop back to the "index" state.
-        m.io_read(0x3DA, 1);
+        //
+        // Ensure the mono alias port works too (0x3BA vs 0x3DA).
+        m.io_read(0x3BA, 1);
 
         // If the flip-flop was reset, this write should be treated as an *index* write, not data.
         // If 0x3DA doesn't reset the flip-flop, this will overwrite attribute[0x11] instead.
