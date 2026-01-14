@@ -18564,6 +18564,43 @@ mod tests {
     }
 
     #[test]
+    fn aerogpu_snapshot_v2_restores_bochs_vbe_dispi_state() {
+        // Regression coverage for the optional `BVBE` trailing section.
+        let mut src_vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        src_vram.vbe_dispi_guest_owned = true;
+        src_vram.vbe_dispi_index = 0x1234;
+        src_vram.vbe_dispi_xres = 800;
+        src_vram.vbe_dispi_yres = 600;
+        src_vram.vbe_dispi_bpp = 32;
+        src_vram.vbe_dispi_enable = 0x0001;
+        src_vram.vbe_bank = 3;
+        src_vram.vbe_dispi_virt_width = 1024;
+        src_vram.vbe_dispi_virt_height = 768;
+        src_vram.vbe_dispi_x_offset = 10;
+        src_vram.vbe_dispi_y_offset = 20;
+
+        let src_bar0 = AeroGpuMmioDevice::default();
+        let bytes = encode_aerogpu_snapshot_v2(&src_vram, &src_bar0);
+
+        let mut dst_vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut dst_bar0 = AeroGpuMmioDevice::default();
+        let _ = apply_aerogpu_snapshot_v2(&bytes, &mut dst_vram, &mut dst_bar0)
+            .expect("snapshot v2 should apply");
+
+        assert_eq!(dst_vram.vbe_dispi_guest_owned, true);
+        assert_eq!(dst_vram.vbe_dispi_index, 0x1234);
+        assert_eq!(dst_vram.vbe_dispi_xres, 800);
+        assert_eq!(dst_vram.vbe_dispi_yres, 600);
+        assert_eq!(dst_vram.vbe_dispi_bpp, 32);
+        assert_eq!(dst_vram.vbe_dispi_enable, 0x0001);
+        assert_eq!(dst_vram.vbe_bank, 3);
+        assert_eq!(dst_vram.vbe_dispi_virt_width, 1024);
+        assert_eq!(dst_vram.vbe_dispi_virt_height, 768);
+        assert_eq!(dst_vram.vbe_dispi_x_offset, 10);
+        assert_eq!(dst_vram.vbe_dispi_y_offset, 20);
+    }
+
+    #[test]
     fn restore_snapshot_ignores_vga_state_when_vga_is_disabled() {
         // Restoring a VGA-enabled snapshot into a headless machine should not panic due to MMIO
         // overlap (the headless PC platform maps its PCI MMIO window at 0xE0000000, which overlaps
