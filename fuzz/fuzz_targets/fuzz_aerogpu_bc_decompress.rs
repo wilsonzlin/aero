@@ -78,9 +78,25 @@ fn check_decompress_into_matches_vec(
         return;
     };
 
-    // If the allocating wrapper rejected the dims (returns empty vec), don't require the `*_into`
-    // behavior to match; just skip.
+    // The `*_into` variant must never write if the output slice is too small.
+    if expected_len != 0 {
+        let small_len = expected_len.saturating_sub(1).min(16);
+        let mut out = vec![0xAAu8; small_len];
+        f_into(width, height, data, &mut out);
+        if out.iter().any(|&b| b != 0xAA) {
+            panic!("{name}: wrote to output even though output slice was too small");
+        }
+    }
+
+    // If the allocating wrapper rejected the dims (returns empty vec), the `*_into` variant should
+    // also reject and leave the output untouched.
     if out_vec.len() != expected_len {
+        const GUARD_LEN: usize = 16;
+        let mut out = vec![0xAAu8; expected_len + GUARD_LEN];
+        f_into(width, height, data, &mut out);
+        if out.iter().any(|&b| b != 0xAA) {
+            panic!("{name}: wrote to output even though allocating variant rejected dims");
+        }
         return;
     }
 

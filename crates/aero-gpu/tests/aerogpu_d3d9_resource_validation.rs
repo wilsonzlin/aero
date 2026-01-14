@@ -28,6 +28,17 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
+fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
+    // `dcl` encodes declaration metadata in opcode_token[16..24] and has a single operand: the
+    // declared register.
+    let opcode: u32 = 0x001F;
+    let len_dwords: u32 = 2; // opcode token + 1 operand token
+    vec![
+        opcode | (u32::from(usage_raw) << 16) | (u32::from(usage_index) << 20) | (len_dwords << 24),
+        dst,
+    ]
+}
+
 fn to_bytes(words: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(words.len() * 4);
     for w in words {
@@ -47,9 +58,8 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
 fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_cube s0` declaration.
     let mut words = vec![0xFFFF_0300];
-    // DCL opcode=0x001F, texture type is encoded in opcode token bits 16..20; 3=cube
-    words.push(0x001F | (2u32 << 24) | (3u32 << 16));
-    words.push(enc_dst(10, 0, 0xF));
+    // sampler texture type = cube
+    words.extend(enc_dcl(3, 0, enc_dst(10, 0, 0xF)));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -57,9 +67,8 @@ fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
 fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
     let mut words = vec![0xFFFF_0300];
-    // DCL opcode=0x001F, texture type is encoded in opcode token bits 16..20; 4=volume (3D)
-    words.push(0x001F | (2u32 << 24) | (4u32 << 16));
-    words.push(enc_dst(10, 0, 0xF));
+    // sampler texture type = 3D
+    words.extend(enc_dcl(4, 0, enc_dst(10, 0, 0xF)));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -223,7 +232,7 @@ fn d3d9_create_shader_dxbc_accepts_cube_sampler_declaration() {
 }
 
 #[test]
-fn d3d9_create_shader_dxbc_accepts_volume_sampler_declaration() {
+fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
     let mut exec = match common::d3d9_executor(module_path!()) {
         Some(exec) => exec,
         None => return,
@@ -235,7 +244,10 @@ fn d3d9_create_shader_dxbc_accepts_volume_sampler_declaration() {
     let stream = writer.finish();
 
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => {}
+        Ok(_) => panic!("expected Texture3D sampler declaration to be rejected"),
+        Err(AerogpuD3d9Error::ShaderTranslation(msg)) => {
+            assert!(msg.contains("unsupported sampler texture type"));
+        }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }

@@ -117,21 +117,25 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_renders_triangle() {
     let width = 64u32;
     let height = 64u32;
 
-    // Built-in fixed-function fallback shader token streams (same as
-    // `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`).
+    // Minimal shader token streams used by fixed-function fallback bring-up.
+    //
+    // Note: The full UMD fixed-function vertex shaders often also write `oT0` to provide a stable
+    // stage0 texture coordinate stream. wgpu currently requires that the vertex outputs match the
+    // fragment inputs exactly, so this test uses a VS variant that only writes the varyings
+    // consumed by the PS (position + diffuse color).
     const VS_WORDS: [u32; 8] = [
         0xFFFE_0200u32, // vs_2_0
-        0x0300_0001u32, // mov oPos, v0
+        0x0300_0001u32, // mov (2 operands) oPos, v0
         0x400F_0000u32, // oPos.xyzw
         0x10E4_0000u32, // v0.xyzw
-        0x0300_0001u32, // mov oD0, v1
+        0x0300_0001u32, // mov (2 operands) oD0, v1
         0x500F_0000u32, // oD0.xyzw
         0x10E4_0001u32, // v1.xyzw
         0x0000_FFFFu32, // end
     ];
     const PS_WORDS: [u32; 5] = [
         0xFFFF_0200u32, // ps_2_0
-        0x0300_0001u32, // mov oC0, v0
+        0x0300_0001u32, // mov (2 operands) oC0, v0
         0x000F_0800u32, // oC0.xyzw
         0x10E4_0000u32, // v0.xyzw
         0x0000_FFFFu32, // end

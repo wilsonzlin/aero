@@ -1152,52 +1152,106 @@ fn build_alpha_test_wgsl_variant(
     alpha_test_func: u32,
     alpha_test_ref: u8,
 ) -> Result<String, AerogpuD3d9Error> {
-    // SM3 WGSL generator signatures.
-    const FS_SIG_WITH_INPUT: &str = "@fragment\nfn fs_main(input: FsIn) -> FsOut {\n";
-    const FS_SIG_NO_INPUT: &str = "@fragment\nfn fs_main() -> FsOut {\n";
-    // Legacy signature used by the old token-stream translator.
-    const FS_SIG_WITH_INPUT_LEGACY: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
-    const FS_SIG_NO_INPUT_LEGACY: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
+    const FS_SIG_PREFIX: &str = "@fragment\nfn fs_main";
 
-    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT) {
-        (
-            FS_SIG_WITH_INPUT,
-            "fn fs_main_inner(input: FsIn) -> FsOut {\n",
-            "fn fs_main(input: FsIn) -> FsOut {\n",
-            "fs_main_inner(input)",
-        )
-    } else if base.contains(FS_SIG_NO_INPUT) {
-        (
-            FS_SIG_NO_INPUT,
-            "fn fs_main_inner() -> FsOut {\n",
-            "fn fs_main() -> FsOut {\n",
-            "fs_main_inner()",
-        )
-    } else if base.contains(FS_SIG_WITH_INPUT_LEGACY) {
-        (
-            FS_SIG_WITH_INPUT_LEGACY,
-            "fn fs_main_inner(input: PsInput) -> PsOutput {\n",
-            "fn fs_main(input: PsInput) -> PsOutput {\n",
-            "fs_main_inner(input)",
-        )
-    } else if base.contains(FS_SIG_NO_INPUT_LEGACY) {
-        (
-            FS_SIG_NO_INPUT_LEGACY,
-            "fn fs_main_inner() -> PsOutput {\n",
-            "fn fs_main() -> PsOutput {\n",
-            "fs_main_inner()",
-        )
-    } else {
-        return Err(AerogpuD3d9Error::ShaderTranslation(
+    // Historical note: the D3D9 WGSL generators have used a few different naming conventions for
+    // their fragment entrypoint types (`PsInput`/`PsOutput`, `FsIn`/`FsOut`, fixed-function
+    // `FragmentIn` with a bare `vec4<f32>` return type). Keep the alpha-test injection tolerant of
+    // these variations by parsing the function signature rather than string-matching exact type
+    // names.
+    let sig_start = base.find(FS_SIG_PREFIX).ok_or_else(|| {
+        AerogpuD3d9Error::ShaderTranslation(
             "alpha-test WGSL injection failed: unrecognized fs_main signature".into(),
-        ));
+        )
+    })?;
+
+    // Find the opening `{` for the entrypoint signature.
+    let brace_rel = base[sig_start..].find('{').ok_or_else(|| {
+        AerogpuD3d9Error::ShaderTranslation(
+            "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+        )
+    })?;
+    let mut sig_end = sig_start + brace_rel + 1;
+    // Consume the trailing newline (all current generators emit it) so replacement is exact.
+    if base.as_bytes().get(sig_end) == Some(&b'\n') {
+        sig_end += 1;
+    }
+
+    let old_sig = &base[sig_start..sig_end];
+    let original_fn_line = old_sig.strip_prefix("@fragment\n").ok_or_else(|| {
+        AerogpuD3d9Error::ShaderTranslation(
+            "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+        )
+    })?;
+    let inner_fn_line = original_fn_line.replacen("fn fs_main", "fn fs_main_inner", 1);
+
+    let (call_expr, alpha_expr) = {
+        let open_paren = original_fn_line.find('(').ok_or_else(|| {
+            AerogpuD3d9Error::ShaderTranslation(
+                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+            )
+        })?;
+        let close_paren = original_fn_line[open_paren + 1..]
+            .find(')')
+            .map(|idx| open_paren + 1 + idx)
+            .ok_or_else(|| {
+                AerogpuD3d9Error::ShaderTranslation(
+                    "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+                )
+            })?;
+        let params = &original_fn_line[open_paren + 1..close_paren];
+
+        let args: String = params
+            .split(',')
+            .filter_map(|p| {
+                let p = p.trim();
+                if p.is_empty() {
+                    return None;
+                }
+                let before_colon = p.split_once(':').map(|(a, _)| a).unwrap_or(p);
+                // Strip any parameter attributes (e.g. `@location(0)`).
+                let name = before_colon
+                    .split_whitespace()
+                    .last()
+                    .unwrap_or(before_colon)
+                    .trim();
+                Some(name)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let call_expr = if args.is_empty() {
+            "fs_main_inner()".to_owned()
+        } else {
+            format!("fs_main_inner({args})")
+        };
+
+        let arrow = original_fn_line.find("->").ok_or_else(|| {
+            AerogpuD3d9Error::ShaderTranslation(
+                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+            )
+        })?;
+        let brace = original_fn_line.find('{').ok_or_else(|| {
+            AerogpuD3d9Error::ShaderTranslation(
+                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+            )
+        })?;
+        let return_ty = original_fn_line[arrow + 2..brace].trim();
+        let alpha_expr = if return_ty.contains("vec4") {
+            // Fixed-function shaders return a bare vec4.
+            "out.a"
+        } else {
+            // SM2/SM3 shaders return a struct with `oC0`.
+            "out.oC0.a"
+        };
+        (call_expr, alpha_expr)
     };
 
-    let mut out = base.replacen(old_sig, new_sig, 1);
+    let mut out = base.replacen(old_sig, &inner_fn_line, 1);
     out.push_str("\n@fragment\n");
-    out.push_str(wrapper_sig);
+    out.push_str(original_fn_line);
     out.push_str(&format!("  let out = {};\n", call_expr));
-    out.push_str("  let a: f32 = clamp(out.oC0.a, 0.0, 1.0);\n");
+    out.push_str(&format!("  let a: f32 = clamp({}, 0.0, 1.0);\n", alpha_expr));
     out.push_str(&format!(
         "  let alpha_ref: f32 = f32({}u) / 255.0;\n",
         alpha_test_ref
