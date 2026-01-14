@@ -10093,8 +10093,8 @@ impl AerogpuD3d11Executor {
         // Aero's initial GS bring-up only targets stream 0, so reject any shaders that use a
         // non-zero stream index with a clear diagnostic.
         //
-        // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders that
-        // are currently accepted-but-ignored by the WebGPU backend.
+        // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders where
+        // execution is still partial (GS) or not wired yet (HS/DS).
         validate_sm5_gs_streams(&program)?;
         let parsed_stage = match program.stage {
             crate::ShaderStage::Vertex => ShaderStage::Vertex,
