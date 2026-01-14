@@ -306,4 +306,3 @@ fn aerogpu_wgpu_backend_smoke_executes_acmd_and_updates_scanout() {
     let green = u32::from_le_bytes([0, 255, 0, 255]);
     assert!(fb.iter().any(|&px| px == green));
 }
-

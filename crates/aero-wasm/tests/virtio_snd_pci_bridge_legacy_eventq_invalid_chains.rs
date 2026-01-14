@@ -5,10 +5,10 @@ use aero_virtio::devices::snd::{
     JACK_ID_SPEAKER, VIRTIO_SND_EVT_JACK_CONNECTED, VIRTIO_SND_QUEUE_EVENT,
 };
 use aero_virtio::pci::{
-    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY,
-    VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN, VIRTIO_PCI_LEGACY_QUEUE_SEL,
-    VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN, VIRTIO_STATUS_ACKNOWLEDGE,
-    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES,
+    VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN,
+    VIRTIO_PCI_LEGACY_QUEUE_SEL, VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
 };
 use aero_virtio::queue::VIRTQ_DESC_F_WRITE;
 use aero_wasm::VirtioSndPciBridge;
@@ -139,8 +139,8 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_retains_event_when_first_chain_head_
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_transitional_eventq_retains_event_when_first_chain_head_is_out_of_range_via_legacy_io(
-) {
+fn virtio_snd_pci_bridge_transitional_eventq_retains_event_when_first_chain_head_is_out_of_range_via_legacy_io()
+ {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
         base: guest_base,
@@ -190,4 +190,3 @@ fn virtio_snd_pci_bridge_transitional_eventq_retains_event_when_first_chain_head
     guest.read_into(buf, &mut got_evt);
     assert_eq!(&got_evt, &expected_speaker_connected());
 }
-

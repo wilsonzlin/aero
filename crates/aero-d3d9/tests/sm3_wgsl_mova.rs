@@ -409,14 +409,8 @@ fn wgsl_mova_write_mask_preserves_other_components() {
         let wgsl = generate_wgsl(&ir).unwrap().wgsl;
 
         // Ensure both assignments are per-component (not `a0 = ...`).
-        assert!(
-            wgsl.contains("a0.x = (vec4<i32>(c0.xxxx)).x;"),
-            "{wgsl}"
-        );
-        assert!(
-            wgsl.contains("a0.y = (vec4<i32>(c0.yyyy)).y;"),
-            "{wgsl}"
-        );
+        assert!(wgsl.contains("a0.x = (vec4<i32>(c0.xxxx)).x;"), "{wgsl}");
+        assert!(wgsl.contains("a0.y = (vec4<i32>(c0.yyyy)).y;"), "{wgsl}");
         assert!(!wgsl.contains("a0 = vec4<i32>("), "{wgsl}");
 
         let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");

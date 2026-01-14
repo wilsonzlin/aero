@@ -4,7 +4,9 @@ use std::collections::{HashSet, VecDeque};
 
 use aero_devices::clock::{Clock as _, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
-use aero_devices_gpu::backend::{AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend};
+use aero_devices_gpu::backend::{
+    AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+};
 use aero_devices_gpu::ring::{
     write_fence_page, AEROGPU_RING_HEADER_SIZE_BYTES as RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET,
     RING_TAIL_OFFSET,
