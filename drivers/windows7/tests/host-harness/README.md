@@ -326,10 +326,10 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
   - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`; guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 - Python:
-  - `--require-virtio-net-msix` *(also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
+  - `--require-virtio-net-msix` *(alias: `--require-net-msix`; also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
   - `--require-virtio-blk-msix`
   - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
-  - `--require-virtio-input-msix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
+  - `--require-virtio-input-msix` *(alias: `--require-input-msix`; guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 
 Notes:
 

@@ -3309,6 +3309,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-virtio-net-msix",
+        "--require-net-msix",
         dest="require_virtio_net_msix",
         action="store_true",
         help=(
@@ -3316,7 +3317,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "and also requires the guest marker: "
             "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|... "
             "This requires a guest image with an updated aero-virtio-selftest.exe; "
-            "to make the guest fail-fast, provision it with --require-net-msix "
+            "to make the guest fail-fast, provision the guest selftest with the guest flag --require-net-msix "
             "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1). "
             "If provisioning via New-AeroWin7TestImage.ps1, use -RequireNetMsix."
         ),
@@ -3345,12 +3346,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-virtio-input-msix",
+        "--require-input-msix",
         dest="require_virtio_input_msix",
         action="store_true",
         help=(
             "Require the guest virtio-input-msix marker to report mode=msix. "
             "This is optional so older guest selftest binaries (which don't emit the marker) can still run. "
-            "Tip: to make the guest fail-fast, provision the guest selftest with --require-input-msix "
+            "Tip: to make the guest fail-fast, provision the guest selftest with the guest flag --require-input-msix "
             "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1); when provisioning via "
             "New-AeroWin7TestImage.ps1, use -RequireInputMsix."
         ),
