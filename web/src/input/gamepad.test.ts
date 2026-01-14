@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
@@ -105,17 +106,28 @@ describe("hid_gamepad_report_vectors fixture", () => {
     };
 
     const raw = await readFile(new URL("../../../docs/fixtures/hid_gamepad_report_vectors.json", import.meta.url), "utf8");
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64 * 1024);
     const vectors = JSON.parse(raw) as FixtureVector[];
 
     expect(vectors.length).toBeGreaterThan(0);
     expect(vectors.length).toBeLessThanOrEqual(64);
+
+    const uniqueNames = new Set<string>();
 
     for (const [idx, v] of vectors.entries()) {
       expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
       // These vectors are inputs to `packGamepadReport` and intentionally stay within the
       // Rust-side canonical report field ranges so the fixture primarily validates layout/packing.
       expect(Number.isInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(0xffff);
       expect(Number.isInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(GAMEPAD_HAT_NEUTRAL);
+      if (v.name) {
+        expect(uniqueNames.has(v.name), `duplicate fixture vector name: ${v.name}`).toBe(false);
+        uniqueNames.add(v.name);
+      }
       for (const [axisName, axis] of [
         ["x", v.x],
         ["y", v.y],
