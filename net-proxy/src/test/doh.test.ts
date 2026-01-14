@@ -357,6 +357,17 @@ test("DoH endpoints support optional CORS allowlist (preflight + response header
     assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
     assert.equal(preflight.headers.get("access-control-max-age"), "600");
 
+    const jsonPreflight = await fetch(`${baseUrl}/dns-json`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "GET"
+      }
+    });
+    assert.equal(jsonPreflight.status, 204);
+    assert.equal(jsonPreflight.headers.get("access-control-allow-origin"), "http://localhost:5173");
+    assert.ok((jsonPreflight.headers.get("access-control-allow-methods") ?? "").includes("GET"));
+
     const id = 0x9999;
     const query = encodeDnsQuery("localhost", 1, id);
     const resp = await fetch(`${baseUrl}/dns-query`, {
@@ -370,6 +381,12 @@ test("DoH endpoints support optional CORS allowlist (preflight + response header
     });
     assert.equal(resp.status, 200);
     assert.equal(resp.headers.get("access-control-allow-origin"), "http://localhost:5173");
+
+    const jsonResp = await fetch(`${baseUrl}/dns-json?name=localhost&type=A`, {
+      headers: { Origin: "http://localhost:5173", accept: "application/dns-json" }
+    });
+    assert.equal(jsonResp.status, 200);
+    assert.equal(jsonResp.headers.get("access-control-allow-origin"), "http://localhost:5173");
   });
 
   await withProxyServer({ open: true, dohCorsAllowOrigins: ["http://localhost:5173"] }, async (baseUrl) => {
