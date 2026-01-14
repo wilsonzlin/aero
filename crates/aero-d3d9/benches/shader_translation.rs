@@ -145,8 +145,7 @@ fn bench_shader_cache_keying(c: &mut Criterion) {
     cache.insert(key, ());
     group.bench_function("lookup_hit", |b| {
         b.iter(|| {
-            let key = compute_persistent_in_memory_key(black_box(&ps_dxbc), black_box(&flags));
-            let value = cache.get(&key).unwrap();
+            let value = cache.get(black_box(&key)).unwrap();
             black_box(value);
         })
     });
