@@ -10,7 +10,10 @@ use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
 
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{
+    ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB,
+    SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_WDDM,
+};
 
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
@@ -512,23 +515,23 @@ impl AeroGpuMmioDevice {
             width: 0,
             height: 0,
             pitch_bytes: 0,
-            // Keep format at the default/only-representable value even while disabled.
+            // Keep format at a stable default even while disabled.
             format: SCANOUT_FORMAT_B8G8R8X8,
         }
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     fn scanout_state_format_from_aerogpu_format(fmt: u32) -> Option<u32> {
-        // The shared scanout descriptor currently supports only `B8G8R8X8`.
-        // Treat BGRA/XRGB (and sRGB variants) as compatible since they share the same byte layout
-        // for the RGB channels; alpha (if present) is ignored by the scanout consumer.
+        // The scanout state format uses the AeroGPU `AerogpuFormat` discriminant values. Only a
+        // small subset is currently supported by consumers (web GPU worker / present paths).
         match fmt {
-            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
-            {
-                Some(SCANOUT_FORMAT_B8G8R8X8)
+            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32 => Some(SCANOUT_FORMAT_B8G8R8X8),
+            x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32 => Some(SCANOUT_FORMAT_B8G8R8A8),
+            x if x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
+                Some(SCANOUT_FORMAT_B8G8R8X8_SRGB)
+            }
+            x if x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
+                Some(SCANOUT_FORMAT_B8G8R8A8_SRGB)
             }
             _ => None,
         }
@@ -552,8 +555,8 @@ impl AeroGpuMmioDevice {
             return Self::scanout0_disabled_update();
         }
 
-        // Today the shared scanout descriptor can only represent B8G8R8X8 (4 bytes per pixel).
-        // Enforce that assumption here so consumers don't misinterpret memory.
+        // The shared scanout descriptor currently only represents 32bpp BGRA/BGRX (4 bytes per
+        // pixel). Enforce that assumption here so consumers don't misinterpret memory.
         let bytes_per_pixel = 4u64;
 
         let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {

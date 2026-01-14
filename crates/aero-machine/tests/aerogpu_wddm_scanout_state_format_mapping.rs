@@ -4,7 +4,8 @@ use aero_devices::pci::profile::AEROGPU_BAR0_INDEX;
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
+    ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
+    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
 
@@ -76,6 +77,37 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     assert_eq!(snap.height, 480);
     assert_eq!(snap.pitch_bytes, 640 * 4);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+
+    // Program a BGRA scanout; this should publish the corresponding scanout format value.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), fb_gpa);
+    assert_eq!(snap.width, 640);
+    assert_eq!(snap.height, 480);
+    assert_eq!(snap.pitch_bytes, 640 * 4);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8);
+
+    // Program sRGB variants; these should preserve the sRGB discriminants in the shared state.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 
     // Program an unsupported scanout format; this must not panic and must publish a deterministic
     // disabled descriptor rather than leaking an unsupported format value to the shared state.

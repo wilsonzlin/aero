@@ -6234,6 +6234,9 @@ impl Machine {
             }
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
+                //
+                // Expose the device so BIOS POST assigns BARs and BAR0 MMIO (ring/scanout regs) +
+                // BAR1 VRAM are reachable via the PCI BAR MMIO router.
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::AEROGPU.bdf,
                     Box::new(AeroGpuPciConfigDevice::new()),
