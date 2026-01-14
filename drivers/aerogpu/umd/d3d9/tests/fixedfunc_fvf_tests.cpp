@@ -2197,6 +2197,65 @@ bool TestFvfXyzrhwDiffuseLightingEnabledStillDraws() {
   return true;
 }
 
+bool TestFvfXyzDiffuseLightingEnabledFailsInvalidCall() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // MVP behavior: if fixed-function lighting is enabled with an FVF that does not
+  // supply normals (and is not pre-transformed XYZRHW), the fixed-function
+  // fallback fails the draw cleanly with D3DERR_INVALIDCALL (rather than silently
+  // selecting the unlit VS).
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, 0xFFFFFFFFu},
+  };
+
+  const size_t before_draw = dev->cmd.bytes_used();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(XYZ|DIFFUSE; lighting=on) => INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == before_draw, "invalid draw emits no new commands")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE; lighting=on => INVALIDCALL)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "invalid draw does not emit DRAW packets")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6190,6 +6249,188 @@ bool TestPsOnlyInteropXyzNormalTex1IgnoresLightingAndDoesNotUploadLightingConsta
   return true;
 }
 
+bool TestPsOnlyInteropXyzNormalDiffuseIgnoresLightingAndDoesNotUploadLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader (VS stays NULL). The bring-up behavior
+  // intentionally ignores fixed-function lighting under shader-stage interop to
+  // avoid clobbering user VS constants with the large c208..c236 lighting block.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop XYZ|NORMAL|DIFFUSE; lighting=on)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "PS-only interop: synthesized VS is bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuse),
+               "PS-only interop: lighting ignored and unlit normal+diffuse VS selected")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "PS-only interop: DRAW emitted")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) >= 1,
+             "PS-only interop: uploaded WVP constants")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 0,
+             "PS-only interop: does not upload fixed-function lighting constants")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestPsOnlyInteropXyzNormalDiffuseTex1IgnoresLightingAndDoesNotUploadLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader (VS stays NULL). The bring-up behavior
+  // intentionally ignores fixed-function lighting under shader-stage interop to
+  // avoid clobbering user VS constants with the large c208..c236 lighting block.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/0.0f},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/1.0f, /*v=*/0.0f},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop XYZ|NORMAL|DIFFUSE|TEX1; lighting=on)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "PS-only interop: synthesized VS is bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuseTex1),
+               "PS-only interop: lighting ignored and unlit normal+diffuse+tex1 VS selected")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop XYZ|NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "PS-only interop: DRAW emitted")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) >= 1,
+             "PS-only interop: uploaded WVP constants")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 0,
+             "PS-only interop: does not upload fixed-function lighting constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestPsOnlyInteropVertexDeclXyzrhwTex1SynthesizesVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -9749,6 +9990,9 @@ int main() {
   if (!aerogpu::TestFvfXyzrhwDiffuseLightingEnabledStillDraws()) {
     return 1;
   }
+  if (!aerogpu::TestFvfXyzDiffuseLightingEnabledFailsInvalidCall()) {
+    return 1;
+  }
   if (!aerogpu::TestFvfXyzDiffuseEmitsInputLayoutAndShaders()) {
     return 1;
   }
@@ -9861,6 +10105,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzNormalTex1IgnoresLightingAndDoesNotUploadLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropXyzNormalDiffuseIgnoresLightingAndDoesNotUploadLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropXyzNormalDiffuseTex1IgnoresLightingAndDoesNotUploadLightingConstants()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropVertexDeclXyzrhwTex1SynthesizesVs()) {
