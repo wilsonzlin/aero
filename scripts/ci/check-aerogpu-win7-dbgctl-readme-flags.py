@@ -142,15 +142,30 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
 
     Current heuristic:
     - only consider lines that mention `aerogpu_dbgctl` (or `aerogpu_dbgctl.exe`)
+    - additionally, in files that mention `aerogpu_dbgctl` anywhere, also scan
+      lines that reference dbgctl's "command selector" flags (e.g. `--dump-*`,
+      `--watch-*`, `--read-*`, `--map-*`, `--list-*`) even if the line omits the
+      `aerogpu_dbgctl` prefix (many docs mention flags in prose / tables).
     - skip lines that mention `--dbgctl` (test-runner flags that reference the
       dbgctl binary by path, but are not dbgctl CLI flags)
     """
     text = read_text(path)
+    if "aerogpu_dbgctl" not in text:
+        return []
+
+    # Some docs refer to dbgctl flags in prose without repeating the tool name
+    # on the same line. To keep the check conservative (and avoid flag collisions
+    # with other tools), only treat lines containing these dbgctl-specific flag
+    # prefixes as dbgctl-related context.
+    #
+    # NOTE: do *not* include `--wait-` here; the Win7 test suite has unrelated
+    # flags like `--wait-timeout-ms`.
+    dbgctl_context_re = re.compile(r"--(?:dump|watch|read|map|list)-")
     out: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        if "aerogpu_dbgctl" not in line:
-            continue
         if "--dbgctl" in line:
+            continue
+        if "aerogpu_dbgctl" not in line and not dbgctl_context_re.search(line):
             continue
         for flag in MD_FLAG_RE.findall(line):
             out.append((line_no, flag))
