@@ -242,6 +242,9 @@ loop {
 }
 ```
 
+If you already have a `PerfWorker`, `aero_cpu_core::exec::ExecDispatcher` also provides
+`ExecDispatcher::step_with_perf(&mut vcpu, &mut perf)` as a convenience wrapper around the above pattern.
+
 ---
 
 ## Paging integration (`PagingBus` + `CpuBus::sync/invlpg`)
