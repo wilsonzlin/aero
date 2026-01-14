@@ -325,6 +325,25 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         } else {
             VIRTIO_SND_EVT_JACK_DISCONNECTED
         };
+
+        // Avoid spamming redundant jack events. Scan backwards to find the most recent pending jack
+        // event for this jack ID; if it already reflects the desired connected state, there is no
+        // need to enqueue another identical state transition.
+        for evt in self.pending_events.iter().rev() {
+            let ty = u32::from_le_bytes(evt[0..4].try_into().unwrap());
+            if ty != VIRTIO_SND_EVT_JACK_CONNECTED && ty != VIRTIO_SND_EVT_JACK_DISCONNECTED {
+                continue;
+            }
+            let data = u32::from_le_bytes(evt[4..8].try_into().unwrap());
+            if data != jack_id {
+                continue;
+            }
+            if ty == event_type {
+                return;
+            }
+            break;
+        }
+
         self.queue_event(event_type, jack_id);
     }
 
@@ -2052,6 +2071,29 @@ mod tests {
         let first = snd.pending_events.front().unwrap();
         let data = u32::from_le_bytes(first[4..8].try_into().unwrap());
         assert_eq!(data, 10);
+    }
+
+    #[test]
+    fn virtio_snd_queue_jack_event_dedupes_redundant_state() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        snd.queue_jack_event(JACK_ID_SPEAKER, true);
+        snd.queue_jack_event(JACK_ID_SPEAKER, true);
+        assert_eq!(snd.pending_events.len(), 1);
+
+        // Interleave with a non-jack event; dedup should still find the last jack state.
+        snd.queue_event(VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED, 0);
+        snd.queue_jack_event(JACK_ID_SPEAKER, true);
+        assert_eq!(snd.pending_events.len(), 2);
+
+        snd.queue_jack_event(JACK_ID_SPEAKER, false);
+        assert_eq!(snd.pending_events.len(), 3);
+        snd.queue_jack_event(JACK_ID_SPEAKER, false);
+        assert_eq!(snd.pending_events.len(), 3);
+
+        // A state transition back to connected should still enqueue.
+        snd.queue_jack_event(JACK_ID_SPEAKER, true);
+        assert_eq!(snd.pending_events.len(), 4);
     }
 
     #[test]
