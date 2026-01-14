@@ -60,9 +60,15 @@ describe("gpu/test-card", () => {
       const rgba = createGpuColorTestCardRgba8Linear(width, height);
       expect(rgba.length).toBe(width * height * 4);
 
+      // With height=1, the "top" and "bottom" corners overlap. The marker writes are still
+      // deterministic (later writes win):
+      // - (0,0) ends up as bottom-left marker (blue)
+      // - (w-1,0) ends up as bottom-right marker (white)
+      expect(getPixelRgba(rgba, width, 0, 0)).toEqual([0, 0, 255, 255]);
+      expect(getPixelRgba(rgba, width, width - 1, 0)).toEqual([255, 255, 255, 255]);
+
       // Middle pixel is not a corner marker. For height=1 we define a=1, so the right half stays fully opaque.
       expect(getPixelRgba(rgba, width, 1, 0)).toEqual([255, 0, 255, 255]);
     });
   });
 });
-
