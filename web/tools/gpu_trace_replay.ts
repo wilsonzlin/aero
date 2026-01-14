@@ -124,10 +124,17 @@
   let AEROGPU_CLEAR_DEPTH = 1 << 1;
   let AEROGPU_CLEAR_STENCIL = 1 << 2;
 
+  // Resource usage flags (subset).
+  let AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = 1 << 5;
+
   let AEROGPU_FORMAT_R8G8B8A8_UNORM = 3;
   // ABI 1.2+ adds explicit sRGB variants. The replay tool treats sRGB as UNORM (no conversion)
   // because WebGL2 presentation is not color-managed here.
   let AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB = 9;
+  let AEROGPU_FORMAT_D24_UNORM_S8_UINT = 32;
+  let AEROGPU_FORMAT_D32_FLOAT = 33;
+  let AEROGPU_FORMAT_BC1_RGBA_UNORM = 64;
+  let AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB = 65;
   let AEROGPU_TOPOLOGY_TRIANGLELIST = 4;
 
   let decodeCmdStreamHeader = null;
@@ -251,6 +258,10 @@
         if (typeof cmd.AEROGPU_CLEAR_DEPTH === "number") AEROGPU_CLEAR_DEPTH = cmd.AEROGPU_CLEAR_DEPTH >>> 0;
         if (typeof cmd.AEROGPU_CLEAR_STENCIL === "number") AEROGPU_CLEAR_STENCIL = cmd.AEROGPU_CLEAR_STENCIL >>> 0;
 
+        if (typeof cmd.AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL === "number") {
+          AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = cmd.AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL >>> 0;
+        }
+
         if (cmd.AerogpuPrimitiveTopology && typeof cmd.AerogpuPrimitiveTopology.TriangleList === "number") {
           AEROGPU_TOPOLOGY_TRIANGLELIST = cmd.AerogpuPrimitiveTopology.TriangleList >>> 0;
         }
@@ -259,6 +270,18 @@
         }
         if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.R8G8B8A8UnormSrgb === "number") {
           AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB = pci.AerogpuFormat.R8G8B8A8UnormSrgb >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.D24UnormS8Uint === "number") {
+          AEROGPU_FORMAT_D24_UNORM_S8_UINT = pci.AerogpuFormat.D24UnormS8Uint >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.D32Float === "number") {
+          AEROGPU_FORMAT_D32_FLOAT = pci.AerogpuFormat.D32Float >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.BC1RgbaUnorm === "number") {
+          AEROGPU_FORMAT_BC1_RGBA_UNORM = pci.AerogpuFormat.BC1RgbaUnorm >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.BC1RgbaUnormSrgb === "number") {
+          AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB = pci.AerogpuFormat.BC1RgbaUnormSrgb >>> 0;
         }
       } catch (e) {
         // Ignore; this tool can run standalone without the protocol mirrors.
@@ -996,6 +1019,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     // A3A0 (AeroGPU command stream) replay state.
     const acmdBuffers = new Map(); // u32 handle -> WebGLBuffer
     const acmdTextures = new Map(); // u32 handle -> { texture, framebuffer, width, height, format }
+    const acmdDepthStencils = new Map(); // u32 handle -> { renderbuffer, width, height, format }
     // Shared surface bookkeeping (EXPORT/IMPORT_SHARED_SURFACE).
     // Mirrors the host-side shared-surface protocol:
     // - EXPORT: share_token -> underlying handle
@@ -1136,6 +1160,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
     let acmdFramebuffer = null; // currently bound draw framebuffer (WebGLFramebuffer | null)
     let acmdColor0 = null; // { framebuffer, width, height } | null
+    let acmdDepthStencil0 = null; // { renderbuffer, attachment } | null
     let acmdPrimitiveMode = gl.TRIANGLES;
     let acmdPsTexture0 = null; // WebGLTexture | null
     let acmdPsTexture0Target = gl.TEXTURE_2D;
@@ -1326,6 +1351,73 @@ void main() {
         }
       }
 
+      function rgb565ToRgb8(c) {
+        const r5 = (c >>> 11) & 0x1f;
+        const g6 = (c >>> 5) & 0x3f;
+        const b5 = c & 0x1f;
+        const r = (r5 << 3) | (r5 >>> 2);
+        const g = (g6 << 2) | (g6 >>> 4);
+        const b = (b5 << 3) | (b5 >>> 2);
+        return [r & 0xff, g & 0xff, b & 0xff];
+      }
+
+      function decodeBc1Rgba8(srcBytes, width, height) {
+        const blocksX = Math.ceil(width / 4);
+        const blocksY = Math.ceil(height / 4);
+        const expectedLen = blocksX * blocksY * 8;
+        if (srcBytes.byteLength !== expectedLen) {
+          fail("BC1 data length mismatch: got " + srcBytes.byteLength + " expected " + expectedLen);
+        }
+        const out = new Uint8Array(width * height * 4);
+        let off = 0;
+        for (let by = 0; by < blocksY; by++) {
+          for (let bx = 0; bx < blocksX; bx++) {
+            const c0 = srcBytes[off + 0] | (srcBytes[off + 1] << 8);
+            const c1 = srcBytes[off + 2] | (srcBytes[off + 3] << 8);
+            const [r0, g0, b0] = rgb565ToRgb8(c0);
+            const [r1, g1, b1] = rgb565ToRgb8(c1);
+            const bits =
+              (srcBytes[off + 4] |
+                (srcBytes[off + 5] << 8) |
+                (srcBytes[off + 6] << 16) |
+                (srcBytes[off + 7] << 24)) >>>
+              0;
+
+            const pal = [
+              [r0, g0, b0, 255],
+              [r1, g1, b1, 255],
+              [0, 0, 0, 255],
+              [0, 0, 0, 255],
+            ];
+            if (c0 > c1) {
+              pal[2] = [((2 * r0 + r1) / 3) | 0, ((2 * g0 + g1) / 3) | 0, ((2 * b0 + b1) / 3) | 0, 255];
+              pal[3] = [((r0 + 2 * r1) / 3) | 0, ((g0 + 2 * g1) / 3) | 0, ((b0 + 2 * b1) / 3) | 0, 255];
+            } else {
+              pal[2] = [((r0 + r1) / 2) | 0, ((g0 + g1) / 2) | 0, ((b0 + b1) / 2) | 0, 255];
+              pal[3] = [0, 0, 0, 0];
+            }
+
+            for (let py = 0; py < 4; py++) {
+              for (let px = 0; px < 4; px++) {
+                const x = bx * 4 + px;
+                const y = by * 4 + py;
+                if (x >= width || y >= height) continue;
+                const code = (bits >>> (2 * (py * 4 + px))) & 3;
+                const di = (y * width + x) * 4;
+                const c = pal[code];
+                out[di + 0] = c[0] & 0xff;
+                out[di + 1] = c[1] & 0xff;
+                out[di + 2] = c[2] & 0xff;
+                out[di + 3] = c[3] & 0xff;
+              }
+            }
+
+            off += 8;
+          }
+        }
+        return out;
+      }
+
       while (off < streamEnd) {
         if (off + AEROGPU_CMD_HDR_SIZE_BYTES > streamEnd) fail("ACMD command header out of bounds");
         let opcode = 0;
@@ -1381,6 +1473,7 @@ void main() {
             // struct aerogpu_cmd_create_texture2d (56 bytes)
             if (cmdSize < 56) fail("ACMD CREATE_TEXTURE2D size_bytes too small: " + cmdSize);
             const textureHandle = readU32(pv, off + 8);
+            const usageFlags = readU32(pv, off + 12);
             const format = readU32(pv, off + 16);
             const width = readU32(pv, off + 20);
             const height = readU32(pv, off + 24);
@@ -1399,10 +1492,47 @@ void main() {
             if (mipLevels === 0) fail("ACMD CREATE_TEXTURE2D mip_levels must be >= 1");
             if (arrayLayers === 0) fail("ACMD CREATE_TEXTURE2D array_layers must be >= 1");
 
+            // Depth-stencil resources are modeled as renderbuffers (not textures) in the WebGL2 replay tool.
+            if ((usageFlags & AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL) !== 0) {
+              if (backingAllocId !== 0) fail("ACMD CREATE_TEXTURE2D depth-stencil backing_alloc_id is not supported");
+              if (arrayLayers !== 1 || mipLevels !== 1) {
+                fail("ACMD CREATE_TEXTURE2D depth-stencil array/mip chains are not supported");
+              }
+
+              let rbFormat = 0;
+              let attachment = 0;
+              if (format === AEROGPU_FORMAT_D32_FLOAT) {
+                rbFormat = gl.DEPTH_COMPONENT32F;
+                attachment = gl.DEPTH_ATTACHMENT;
+              } else if (format === AEROGPU_FORMAT_D24_UNORM_S8_UINT) {
+                rbFormat = gl.DEPTH24_STENCIL8;
+                attachment = gl.DEPTH_STENCIL_ATTACHMENT;
+              } else {
+                fail("ACMD CREATE_TEXTURE2D unsupported depth-stencil format=" + format);
+              }
+
+              const rb = gl.createRenderbuffer();
+              if (!rb) fail("gl.createRenderbuffer failed");
+              gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+              gl.renderbufferStorage(gl.RENDERBUFFER, rbFormat, width, height);
+
+              acmdDepthStencils.set(textureHandle, { renderbuffer: rb, width, height, format, attachment });
+              registerSharedHandle(textureHandle);
+              break;
+            }
+
             let glInternalFormat = 0;
             let glFormat = 0;
             let glType = 0;
+            let logicalFormat = format;
+            let isBc1 = false;
             if (format === AEROGPU_FORMAT_R8G8B8A8_UNORM || format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
+              glInternalFormat = gl.RGBA8;
+              glFormat = gl.RGBA;
+              glType = gl.UNSIGNED_BYTE;
+            } else if (format === AEROGPU_FORMAT_BC1_RGBA_UNORM || format === AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB) {
+              // Decode BC1 on the CPU into an RGBA8 texture for the WebGL2 replay tool.
+              isBc1 = true;
               glInternalFormat = gl.RGBA8;
               glFormat = gl.RGBA;
               glType = gl.UNSIGNED_BYTE;
@@ -1430,6 +1560,7 @@ void main() {
               if (!allocMemory) fail("ACMD CREATE_TEXTURE2D missing alloc memory map");
               const alloc = allocMemory.get(backingAllocId);
               if (!alloc) fail("ACMD CREATE_TEXTURE2D missing alloc_id=" + backingAllocId);
+              if (isBc1) fail("ACMD CREATE_TEXTURE2D BC formats do not support guest-backed alloc uploads");
 
               // Guest backing is a packed `(array_layer, mip)` chain; mip0 uses
               // `row_pitch_bytes`, other mips are tightly packed.
@@ -1468,8 +1599,6 @@ void main() {
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
-            const depthStencilRb = gl.createRenderbuffer();
-            if (!depthStencilRb) fail("gl.createRenderbuffer failed");
             const prevFb = acmdFramebuffer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
             if (target === gl.TEXTURE_2D_ARRAY) {
@@ -1478,9 +1607,6 @@ void main() {
             } else {
               gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
             }
-            gl.bindRenderbuffer(gl.RENDERBUFFER, depthStencilRb);
-            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, width, height);
-            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, depthStencilRb);
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
             const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
             if (status !== gl.FRAMEBUFFER_COMPLETE) {
@@ -1488,7 +1614,17 @@ void main() {
             }
             gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
 
-            acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, depthStencilRb, width, height, format, target, mipLevels, arrayLayers });
+            acmdTextures.set(textureHandle, {
+              texture: tex,
+              framebuffer: fb,
+              width,
+              height,
+              format: logicalFormat,
+              target,
+              mipLevels,
+              arrayLayers,
+              isBc1,
+            });
             registerSharedHandle(textureHandle);
             break;
           }
@@ -1510,9 +1646,19 @@ void main() {
               }
               if (acmdColor0 && acmdColor0.framebuffer === texObj.framebuffer) acmdColor0 = null;
               gl.deleteFramebuffer(texObj.framebuffer);
-              if (texObj.depthStencilRb) gl.deleteRenderbuffer(texObj.depthStencilRb);
               gl.deleteTexture(texObj.texture);
               acmdTextures.delete(underlying);
+            }
+            const dsObj = acmdDepthStencils.get(underlying);
+            if (dsObj) {
+              if (acmdDepthStencil0 && acmdDepthStencil0.renderbuffer === dsObj.renderbuffer && acmdFramebuffer) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, acmdFramebuffer);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, null);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, null);
+              }
+              gl.deleteRenderbuffer(dsObj.renderbuffer);
+              acmdDepthStencils.delete(underlying);
+              if (acmdDepthStencil0 && acmdDepthStencil0.renderbuffer === dsObj.renderbuffer) acmdDepthStencil0 = null;
             }
             const bufObj = acmdBuffers.get(underlying);
             if (bufObj) {
@@ -1526,8 +1672,10 @@ void main() {
             if (cmdSize < 48) fail("ACMD SET_RENDER_TARGETS size_bytes too small: " + cmdSize);
             const colorCount = readU32(pv, off + 8);
             if (colorCount > 8) fail("ACMD SET_RENDER_TARGETS color_count out of bounds: " + colorCount);
+            const depthStencilRaw = readU32(pv, off + 12);
             const color0Raw = colorCount > 0 ? readU32(pv, off + 16) : 0;
             const color0 = color0Raw !== 0 ? resolveSharedHandle(color0Raw) : 0;
+            const depthStencil = depthStencilRaw !== 0 ? resolveSharedHandle(depthStencilRaw) : 0;
 
             let fb = null;
             acmdColor0 = null;
@@ -1540,6 +1688,48 @@ void main() {
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
             acmdFramebuffer = fb;
+
+            // Attach depth-stencil buffer if provided (offscreen RTs only).
+            acmdDepthStencil0 = null;
+            if (fb) {
+              // Detach any previous attachments first.
+              gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, null);
+              gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, null);
+
+              if (depthStencil !== 0) {
+                const dsObj = acmdDepthStencils.get(depthStencil);
+                if (!dsObj) {
+                  fail(
+                    "ACMD SET_RENDER_TARGETS unknown depth_stencil=" +
+                      depthStencilRaw +
+                      " (resolved=" +
+                      depthStencil +
+                      ")",
+                  );
+                }
+                if (acmdColor0 && (dsObj.width !== acmdColor0.width || dsObj.height !== acmdColor0.height)) {
+                  fail(
+                    "ACMD SET_RENDER_TARGETS depth-stencil size mismatch: rt=" +
+                      acmdColor0.width +
+                      "x" +
+                      acmdColor0.height +
+                      " ds=" +
+                      dsObj.width +
+                      "x" +
+                      dsObj.height,
+                  );
+                }
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, dsObj.attachment, gl.RENDERBUFFER, dsObj.renderbuffer);
+                acmdDepthStencil0 = { renderbuffer: dsObj.renderbuffer, attachment: dsObj.attachment };
+              }
+
+              const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+              if (status !== gl.FRAMEBUFFER_COMPLETE) {
+                fail("ACMD framebuffer incomplete after SET_RENDER_TARGETS: 0x" + status.toString(16));
+              }
+            } else if (depthStencil !== 0) {
+              fail("ACMD SET_RENDER_TARGETS cannot bind a depth-stencil buffer without a color render target");
+            }
             break;
           }
           case AEROGPU_CMD_SET_VIEWPORT: {
@@ -1601,23 +1791,52 @@ void main() {
               const offsetBytes = readU32(pv, bOff + 8);
 
               if (slot === 0) {
-                if (strideBytes < 24) fail("ACMD vertex stride too small: " + strideBytes);
                 const resolvedBufferHandle = resolveSharedHandle(bufferHandle);
                 const glBuf = acmdBuffers.get(resolvedBufferHandle);
                 if (!glBuf) fail("ACMD unknown buffer_handle=" + bufferHandle + " (resolved=" + resolvedBufferHandle + ")");
                 gl.bindVertexArray(acmdVao);
                 gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
-                // Vertex format for the triangle fixture:
-                // - position: vec2<f32> at offset 0
-                // - color: vec4<f32> at offset 8
+
+                // Supported vertex formats (based on the committed trace fixtures):
+                // - stride=24: float2 position + float4 color
+                // - stride=28: float3 position + float4 color
+                // - stride=20: float3 position + float2 texcoord
+                //
+                // The replay tool uses a fixed shader interface:
+                // - @location(0): vec2 position.xy
+                // - @location(1): vec4 colorOrUv (vec2 uploads are padded to vec4 by WebGL)
+                // - @location(2): float depth
                 gl.enableVertexAttribArray(0);
                 gl.vertexAttribPointer(0, 2, gl.FLOAT, false, strideBytes, offsetBytes + 0);
-                gl.enableVertexAttribArray(1);
-                gl.vertexAttribPointer(1, 4, gl.FLOAT, false, strideBytes, offsetBytes + 8);
-                // Optional depth: float at offset 24 (if present).
+
+                let colorSize = 0;
+                let colorOffset = 0;
+                let depthOffset = null;
+
                 if (strideBytes >= 28) {
+                  // float3 position (z used for depth) + float4 color
+                  colorSize = 4;
+                  colorOffset = offsetBytes + 12;
+                  depthOffset = offsetBytes + 8;
+                } else if (strideBytes >= 24) {
+                  // float2 position + float4 color
+                  colorSize = 4;
+                  colorOffset = offsetBytes + 8;
+                } else if (strideBytes >= 20) {
+                  // float3 position (z used for depth) + float2 texcoord
+                  colorSize = 2;
+                  colorOffset = offsetBytes + 12;
+                  depthOffset = offsetBytes + 8;
+                } else {
+                  fail("ACMD unsupported vertex stride_bytes=" + strideBytes + " (supported: 20/24/28)");
+                }
+
+                gl.enableVertexAttribArray(1);
+                gl.vertexAttribPointer(1, colorSize, gl.FLOAT, false, strideBytes, colorOffset);
+
+                if (depthOffset !== null) {
                   gl.enableVertexAttribArray(2);
-                  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, strideBytes, offsetBytes + 24);
+                  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, strideBytes, depthOffset);
                 } else {
                   gl.disableVertexAttribArray(2);
                   gl.vertexAttrib1f(2, 0.0);
@@ -1810,12 +2029,23 @@ void main() {
               if (texObj.target !== gl.TEXTURE_2D || texObj.arrayLayers !== 1 || texObj.mipLevels < 1) {
                 fail("ACMD UPLOAD_RESOURCE only supports TEXTURE_2D array_layers=1");
               }
-              const expected = texObj.width * texObj.height * 4;
-              if (sizeBytes !== expected) {
-                fail("ACMD UPLOAD_RESOURCE texture size_bytes mismatch: got " + sizeBytes + " expected " + expected);
-              }
               gl.bindTexture(gl.TEXTURE_2D, texObj.texture);
-              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, texObj.width, texObj.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+              if (texObj.isBc1) {
+                const blocksX = Math.ceil(texObj.width / 4);
+                const blocksY = Math.ceil(texObj.height / 4);
+                const expected = blocksX * blocksY * 8;
+                if (sizeBytes !== expected) {
+                  fail("ACMD UPLOAD_RESOURCE BC1 size_bytes mismatch: got " + sizeBytes + " expected " + expected);
+                }
+                const rgba = decodeBc1Rgba8(data, texObj.width, texObj.height);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, texObj.width, texObj.height, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+              } else {
+                const expected = texObj.width * texObj.height * 4;
+                if (sizeBytes !== expected) {
+                  fail("ACMD UPLOAD_RESOURCE texture size_bytes mismatch: got " + sizeBytes + " expected " + expected);
+                }
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, texObj.width, texObj.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+              }
               break;
             }
 

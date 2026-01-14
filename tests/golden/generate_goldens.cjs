@@ -132,6 +132,18 @@ function main() {
     wrote++;
   }
 
+  // Depth test fixture should result in a solid green frame (near triangle passes, far triangle rejected).
+  const traceGreen64 = generateSolidColorRGBA(64, 64, 0, 255, 0, 255);
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_depth_test_64.png'), 64, 64, traceGreen64)) {
+    wrote++;
+  }
+
+  // Textured BC1 fixture uploads a single blue block and samples it across the triangle.
+  const traceBlue64 = generateSolidColorRGBA(64, 64, 0, 0, 255, 255);
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_textured_bc1_triangle_64.png'), 64, 64, traceBlue64)) {
+    wrote++;
+  }
+
   // eslint-disable-next-line no-console
   if (wrote === 0) {
     console.log(`Goldens already up to date in ${outDir}`);
