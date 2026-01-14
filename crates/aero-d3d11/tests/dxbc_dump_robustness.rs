@@ -5,43 +5,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
-use aero_d3d11::{DxbcFile, FourCC};
-
-fn push_u32_le(out: &mut Vec<u8>, v: u32) {
-    out.extend_from_slice(&v.to_le_bytes());
-}
-
-fn make_single_chunk_dxbc(fourcc: FourCC, data: &[u8]) -> Vec<u8> {
-    // Minimal DXBC container:
-    // - header (32 bytes)
-    // - 1 chunk offset (4 bytes)
-    // - chunk header (8 bytes)
-    // - chunk payload (variable)
-    let header_len = 4 + 16 + 4 + 4 + 4;
-    let chunk_count = 1u32;
-    let offset_table_len = (chunk_count as usize) * 4;
-    let chunk_offset = (header_len + offset_table_len) as u32;
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (unused by our parser)
-    push_u32_le(&mut bytes, 0); // reserved
-    let total_size_pos = bytes.len();
-    push_u32_le(&mut bytes, 0); // placeholder total_size
-    push_u32_le(&mut bytes, chunk_count);
-    push_u32_le(&mut bytes, chunk_offset);
-
-    assert_eq!(bytes.len(), chunk_offset as usize);
-
-    bytes.extend_from_slice(&fourcc.0);
-    push_u32_le(&mut bytes, data.len() as u32);
-    bytes.extend_from_slice(data);
-
-    let total_size = bytes.len() as u32;
-    bytes[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
-    bytes
-}
+use aero_d3d11::DxbcFile;
 
 #[test]
 fn dxbc_dump_warns_and_truncates_misaligned_shader_chunk() {
@@ -67,7 +33,10 @@ fn dxbc_dump_warns_and_truncates_misaligned_shader_chunk() {
     // alignment, and continue parsing successfully.
     let mut misaligned_shader = shader_chunk.data.to_vec();
     misaligned_shader.push(0);
-    let misaligned = make_single_chunk_dxbc(shader_chunk.fourcc, &misaligned_shader);
+    let misaligned = dxbc_test_utils::build_container_unaligned(&[(
+        shader_chunk.fourcc,
+        misaligned_shader.as_slice(),
+    )]);
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

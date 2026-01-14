@@ -4,18 +4,7 @@ use aero_d3d11::{
     RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
-
-fn build_empty_dxbc() -> Vec<u8> {
-    // Minimal DXBC container with no chunks.
-    let total_size = 4 + 16 + 4 + 4 + 4;
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk count
-    bytes
-}
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn assert_wgsl_validates(wgsl: &str) {
     let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
@@ -30,7 +19,7 @@ fn assert_wgsl_validates(wgsl: &str) {
 
 #[test]
 fn translates_compute_ld_uav_structured_and_validates() {
-    let dxbc_bytes = build_empty_dxbc();
+    let dxbc_bytes = dxbc_test_utils::build_container(&[]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
 
     // Minimal compute module that reads from a structured UAV.
