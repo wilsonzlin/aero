@@ -893,7 +893,11 @@ fn vs_as_compute_loads_extended_formats() {
                     device,
                     &pulling,
                     &[&vb],
-                    &ia_uniform,
+                    wgpu::BufferBinding {
+                        buffer: &ia_uniform,
+                        offset: 0,
+                        size: None,
+                    },
                     None,
                     None,
                     &vs_out_regs,
