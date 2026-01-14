@@ -1785,6 +1785,162 @@ describe("hid/WebHidBroker", () => {
     expect(failed.msg).toMatchObject({ requestId: 3, ok: false });
   });
 
+  it("clamps oversized feature report payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // One feature report (ID 7) with 4 bytes of payload.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [
+            {
+              reportId: 7,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      device.receiveFeatureReport.mockImplementationOnce(async () => {
+        const huge = new Uint8Array(1024 * 1024);
+        huge.set([1, 2, 3, 4], 0);
+        return new DataView(huge.buffer);
+      });
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 7 });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const result = port.posted.find(
+        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
+      ) as any;
+      expect(result).toBeTruthy();
+      expect(result.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
+      expect(result.msg.data.byteLength).toBe(4);
+      expect(Array.from(result.msg.data)).toEqual([1, 2, 3, 4]);
+      expect(result.transfer?.[0]).toBe(result.msg.data.buffer);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("zero-pads short feature report payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // One feature report (ID 7) with 4 bytes of payload.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [
+            {
+              reportId: 7,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      device.receiveFeatureReport.mockImplementationOnce(async () => new DataView(Uint8Array.of(9, 8).buffer));
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 7 });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const result = port.posted.find(
+        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
+      ) as any;
+      expect(result).toBeTruthy();
+      expect(result.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
+      expect(Array.from(result.msg.data)).toEqual([9, 8, 0, 0]);
+      expect(result.transfer?.[0]).toBe(result.msg.data.buffer);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hard-caps unknown feature report payload sizes before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // No feature report metadata -> size will be treated as unknown.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      device.receiveFeatureReport.mockImplementation(async () => {
+        const huge = new Uint8Array(1024 * 1024);
+        huge.set([1, 2, 3], 0);
+        return new DataView(huge.buffer);
+      });
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 99 });
+      port.emit({ type: "hid.getFeatureReport", requestId: 2, deviceId: id, reportId: 99 });
+
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      const results = port.posted.filter(
+        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).ok === true,
+      ) as any[];
+      expect(results.length).toBeGreaterThanOrEqual(2);
+
+      const a = results.find((r) => r.msg.requestId === 1);
+      const b = results.find((r) => r.msg.requestId === 2);
+      expect(a).toBeTruthy();
+      expect(b).toBeTruthy();
+      expect(a.msg.data.byteLength).toBe(4096);
+      expect(Array.from(a.msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+      expect(b.msg.data.byteLength).toBe(4096);
+      expect(Array.from(b.msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+
+      // Warn once per (deviceId, reportId) when hard-capping unknown report sizes.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("does not auto-attach devices when the worker port is replaced", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });

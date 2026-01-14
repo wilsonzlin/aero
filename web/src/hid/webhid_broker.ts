@@ -3,7 +3,7 @@ import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
-import { computeInputReportPayloadByteLengths } from "./hid_report_sizes";
+import { computeFeatureReportPayloadByteLengths, computeInputReportPayloadByteLengths } from "./hid_report_sizes";
 import {
   isHidAttachResultMessage,
   isHidErrorMessage,
@@ -144,6 +144,7 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
+const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
 
 function toU32OrZero(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -199,6 +200,8 @@ export class WebHidBroker {
   readonly #lastInputReportInfo = new Map<number, WebHidLastInputReportInfo>();
   readonly #inputReportExpectedPayloadBytes = new Map<number, Map<number, number>>();
   readonly #inputReportSizeWarned = new Set<string>();
+  readonly #featureReportExpectedPayloadBytes = new Map<number, Map<number, number>>();
+  readonly #featureReportSizeWarned = new Set<string>();
   #inputReportTruncated = 0;
   #inputReportPadded = 0;
   #inputReportHardCapped = 0;
@@ -736,6 +739,8 @@ export class WebHidBroker {
       const hasInterruptOut = computeHasInterruptOut(collections);
       const inputReportPayloadBytes = computeInputReportPayloadByteLengths(collections);
       this.#inputReportExpectedPayloadBytes.set(deviceId, inputReportPayloadBytes);
+      const featureReportPayloadBytes = computeFeatureReportPayloadByteLengths(collections);
+      this.#featureReportExpectedPayloadBytes.set(deviceId, featureReportPayloadBytes);
 
       const attachMsg: HidAttachMessage = {
         type: "hid.attach",
@@ -806,7 +811,7 @@ export class WebHidBroker {
           }
         }
 
-        // Only ever create a view over the clamped amount of input data so a bogus
+        // Only ever create a view over the clamped amount of feature data so a bogus
         // (or malicious) browser/device can't trick us into copying huge buffers.
         const copyLen = Math.min(srcLen, destLen);
         const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
@@ -993,6 +998,7 @@ export class WebHidBroker {
     this.#inputReportListeners.delete(deviceId);
     this.#lastInputReportInfo.delete(deviceId);
     this.#inputReportExpectedPayloadBytes.delete(deviceId);
+    this.#featureReportExpectedPayloadBytes.delete(deviceId);
     const pendingAttach = this.#pendingAttachResults.get(deviceId);
     if (pendingAttach) {
       this.#pendingAttachResults.delete(deviceId);
@@ -1005,6 +1011,11 @@ export class WebHidBroker {
     for (const key of this.#inputReportSizeWarned) {
       if (key.startsWith(`${deviceId}:`)) {
         this.#inputReportSizeWarned.delete(key);
+      }
+    }
+    for (const key of this.#featureReportSizeWarned) {
+      if (key.startsWith(`${deviceId}:`)) {
+        this.#featureReportSizeWarned.delete(key);
       }
     }
 
@@ -1037,6 +1048,13 @@ export class WebHidBroker {
     const key = `${deviceId}:${reportId}:${kind}`;
     if (this.#inputReportSizeWarned.has(key)) return;
     this.#inputReportSizeWarned.add(key);
+    console.warn(message);
+  }
+
+  #warnFeatureReportSizeOnce(deviceId: number, reportId: number, kind: string, message: string): void {
+    const key = `${deviceId}:${reportId}:${kind}`;
+    if (this.#featureReportSizeWarned.has(key)) return;
+    this.#featureReportSizeWarned.add(key);
     console.warn(message);
   }
 
@@ -1145,8 +1163,46 @@ export class WebHidBroker {
           this.#postToWorker(worker, res);
           return;
         }
-        const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-        const data = new Uint8Array(src.byteLength);
+
+        const srcLen = view.byteLength;
+        const expected = this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId);
+        let destLen: number;
+        if (expected !== undefined) {
+          destLen = expected;
+          if (srcLen > expected) {
+            this.#warnFeatureReportSizeOnce(
+              deviceId,
+              reportId,
+              "truncated",
+              `[webhid] feature report length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+            );
+          } else if (srcLen < expected) {
+            this.#warnFeatureReportSizeOnce(
+              deviceId,
+              reportId,
+              "padded",
+              `[webhid] feature report length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+            );
+          }
+        } else if (srcLen > UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES) {
+          destLen = UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES;
+          this.#warnFeatureReportSizeOnce(
+            deviceId,
+            reportId,
+            "hardCap",
+            `[webhid] feature report reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES}`,
+          );
+        } else {
+          destLen = srcLen;
+        }
+
+        // Only ever create a view over the clamped amount of input data so a bogus
+        // (or malicious) browser/device can't trick us into copying huge buffers.
+        const copyLen = Math.min(srcLen, destLen);
+        const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
+
+        // Always send an ArrayBuffer-backed Uint8Array (transferable).
+        const data = new Uint8Array(destLen);
         data.set(src);
         const res: HidFeatureReportResultMessage = { ...base, ok: true, data };
         this.#postToWorker(worker, res, [data.buffer]);

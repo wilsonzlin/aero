@@ -633,8 +633,9 @@ impl UsbHidPassthrough {
         self.feature_report_request_queue
             .retain(|req| req.request_id != request_id);
 
+        let payload = self.normalize_report_payload_no_prefix(3, report_id, data);
         self.cached_feature_reports
-            .insert(report_id, bytes_with_report_id(report_id, data));
+            .insert(report_id, bytes_with_report_id(report_id, &payload));
         true
     }
 
@@ -2162,6 +2163,22 @@ mod tests {
         ]
     }
 
+    fn sample_report_descriptor_feature_with_id() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x05, // Report ID (5)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x04, // Report Count (4)
+            0xb1, 0x02, // Feature (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
     #[test]
     fn descriptors_are_well_formed() {
         let report = sample_report_descriptor_with_ids();
@@ -3130,6 +3147,138 @@ mod tests {
                 data: vec![(DEFAULT_MAX_PENDING_OUTPUT_REPORTS - 1) as u8]
             }
         );
+    }
+
+    #[test]
+    fn complete_feature_report_request_pads_payload_to_descriptor_length() {
+        let report = sample_report_descriptor_feature_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Descriptor defines feature report ID 5 with 4 bytes of payload (5 bytes total including ID).
+        let setup = SetupPacket {
+            bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 5u16, // Feature, report ID 5
+            w_index: 0,
+            w_length: 64,
+        };
+
+        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        let req = dev
+            .pop_feature_report_request()
+            .expect("expected host feature report request");
+        assert_eq!(req.report_id, 5);
+
+        // Host provides a short payload; device model should zero-pad to the descriptor length.
+        assert!(dev.complete_feature_report_request(req.request_id, req.report_id, &[0x11, 0x22]));
+
+        let resp = dev.handle_control_request(setup, None);
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![5, 0x11, 0x22, 0, 0]);
+    }
+
+    #[test]
+    fn complete_feature_report_request_truncates_payload_to_descriptor_length() {
+        let report = sample_report_descriptor_feature_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Descriptor defines feature report ID 5 with 4 bytes of payload (5 bytes total including ID).
+        let setup = SetupPacket {
+            bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 5u16, // Feature, report ID 5
+            w_index: 0,
+            w_length: 64,
+        };
+
+        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        let req = dev
+            .pop_feature_report_request()
+            .expect("expected host feature report request");
+        assert_eq!(req.report_id, 5);
+
+        // Host provides a long payload; device model should truncate to the descriptor length.
+        assert!(dev.complete_feature_report_request(
+            req.request_id,
+            req.report_id,
+            &[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+        ));
+
+        let resp = dev.handle_control_request(setup, None);
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![5, 0xaa, 0xbb, 0xcc, 0xdd]);
+    }
+
+    #[test]
+    fn complete_feature_report_request_caps_unknown_report_payload_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Feature report ID 1 is not present in the descriptor; cached payloads should be capped.
+        let setup = SetupPacket {
+            bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
+            w_index: 0,
+            w_length: 6000,
+        };
+
+        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        let req = dev
+            .pop_feature_report_request()
+            .expect("expected host feature report request");
+        assert_eq!(req.report_id, 1);
+
+        let payload = vec![0x55u8; MAX_HID_SET_REPORT_BYTES + 123];
+        assert!(dev.complete_feature_report_request(req.request_id, req.report_id, &payload));
+
+        let resp = dev.handle_control_request(setup, None);
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data.len(), MAX_HID_SET_REPORT_BYTES + 1);
+        assert_eq!(data[0], 1);
+        assert!(data[1..].iter().all(|&b| b == 0x55));
     }
 
     #[test]
