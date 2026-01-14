@@ -2523,7 +2523,7 @@ static NTSTATUS AeroGpuV1FencePageInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 
     Adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
     Adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
-    Adapter->FencePageVa->completed_fence = 0;
+    AeroGpuAtomicWriteU64((volatile ULONGLONG*)&Adapter->FencePageVa->completed_fence, 0);
 
     KeMemoryBarrier();
 
@@ -4431,7 +4431,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                                     (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0) {
                                     adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
                                     adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
-                                    adapter->FencePageVa->completed_fence = completedFence;
+                                    AeroGpuAtomicWriteU64((volatile ULONGLONG*)&adapter->FencePageVa->completed_fence, completedFence);
                                     KeMemoryBarrier();
                                     AeroGpuWriteRegU32(adapter,
                                                        AEROGPU_MMIO_REG_FENCE_GPA_LO,
@@ -9957,7 +9957,8 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
                              */
                             adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
                             adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
-                            adapter->FencePageVa->completed_fence = AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
+                            AeroGpuAtomicWriteU64((volatile ULONGLONG*)&adapter->FencePageVa->completed_fence,
+                                                  AeroGpuAtomicReadU64(&adapter->LastCompletedFence));
                             KeMemoryBarrier();
 
                             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
