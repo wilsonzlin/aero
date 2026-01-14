@@ -560,19 +560,20 @@ jobs:
         run: |
           set -euo pipefail
           repo_root="$(git rev-parse --show-toplevel)"
-          (cd "$repo_root" && npm run generate:goldens)
-          if ! git -C "$repo_root" diff --exit-code -- tests/golden; then
+          cd "$repo_root"
+          npm run generate:goldens
+          if ! git diff --exit-code tests/golden; then
             echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
             echo "Changed files:"
-            git -C "$repo_root" status --porcelain -- tests/golden
+            git status --porcelain -- tests/golden
             exit 1
           fi
           # `git diff` does not report untracked files; ensure the generator did not
           # produce any new goldens that were forgotten in the commit.
-          if [[ -n "$(git -C "$repo_root" status --porcelain -- tests/golden)" ]]; then
+          if [[ -n "$(git status --porcelain -- tests/golden)" ]]; then
             echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
             echo "Changed files:"
-            git -C "$repo_root" status --porcelain -- tests/golden
+            git status --porcelain -- tests/golden
             exit 1
           fi
 
