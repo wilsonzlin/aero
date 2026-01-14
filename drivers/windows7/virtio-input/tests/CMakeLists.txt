@@ -3,6 +3,12 @@ project(virtio_input_tests C)
 
 enable_testing()
 
+set(VIOINPUT_TEST_CFLAGS "")
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    # Keep assertions enabled even in Release builds (CMake adds -DNDEBUG by default).
+    set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
+endif ()
+
 add_executable(hid_translate_test
     hid_translate_test.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/hid_translate.c
@@ -11,8 +17,10 @@ add_executable(hid_translate_test
 set_target_properties(hid_translate_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
 )
 
+target_compile_options(hid_translate_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME hid_translate_test COMMAND hid_translate_test)
 
 add_executable(led_translate_test
@@ -23,8 +31,10 @@ add_executable(led_translate_test
 set_target_properties(led_translate_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
 )
 
+target_compile_options(led_translate_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME led_translate_test COMMAND led_translate_test)
 
 add_executable(led_report_parse_test
@@ -35,8 +45,10 @@ add_executable(led_report_parse_test
 set_target_properties(led_report_parse_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
 )
 
+target_compile_options(led_report_parse_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME led_report_parse_test COMMAND led_report_parse_test)
 
 add_executable(led_output_pipeline_test
@@ -48,8 +60,10 @@ add_executable(led_output_pipeline_test
 set_target_properties(led_output_pipeline_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
 )
 
+target_compile_options(led_output_pipeline_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME led_output_pipeline_test COMMAND led_output_pipeline_test)
 
 add_executable(report_ring_test
@@ -61,6 +75,8 @@ add_executable(report_ring_test
 set_target_properties(report_ring_test PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
 )
 
+target_compile_options(report_ring_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME report_ring_test COMMAND report_ring_test)
