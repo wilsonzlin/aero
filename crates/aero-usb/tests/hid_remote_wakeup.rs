@@ -1,5 +1,6 @@
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::hid::mouse::UsbHidMouseHandle;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::regs::{
     REG_PORTSC1, REG_USBINTR, REG_USBSTS, USBINTR_RESUME, USBSTS_RESUMEDETECT,
@@ -174,6 +175,105 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect() {
     // Inject a key press while the device is suspended. The HID model should request remote wakeup
     // which the root hub turns into a port-level Resume Detect event.
     keyboard.key_event(0x04, true); // HID usage ID for KeyA
+
+    assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
+    let mut mem = TestMemory::new(0x1000);
+    ctrl.tick_1ms(&mut mem);
+
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert!(
+        portsc & PORTSC_RD != 0,
+        "expected root hub port Resume Detect bit to latch after remote wake"
+    );
+
+    let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
+    assert!(
+        usbsts & USBSTS_RESUMEDETECT != 0,
+        "expected UHCI USBSTS.RESUMEDETECT to latch from root hub Resume Detect"
+    );
+    assert!(
+        ctrl.irq_level(),
+        "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
+    );
+}
+
+#[test]
+fn hid_mouse_remote_wakeup_sets_uhci_resume_detect_from_boot_scroll() {
+    let mut ctrl = UhciController::new();
+    let mouse = UsbHidMouseHandle::new();
+    ctrl.hub_mut().attach(0, Box::new(mouse.clone()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    // Guest enables Resume interrupts so remote wake latches USBSTS.RESUMEDETECT and raises IRQ.
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+
+    // Minimal enumeration/configuration + enable device remote wakeup.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    // Select HID boot protocol so wheel input is not representable; the mouse should still request
+    // remote wakeup on scroll.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x21, // HostToDevice | Class | Interface
+            b_request: 0x0b,       // SET_PROTOCOL
+            w_value: 0,            // Boot
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(mouse.configured(), "expected mouse to be configured");
+
+    // Put the port into suspend.
+    let cur_portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    ctrl.io_write(
+        REG_PORTSC1,
+        2,
+        (cur_portsc | PORTSC_PED | PORTSC_SUSP) as u32,
+    );
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert!(portsc & PORTSC_SUSP != 0, "expected port to be suspended");
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "resume-detect must not be asserted before remote wake triggers"
+    );
+
+    // Inject a scroll while suspended. In boot protocol this should not enqueue an interrupt report,
+    // but it should still request remote wakeup.
+    mouse.wheel(1);
 
     assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
     let mut mem = TestMemory::new(0x1000);

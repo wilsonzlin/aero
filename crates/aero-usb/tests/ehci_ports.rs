@@ -6,6 +6,7 @@ use aero_usb::ehci::regs::{
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::hid::mouse::UsbHidMouseHandle;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::{
@@ -351,6 +352,106 @@ fn ehci_keyboard_remote_wakeup_enters_resume_state() {
 
     // Inject a keypress while suspended. This should request remote wakeup.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
+
+    // Tick once to allow the root hub to observe the remote wakeup request.
+    ehci.tick_1ms(&mut mem);
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(
+        portsc & PORTSC_FPR,
+        0,
+        "expected EHCI port to enter resume state after remote wakeup"
+    );
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
+
+    // After the resume timer expires, the port should exit suspend/resume and return to J state.
+    for _ in 0..20 {
+        ehci.tick_1ms(&mut mem);
+    }
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+
+    // The device should be reachable again after resume.
+    assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
+}
+
+#[test]
+fn ehci_mouse_remote_wakeup_enters_resume_state_from_boot_scroll() {
+    let mut ehci = EhciController::new_with_port_count(1);
+    let mouse = UsbHidMouseHandle::new();
+    ehci.hub_mut().attach(0, Box::new(mouse.clone()));
+
+    // Claim ports for EHCI (clears PORT_OWNER) and reset the port to enable it.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+    ehci.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    // Minimal configuration + enable remote wakeup.
+    control_no_data(
+        &mut ehci,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    // Select HID boot protocol so wheel input is not representable; the mouse should still request
+    // remote wakeup on scroll.
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x21, // HostToDevice | Class | Interface
+            b_request: 0x0b,       // SET_PROTOCOL
+            w_value: 0,            // Boot
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(mouse.configured(), "expected mouse to be configured");
+
+    // Suspend the port.
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(portsc & PORTSC_SUSP, 0, "expected port to be suspended");
+
+    // Inject a scroll while suspended. In boot protocol this should not enqueue an interrupt
+    // report, but it should still request remote wakeup.
+    mouse.wheel(1);
 
     // Tick once to allow the root hub to observe the remote wakeup request.
     ehci.tick_1ms(&mut mem);
