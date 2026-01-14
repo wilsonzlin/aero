@@ -10,7 +10,7 @@
 //! This pass intentionally runs with `@workgroup_size(1)` and only the `global_invocation_id.x==0`
 //! lane active so ordering is deterministic without atomics.
 
-use super::MAX_TESS_FACTOR;
+use super::{tessellator::wgsl_tri_tessellator_lib, MAX_TESS_FACTOR};
 
 /// Returns a WGSL compute shader implementing the tessellation layout pass.
 ///
@@ -28,6 +28,7 @@ pub fn wgsl_tessellation_layout_pass(
     out_indirect_args_binding: u32,
     out_debug_binding: u32,
 ) -> String {
+    let tri_lib = wgsl_tri_tessellator_lib(MAX_TESS_FACTOR);
     format!(
         r#"
 // ---- Layouts (must match Rust `#[repr(C)]` structs) ----
@@ -59,6 +60,8 @@ struct DebugOut {{
     flag: u32,
 }};
 
+{tri_lib}
+
 @group({group}) @binding({params_binding})
 var<uniform> params: LayoutParams;
 
@@ -76,8 +79,6 @@ var<storage, read_write> out_indirect: DrawIndexedIndirectArgs;
 @group({group}) @binding({out_debug_binding})
 var<storage, read_write> out_debug: DebugOut;
 
-const MAX_TESS: u32 = {MAX_TESS_FACTOR}u;
-
 fn safe_round_tess_factor(x: f32) -> u32 {{
     // Defensive against NaN/Inf; treat as 0.
     if (isNan(x) || isInf(x)) {{
@@ -85,10 +86,10 @@ fn safe_round_tess_factor(x: f32) -> u32 {{
     }}
 
     // Clamp before rounding to avoid undefined float→int conversions.
-    let clamped = clamp(x, 0.0, f32(MAX_TESS));
+    let clamped = clamp(x, 0.0, f32(MAX_TESS_FACTOR));
     let r = round(clamped);
     // `round` may produce -0.0; clamp again just in case.
-    return u32(clamp(r, 0.0, f32(MAX_TESS)));
+    return u32(clamp(r, 0.0, f32(MAX_TESS_FACTOR)));
 }}
 
 fn derive_tess_level(factors: vec4<f32>) -> u32 {{
@@ -97,21 +98,7 @@ fn derive_tess_level(factors: vec4<f32>) -> u32 {{
     let e2 = safe_round_tess_factor(factors.z);
     let inside = safe_round_tess_factor(factors.w);
     let m = max(max(e0, e1), max(e2, inside));
-    return max(1u, min(m, MAX_TESS));
-}}
-
-fn vertex_count_for_tess_level(level: u32) -> u32 {{
-    // Triangle domain vertex count:
-    // vertices = (n+1)(n+2)/2
-    let a = level + 1u;
-    let b = level + 2u;
-    return (a * b) / 2u;
-}}
-
-fn index_count_for_tess_level(level: u32) -> u32 {{
-    // Triangle domain index count (triangle list):
-    // triangles = n^2, indices = 3*n^2
-    return 3u * level * level;
+    return tri_clamp_level(m);
 }}
 
 @compute @workgroup_size(1)
@@ -147,8 +134,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             if (level == 0u) {{
                 break;
             }}
-            let v = vertex_count_for_tess_level(level);
-            let i = index_count_for_tess_level(level);
+            let v = tri_vertex_count(level);
+            let i = tri_index_count(level);
             if (v <= rem_vertices && i <= rem_indices) {{
                 v_count = v;
                 i_count = i;
