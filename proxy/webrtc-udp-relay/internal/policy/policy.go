@@ -51,22 +51,6 @@ type portRange struct {
 	end   uint16
 }
 
-func NewProductionDestinationPolicy() *DestinationPolicy {
-	return &DestinationPolicy{
-		Preset:               "prod",
-		DefaultAllow:         false,
-		AllowPrivateNetworks: false,
-	}
-}
-
-func NewDevDestinationPolicy() *DestinationPolicy {
-	return &DestinationPolicy{
-		Preset:               "dev",
-		DefaultAllow:         true,
-		AllowPrivateNetworks: true,
-	}
-}
-
 // NewDestinationPolicyFromEnv builds a DestinationPolicy from environment variables.
 //
 // Supported env vars are documented in proxy/webrtc-udp-relay/README.md.
@@ -75,9 +59,17 @@ func NewDestinationPolicyFromEnv() (*DestinationPolicy, error) {
 	var p *DestinationPolicy
 	switch preset {
 	case "", "prod", "production":
-		p = NewProductionDestinationPolicy()
+		p = &DestinationPolicy{
+			Preset:               "prod",
+			DefaultAllow:         false,
+			AllowPrivateNetworks: false,
+		}
 	case "dev", "development":
-		p = NewDevDestinationPolicy()
+		p = &DestinationPolicy{
+			Preset:               "dev",
+			DefaultAllow:         true,
+			AllowPrivateNetworks: true,
+		}
 	default:
 		return nil, fmt.Errorf("destination policy: unknown DESTINATION_POLICY_PRESET %q", preset)
 	}

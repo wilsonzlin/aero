@@ -117,7 +117,7 @@ func TestStartupSecurityWarnings_UDPInboundFilterModeAny(t *testing.T) {
 		MaxSessions:          1,
 		UDPInboundFilterMode: config.UDPInboundFilterModeAny,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -146,7 +146,7 @@ func TestStartupSecurityWarnings_AuthModeNone(t *testing.T) {
 		Mode:     config.ModeDev,
 		AuthMode: config.AuthModeNone,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -177,7 +177,7 @@ func TestStartupSecurityWarnings_AllowedOriginsWildcard(t *testing.T) {
 		AllowedOrigins: []string{"*"},
 		APIKey:         "secret",
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -205,7 +205,7 @@ func TestStartupSecurityWarnings_DestinationPolicyPresetDev(t *testing.T) {
 		APIKey:      "secret",
 		MaxSessions: 1,
 	}
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -236,7 +236,7 @@ func TestStartupSecurityWarnings_AllowPrivateNetworksInProd(t *testing.T) {
 		APIKey:      "secret",
 		MaxSessions: 1,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 	destPolicy.AllowPrivateNetworks = true
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
@@ -268,7 +268,7 @@ func TestStartupSecurityWarnings_MaxSessionsUnlimitedInProd(t *testing.T) {
 		APIKey:      "secret",
 		MaxSessions: 0,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -298,7 +298,7 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
 		L2BackendWSURL:           "wss://example.com/l2",
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeQuery,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -334,7 +334,7 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery_WarnsWhenL2Disabled(t *t
 		L2BackendWSURL:           "",
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeQuery,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -371,7 +371,7 @@ func TestStartupSecurityWarnings_WebRTCDataChannelMaxMessageLarge(t *testing.T) 
 		// Avoid query-string auth forwarding mode (which would produce its own warning).
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -409,7 +409,7 @@ func TestStartupSecurityWarnings_WebRTCSCTPMaxReceiveBufferLarge(t *testing.T) {
 		// Avoid query-string auth forwarding mode (which would produce its own warning).
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -447,7 +447,7 @@ func TestStartupSecurityWarnings_WebRTCSessionConnectTimeoutLarge(t *testing.T) 
 		// Avoid query-string auth forwarding mode (which would produce its own warning).
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
 	}
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 
@@ -482,7 +482,7 @@ func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
 	// Explicitly avoid query-string auth forwarding mode (the default in config.Load)
 	// so we assert a truly "safe" config produces no warnings.
 	cfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
-	destPolicy := policy.NewProductionDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)
 

@@ -32,7 +32,7 @@ func mustEncode(t *testing.T, f udpproto.Frame) []byte {
 
 func TestSessionRelay_BindingEviction(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := Config{
 		MaxUDPBindingsPerSession:  2,
 		UDPBindingIdleTimeout:     time.Minute,
@@ -82,7 +82,7 @@ func TestSessionRelay_BindingEviction(t *testing.T) {
 
 func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := Config{
 		MaxUDPBindingsPerSession:  8,
 		UDPBindingIdleTimeout:     50 * time.Millisecond,
@@ -114,7 +114,7 @@ func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 
 func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	m := &metrics.Metrics{}
 	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
@@ -223,7 +223,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 
 func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAny
 	cfg.UDPBindingIdleTimeout = time.Minute
@@ -311,7 +311,7 @@ func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 
 func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAny
 	cfg.UDPBindingIdleTimeout = time.Minute
@@ -382,7 +382,7 @@ func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 	defer echoConn.Close()
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
 	cfg.UDPBindingIdleTimeout = time.Minute
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
@@ -433,7 +433,7 @@ func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 
 func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
-	p := policy.NewDevDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
 	cfg.PreferV2 = true
 	cfg.InboundFilterMode = InboundFilterAddressAndPort

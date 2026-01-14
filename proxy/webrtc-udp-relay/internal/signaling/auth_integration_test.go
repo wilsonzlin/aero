@@ -187,7 +187,7 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 		WebRTC:                        api,
 		ICEServers:                    nil,
 		RelayConfig:                   relay.Config{}.WithDefaults(),
-		Policy:                        policy.NewDevDestinationPolicy(),
+		Policy:                        &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true},
 		Authorizer:                    authz,
 		ICEGatheringTimeout:           2 * time.Second,
 		SessionPreallocTTL:            cfg.SessionPreallocTTL,

@@ -359,7 +359,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 
 	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -399,7 +399,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
 
 	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -437,7 +437,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 
 	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -506,7 +506,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendWSToken = "sekrit"
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -581,7 +581,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	relayCfg.L2BackendForwardOrigin = true
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeQuery
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "relay-secret")
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -673,7 +673,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardOrigin = true
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -750,7 +750,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 	relayCfg.L2BackendForwardOrigin = true
 	relayCfg.L2BackendWSOrigin = "https://backend.example.com"
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -827,7 +827,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "relay-secret")
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -914,7 +914,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 	relayCfg.L2BackendWSToken = "backend-secret"
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "client-secret")
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -1003,7 +1003,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeNone
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "relay-secret")
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -1089,7 +1089,7 @@ func TestWebRTCUDPRelay_L2TunnelSubprotocolForwardingRejectsInvalidCredential(t 
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "bad=secret")
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -1131,7 +1131,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardAeroSession = true
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})

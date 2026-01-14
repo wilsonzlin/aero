@@ -41,7 +41,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	}()
 
 	relayCfg := relay.Config{}.WithDefaults()
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
@@ -226,7 +226,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 	}()
 
 	relayCfg := relay.Config{}.WithDefaults()
-	destPolicy := policy.NewDevDestinationPolicy()
+	destPolicy := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",

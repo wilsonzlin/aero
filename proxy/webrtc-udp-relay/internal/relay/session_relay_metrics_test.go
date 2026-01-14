@@ -22,7 +22,7 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 	}
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	r.HandleDataChannelMessage([]byte{0x00})
@@ -47,7 +47,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 	relayCfg.MaxDatagramPayloadBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	// Construct a v1 frame whose payload is larger than MaxDatagramPayloadBytes.
@@ -79,7 +79,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 	relayCfg.DataChannelSendQueueBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 	r.EnableWebRTCUDPMetrics()
 
@@ -153,7 +153,7 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 	relayCfg.UDPReadBufferBytes = 2048
 	relayCfg.DataChannelSendQueueBytes = 1 << 20
 
-	r := NewSessionRelay(dc, relayCfg, policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	remote1, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -240,7 +240,7 @@ func TestSessionRelay_DefaultMetricsSink_UsesSessionMetrics(t *testing.T) {
 	sess := &Session{metrics: m}
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	if r.metrics != m {

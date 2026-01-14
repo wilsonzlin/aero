@@ -46,7 +46,7 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 	}()
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
-	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	send := func() {
@@ -116,7 +116,7 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 	remoteAddr := remote.LocalAddr().(*net.UDPAddr)
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
-	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, sess, nil)
 	t.Cleanup(r.Close)
 
 	// Create the UDP binding and allowlist the remote endpoint.

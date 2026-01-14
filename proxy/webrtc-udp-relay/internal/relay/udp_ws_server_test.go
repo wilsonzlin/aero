@@ -180,7 +180,7 @@ func TestUDPWebSocketServer_IdleTimeoutClosesWithoutPong(t *testing.T) {
 	}
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestUDPWebSocketServer_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 	}
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestUDPWebSocketServer_ReadyIncludesSessionIDWithoutSessionManager(t *testi
 	}
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestUDPWebSocketServer_JWTAuthViaHeader(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestUDPWebSocketServer_JWTAuthViaHeader_XAPIKeyAlias(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_HeaderAlias(
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_QueryParamAl
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestUDPWebSocketServer_JWTAllowsConcurrentSessionsWithDifferentSID(t *testi
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestUDPWebSocketServer_JWTAllowsConcurrentSessionsWithDifferentSID_FirstMes
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -752,7 +752,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -812,7 +812,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -877,7 +877,7 @@ func TestUDPWebSocketServer_InboundFilterAddressAndPort_DropsUnexpectedSourcePor
 	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -959,7 +959,7 @@ func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testi
 	relayCfg.InboundFilterMode = InboundFilterAny
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1025,7 +1025,7 @@ func TestUDPWebSocketServer_RemoteAllowlistEvictionIncrementsMetric(t *testing.T
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 	relayCfg.MaxAllowedRemotesPerBinding = 1
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1087,7 +1087,7 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 	relayCfg := defaultConfig()
 
 	// Production policy denies 127.0.0.0/8 by default.
-	p := policy.NewProductionDestinationPolicy()
+	p := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
 
 	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, p, nil)
 	if err != nil {
@@ -1142,7 +1142,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 	sm := NewSessionManager(cfg, m, clk)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1200,7 +1200,7 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1267,7 +1267,7 @@ func TestUDPWebSocketServer_DroppedOversizedIncrementsMetric(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.MaxDatagramPayloadBytes = 5
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1341,7 +1341,7 @@ func TestUDPWebSocketServer_DroppedMalformedIncrementsMetric(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1410,7 +1410,7 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1466,7 +1466,7 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1514,7 +1514,7 @@ func TestUDPWebSocketServer_AuthTimeoutClosesWithoutAuthMessage(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1561,7 +1561,7 @@ func TestUDPWebSocketServer_APIKeyAuthViaHeader(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1591,7 +1591,7 @@ func TestUDPWebSocketServer_APIKeyAuthViaHeader_AuthorizationBearerAlias(t *test
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1625,7 +1625,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1686,7 +1686,7 @@ func TestUDPWebSocketServer_AuthMessage_TokenAliasInAPIKeyMode(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1719,7 +1719,7 @@ func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1770,7 +1770,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1831,7 +1831,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1887,7 +1887,7 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 	relayCfg := defaultConfig()
 	relayCfg.DataChannelSendQueueBytes = 1
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -1933,7 +1933,7 @@ func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -2009,7 +2009,7 @@ func TestUDPWebSocketServer_OriginChecks_AllowsConfiguredOrigin(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -2040,7 +2040,7 @@ func TestUDPWebSocketServer_NonWebSocketRequestReturnsJSONError(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, defaultConfig(), policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, nil, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -2083,7 +2083,7 @@ func TestUDPWebSocketServer_ForbiddenOriginReturnsJSONError(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	srv, err := NewUDPWebSocketServer(cfg, nil, defaultConfig(), policy.NewDevDestinationPolicy(), nil)
+	srv, err := NewUDPWebSocketServer(cfg, nil, defaultConfig(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}

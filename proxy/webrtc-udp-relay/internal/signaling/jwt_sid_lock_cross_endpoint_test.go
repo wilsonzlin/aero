@@ -33,7 +33,7 @@ func startSignalingAndUDPServer(t *testing.T, cfg config.Config) (*httptest.Serv
 		WebRTC:                        api,
 		ICEServers:                    nil,
 		RelayConfig:                   relay.Config{}.WithDefaults(),
-		Policy:                        policy.NewDevDestinationPolicy(),
+		Policy:                        &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true},
 		Authorizer:                    authz,
 		ICEGatheringTimeout:           2 * time.Second,
 		SessionPreallocTTL:            cfg.SessionPreallocTTL,
@@ -42,7 +42,7 @@ func startSignalingAndUDPServer(t *testing.T, cfg config.Config) (*httptest.Serv
 		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
 	})
 
-	udpWS, err := relay.NewUDPWebSocketServer(cfg, sm, relay.Config{}.WithDefaults(), policy.NewDevDestinationPolicy(), nil)
+	udpWS, err := relay.NewUDPWebSocketServer(cfg, sm, relay.Config{}.WithDefaults(), &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}

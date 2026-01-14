@@ -21,7 +21,7 @@ func TestWebSocketSignaling_IdleTimeoutClosesWithoutPong(t *testing.T) {
 	srv := NewServer(Config{
 		WebRTC:                  webrtc.NewAPI(),
 		RelayConfig:             relay.Config{}.WithDefaults(),
-		Policy:                  policy.NewDevDestinationPolicy(),
+		Policy:                  &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true},
 		Authorizer:              allowAllAuthorizer{},
 		SignalingWSIdleTimeout:  idleTimeout,
 		SignalingWSPingInterval: pingInterval,
@@ -83,7 +83,7 @@ func TestWebSocketSignaling_PongKeepsConnectionOpenBeyondIdleTimeout(t *testing.
 	srv := NewServer(Config{
 		WebRTC:                  webrtc.NewAPI(),
 		RelayConfig:             relay.Config{}.WithDefaults(),
-		Policy:                  policy.NewDevDestinationPolicy(),
+		Policy:                  &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true},
 		Authorizer:              allowAllAuthorizer{},
 		SignalingWSIdleTimeout:  idleTimeout,
 		SignalingWSPingInterval: pingInterval,
