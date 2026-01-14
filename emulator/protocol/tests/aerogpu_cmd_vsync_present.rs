@@ -38,7 +38,7 @@ fn detects_vsync_present_packets() {
     push_u32(&mut stream, AEROGPU_PRESENT_FLAG_VSYNC);
     patch_stream_size(&mut stream);
 
-    assert_eq!(cmd_stream_has_vsync_present_bytes(&stream).unwrap(), true);
+    assert!(cmd_stream_has_vsync_present_bytes(&stream).unwrap());
 
     // PRESENT without VSYNC.
     let mut stream = build_cmd_stream_header();
@@ -48,7 +48,7 @@ fn detects_vsync_present_packets() {
     push_u32(&mut stream, 0); // flags
     patch_stream_size(&mut stream);
 
-    assert_eq!(cmd_stream_has_vsync_present_bytes(&stream).unwrap(), false);
+    assert!(!cmd_stream_has_vsync_present_bytes(&stream).unwrap());
 
     // PRESENT_EX with VSYNC.
     let mut stream = build_cmd_stream_header();
@@ -60,6 +60,5 @@ fn detects_vsync_present_packets() {
     push_u32(&mut stream, 0); // reserved0
     patch_stream_size(&mut stream);
 
-    assert_eq!(cmd_stream_has_vsync_present_bytes(&stream).unwrap(), true);
+    assert!(cmd_stream_has_vsync_present_bytes(&stream).unwrap());
 }
-
