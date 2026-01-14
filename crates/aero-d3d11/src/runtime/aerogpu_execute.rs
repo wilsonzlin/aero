@@ -2563,38 +2563,6 @@ mod tests {
                 write_mask: wgpu::ColorWrites::ALL,
             };
 
-            // (1) Only RT0 bound: untrimmed shader should fail pipeline creation, trimmed should succeed.
-            let targets_rt0 = [Some(ct.clone())];
-            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("wgsl_link mrt untrimmed rt0-only"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &vs_module,
-                        entry_point: "vs_main",
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fs_module,
-                        entry_point: "fs_main",
-                        targets: &targets_rt0,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                });
-            rt.device.poll(wgpu::Maintain::Wait);
-            let err = rt.device.pop_error_scope().await;
-            assert!(
-                err.is_some(),
-                "expected pipeline creation to fail when RT2 is unbound but shader writes @location(2)"
-            );
-
             // Now go through the AeroGPU runtime path: the runtime should trim `@location(2)` at
             // pipeline-creation time and the draw should succeed with only RT0 bound.
             const VS: AerogpuHandle = 10;
@@ -2633,11 +2601,44 @@ mod tests {
             );
             rt.bind_shaders(Some(VS), None, Some(PS));
 
+            // This test uses a full-screen triangle. Disable face culling so the output is
+            // deterministic across backends that may differ in clip-space Y conventions.
+            rt.set_rasterizer_state(RasterizerState {
+                cull_mode: None,
+                front_face: wgpu::FrontFace::Ccw,
+                scissor_enable: false,
+            });
+
             let mut colors = [None; 8];
             colors[0] = Some(RT0);
             rt.set_render_targets(&colors, None);
             rt.set_primitive_topology(PrimitiveTopology::TriangleList);
             rt.draw(3, 1, 0, 0).expect("runtime draw");
+
+            // Validate that the runtime actually trimmed and cached the fragment shader module,
+            // rather than relying on backend-specific wgpu validation behavior.
+            #[cfg(debug_assertions)]
+            {
+                let keep_output_locations: BTreeSet<u32> = colors
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, handle)| handle.as_ref().map(|_| slot as u32))
+                    .collect();
+                let expected_trimmed_wgsl = super::super::wgsl_link::trim_ps_outputs_to_locations(
+                    fs_wgsl,
+                    &keep_output_locations,
+                );
+                let expected_trimmed_hash =
+                    aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
+                let cached = rt
+                    .pipelines
+                    .debug_shader_source(ShaderStage::Fragment, expected_trimmed_hash);
+                assert_eq!(
+                    cached,
+                    Some(expected_trimmed_wgsl.as_str()),
+                    "expected trimmed fragment shader to be cached for the rt0-only pipeline"
+                );
+            }
 
             let bytes = rt.read_texture_rgba8(RT0).await.expect("read RT0");
             assert_eq!(&bytes[..4], &[255, 0, 0, 255], "RT0 must be red");

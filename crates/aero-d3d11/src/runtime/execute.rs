@@ -7,13 +7,13 @@ use aero_gpu::bindings::bind_group_cache::{
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::bindings::CacheStats;
-use aero_gpu::pipeline_key::PipelineLayoutKey;
+use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
+use aero_gpu::pipeline_key::{PipelineLayoutKey, ShaderStage};
 use aero_gpu::protocol_d3d11::{
     BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
     PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
 };
-use aero_gpu::GpuCapabilities;
-use aero_gpu::GpuError;
+use aero_gpu::{GpuCapabilities, GpuError};
 use anyhow::{anyhow, bail, Context, Result};
 
 use super::pipeline_layout_cache::PipelineLayoutCache;
@@ -43,6 +43,7 @@ pub struct D3D11Runtime {
     device: wgpu::Device,
     queue: wgpu::Queue,
     supports_compute: bool,
+    pipelines: PipelineCache,
     pub resources: D3D11Resources,
     pub state: D3D11State,
     sampler_cache: SamplerCache,
@@ -128,10 +129,14 @@ impl D3D11Runtime {
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
+        let caps = GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel.flags);
+        let pipelines = PipelineCache::new(PipelineCacheConfig::default(), caps);
+
         Ok(Self {
             device,
             queue,
             supports_compute,
+            pipelines,
             resources: D3D11Resources::default(),
             state: D3D11State::new(),
             sampler_cache: SamplerCache::new(),
@@ -974,6 +979,7 @@ impl D3D11Runtime {
             .copied()
             .collect();
 
+<<<<<<< HEAD
         if !missing_outputs.is_empty() {
             linked_fs_wgsl =
                 std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
@@ -993,8 +999,19 @@ impl D3D11Runtime {
                         source: wgpu::ShaderSource::Wgsl(wgsl.into()),
                     }),
             )
+=======
+        // Defer creation of the trimmed shader module until after we've decoded the rest of the
+        // pipeline descriptor so we don't hold a borrow of `self.pipelines` across other `&self`
+        // method calls.
+        let trimmed_fs_wgsl = if missing_outputs.is_empty() {
+            None
+        } else {
+            Some(super::wgsl_link::trim_ps_outputs_to_locations(
+                &fs.wgsl,
+                &keep_output_locations,
+            ))
+>>>>>>> 1cf59acae (test: make MRT trimming tests backend-agnostic)
         };
-        let fs_module_for_pipeline = trimmed_fs_module.as_ref().unwrap_or(&fs.module);
 
         let trimmed_vs_module = if vs_can_trim_outputs
             && ps_link_locations.is_subset(&vs_outputs)
@@ -1116,6 +1133,18 @@ impl D3D11Runtime {
             topology,
             wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip
         );
+
+        let fs_module_for_pipeline = if let Some(ref trimmed_wgsl) = trimmed_fs_wgsl {
+            let (_hash, module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Fragment,
+                trimmed_wgsl,
+                Some("aero-d3d11 trimmed fragment shader"),
+            );
+            module
+        } else {
+            &fs.module
+        };
 
         let create_pipeline = |strip_index_format: Option<wgpu::IndexFormat>| {
             self.device
@@ -2242,7 +2271,6 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 mod tests {
     use super::*;
     use aero_gpu::protocol_d3d11::{CmdWriter, RenderPipelineDesc};
-    use std::borrow::Cow;
 
     #[test]
     fn take_bytes_extracts_prefix() {
@@ -2304,6 +2332,7 @@ mod tests {
                 }
             "#;
 
+<<<<<<< HEAD
             // Baseline: the untrimmed shader should fail validation when paired with a single
             // color target.
             let vs = rt
@@ -2355,10 +2384,17 @@ mod tests {
                 });
             rt.device.poll(wgpu::Maintain::Wait);
             let err = rt.device.pop_error_scope().await;
+=======
+            let keep_output_locations = BTreeSet::from([0u32]);
+            let expected_trimmed_wgsl =
+                super::super::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep_output_locations);
+>>>>>>> 1cf59acae (test: make MRT trimming tests backend-agnostic)
             assert!(
-                err.is_some(),
-                "untrimmed MRT shader should fail validation with a single color target"
+                !expected_trimmed_wgsl.contains("@location(1)"),
+                "sanity check: trimmed WGSL should drop unbound outputs"
             );
+            #[cfg(debug_assertions)]
+            let expected_trimmed_hash = aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
 
             // Now go through the D3D11 runtime command path; the runtime should trim outputs and
             // pipeline creation should succeed without validation errors.
@@ -2387,6 +2423,18 @@ mod tests {
                 err.is_none(),
                 "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
             );
+
+            #[cfg(debug_assertions)]
+            {
+                let cached = rt
+                    .pipelines
+                    .debug_shader_source(ShaderStage::Fragment, expected_trimmed_hash);
+                assert_eq!(
+                    cached,
+                    Some(expected_trimmed_wgsl.as_str()),
+                    "expected trimmed fragment WGSL to be cached when creating the pipeline"
+                );
+            }
         });
     }
 
