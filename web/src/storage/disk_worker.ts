@@ -1040,6 +1040,15 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("delivery must be 'range' or 'chunked'");
       }
       if (kind !== "hdd" && kind !== "cd") throw new Error("kind must be 'hdd' or 'cd'");
+      if (format !== "raw" && format !== "iso") {
+        throw new Error("format must be 'raw' or 'iso'");
+      }
+      if (kind === "hdd" && format !== "raw") {
+        throw new Error("HDD remote disks must use format 'raw'");
+      }
+      if (kind === "cd" && format !== "iso") {
+        throw new Error("CD remote disks must use format 'iso'");
+      }
       if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
         throw new Error("sizeBytes must be a positive number");
       }
@@ -1209,6 +1218,19 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.cache.backend === "idb") {
         assertValidIdbRemoteChunkSize(meta.cache.chunkSizeBytes, "chunkSizeBytes");
         assertValidIdbRemoteChunkSize(meta.cache.overlayBlockSizeBytes, "overlayBlockSizeBytes");
+      }
+
+      if (meta.kind !== "hdd" && meta.kind !== "cd") {
+        throw new Error("kind must be 'hdd' or 'cd'");
+      }
+      if (meta.format !== "raw" && meta.format !== "iso") {
+        throw new Error("format must be 'raw' or 'iso'");
+      }
+      if (meta.kind === "hdd" && meta.format !== "raw") {
+        throw new Error("HDD remote disks must use format 'raw'");
+      }
+      if (meta.kind === "cd" && meta.format !== "iso") {
+        throw new Error("CD remote disks must use format 'iso'");
       }
 
       await store.putDisk(meta);
