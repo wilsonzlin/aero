@@ -237,6 +237,13 @@ impl MsixCapability {
         Some((word, 1u64 << bit))
     }
 
+    fn pending(&self, vector: u16) -> bool {
+        let Some((word, mask)) = Self::pending_word_and_mask(vector) else {
+            return false;
+        };
+        self.pba.get(word).is_some_and(|bits| (bits & mask) != 0)
+    }
+
     fn set_pending(&mut self, vector: u16, pending: bool) {
         let Some((word, mask)) = Self::pending_word_and_mask(vector) else {
             return;
@@ -313,12 +320,56 @@ impl MsixCapability {
     }
 
     /// Triggers an MSI-X delivery into the provided platform MSI sink.
-    pub fn trigger_into(&mut self, vector: u16, platform: &mut impl MsiTrigger) -> bool {
+    pub fn trigger_into<T: MsiTrigger + ?Sized>(&mut self, vector: u16, platform: &mut T) -> bool {
         let Some(msg) = self.trigger(vector) else {
             return false;
         };
         platform.trigger_msi(msg);
         true
+    }
+
+    /// Deliver any MSI-X vectors whose pending bit is set and whose table entry is now deliverable.
+    ///
+    /// This models the PCI MSI-X pending-bit behaviour: when an interrupt is raised while masked,
+    /// the pending bit is set, and the message is delivered once the vector becomes unmasked and
+    /// fully programmed.
+    ///
+    /// Returns the number of messages delivered.
+    pub fn drain_pending<F: FnMut(MsiMessage)>(&mut self, mut deliver: F) -> usize {
+        // MSI-X is globally disabled, or delivery is globally masked at the capability level.
+        if !self.enabled || self.function_mask {
+            return 0;
+        }
+
+        let mut delivered = 0usize;
+        for vector in 0..self.table_size {
+            if !self.pending(vector) {
+                continue;
+            }
+
+            // Entry-level mask bit still blocks delivery; leave pending set.
+            if self.entry_masked(vector).unwrap_or(true) {
+                continue;
+            }
+
+            let Some(msg) = self.entry_message(vector) else {
+                continue;
+            };
+            if msg.address == 0 {
+                continue;
+            }
+
+            self.set_pending(vector, false);
+            deliver(msg);
+            delivered = delivered.saturating_add(1);
+        }
+        delivered
+    }
+
+    /// Convenience wrapper for [`MsixCapability::drain_pending`] that delivers into an
+    /// [`MsiTrigger`] sink.
+    pub fn deliver_pending_into<T: MsiTrigger + ?Sized>(&mut self, platform: &mut T) -> usize {
+        self.drain_pending(|msg| platform.trigger_msi(msg))
     }
 
     fn write_u16(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {

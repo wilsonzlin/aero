@@ -359,6 +359,10 @@ impl VirtioPciDevice {
     pub fn config_write(&mut self, offset: u16, data: &[u8]) {
         let prev_command = self.command();
         let prev_msix_enabled = self.msix_enabled();
+        let prev_msix_state = self
+            .config
+            .capability::<MsixCapability>()
+            .map(|msix| (msix.enabled(), msix.function_masked()));
         match data.len() {
             0 => {}
             1 => self.config.write(offset, 1, u32::from(data[0])),
@@ -382,6 +386,18 @@ impl VirtioPciDevice {
         // - the PCI MSI-X enable bit (MSI-X is exclusive when enabled).
         if self.command() != prev_command || self.msix_enabled() != prev_msix_enabled {
             self.sync_legacy_irq_line();
+        }
+
+        // MSI-X function masking is handled inside the capability (it sets the PBA pending bit when
+        // a vector is triggered while masked). When the guest clears the function mask bit, any
+        // vectors that are pending and now deliverable must be re-driven.
+        if let (Some((old_enabled, old_masked)), Some(msix)) = (
+            prev_msix_state,
+            self.config.capability_mut::<MsixCapability>(),
+        ) {
+            if msix.enabled() && !msix.function_masked() && (!old_enabled || old_masked) {
+                msix.drain_pending(|msg| self.interrupts.signal_msix(msg));
+            }
         }
     }
 
@@ -457,6 +473,10 @@ impl VirtioPciDevice {
                 let end = base.saturating_add(msix.table_len_bytes() as u64);
                 if offset >= base && offset < end {
                     msix.table_write(offset - base, data);
+                    // MSI-X table writes may unmask a vector or complete programming of the message
+                    // address/data. If any vectors were previously marked pending due to masking,
+                    // attempt to deliver them now that they may be unblocked.
+                    msix.drain_pending(|msg| self.interrupts.signal_msix(msg));
                     return;
                 }
             }
@@ -2066,6 +2086,14 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.legacy_raise_count, 0);
         assert!(state.msix_messages.is_empty());
+
+        let mut pba = [0u8; 8];
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        let bits = u64::from_le_bytes(pba);
+        assert_eq!(bits & (1 << 1), 1 << 1);
     }
 
     #[test]
@@ -2089,6 +2117,14 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.legacy_raise_count, 0);
         assert!(state.msix_messages.is_empty());
+
+        let mut pba = [0u8; 8];
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        let bits = u64::from_le_bytes(pba);
+        assert_eq!(bits & (1 << 1), 1 << 1);
     }
 
     #[test]
@@ -2213,6 +2249,14 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.legacy_raise_count, 0);
         assert!(state.msix_messages.is_empty());
+
+        let mut pba = [0u8; 8];
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        let bits = u64::from_le_bytes(pba);
+        assert_eq!(bits & 1, 1);
     }
 
     #[test]
@@ -2236,6 +2280,14 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.legacy_raise_count, 0);
         assert!(state.msix_messages.is_empty());
+
+        let mut pba = [0u8; 8];
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        let bits = u64::from_le_bytes(pba);
+        assert_eq!(bits & 1, 1);
     }
 
     #[test]

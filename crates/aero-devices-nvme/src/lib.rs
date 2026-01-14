@@ -2454,6 +2454,16 @@ impl NvmePciDevice {
 
     /// Process any DMA work that was made pending by MMIO doorbell writes.
     pub fn process(&mut self, memory: &mut dyn MemoryBus) {
+        // MSI-X vectors can be raised while masked; the capability records them as pending in the
+        // PBA. If the guest later unmasks MSI-X (clears the function mask bit) we must re-drive any
+        // pending vectors that are now deliverable.
+        if let (Some(target), Some(msix)) = (
+            self.msi_target.as_mut(),
+            self.config.capability_mut::<MsixCapability>(),
+        ) {
+            msix.deliver_pending_into(target.as_mut());
+        }
+
         // Only allow the device to DMA when PCI Bus Mastering is enabled (PCI command bit 2).
         //
         // This mirrors the behavior of other PCI DMA devices in the repo (e.g. AHCI/E1000/UHCI),
@@ -2639,6 +2649,9 @@ impl MmioHandler for NvmePciDevice {
                         data[i] = ((value >> (i * 8)) & 0xff) as u8;
                     }
                     msix.table_write(offset - base, &data[..size]);
+                    if let Some(target) = self.msi_target.as_mut() {
+                        msix.deliver_pending_into(target.as_mut());
+                    }
                     return;
                 }
             }

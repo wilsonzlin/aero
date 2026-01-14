@@ -931,6 +931,118 @@ fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallb
 }
 
 #[test]
+fn virtio_blk_msix_pending_bit_redelivered_on_unmask() {
+    let irq0 = TestIrq::default();
+    let (mut dev, caps, mut mem, _backing, flushes, irq0) = setup_with_irq(irq0);
+
+    // Find MSI-X capability in PCI config space.
+    let mut cfg = [0u8; 256];
+    dev.config_read(0, &mut cfg);
+    let mut ptr = cfg[0x34] as usize;
+    let mut msix_cap_offset = None;
+    while ptr != 0 {
+        if cfg[ptr] == 0x11 {
+            msix_cap_offset = Some(ptr as u16);
+            break;
+        }
+        ptr = cfg[ptr + 1] as usize;
+    }
+    let msix_cap_offset = msix_cap_offset.expect("missing MSI-X capability");
+
+    // Enable MSI-X.
+    let msg_ctl = u16::from_le_bytes([
+        cfg[msix_cap_offset as usize + 0x02],
+        cfg[msix_cap_offset as usize + 0x03],
+    ]);
+    dev.config_write(msix_cap_offset + 0x02, &(msg_ctl | (1 << 15)).to_le_bytes());
+
+    // MSI-X Table register: BIR + offset.
+    let table = u32::from_le_bytes(
+        cfg[msix_cap_offset as usize + 0x04..msix_cap_offset as usize + 0x08]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0");
+    let table_offset = (table & !0x7) as u64;
+
+    let pba = u32::from_le_bytes(
+        cfg[msix_cap_offset as usize + 0x08..msix_cap_offset as usize + 0x0c]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(pba & 0x7, 0, "MSI-X PBA must live in BAR0");
+    let pba_offset = (pba & !0x7) as u64;
+
+    // Program table entry 1 (queue 0 vector: index 1 because index 0 is the config vector), but
+    // keep it masked so the first completion sets the PBA pending bit instead of delivering the
+    // message.
+    let entry = table_offset + 16;
+    bar_write_u32(&mut dev, entry, 0xfee0_0000);
+    bar_write_u32(&mut dev, entry + 0x04, 0);
+    bar_write_u32(&mut dev, entry + 0x08, 0x0045);
+    bar_write_u32(&mut dev, entry + 0x0c, 1); // masked
+
+    // Assign the queue MSI-X vector.
+    bar_write_u16(&mut dev, caps.common + 0x16, 0); // queue_select
+    bar_write_u16(&mut dev, caps.common + 0x1a, 1); // queue_msix_vector
+
+    // Build a FLUSH request so completion is observable via `flushes`.
+    let header = 0x7000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_FLUSH).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, status, 1, 0x0002, 0);
+
+    // Initialise rings (flags/idx).
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(flushes.get(), 1);
+
+    // MSI-X is enabled and a vector is assigned, but it is masked. This must set the PBA pending
+    // bit without falling back to INTx.
+    assert_eq!(irq0.legacy_count(), 0);
+    assert!(!irq0.legacy_level());
+    assert!(irq0.take_msix_messages().is_empty());
+
+    let pending = bar_read_u64(&mut dev, pba_offset);
+    assert_eq!(
+        pending & (1 << 1),
+        1 << 1,
+        "vector 1 should be pending in PBA"
+    );
+
+    // Unmask the entry; the device should immediately re-deliver the pending message.
+    bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
+    assert_eq!(flushes.get(), 1, "unmask must not require a new completion");
+    assert_eq!(
+        irq0.take_msix_messages(),
+        vec![MsiMessage {
+            address: 0xfee0_0000,
+            data: 0x0045,
+        }]
+    );
+
+    let pending = bar_read_u64(&mut dev, pba_offset);
+    assert_eq!(
+        pending & (1 << 1),
+        0,
+        "vector 1 pending bit must be cleared"
+    );
+}
+
+#[test]
 fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
     let irq0 = TestIrq::default();
     let (mut dev, caps, mem, backing, flushes, _irq0) = setup_with_irq(irq0);
