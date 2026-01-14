@@ -256,7 +256,7 @@ pub enum DiskFormat {
     Raw,              // Direct sector mapping
     Qcow2,            // QEMU Copy-on-Write v2
     Vhd,              // Microsoft Virtual Hard Disk
-    Sparse,           // Custom sparse format for OPFS
+    Sparse,           // Aero sparse format (`AEROSPAR`)
 }
 
 pub struct VirtualDrive {
@@ -284,6 +284,9 @@ See also: [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation
 **Implementation status (reference implementation):**
 The canonical Rust disk image formats live in `crates/aero-storage/` and currently support:
 
+- **Aero Sparse (`AEROSPAR`, v1)** (Aero-specific sparse format).\
+  Implementation: [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs). See also:
+  [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 - **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
 - **VHD fixed and dynamic** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap).
 
