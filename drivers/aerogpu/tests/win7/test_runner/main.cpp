@@ -439,12 +439,45 @@ static bool IsDriveRootLikePathW(const std::wstring& path) {
          ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z'));
 }
 
+static bool IsExtendedLengthDriveRootLikePathW(const std::wstring& path) {
+  // Extended-length drive root: \\?\C:
+  if (path.size() != 6) {
+    return false;
+  }
+  if (path[0] != L'\\' || path[1] != L'\\' || path[2] != L'?' || path[3] != L'\\') {
+    return false;
+  }
+  if (path[5] != L':') {
+    return false;
+  }
+  const wchar_t c = path[4];
+  return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z');
+}
+
 static bool IsUncShareRootPathW(const std::wstring& path) {
   // UNC path: \\server\share
   if (path.size() < 5 || path[0] != L'\\' || path[1] != L'\\') {
     return false;
   }
   const size_t server_end = path.find_first_of(L"\\/", 2);
+  if (server_end == std::wstring::npos) {
+    return false;
+  }
+  const size_t share_end = path.find_first_of(L"\\/", server_end + 1);
+  return share_end == std::wstring::npos;
+}
+
+static bool IsExtendedLengthUncShareRootPathW(const std::wstring& path) {
+  // Extended-length UNC share root: \\?\UNC\server\share
+  const wchar_t* const kPrefix = L"\\\\?\\UNC\\";
+  const size_t kPrefixLen = 8;
+  if (path.size() < kPrefixLen + 3) {
+    return false;
+  }
+  if (_wcsnicmp(path.c_str(), kPrefix, kPrefixLen) != 0) {
+    return false;
+  }
+  const size_t server_end = path.find_first_of(L"\\/", kPrefixLen);
   if (server_end == std::wstring::npos) {
     return false;
   }
@@ -485,6 +518,20 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
     }
     return false;
   }
+  if (IsExtendedLengthDriveRootLikePathW(dir)) {
+    // `\\?\C:` is not a creatable directory. Validate the drive root exists.
+    std::wstring root = dir;
+    root.push_back(L'\\');
+    DWORD attr = GetFileAttributesW(root.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      return true;
+    }
+    if (err) {
+      const DWORD e = GetLastError();
+      *err = "extended drive root not accessible: " + aerogpu_test::Win32ErrorToString(e);
+    }
+    return false;
+  }
   if (IsUncShareRootPathW(dir)) {
     // `\\server\share` is not creatable via CreateDirectory; it must already exist.
     DWORD attr = GetFileAttributesW(dir.c_str());
@@ -494,6 +541,25 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
     if (err) {
       const DWORD e = GetLastError();
       *err = "UNC share root not accessible (" + aerogpu_test::WideToUtf8(dir) + "): " +
+             aerogpu_test::Win32ErrorToString(e);
+    }
+    return false;
+  }
+  if (IsExtendedLengthUncShareRootPathW(dir)) {
+    // `\\?\UNC\server\share` is not creatable via CreateDirectory; it must already exist.
+    DWORD attr = GetFileAttributesW(dir.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+      // Best-effort: some APIs want a trailing separator on \\?\UNC share roots.
+      std::wstring root = dir;
+      root.push_back(L'\\');
+      attr = GetFileAttributesW(root.c_str());
+    }
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      return true;
+    }
+    if (err) {
+      const DWORD e = GetLastError();
+      *err = "extended UNC share root not accessible (" + aerogpu_test::WideToUtf8(dir) + "): " +
              aerogpu_test::Win32ErrorToString(e);
     }
     return false;
