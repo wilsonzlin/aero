@@ -248,6 +248,23 @@ def _synthetic_verify_text() -> str:
 
 
 class LintGuestToolsScriptsTests(unittest.TestCase):
+    def test_synthetic_scripts_pass_linter(self) -> None:
+        # Keep synthetic fixtures in sync with all current invariants.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertEqual(errs, [], msg="unexpected lint errors:\n" + "\n".join(errs))
+
     def test_linter_passes_on_repo_scripts(self) -> None:
         repo_root = Path(__file__).resolve().parents[3]
         errs = lint_guest_tools_scripts.lint_files(
