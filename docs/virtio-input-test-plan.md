@@ -531,6 +531,12 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --snapshot
 ```
 
+To attach the `virtio-tablet-pci` device **without** QMP injection / marker enforcement (for example to validate
+enumeration only), run the harness with:
+
+- PowerShell: `-WithVirtioTablet`
+- Python: `--with-virtio-tablet`
+
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY`
