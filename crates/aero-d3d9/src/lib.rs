@@ -6,6 +6,12 @@
 //! The [`resources`] module provides a D3D9-ish resource management layer (VB/IB/textures/samplers
 //! and RT/DS surfaces) mapped to `wgpu` objects with lock/unlock update semantics.
 
+// On wasm32, many `wgpu` handle types are `!Send + !Sync` due to JS thread-affinity. We still use
+// `Arc<T>` widely for shared ownership across the codebase (matching native builds), but those
+// `Arc<T>`s are never sent across threads on wasm. Clippy warns about this pattern; silence it for
+// wasm32 builds.
+#![cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+
 pub mod abi;
 pub mod dxbc;
 pub mod fixed_function;

@@ -1900,7 +1900,7 @@ impl AerogpuD3d9Executor {
                 self.persistent_shader_cache_flags.caps_hash =
                     Some(format!("{stable_fingerprint}-{wgpu_caps_short}"));
             }
-            return self.persistent_shader_cache_flags.caps_hash.clone();
+            self.persistent_shader_cache_flags.caps_hash.clone()
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -2554,10 +2554,10 @@ impl AerogpuD3d9Executor {
 
             // Shader creation uses the persistent shader cache on wasm, which requires async IO.
             // Reject synchronous execution to avoid silently bypassing persistence.
-            let shader_at = stream.cmds.iter().position(|cmd| match cmd {
-                AeroGpuCmd::CreateShaderDxbc { .. } => true,
-                _ => false,
-            });
+            let shader_at = stream
+                .cmds
+                .iter()
+                .position(|cmd| matches!(cmd, AeroGpuCmd::CreateShaderDxbc { .. }));
             if let Some(at) = shader_at {
                 return Err(AerogpuD3d9Error::Validation(format!(
                     "CREATE_SHADER_DXBC requires async execution on wasm (call execute_cmd_stream_for_context_async or execute_cmd_stream_with_guest_memory_for_context_async); first CREATE_SHADER_DXBC at packet {at}"
@@ -2585,10 +2585,10 @@ impl AerogpuD3d9Executor {
 
         #[cfg(target_arch = "wasm32")]
         {
-            return Err(AerogpuD3d9Error::Validation(
+            Err(AerogpuD3d9Error::Validation(
                 "WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_with_guest_memory_for_context_async)"
                     .into(),
-            ));
+            ))
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -10294,7 +10294,7 @@ fn bc_copy_to_buffer_supported(device: &wgpu::Device, queue: &wgpu::Queue) -> bo
     #[cfg(target_arch = "wasm32")]
     {
         let _ = (device, queue);
-        return false;
+        false
     }
 
     #[cfg(not(target_arch = "wasm32"))]

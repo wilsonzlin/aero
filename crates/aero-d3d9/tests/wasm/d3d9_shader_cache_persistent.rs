@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use std::cell::Cell;
 use std::rc::Rc;
 

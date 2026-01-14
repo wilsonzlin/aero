@@ -154,7 +154,7 @@ mod wasm {
         //
         // We use `thread_local!` instead of the unstable `#[thread_local]` attribute so
         // the threaded WASM build can compile on stable Rust.
-        static TLS_DUMMY: u8 = 0;
+        static TLS_DUMMY: u8 = const { 0 };
     }
 
     #[wasm_bindgen(start)]
@@ -524,8 +524,8 @@ mod wasm {
     }
 
     thread_local! {
-        static GUEST_MEMORY: RefCell<Option<JsGuestMemory>> = RefCell::new(None);
-        static VRAM_MEMORY: RefCell<Option<Uint8Array>> = RefCell::new(None);
+        static GUEST_MEMORY: RefCell<Option<JsGuestMemory>> = const { RefCell::new(None) };
+        static VRAM_MEMORY: RefCell<Option<Uint8Array>> = const { RefCell::new(None) };
     }
 
     /// Register a view of guest RAM for AeroGPU submissions.
@@ -1035,24 +1035,22 @@ mod wasm {
                 Err(_) => return Ok(()),
             };
 
-            if exec_result.is_ok() {
-                if let Some(scanout_id) = last_present_scanout {
-                    d3d9_state.last_presented_scanout = Some(scanout_id);
+            if exec_result.is_ok() && let Some(scanout_id) = last_present_scanout {
+                d3d9_state.last_presented_scanout = Some(scanout_id);
 
-                    if let Some(presenter) = d3d9_state.presenter.as_mut() {
-                        let device = d3d9_state.executor.device();
-                        let queue = d3d9_state.executor.queue();
-                        if let Some(scanout) = d3d9_state.executor.presented_scanout(scanout_id) {
-                            presenter.present_texture_view(
-                                device,
-                                queue,
-                                scanout.view,
-                                scanout.width,
-                                scanout.height,
-                            )?;
-                        } else {
-                            presenter.present_clear(device, queue)?;
-                        }
+                if let Some(presenter) = d3d9_state.presenter.as_mut() {
+                    let device = d3d9_state.executor.device();
+                    let queue = d3d9_state.executor.queue();
+                    if let Some(scanout) = d3d9_state.executor.presented_scanout(scanout_id) {
+                        presenter.present_texture_view(
+                            device,
+                            queue,
+                            scanout.view,
+                            scanout.width,
+                            scanout.height,
+                        )?;
+                    } else {
+                        presenter.present_clear(device, queue)?;
                     }
                 }
             }
@@ -1176,6 +1174,7 @@ mod wasm {
     }
 
     impl Presenter {
+        #[allow(clippy::too_many_arguments)]
         async fn new(
             canvas: OffscreenCanvas,
             backend_kind: GpuBackendKind,
@@ -1588,7 +1587,7 @@ mod wasm {
                 // WebGPU's bytesPerRow alignment requirement does not apply when uploading a single
                 // row; avoid unnecessary padding/copying for 1-row framebuffers.
                 tight_row_bytes
-            } else if stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+            } else if stride_bytes.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) {
                 stride_bytes
             } else {
                 padded_bytes_per_row(tight_row_bytes)
@@ -1695,7 +1694,7 @@ mod wasm {
 
             RGBA8_UPLOAD_DIRTY_CALLS.fetch_add(1, Ordering::Relaxed);
 
-            let stride_aligned = stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0;
+            let stride_aligned = stride_bytes.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
             let mut any_uploaded = false;
 
             for chunk in rects.chunks_exact(4) {
@@ -2527,7 +2526,7 @@ mod wasm {
 
     fn padded_bytes_per_row(bytes_per_row: u32) -> u32 {
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        ((bytes_per_row + align - 1) / align) * align
+        bytes_per_row.div_ceil(align) * align
     }
 
     fn compute_viewport_transform(
@@ -2868,7 +2867,7 @@ mod wasm {
     }
 
     thread_local! {
-        static STATE: RefCell<Option<GpuState>> = RefCell::new(None);
+        static STATE: RefCell<Option<GpuState>> = const { RefCell::new(None) };
     }
 
     struct AerogpuD3d9State {
@@ -2881,7 +2880,7 @@ mod wasm {
     }
 
     thread_local! {
-        static D3D9_STATE: RefCell<Option<AerogpuD3d9State>> = RefCell::new(None);
+        static D3D9_STATE: RefCell<Option<AerogpuD3d9State>> = const { RefCell::new(None) };
     }
 
     fn with_state<T>(f: impl FnOnce(&GpuState) -> Result<T, JsValue>) -> Result<T, JsValue> {
