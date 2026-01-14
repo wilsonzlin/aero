@@ -1472,6 +1472,86 @@ static DWORD WINAPI QueryAdapterInfoThreadProc(LPVOID param) {
   return 0;
 }
 
+typedef struct QueryAdapterInfoWorker {
+  HANDLE request_event;
+  volatile QueryAdapterInfoThreadCtx *ctx;
+  QueryAdapterInfoThreadCtx ctx_storage;
+  void *buf_storage;
+  UINT buf_storage_capacity;
+} QueryAdapterInfoWorker;
+
+static QueryAdapterInfoWorker *g_query_adapter_info_worker = NULL;
+static CRITICAL_SECTION g_query_adapter_info_worker_cs;
+static bool g_query_adapter_info_worker_cs_inited = false;
+
+static void InitQueryAdapterInfoWorkerCs() {
+  if (!g_query_adapter_info_worker_cs_inited) {
+    InitializeCriticalSection(&g_query_adapter_info_worker_cs);
+    g_query_adapter_info_worker_cs_inited = true;
+  }
+}
+
+static DWORD WINAPI QueryAdapterInfoWorkerThreadProc(LPVOID param) {
+  QueryAdapterInfoWorker *worker = (QueryAdapterInfoWorker *)param;
+  if (!worker || !worker->request_event) {
+    return 0;
+  }
+
+  for (;;) {
+    DWORD w = WaitForSingleObject(worker->request_event, INFINITE);
+    if (w != WAIT_OBJECT_0) {
+      continue;
+    }
+
+    QueryAdapterInfoThreadCtx *ctx =
+        (QueryAdapterInfoThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+    if (!ctx) {
+      continue;
+    }
+
+    // Reuse the existing helper (it sets ctx->status and signals done_event).
+    (void)QueryAdapterInfoThreadProc(ctx);
+  }
+
+  // Unreachable (thread runs until process exit), but keep MSVC happy.
+  return 0;
+}
+
+static QueryAdapterInfoWorker *CreateQueryAdapterInfoWorker() {
+  QueryAdapterInfoWorker *worker =
+      (QueryAdapterInfoWorker *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*worker));
+  if (!worker) {
+    return NULL;
+  }
+
+  worker->request_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+  if (!worker->request_event) {
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  worker->ctx_storage.done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!worker->ctx_storage.done_event) {
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  worker->buf_storage = NULL;
+  worker->buf_storage_capacity = 0;
+
+  HANDLE thread = CreateThread(NULL, 0, QueryAdapterInfoWorkerThreadProc, worker, 0, NULL);
+  if (!thread) {
+    CloseHandle(worker->ctx_storage.done_event);
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  CloseHandle(thread);
+  return worker;
+}
+
 static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, UINT type, void *buf,
                                             UINT bufSize) {
   if (!f || !f->QueryAdapterInfo || !hAdapter || !buf || bufSize == 0) {
@@ -1489,57 +1569,74 @@ static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE
     return f->QueryAdapterInfo(&q);
   }
 
-  // Run QueryAdapterInfo on a worker thread so a buggy kernel driver cannot hang dbgctl forever. If the call times out,
-  // leak the context (the thread may be blocked inside the kernel thunk) and set a global so we avoid calling
-  // D3DKMTCloseAdapter.
-  QueryAdapterInfoThreadCtx *ctx =
-      (QueryAdapterInfoThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
-  if (!ctx) {
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
+  // Run QueryAdapterInfo on a worker thread so a buggy kernel driver cannot hang dbgctl forever.
+  //
+  // IMPORTANT: Use a single long-lived worker thread rather than a new thread per call. Some
+  // dbgctl commands probe multiple QueryAdapterInfo types (e.g. to discover QUERYSEGMENT type
+  // values) and would otherwise create hundreds of threads.
+  //
+  // If the call times out, leak the worker (it may be blocked inside the kernel thunk), mark the
+  // adapter handle as unsafe to close, and allow future calls to spin up a fresh worker.
+  InitQueryAdapterInfoWorkerCs();
 
-  void *bufCopy = HeapAlloc(GetProcessHeap(), 0, bufSize);
-  if (!bufCopy) {
-    HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
-  memcpy(bufCopy, buf, bufSize);
-
-  ctx->f = f;
-  ctx->hAdapter = hAdapter;
-  ctx->type = type;
-  ctx->buf = bufCopy;
-  ctx->bufSize = bufSize;
-  ctx->status = 0;
-  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-  if (!ctx->done_event) {
-    HeapFree(GetProcessHeap(), 0, bufCopy);
-    HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
-
-  HANDLE thread = CreateThread(NULL, 0, QueryAdapterInfoThreadProc, ctx, 0, NULL);
-  if (!thread) {
-    CloseHandle(ctx->done_event);
-    HeapFree(GetProcessHeap(), 0, bufCopy);
-    HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
-
-  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
-  if (w == WAIT_OBJECT_0) {
-    const NTSTATUS st = ctx->status;
-    if (NT_SUCCESS(st)) {
-      memcpy(buf, ctx->buf, bufSize);
+  QueryAdapterInfoWorker *worker = NULL;
+  EnterCriticalSection(&g_query_adapter_info_worker_cs);
+  worker = g_query_adapter_info_worker;
+  if (!worker) {
+    worker = CreateQueryAdapterInfoWorker();
+    if (!worker) {
+      LeaveCriticalSection(&g_query_adapter_info_worker_cs);
+      return STATUS_INSUFFICIENT_RESOURCES;
     }
-    CloseHandle(thread);
-    CloseHandle(ctx->done_event);
-    HeapFree(GetProcessHeap(), 0, ctx->buf);
-    HeapFree(GetProcessHeap(), 0, ctx);
+    g_query_adapter_info_worker = worker;
+  }
+  LeaveCriticalSection(&g_query_adapter_info_worker_cs);
+
+  if (bufSize > worker->buf_storage_capacity || !worker->buf_storage) {
+    void *newBuf = NULL;
+    if (worker->buf_storage) {
+      newBuf = HeapReAlloc(GetProcessHeap(), 0, worker->buf_storage, (SIZE_T)bufSize);
+    } else {
+      newBuf = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)bufSize);
+    }
+    if (!newBuf) {
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    worker->buf_storage = newBuf;
+    worker->buf_storage_capacity = bufSize;
+  }
+
+  // Prepare the request payload in worker-owned memory (safe to leak on timeout).
+  memcpy(worker->buf_storage, buf, bufSize);
+  ResetEvent(worker->ctx_storage.done_event);
+
+  worker->ctx_storage.f = f;
+  worker->ctx_storage.hAdapter = hAdapter;
+  worker->ctx_storage.type = type;
+  worker->ctx_storage.buf = worker->buf_storage;
+  worker->ctx_storage.bufSize = bufSize;
+  worker->ctx_storage.status = 0;
+
+  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
+    return STATUS_INVALID_DEVICE_STATE;
+  }
+  SetEvent(worker->request_event);
+
+  DWORD w = WaitForSingleObject(worker->ctx_storage.done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    const NTSTATUS st = worker->ctx_storage.status;
+    if (NT_SUCCESS(st)) {
+      memcpy(buf, worker->buf_storage, bufSize);
+    }
     return st;
   }
 
-  CloseHandle(thread);
+  EnterCriticalSection(&g_query_adapter_info_worker_cs);
+  if (g_query_adapter_info_worker == worker) {
+    g_query_adapter_info_worker = NULL;
+  }
+  LeaveCriticalSection(&g_query_adapter_info_worker_cs);
+
   InterlockedExchange(&g_skip_close_adapter, 1);
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
