@@ -133,7 +133,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 
 ---
 
-## Task 62 / 66 / 69 — `SharedSurfaceTable` refactor across command processors + D3D9 executor
+## Task 62 / 66 / 69 — `SharedSurfaceTable` refactor across command processors + executors (D3D9/D3D11)
 
 **Status:** ✅ Done
 
