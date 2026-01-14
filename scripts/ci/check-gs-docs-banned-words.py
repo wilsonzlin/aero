@@ -13,9 +13,10 @@ reintroduced a couple of ambiguous bring-up terms:
 - "accepted-but-ignored"
 - "placeholder"
 
-This script intentionally enforces that these exact substrings do not appear in
-those two files, so wording stays explicit (e.g. "synthetic expansion" /
-"fallback path") and the docs remain aligned with implementation behavior.
+This script intentionally enforces that these substrings do not appear (case
+insensitive) in those two files, so wording stays explicit (e.g. "synthetic
+expansion" / "fallback path") and the docs remain aligned with implementation
+behavior.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ FILES = [
     ROOT / "docs" / "graphics" / "status.md",
 ]
 
-PATTERN = re.compile(r"accepted-but-ignored|placeholder")
+PATTERN = re.compile(r"accepted-but-ignored|placeholder", flags=re.IGNORECASE)
 
 
 def main() -> int:
@@ -73,4 +74,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

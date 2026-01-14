@@ -104,7 +104,7 @@ There are currently two compute-prepass “modes”:
 
 - **Real GS execution (supported subset):** translate the guest’s GS DXBC into a WGSL compute shader
   and run it to generate expanded vertices/indices + indirect args.
-- **Placeholder/scaffolding:** run `GEOMETRY_PREPASS_CS_WGSL`, which emits synthetic primitives. This
+- **Fallback synthetic expansion (scaffolding):** run `GEOMETRY_PREPASS_CS_WGSL`, which emits synthetic primitives. This
   mode remains useful for HS/DS scaffolding, adjacency/patchlist scaffolding, and tests that force
   the compute-prepass path without a real GS.
 
