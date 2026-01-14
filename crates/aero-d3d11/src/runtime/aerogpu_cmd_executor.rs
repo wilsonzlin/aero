@@ -24902,6 +24902,175 @@ fn cs_main() {
     }
 
     #[test]
+    fn srv_buffer_scratch_respects_stage_ex_bucket_for_domain_stage() {
+        pollster::block_on(async {
+            use reflection_bindings::BindGroupResourceProvider;
+
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let storage_align = (exec.device.limits().min_storage_buffer_offset_alignment as u64)
+                .max(1);
+            if storage_align <= wgpu::COPY_BUFFER_ALIGNMENT {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("storage alignment too small for scratch test ({storage_align})"),
+                );
+                return;
+            }
+
+            const BUF: u32 = 1;
+            let buf_size = storage_align
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(64))
+                .expect("buf_size overflow");
+            let src = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch domain test src"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            // Fill buffer with a deterministic u32 pattern so the scratch copy can be validated by
+            // reading back the first copied word.
+            let mut data = Vec::with_capacity(buf_size as usize);
+            for i in 0..(buf_size / 4) {
+                data.extend_from_slice(&(i as u32).to_le_bytes());
+            }
+            exec.queue.write_buffer(&src, 0, &data);
+
+            let id = BufferId(exec.next_buffer_id);
+            exec.next_buffer_id = exec.next_buffer_id.wrapping_add(1);
+            exec.resources.buffers.insert(
+                BUF,
+                BufferResource {
+                    id,
+                    buffer: src,
+                    size: buf_size,
+                    gpu_size: buf_size,
+                    aerogpu_usage_flags: 0,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                    backing: None,
+                    dirty: None,
+                    host_shadow: None,
+                },
+            );
+
+            let offset = storage_align - wgpu::COPY_BUFFER_ALIGNMENT;
+            let bind_size = 16u64;
+            exec.bindings.stage_mut(ShaderStage::Domain).set_srv_buffer(
+                0,
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset,
+                    size: Some(bind_size),
+                }),
+            );
+
+            let binding = crate::Binding {
+                group: ShaderStage::Domain.as_bind_group_index(),
+                binding: BINDING_BASE_TEXTURE,
+                // HS/DS are emulated via compute; bind groups for these stages should use compute
+                // visibility.
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::SrvBuffer { slot: 0 },
+            };
+            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(std::slice::from_ref(&binding))],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("build pipeline bindings");
+
+            let allocs = AllocTable::new(None).expect("alloc table");
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("srv buffer scratch domain test encoder"),
+                });
+            exec.ensure_bound_resources_uploaded(
+                ShaderStage::Domain,
+                &mut encoder,
+                &pipeline_bindings,
+                &allocs,
+                &mut guest_mem,
+            )
+            .expect("ensure bound resources uploaded");
+
+            let scratch = exec
+                .srv_buffer_scratch
+                .get(&(ShaderStage::Domain, 0))
+                .expect("scratch buffer should be allocated for unaligned DS SRV offset");
+
+            // Copy back the scratched bytes so we can validate the copy.
+            let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch domain test staging"),
+                size: scratch.bind_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&scratch.buffer, 0, &staging, 0, scratch.bind_size);
+            exec.queue.submit([encoder.finish()]);
+            exec.poll_wait();
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |v| {
+                sender.send(v).ok();
+            });
+            exec.poll_wait();
+            receiver
+                .receive()
+                .await
+                .expect("map_async dropped")
+                .expect("map_async failed");
+
+            let mapped = slice.get_mapped_range();
+            let got = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+            drop(mapped);
+            staging.unmap();
+            let expected = (offset / 4) as u32;
+            assert_eq!(got, expected);
+
+            // Verify that bind-group providers surface the scratch buffer for DS bindings.
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align,
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size as u64,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Domain,
+                stage_state: exec.bindings.stage(ShaderStage::Domain),
+                internal_buffers: &[],
+            };
+            let bound = provider
+                .srv_buffer(0)
+                .expect("provider should surface scratch binding");
+            assert_eq!(bound.id, scratch.id);
+            assert_eq!(bound.offset, 0);
+            assert_eq!(bound.size, Some(scratch.bind_size));
+        });
+    }
+
+    #[test]
     fn map_aerogpu_texture_format_bc_falls_back_when_disabled() {
         assert_eq!(
             map_aerogpu_texture_format(AEROGPU_FORMAT_BC1_RGBA_UNORM, false).unwrap(),
