@@ -1003,8 +1003,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     // Reduce driver variance for screenshot comparisons.
     gl.disable(gl.DITHER);
     gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
     gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.SCISSOR_TEST);
     gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 
     const buffers = new Map(); // u32 -> WebGLBuffer
@@ -2430,8 +2435,13 @@ void main() {
     // Reduce driver variance for screenshot comparisons.
     gl.disable(gl.DITHER);
     gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
     gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.SCISSOR_TEST);
     gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 
     const GLSL_VS = `#version 300 es
