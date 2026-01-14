@@ -18,6 +18,7 @@ DRIVER_INITIALIZE DriverEntry;
 static DRIVER_ADD_DEVICE VirtIoSndAddDevice;
 static DRIVER_DISPATCH VirtIoSndDispatchPnp;
 static DRIVER_DISPATCH VirtIoSndDispatchCreate;
+static DRIVER_DISPATCH VirtIoSndDispatchCleanup;
 static DRIVER_DISPATCH VirtIoSndDispatchClose;
 static DRIVER_DISPATCH VirtIoSndDispatchDeviceControl;
 static NTSTATUS VirtIoSndStartDevice(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PRESOURCELIST ResourceList);
@@ -53,6 +54,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     // on STOP/REMOVE. All other PnP IRPs are forwarded to PcDispatchIrp.
     DriverObject->MajorFunction[IRP_MJ_PNP] = VirtIoSndDispatchPnp;
     DriverObject->MajorFunction[IRP_MJ_CREATE] = VirtIoSndDispatchCreate;
+    DriverObject->MajorFunction[IRP_MJ_CLEANUP] = VirtIoSndDispatchCleanup;
     DriverObject->MajorFunction[IRP_MJ_CLOSE] = VirtIoSndDispatchClose;
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = VirtIoSndDispatchDeviceControl;
     return STATUS_SUCCESS;
@@ -323,6 +325,18 @@ static NTSTATUS VirtIoSndCompleteIrp(_Inout_ PIRP Irp, _In_ NTSTATUS Status, _In
 
 _Use_decl_annotations_
 static NTSTATUS VirtIoSndDispatchCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+
+    diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+    if (diag != NULL && diag->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+        return VirtIoSndCompleteIrp(Irp, STATUS_SUCCESS, 0);
+    }
+    return PcDispatchIrp(DeviceObject, Irp);
+}
+
+_Use_decl_annotations_
+static NTSTATUS VirtIoSndDispatchCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
 
