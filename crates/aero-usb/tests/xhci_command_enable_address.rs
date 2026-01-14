@@ -2,6 +2,7 @@ mod util;
 
 use aero_usb::xhci::command_ring::{CommandRing, CommandRingProcessor, EventRing};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::{ControlResponse, UsbDeviceModel};
 
 use util::{Alloc, TestMemory};
@@ -32,9 +33,8 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
     // Input contexts are 64-byte aligned.
     let input_ctx = alloc.alloc(0x40, 0x40);
     // Slot context is the second context entry in an input context (after the Input Control
-    // Context). Root hub port number is encoded in Slot Context dword1 bits 7:0 (per our context
-    // helpers).
-    mem.write_u32(input_ctx + 0x20 + 4, 1);
+    // Context). Root hub port number is encoded in Slot Context dword1 bits 23:16.
+    mem.write_u32(input_ctx + 0x20 + 4, 1u32 << 16);
 
     let event_ring = alloc.alloc(16 * 8, 0x10);
 
@@ -97,4 +97,100 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
         .port_device(1)
         .expect("device should still be attached");
     assert_ne!(dev.address(), 0);
+}
+
+#[test]
+fn address_device_uses_route_string_to_target_downstream_device() {
+    let mut mem = TestMemory::new(0x20000);
+    let mut alloc = Alloc::new(0x1000);
+
+    // Device Context Base Address Array (DCBAA) is 64-byte aligned.
+    let dcbaa = alloc.alloc(0x100, 0x40);
+
+    // Command ring: [Enable Slot][Address Device (hub)][Enable Slot][Address Device (leaf)][Link]
+    let cmd_ring = alloc.alloc(0x60, 0x40);
+
+    // Input contexts are 64-byte aligned.
+    let hub_input_ctx = alloc.alloc(0x40, 0x40);
+    let leaf_input_ctx = alloc.alloc(0x40, 0x40);
+
+    // Hub slot context: root port 1, route string = 0.
+    mem.write_u32(hub_input_ctx + 0x20 + 4, 1u32 << 16);
+
+    // Leaf slot context: root port 1, route string tier0 = 3.
+    mem.write_u32(leaf_input_ctx + 0x20 + 0, 3);
+    mem.write_u32(leaf_input_ctx + 0x20 + 4, 1u32 << 16);
+
+    let event_ring = alloc.alloc(16 * 8, 0x10);
+
+    let mut processor = CommandRingProcessor::new(
+        mem.data.len() as u64,
+        8,
+        dcbaa as u64,
+        CommandRing::from_crcr((cmd_ring as u64) | 1),
+        EventRing::new(event_ring as u64, 8),
+    );
+
+    let mut hub = UsbHubDevice::new();
+    hub.attach(3, Box::new(AckDevice));
+    processor.attach_root_port(1, Box::new(hub));
+
+    // Enable Slot (slot 1).
+    {
+        let mut trb = Trb::new(0, 0, 0);
+        trb.set_trb_type(TrbType::EnableSlotCommand);
+        trb.set_cycle(true);
+        trb.write_to(&mut mem, cmd_ring as u64);
+    }
+
+    // Address Device: hub on root port 1 (slot 1).
+    {
+        let mut trb = Trb::new(hub_input_ctx as u64, 0, 0);
+        trb.set_trb_type(TrbType::AddressDeviceCommand);
+        trb.set_cycle(true);
+        trb.set_slot_id(1);
+        trb.write_to(&mut mem, (cmd_ring + 16) as u64);
+    }
+
+    // Enable Slot (slot 2).
+    {
+        let mut trb = Trb::new(0, 0, 0);
+        trb.set_trb_type(TrbType::EnableSlotCommand);
+        trb.set_cycle(true);
+        trb.write_to(&mut mem, (cmd_ring + 32) as u64);
+    }
+
+    // Address Device: leaf device behind hub port 3 (slot 2).
+    {
+        let mut trb = Trb::new(leaf_input_ctx as u64, 0, 0);
+        trb.set_trb_type(TrbType::AddressDeviceCommand);
+        trb.set_cycle(true);
+        trb.set_slot_id(2);
+        trb.write_to(&mut mem, (cmd_ring + 48) as u64);
+    }
+
+    // Link TRB back to ring base (toggle cycle when wrapping).
+    let cmd_ring_u64 = cmd_ring as u64;
+    {
+        let mut trb = Trb::new(cmd_ring_u64, 0, 0);
+        trb.set_trb_type(TrbType::Link);
+        trb.set_cycle(true);
+        trb.set_link_toggle_cycle(true);
+        trb.write_to(&mut mem, (cmd_ring + 64) as u64);
+    }
+
+    processor.process(&mut mem, 256);
+
+    // Hub should have been assigned address 1.
+    let hub_dev = processor
+        .port_device_mut(1)
+        .expect("hub should still be attached");
+    assert_eq!(hub_dev.address(), 1);
+
+    // Leaf should have been assigned address 2 (not overwriting the hub).
+    let leaf_dev = hub_dev
+        .model_mut()
+        .hub_port_device_mut(3)
+        .expect("leaf device should still be attached");
+    assert_eq!(leaf_dev.address(), 2);
 }

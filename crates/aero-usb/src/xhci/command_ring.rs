@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::{MemoryBus, SetupPacket, UsbDeviceModel};
 
-use super::context::EndpointContext;
+use super::context::{EndpointContext, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT, XhciRouteString};
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 
 const CONTEXT_ALIGN: u64 = 64;
@@ -108,6 +108,7 @@ struct EndpointState {
 #[derive(Clone, Debug)]
 struct SlotState {
     root_port: Option<u8>,
+    route: Vec<u8>,
     address: u8,
     /// Endpoint states indexed by DCI (Device Context Index).
     ///
@@ -119,6 +120,7 @@ impl SlotState {
     fn new() -> Self {
         Self {
             root_port: None,
+            route: Vec::new(),
             address: 0,
             endpoints: vec![None; 32],
         }
@@ -193,6 +195,29 @@ impl CommandRingProcessor {
     pub fn port_device_mut(&mut self, port: u8) -> Option<&mut AttachedUsbDevice> {
         let idx = (port as usize).checked_sub(1)?;
         self.root_ports.get_mut(idx)?.as_mut()
+    }
+
+    /// Resolve a device in the xHCI topology.
+    ///
+    /// - `root_port` is the 1-based Root Hub Port Number from the Slot Context.
+    /// - `route` is the decoded Route String, where each element is a 1-based downstream hub port.
+    fn find_device_by_topology(&mut self, root_port: u8, route: &[u8]) -> Option<&mut AttachedUsbDevice> {
+        if root_port == 0 {
+            return None;
+        }
+        if route.len() > XHCI_ROUTE_STRING_MAX_DEPTH {
+            return None;
+        }
+
+        let idx = usize::from(root_port.checked_sub(1)?);
+        let mut dev = self.root_ports.get_mut(idx)?.as_mut()?;
+        for &hop in route {
+            if hop == 0 || hop > XHCI_ROUTE_STRING_MAX_PORT {
+                return None;
+            }
+            dev = dev.model_mut().hub_port_device_mut(hop).ok()?;
+        }
+        Some(dev)
     }
 
     /// Process up to `max_trbs` TRBs from the command ring.
@@ -398,7 +423,7 @@ impl CommandRingProcessor {
         }
         if let Some(state) = self.slots.get_mut(idx).and_then(|s| s.take()) {
             if let Some(root_port) = state.root_port {
-                if let Some(dev) = self.port_device_mut(root_port) {
+                if let Some(dev) = self.find_device_by_topology(root_port, &state.route) {
                     dev.reset();
                 }
             }
@@ -440,21 +465,32 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
+        let slot_dword0 = match self.read_u32(mem, input_ctx_ptr + INPUT_SLOT_CTX_OFFSET) {
+            Ok(v) => v,
+            Err(_) => return CompletionCode::ParameterError,
+        };
         let slot_dword1 = match self.read_u32(mem, input_ctx_ptr + INPUT_SLOT_CTX_OFFSET + 4) {
             Ok(v) => v,
             Err(_) => return CompletionCode::ParameterError,
         };
-        let root_port = (slot_dword1 & 0xff) as u8;
+        // xHCI Slot Context dword1 bits 23:16 = Root Hub Port Number (1-based).
+        let root_port = ((slot_dword1 >> 16) & 0xff) as u8;
         if root_port == 0 {
             return CompletionCode::ParameterError;
         }
+
+        let route_string = slot_dword0 & 0x000f_ffff;
+        let route = match XhciRouteString::from_raw(route_string).map(|rs| rs.ports_from_root()) {
+            Ok(route) => route,
+            Err(_) => return CompletionCode::ParameterError,
+        };
 
         let Some(addr) = self.alloc_device_address() else {
             return CompletionCode::TrbError;
         };
 
         {
-            let Some(dev) = self.port_device_mut(root_port) else {
+            let Some(dev) = self.find_device_by_topology(root_port, &route) else {
                 return CompletionCode::ContextStateError;
             };
 
@@ -480,6 +516,7 @@ impl CommandRingProcessor {
             .and_then(|s| s.as_mut())
         {
             slot.root_port = Some(root_port);
+            slot.route = route;
             slot.address = addr;
         }
 
@@ -506,6 +543,25 @@ impl CommandRingProcessor {
         }
         if !self.check_range(input_ctx_ptr, 8) {
             return CompletionCode::ParameterError;
+        }
+
+        // Validate that the slot still resolves to a connected device using the topology captured
+        // during Address Device.
+        let (root_port, route) = {
+            let Some(slot) = self
+                .slots
+                .get(slot_id as usize)
+                .and_then(|s| s.as_ref())
+            else {
+                return CompletionCode::SlotNotEnabledError;
+            };
+            let Some(root_port) = slot.root_port else {
+                return CompletionCode::ContextStateError;
+            };
+            (root_port, slot.route.clone())
+        };
+        if self.find_device_by_topology(root_port, &route).is_none() {
+            return CompletionCode::ContextStateError;
         }
 
         let drop_flags = match self.read_u32(mem, input_ctx_ptr + ICC_DROP_FLAGS_OFFSET) {
