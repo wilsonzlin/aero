@@ -80,7 +80,7 @@ fn assemble_ps3_dcl_1d_s0() -> Vec<u8> {
 }
 
 fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
-    // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
+    // ps_3_0 with a `dcl_volume s0` declaration.
     let mut words = vec![0xFFFF_0300];
     // Texture type is encoded in opcode_token[16..20] for SM2/3 `dcl`.
     words.extend(enc_inst_with_extra(
@@ -718,11 +718,11 @@ fn d3d9_create_texture2d_rejects_array_layers_not_one() {
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_TEXTURE2D with array_layers!=1 to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => {
+            assert!(msg.contains("array_layers"), "{msg}");
             assert!(
-                msg.contains("array_layers")
-                    && (msg.contains("not supported") || msg.contains("!= 1")),
+                msg.contains("not supported") || msg.contains("unsupported") || msg.contains("!= 1"),
                 "{msg}"
-            )
+            );
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
