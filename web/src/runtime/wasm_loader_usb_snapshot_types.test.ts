@@ -91,9 +91,9 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
       // @ts-expect-error detach_at_path may be undefined
       xhci.detach_at_path([0]);
       // @ts-expect-error attach_webhid_device may be undefined
-      xhci.attach_webhid_device([0], {} as any);
+      xhci.attach_webhid_device([0], {});
       // @ts-expect-error attach_usb_hid_passthrough_device may be undefined
-      xhci.attach_usb_hid_passthrough_device([0], {} as any);
+      xhci.attach_usb_hid_passthrough_device([0], {});
 
       // @ts-expect-error set_connected may be undefined
       xhci.set_connected(true);
@@ -112,8 +112,8 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
     // running against older WASM builds that do not export these helpers.
     xhci.attach_hub?.(0, 8);
     xhci.detach_at_path?.([0]);
-    xhci.attach_webhid_device?.([0], {} as any);
-    xhci.attach_usb_hid_passthrough_device?.([0], {} as any);
+    xhci.attach_webhid_device?.([0], {});
+    xhci.attach_usb_hid_passthrough_device?.([0], {});
     xhci.set_connected?.(true);
     void xhci.drain_actions?.();
     xhci.push_completion?.({ kind: "controlIn", id: 0, status: "stall" });
