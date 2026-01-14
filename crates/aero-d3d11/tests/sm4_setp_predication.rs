@@ -131,6 +131,20 @@ fn pred_operand_neg(idx: u32, component: u32) -> Vec<u32> {
     ]
 }
 
+fn resource_operand(slot: u32) -> Vec<u32> {
+    vec![
+        operand_token(OPERAND_TYPE_RESOURCE, 0, OPERAND_SEL_MASK, 0, 1),
+        slot,
+    ]
+}
+
+fn sampler_operand(slot: u32) -> Vec<u32> {
+    vec![
+        operand_token(OPERAND_TYPE_SAMPLER, 0, OPERAND_SEL_MASK, 0, 1),
+        slot,
+    ]
+}
+
 fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
     let mut out = Vec::with_capacity(1 + 4);
     out.push(operand_token(
@@ -765,7 +779,6 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
     let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
-
     let Sm4Inst::Setp { dst, op, .. } = &module.instructions[0] else {
         panic!("expected first instruction to be setp");
     };
@@ -826,6 +839,87 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
     assert!(
         translated.wgsl.contains("vec4<u32>(0x00000001u") && translated.wgsl.contains("<"),
         "expected unsigned setp to operate on u32 vectors:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicated_sample() {
+    let mut body = Vec::<u32>::new();
+
+    // setp p0.x, v0.x, l(0.0), gt
+    let dst_p0x = reg_dst(OPERAND_TYPE_PREDICATE, 0, WriteMask::X);
+    let src_v0 = reg_src(OPERAND_TYPE_INPUT, 0, [0, 1, 2, 3]);
+    let src_zero = imm32_scalar(0.0f32.to_bits());
+    let setp_len = 1 + dst_p0x.len() as u32 + src_v0.len() as u32 + src_zero.len() as u32;
+    body.push(opcode_token_setp(setp_len, 5));
+    body.extend_from_slice(&dst_p0x);
+    body.extend_from_slice(&src_v0);
+    body.extend_from_slice(&src_zero);
+
+    // (+p0.x) sample o0, v0.xy, t0, s0
+    //
+    // In the fragment stage, `sample` lowers to `textureSample` which has derivative uniformity
+    // requirements in WGSL/WebGPU. Ensure our predication lowering evaluates the sample in uniform
+    // control flow and only guards the destination write.
+    let pred_p0x = pred_operand(0, 0);
+    let dst_o0 = reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW);
+    let tex_t0 = resource_operand(0);
+    let samp_s0 = sampler_operand(0);
+    let sample_len = 1
+        + pred_p0x.len() as u32
+        + dst_o0.len() as u32
+        + src_v0.len() as u32
+        + tex_t0.len() as u32
+        + samp_s0.len() as u32;
+    body.push(opcode_token(OPCODE_SAMPLE, sample_len));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&dst_o0);
+    body.extend_from_slice(&src_v0);
+    body.extend_from_slice(&tex_t0);
+    body.extend_from_slice(&samp_s0);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(
+        &module.instructions[1],
+        Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Sample { .. })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let sample_pos = translated
+        .wgsl
+        .find("textureSample(")
+        .expect("expected textureSample call in WGSL");
+    let if_pos = translated
+        .wgsl
+        .find("if (p0.x) {")
+        .expect("expected predication if guard in WGSL");
+    assert!(
+        sample_pos < if_pos,
+        "expected textureSample to be emitted before the predication guard:\n{}",
         translated.wgsl
     );
 }

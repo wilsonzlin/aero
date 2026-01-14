@@ -4688,6 +4688,39 @@ fn emit_instructions(
                     continue;
                 }
 
+                if let Sm4Inst::Sample {
+                    dst,
+                    coord,
+                    texture,
+                    sampler,
+                } = inner.as_ref()
+                {
+                    // `textureSample` uses implicit derivatives and therefore comes with WGSL/WebGPU
+                    // uniformity requirements. A direct lowering of predicated `sample` as
+                    // `if (p0.x) { textureSample(...) }` can violate those requirements when the
+                    // predicate is non-uniform.
+                    //
+                    // Preserve the predicated write semantics by evaluating the sample
+                    // unconditionally in uniform control flow, then guarding the destination write.
+                    if ctx.stage == ShaderStage::Pixel {
+                        let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
+                        let expr = format!(
+                            "textureSample(t{}, s{}, ({coord}).xy)",
+                            texture.slot, sampler.slot
+                        );
+                        let expr = maybe_saturate(dst, expr);
+                        let tmp = format!("pred_sample_{inst_index}");
+                        w.line(&format!("let {tmp}: vec4<f32> = {expr};"));
+                        let cond = emit_test_predicate_scalar(pred);
+                        w.line(&format!("if ({cond}) {{"));
+                        w.indent();
+                        emit_write_masked(w, dst.reg, dst.mask, tmp, inst_index, "sample", ctx)?;
+                        w.dedent();
+                        w.line("}");
+                        continue;
+                    }
+                }
+
                 match inner.as_ref() {
                     Sm4Inst::If { .. } => {
                         return Err(ShaderTranslateError::UnsupportedInstruction {
