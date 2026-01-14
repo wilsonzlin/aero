@@ -125,6 +125,11 @@ afterEach(() => {
 const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
 
 describe("hid/WebHidBroker", () => {
+  it("validates maxPendingDeviceSends/maxPendingSendsPerDevice alias mismatch", () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    expect(() => new WebHidBroker({ manager, maxPendingDeviceSends: 1, maxPendingSendsPerDevice: 2 })).toThrow(/must match/);
+  });
+
   it("waits for hid.attachResult before forwarding inputreport events to the worker port", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
