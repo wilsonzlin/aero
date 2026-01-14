@@ -479,8 +479,8 @@ shader handles:
 - `ds` (domain shader / tessellation eval)
 
 For best-effort compatibility with legacy hosts that only understand the 24-byte packet, writers
-may also mirror `gs` into the legacy `reserved0` field, but when present the appended `{gs, hs, ds}`
-handles are authoritative.
+may also mirror `gs` into the legacy `reserved0` field. If mirrored, it should match the appended
+`gs` field, but when present the appended `{gs, hs, ds}` handles are authoritative.
 
 See the authoritative comment block above `struct aerogpu_cmd_bind_shaders` in
 `drivers/aerogpu/protocol/aerogpu_cmd.h`.
