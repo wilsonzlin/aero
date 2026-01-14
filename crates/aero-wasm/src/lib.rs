@@ -5005,6 +5005,58 @@ impl Machine {
         self.inner.clear_bios_tty_output();
     }
 
+    /// Read a 32-bit aligned DWORD from PCI configuration space using config mechanism #1.
+    ///
+    /// This is primarily intended for tests and host-side inspection. The canonical browser runtime
+    /// can also use it to verify that expected PCI devices are present.
+    ///
+    /// Returns `0xFFFF_FFFF` when the machine does not have PCI config ports (PC platform disabled)
+    /// or when parameters are out of range.
+    pub fn pci_config_read_u32(
+        &mut self,
+        bus: u32,
+        device: u32,
+        function: u32,
+        offset: u32,
+    ) -> u32 {
+        if self.inner.pci_config_ports().is_none() {
+            return u32::MAX;
+        }
+
+        let Ok(bus) = u8::try_from(bus) else {
+            return u32::MAX;
+        };
+        let Ok(device) = u8::try_from(device) else {
+            return u32::MAX;
+        };
+        let Ok(function) = u8::try_from(function) else {
+            return u32::MAX;
+        };
+        if device >= 32 || function >= 8 {
+            return u32::MAX;
+        }
+        if offset >= 256 {
+            return u32::MAX;
+        }
+
+        // PCI configuration mechanism #1 address format:
+        // - bit31: enable
+        // - bits23..16: bus
+        // - bits15..11: device
+        // - bits10..8: function
+        // - bits7..2: register number (DWORD aligned)
+        // - bits1..0: must be 0
+        let aligned = offset & !0x3;
+        let addr = 0x8000_0000u32
+            | (u32::from(bus) << 16)
+            | (u32::from(device) << 11)
+            | (u32::from(function) << 8)
+            | aligned;
+
+        self.inner.io_write(0xCF8, 4, addr);
+        self.inner.io_read(0xCFC, 4)
+    }
+
     /// Returns and clears any accumulated serial output.
     pub fn serial_output(&mut self) -> Vec<u8> {
         self.inner.take_serial_output()
