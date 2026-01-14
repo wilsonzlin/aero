@@ -212,6 +212,15 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
     - end-to-end tablet report delivery test: `-WithInputTabletEvents` / `-WithTabletEvents` / `--with-input-tablet-events` / `--with-tablet-events`
     (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01` in default mode)
   - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
+
+Note: Stock QEMU virtio-input devices report virtio-input `ID_NAME` strings like `QEMU Virtio Keyboard` / `QEMU Virtio Mouse`.
+The in-tree Aero virtio-input driver is strict-by-default and expects the Aero contract `ID_NAME` values, so for QEMU-based
+testing enable the driver's ID_NAME compatibility mode:
+
+- `HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` = `1` (REG_DWORD)
+
+The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) sets this automatically.
+
 - COM1 redirected to a host log file
   - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
     virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.

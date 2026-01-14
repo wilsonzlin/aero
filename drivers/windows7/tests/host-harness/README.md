@@ -722,6 +722,14 @@ For safety and determinism, the provisioning script installs **only an allowlist
 Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
 
+Note: Stock QEMU virtio-input devices report virtio-input `ID_NAME` strings like `QEMU Virtio Keyboard` / `QEMU Virtio Mouse`.
+The in-tree Aero virtio-input driver is strict-by-default and expects the Aero contract `ID_NAME` values, so for QEMU-based
+testing the guest must enable the driver's ID_NAME compatibility mode:
+
+- `HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` = `1` (REG_DWORD)
+
+`New-AeroWin7TestImage.ps1` sets this automatically in the generated `provision.cmd`.
+
 Install only one INF per HWID. If you keep multiple in-tree packages in the same drivers directory, disambiguate by
 passing a relative INF path via `-InfAllowList`.
 

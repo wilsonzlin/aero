@@ -488,6 +488,14 @@ echo [AERO] MEDIA=%MEDIA% >> "%LOG%"
 $installDriversCmd
 $enableVirtioInputCompatCmd
 
+REM Enable virtio-input compat mode for stock QEMU ID_NAME strings (e.g. "QEMU Virtio Keyboard").
+REM This is a no-op for Aero contract-compliant devices (they already use the strict Aero ID_NAME values).
+reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters /v CompatIdName /t REG_DWORD /d 1 /f >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [AERO] ERROR: failed to set aero_virtio_input CompatIdName registry flag >> "%LOG%"
+  exit /b 1
+)
+
 REM Install selftest binary.
 mkdir C:\AeroTests >> "%LOG%" 2>&1
 copy /y "%MEDIA%\AERO\selftest\aero-virtio-selftest.exe" C:\AeroTests\ >> "%LOG%" 2>&1
@@ -523,6 +531,8 @@ To provision an already-installed Windows 7 image:
 
 The script will:
 - $readmeDriverInstallDesc
+- Enable virtio-input ID_NAME compatibility for stock QEMU virtio-input devices by setting:
+  HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName=1
 - Copy the selftest to C:\AeroTests\
 - Create a scheduled task (SYSTEM, ONSTART) that runs the selftest each boot.
 
