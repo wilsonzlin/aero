@@ -71,6 +71,15 @@ MODERN_ONLY_VIRTIO_SPECS = frozenset(
 )
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some Windows tooling (e.g. legacy
+    # PowerShell `Out-File -Encoding utf8` emits a BOM by default).
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 @dataclass(frozen=True)
 class DevicesConfig:
     # Uppercased `set` variable name -> raw RHS value (unparsed).
@@ -134,7 +143,7 @@ def load_windows_device_contract(path: Path) -> WindowsDeviceContract:
         raise ValidationError(f"Windows device contract not found: {path}")
 
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_text_strip_utf8_bom(path))
     except json.JSONDecodeError as e:
         raise ValidationError(f"Failed to parse Windows device contract JSON: {path}\n{e}") from e
 
@@ -387,7 +396,7 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
         raise ValidationError(f"Packaging spec not found: {path}")
 
     try:
-        spec = json.loads(path.read_text(encoding="utf-8"))
+        spec = json.loads(_read_text_strip_utf8_bom(path))
     except json.JSONDecodeError as e:
         raise ValidationError(f"Failed to parse JSON spec: {path}\n{e}") from e
 

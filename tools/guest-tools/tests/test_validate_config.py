@@ -56,6 +56,36 @@ class ValidateConfigTests(unittest.TestCase):
         self.assertEqual(validate_config._parse_quoted_list("A"), ("A",))
         self.assertEqual(validate_config._parse_quoted_list(""), ())
 
+    def test_load_windows_device_contract_accepts_utf8_bom(self) -> None:
+        contract_path = validate_config.REPO_ROOT / "docs/windows-device-contract.json"
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            bom_contract = tmp_path / "windows-device-contract.json"
+            bom_contract.write_bytes(b"\xef\xbb\xbf" + contract_path.read_bytes())
+            contract = validate_config.load_windows_device_contract(bom_contract)
+            self.assertIn("virtio-blk", contract.devices)
+
+    def test_load_packaging_spec_accepts_utf8_bom(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            spec_path = tmp_path / "spec.json"
+            spec_path.write_bytes(
+                b"\xef\xbb\xbf"
+                + json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "viostor",
+                                "required": True,
+                                "expected_hardware_ids": [r"PCI\\VEN_1AF4&DEV_1042"],
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+            )
+            parsed = validate_config.load_packaging_spec(spec_path)
+            self.assertIn("viostor", parsed)
+
     def test_optional_validation_only_when_driver_declared(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
             tmp_path = Path(tmp)
