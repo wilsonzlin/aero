@@ -1420,6 +1420,12 @@ static VOID AerovNetFreeTxResources(_Inout_ AEROVNET_ADAPTER* Adapter) {
 static VOID AerovNetFreeRxResources(_Inout_ AEROVNET_ADAPTER* Adapter) {
   ULONG I;
 
+  if (Adapter->RxChecksumScratch) {
+    ExFreePoolWithTag(Adapter->RxChecksumScratch, AEROVNET_TAG);
+    Adapter->RxChecksumScratch = NULL;
+    Adapter->RxChecksumScratchBytes = 0;
+  }
+
   if (Adapter->RxBuffers) {
     for (I = 0; I < Adapter->RxBufferCount; I++) {
       AerovNetFreeRxBuffer(&Adapter->RxBuffers[I]);
@@ -2281,6 +2287,20 @@ static NDIS_STATUS AerovNetAllocateRxResources(_Inout_ AEROVNET_ADAPTER* Adapter
     Rx->Nbl->MiniportReserved[0] = Rx;
 
     InsertTailList(&Adapter->RxFreeList, &Rx->Link);
+  }
+
+  // Allocate a scratch buffer for checksum parsing on multi-buffer receives.
+  // This avoids large stack allocations in the DPC path.
+  Adapter->RxChecksumScratch = NULL;
+  Adapter->RxChecksumScratchBytes = 0;
+  if (Adapter->MaxFrameSize != 0) {
+    Adapter->RxChecksumScratchBytes = Adapter->MaxFrameSize;
+    Adapter->RxChecksumScratch =
+        (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, Adapter->RxChecksumScratchBytes, AEROVNET_TAG);
+    if (!Adapter->RxChecksumScratch) {
+      return NDIS_STATUS_RESOURCES;
+    }
+    RtlZeroMemory(Adapter->RxChecksumScratch, Adapter->RxChecksumScratchBytes);
   }
 
   return NDIS_STATUS_SUCCESS;
@@ -3983,15 +4003,15 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
             AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen,
                                        (const VIRTIO_NET_HDR*)RxHead->BufferVa);
           } else {
-            UCHAR FrameBytes[2048];
             PVOID FramePtr;
 
             FramePtr = NULL;
-            if (RxHead->Nb && TotalPayloadLen <= sizeof(FrameBytes)) {
-              FramePtr = NdisGetDataBuffer(RxHead->Nb, TotalPayloadLen, FrameBytes, 1, 0);
+            if (RxHead->Nb && Adapter->RxChecksumScratch && TotalPayloadLen <= Adapter->RxChecksumScratchBytes) {
+              FramePtr = NdisGetDataBuffer(RxHead->Nb, TotalPayloadLen, Adapter->RxChecksumScratch, 1, 0);
             }
             if (FramePtr) {
-              AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, (const UCHAR*)FramePtr, TotalPayloadLen, (const VIRTIO_NET_HDR*)RxHead->BufferVa);
+              AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, (const UCHAR*)FramePtr, TotalPayloadLen,
+                                         (const VIRTIO_NET_HDR*)RxHead->BufferVa);
             }
           }
 
