@@ -1748,6 +1748,7 @@ impl PciDevice for AeroGpuPciConfigDevice {
         &mut self.cfg
     }
 }
+
 struct E1000PciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }

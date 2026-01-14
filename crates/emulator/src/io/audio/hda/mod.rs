@@ -118,7 +118,10 @@ impl HdaController {
         let mut out = 0u64;
         let capped = size.min(8);
         for i in 0..capped {
-            out |= u64::from(self.mmio_read_u8(offset + i as u32)) << (i * 8);
+            let Some(off) = offset.checked_add(i as u32) else {
+                break;
+            };
+            out |= u64::from(self.mmio_read_u8(off)) << (i * 8);
         }
         out
     }
@@ -187,7 +190,10 @@ impl HdaController {
         let capped = size.min(8);
         for i in 0..capped {
             let b = ((value >> (i * 8)) & 0xff) as u8;
-            self.mmio_write_u8(offset + i as u32, b);
+            let Some(off) = offset.checked_add(i as u32) else {
+                break;
+            };
+            self.mmio_write_u8(off, b);
         }
 
         self.recalc_intsts_summary();
@@ -562,6 +568,21 @@ mod tests {
                 hda.mmio_write(offset, size, 0);
             }
         }
+    }
+
+    #[test]
+    fn mmio_reads_and_writes_do_not_panic_on_offset_overflow() {
+        let mut hda = HdaController::new();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = hda.mmio_read(u32::MAX - 2, 4);
+            hda.mmio_write(u32::MAX - 2, 4, 0);
+        }));
+
+        assert!(
+            result.is_ok(),
+            "mmio_read/mmio_write must not panic when offset+size overflows u32"
+        );
     }
 
     #[derive(Clone, Debug)]
