@@ -366,6 +366,11 @@ Remediation guidance:
     first and add an explicit allowlist entry in:
       scripts/ci/check-repo-policy.sh
 
+  - For the allowlisted BIOS ROM fixture (`assets/bios.bin`), regenerate it from
+    source with:
+      cargo xtask bios-rom
+    (or: cargo xtask fixtures)
+
 See also: docs/13-legal-considerations.md
 See also: docs/FIXTURES.md
 EOF
