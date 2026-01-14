@@ -3350,6 +3350,10 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   if (out.matched_devices == 0) {
     out.reason = "no_matching_hid_devices";
     log.LogLine("virtio-input: no virtio-input HID devices detected");
+    log.LogLine(
+        "virtio-input: hint: if you're running under stock QEMU virtio-input (ID_NAME like 'QEMU Virtio Keyboard'), "
+        "enable the Aero virtio-input driver's CompatIdName mode (HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\CompatIdName=1) "
+        "or use an Aero contract-compliant virtio-input device model.");
     return out;
   }
   if (had_error) {
@@ -3358,10 +3362,16 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   }
   if (out.keyboard_devices <= 0) {
     out.reason = "missing_keyboard_device";
+    log.LogLine(
+        "virtio-input: hint: keyboard HID collection missing. On stock QEMU, ensure virtio-input CompatIdName mode is enabled "
+        "(HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\CompatIdName=1).");
     return out;
   }
   if (out.mouse_devices <= 0) {
     out.reason = "missing_mouse_device";
+    log.LogLine(
+        "virtio-input: hint: mouse HID collection missing. On stock QEMU, ensure virtio-input CompatIdName mode is enabled "
+        "(HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\CompatIdName=1).");
     return out;
   }
   if (out.ambiguous_devices > 0) {
