@@ -487,7 +487,8 @@ emit zero primitives. Recommended debug workflow:
    - `maxvertexcount`
    - input/output signatures (semantics + component masks)
 2. Confirm the command stream is binding the expected GS/HS/DS shader handles (via the extended
-   `BIND_SHADERS` packet) and that stage-specific resources are being populated (via `stage_ex`).
+   `BIND_SHADERS` packet, or via the legacy `reserved0` GS slot) and that stage-specific resources
+   are being populated (via `stage_ex`).
 3. Enable wgpu/WebGPU validation and inspect errors around the expansion compute pass and the
    subsequent indirect draw (binding visibility, usage flags, and out-of-bounds writes are common
    root causes).
@@ -1206,7 +1207,8 @@ Each test should:
 
 When GS support lands, update the existing “ignore GS payloads” robustness test
 (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) to reflect the new behavior (GS
-is no longer ignored when bound through the extended `BIND_SHADERS` packet).
+is no longer ignored when bound, whether via the legacy `reserved0` slot or the extended
+`BIND_SHADERS` packet).
 
 **Unit tests (non-rendering):**
 
