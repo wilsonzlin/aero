@@ -66,7 +66,7 @@ fn assemble_vs_sample_s0_to_od0_with_t0() -> Vec<u8> {
     words.extend(enc_dcl(5, 0, enc_dst(6, 0, 0xF)));
     // mov oPos, v0
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
-    // mov oT0, c0
+    // mov o0, c0
     words.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // texld r0, c0, s0
     words.extend(enc_inst(

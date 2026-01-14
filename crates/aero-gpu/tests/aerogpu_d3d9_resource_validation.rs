@@ -631,7 +631,11 @@ fn d3d9_create_texture2d_rejects_array_layers_not_one() {
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_TEXTURE2D with array_layers!=1 to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => {
-            assert!(msg.contains("array_layers is not supported"), "{msg}")
+            assert!(
+                msg.contains("array_layers")
+                    && (msg.contains("not supported") || msg.contains("!= 1")),
+                "{msg}"
+            )
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }

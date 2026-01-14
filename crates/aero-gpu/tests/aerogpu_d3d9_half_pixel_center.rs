@@ -266,8 +266,8 @@ fn run(exec: &mut AerogpuD3d9Executor, viewport: Option<(f32, f32)>) -> Vec<u8> 
         emit_packet(out, OPC_BIND_SHADERS, |out| {
             push_u32(out, VS_HANDLE);
             push_u32(out, PS_HANDLE);
-            push_u32(out, 0); // flags
-            push_u32(out, 0); // reserved0
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0 (gs when non-zero)
         });
 
         emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {

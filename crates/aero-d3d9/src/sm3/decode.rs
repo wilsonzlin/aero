@@ -1238,6 +1238,13 @@ fn decode_operands_and_extras(
             //
             // For translation/telemetry, it is more important that decoding does not fail than it
             // is to recover every semantic detail. We accept both forms.
+            if operand_tokens.is_empty() {
+                return Err(DecodeError {
+                    token_index: 0,
+                    message: format!("opcode {} expected at least 1 operand token", opcode.name()),
+                });
+            }
+
             match operand_tokens.len() {
                 1 => {
                     parse_fixed_operands(
@@ -1285,33 +1292,32 @@ fn decode_operands_and_extras(
                     }
                 }
                 _ => {
-                    parse_fixed_operands(
-                        opcode,
-                        stage,
-                        major,
-                        operand_tokens,
-                        &[OperandKind::Imm32, OperandKind::Dst],
-                        &mut operands,
-                    )?;
+                    // Legacy form: first operand token is a decl token, followed by a dst operand
+                    // (plus optional relative addressing token).
+                    let decl_token = operand_tokens[0];
+                    let (dst, dst_consumed) = decode_dst_operand(operand_tokens, 1, stage, major)?;
+                    operands.push(Operand::Dst(dst));
+                    if 1 + dst_consumed != operand_tokens.len() {
+                        return Err(DecodeError {
+                            token_index: 1 + dst_consumed,
+                            message: format!(
+                                "opcode {} decoded {} operand tokens but instruction has {}",
+                                opcode.name(),
+                                1 + dst_consumed,
+                                operand_tokens.len()
+                            ),
+                        });
+                    }
 
-                    let decl_token = match operands.first() {
-                        Some(Operand::Imm32(v)) => *v,
-                        _ => {
-                            return Err(DecodeError {
-                                token_index: 0,
-                                message: "dcl missing declaration token".to_owned(),
-                            })
-                        }
-                    };
-                    let dst_operand = operands.get(1);
-
-                    // For non-sampler decls, usage is encoded in decl_token[0..5].
-                    // For sampler decls, texture type is encoded in decl_token[27..31].
-                    let usage_index = ((decl_token >> 16) & 0xF) as u8;
+                    let dst_operand = operands.first();
                     let is_sampler_decl = matches!(
                         dst_operand,
                         Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
                     );
+
+                    // For non-sampler decls, usage is encoded in decl_token[0..5].
+                    // For sampler decls, texture type is encoded in decl_token[27..31].
+                    let usage_index = ((decl_token >> 16) & 0xF) as u8;
                     let usage_raw = if is_sampler_decl {
                         ((decl_token >> 27) & 0xF) as u8
                     } else {
@@ -1791,6 +1797,12 @@ fn decode_dcl_usage(
             4 => TextureType::Texture3D,
             other => TextureType::Unknown(other),
         };
+        if !matches!(texture_type, TextureType::Texture2D | TextureType::TextureCube) {
+            return Err(DecodeError {
+                token_index: 0,
+                message: format!("unsupported sampler texture type {texture_type:?}"),
+            });
+        }
         return Ok(DclUsage::TextureType(texture_type));
     }
 
