@@ -597,6 +597,11 @@ The device MUST NOT offer:
 - Any checksum/GSO/TSO offload features
 - `VIRTIO_NET_F_CTRL_VQ`
 
+> Note: The Windows 7 virtio-net miniport in this repository may **opportunistically request**
+> `VIRTIO_NET_F_MRG_RXBUF` (mergeable receive buffers) when running against non-contract
+> virtio-net implementations (e.g. stock QEMU). Contract v1 Aero device models MUST NOT offer
+> it.
+
 #### 3.2.4 Device config layout (`DEVICE_CFG` capability)
 
 virtio-net config (little-endian):
