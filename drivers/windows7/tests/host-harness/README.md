@@ -805,35 +805,38 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
    (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
-    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
-      HID interface.
-      - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
-        `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-      - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
-        more specific match than the generic fallback in `aero_virtio_input.inf`).
-      - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the canonical
-        `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` can still bind the tablet via its strict revision-gated
-        generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01` (for QEMU, ensure
-        `x-pci-revision=0x01` is in effect; the harness does this by default).
-        - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
-          name.
-      - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-        `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
-      - If you want to exercise the contract tablet binding specifically, ensure the device exposes the tablet subsystem ID
-        (`...&SUBSYS_00121AF4&REV_01`) so `aero_virtio_tablet.inf` can win over the generic fallback match.
-      - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
-        compatibility). Enabling it is **not** required for fallback binding.
-      - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
-    - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
-      an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
-        to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
-      - If you are intentionally using the legacy alias filename (for compatibility with tooling that looks for it), include
-        the enabled alias INF (drop the `.disabled` suffix) instead of `aero_virtio_input.inf`. The alias is filename-only
-        and does not change HWID matching behavior.
+   - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+     HID interface.
+   - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
+     `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+   - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a more
+     specific match than the opt-in strict generic fallback described below).
+   - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
+     - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
+     - The canonical `aero_virtio_input.inf` is SUBSYS-only and will not match either.
+     - To opt into a strict revision-gated generic fallback match (no `SUBSYS`):
+       - Enable the virtio-input INF filename alias (the `*.inf.disabled` file under
+         `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix).
+       - This adds the fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` and can bind the tablet as the generic
+         **Aero VirtIO Input Device**.
+       - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this
+         by default).
+       - Do **not** install both `aero_virtio_input.inf` and the enabled alias INF at the same time.
+     - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+       `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
+     - If you want to exercise the contract tablet binding specifically, ensure the device exposes the tablet subsystem ID
+       (`...&SUBSYS_00121AF4&REV_01`) so `aero_virtio_tablet.inf` can win over the generic fallback match.
+     - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
+   - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+   - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
+     an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+       to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
+     - If you need the strict generic fallback match (no `SUBSYS`), include the enabled alias INF (drop the `.disabled`
+       suffix) instead of `aero_virtio_input.inf`.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-        `-WithTabletEvents`, `-EnableTabletEvents`) /
-        `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-      `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+         `-WithTabletEvents`, `-EnableTabletEvents`) /
+         `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+       `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
     - requires the guest marker to PASS
@@ -1366,8 +1369,8 @@ in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver
   In that case:
   - The canonical `aero_virtio_input.inf` is also SUBSYS-only, so it will not match either.
   - To opt into a strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`; Device Manager name:
-    **Aero VirtIO Input Device**), enable the virtio-input INF filename alias (the `*.inf.disabled` file; drop the `.disabled`
-    suffix to enable).
+    **Aero VirtIO Input Device**), enable the virtio-input INF filename alias (the `*.inf.disabled` file under
+    `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix to enable).
   - Or, emulate the subsystem IDs to the contract values so it binds to `aero_virtio_tablet.inf` (preferred/contract path).
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
