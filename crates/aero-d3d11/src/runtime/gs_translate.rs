@@ -1276,6 +1276,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("// ---- Aero SM4 geometry shader prepass (generated) ----");
     w.line("");
 
+    // Match the expanded-vertex layout consumed by `runtime/wgsl_link.rs`'s passthrough VS
+    // generator, and by the placeholder geometry compute prepass.
     w.line("struct ExpandedVertex {");
     w.indent();
     w.line("pos: vec4<f32>,");
