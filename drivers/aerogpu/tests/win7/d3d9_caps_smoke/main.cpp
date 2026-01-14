@@ -233,6 +233,16 @@ static int RunD3D9CapsSmoke(int argc, char** argv) {
     return reporter.Fail("TextureCaps unexpectedly includes D3DPTEXTURECAPS_POW2 (NPOT required)");
   }
 
+  // Fixed-function fallback supports FVFs with TEX1, so FVFCaps must advertise at
+  // least one texture coordinate set.
+  const DWORD fvf_texcoord_count = caps.FVFCaps & D3DFVFCAPS_TEXCOORDCOUNTMASK;
+  if (fvf_texcoord_count < 1) {
+    return reporter.Fail("FVFCaps supports too few texcoords: got %lu need >= 1", (unsigned long)fvf_texcoord_count);
+  }
+  if (fvf_texcoord_count > 8) {
+    return reporter.Fail("FVFCaps supports too many texcoords: got %lu need <= 8", (unsigned long)fvf_texcoord_count);
+  }
+
   return reporter.Pass();
 }
 

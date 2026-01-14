@@ -197,7 +197,17 @@ bool TestCapsFormatContract() {
   if (!CheckEqU32(static_cast<uint32_t>(caps.MaxVolumeExtent), 0u, "caps.MaxVolumeExtent")) {
     return false;
   }
- 
+
+  // Fixed-function fallback supports FVFs with TEX1, so FVFCaps must advertise at
+  // least one texture coordinate set.
+  const uint32_t fvf_texcoord_count = caps.FVFCaps & D3DFVFCAPS_TEXCOORDCOUNTMASK;
+  if (!Check(fvf_texcoord_count >= 1u, "FVFCaps supports at least TEX1")) {
+    return false;
+  }
+  if (!Check(fvf_texcoord_count <= 8u, "FVFCaps texcoord count <= 8")) {
+    return false;
+  }
+
   // Patch/N-patch caps must remain conservative: the UMD only implements a
   // limited rect/tri patch subset and does not expose N-patch/quintic patches.
   const uint32_t forbidden_patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;

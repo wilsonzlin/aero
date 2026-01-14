@@ -326,6 +326,11 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                      D3DSTENCILCAPS_DECR |
                      D3DSTENCILCAPS_TWOSIDED;
 
+  // Fixed-function vertex formats (FVF) are supported via the UMD's minimal
+  // fixed-function fallback pipeline. Only a small subset of FVFs is implemented
+  // (up to TEX1), so cap the texcoord count to 1.
+  out->FVFCaps = 1;
+
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
   // Basic point/linear filtering including mip filters. Mipmapped textures are
@@ -538,19 +543,21 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
                              D3DPCMPCAPS_ALWAYS;
       caps->ZCmpCaps = cmp_caps;
       caps->AlphaCmpCaps = cmp_caps;
-      caps->StencilCaps = D3DSTENCILCAPS_KEEP |
-                          D3DSTENCILCAPS_ZERO |
-                          D3DSTENCILCAPS_REPLACE |
-                          D3DSTENCILCAPS_INCRSAT |
-                          D3DSTENCILCAPS_DECRSAT |
-                          D3DSTENCILCAPS_INVERT |
-                          D3DSTENCILCAPS_INCR |
-                          D3DSTENCILCAPS_DECR |
-                          D3DSTENCILCAPS_TWOSIDED;
-      caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
-       caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
-       caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
-                                 D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
+       caps->StencilCaps = D3DSTENCILCAPS_KEEP |
+                           D3DSTENCILCAPS_ZERO |
+                           D3DSTENCILCAPS_REPLACE |
+                           D3DSTENCILCAPS_INCRSAT |
+                           D3DSTENCILCAPS_DECRSAT |
+                           D3DSTENCILCAPS_INVERT |
+                           D3DSTENCILCAPS_INCR |
+                           D3DSTENCILCAPS_DECR |
+                           D3DSTENCILCAPS_TWOSIDED;
+       // Fixed-function FVF fallback supports at most TEX1.
+       caps->FVFCaps = 1;
+       caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
+        caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+        caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
+                                  D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
                                  D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
        // StretchRect filtering only supports min/mag point/linear (no mip filtering).
        caps->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |

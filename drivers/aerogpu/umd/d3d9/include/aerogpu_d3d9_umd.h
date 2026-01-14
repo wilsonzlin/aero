@@ -337,6 +337,21 @@ typedef struct _LUID {
   #define D3DSTENCILCAPS_TWOSIDED 0x00000100u
 #endif
 
+// D3DFVFCAPS_* (from d3d9caps.h).
+//
+// Note: `D3DCAPS9::FVFCaps` encodes the *maximum* number of texture coordinate sets
+// supported by the fixed-function pipeline in the low bits (mask below). The
+// remaining bits are feature flags (e.g. point-size).
+#ifndef D3DFVFCAPS_TEXCOORDCOUNTMASK
+  #define D3DFVFCAPS_TEXCOORDCOUNTMASK 0x0000FFFFu
+#endif
+#ifndef D3DFVFCAPS_DONOTSTRIPELEMENTS
+  #define D3DFVFCAPS_DONOTSTRIPELEMENTS 0x00080000u
+#endif
+#ifndef D3DFVFCAPS_PSIZE
+  #define D3DFVFCAPS_PSIZE 0x00100000u
+#endif
+
 // D3DPSHADECAPS_* (from d3d9caps.h).
 #ifndef D3DPSHADECAPS_COLORGOURAUDRGB
   #define D3DPSHADECAPS_COLORGOURAUDRGB 0x00000008u
