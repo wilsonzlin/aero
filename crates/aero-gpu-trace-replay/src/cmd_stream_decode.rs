@@ -136,7 +136,7 @@ impl CmdStreamDecodeReport {
     }
 
     pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        Ok(serde_json::to_string_pretty(&self.to_json_value())?)
+        serde_json::to_string_pretty(&self.to_json_value())
     }
 
     pub fn to_json_value(&self) -> Value {
