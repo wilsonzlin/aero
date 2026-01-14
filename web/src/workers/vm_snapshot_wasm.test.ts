@@ -6,11 +6,13 @@ import {
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_GPU_AEROGPU_KIND,
+  VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_ID_AEROGPU,
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
   VM_SNAPSHOT_DEVICE_ID_E1000,
+  VM_SNAPSHOT_DEVICE_ID_GPU_VRAM,
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
@@ -108,6 +110,8 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND).toBe("input.virtio_input");
     expect(VM_SNAPSHOT_DEVICE_ID_NET_STACK).toBe(20);
     expect(VM_SNAPSHOT_DEVICE_NET_STACK_KIND).toBe("net.stack");
+    expect(VM_SNAPSHOT_DEVICE_ID_GPU_VRAM).toBe(28);
+    expect(VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND).toBe("gpu.vram");
 
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
     // Backwards compatibility: legacy `usb.uhci` kind should still parse as the USB device id.
@@ -135,6 +139,9 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_NET_STACK)).toBe(VM_SNAPSHOT_DEVICE_NET_STACK_KIND);
 
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_GPU_VRAM);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_GPU_VRAM)).toBe(VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND);
+
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_E1000)).toBe(VM_SNAPSHOT_DEVICE_E1000_KIND);
 
@@ -155,6 +162,7 @@ describe("workers/vm_snapshot_wasm", () => {
       VM_SNAPSHOT_DEVICE_ID_E1000,
       VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
       VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT,
+      VM_SNAPSHOT_DEVICE_ID_GPU_VRAM,
     ];
     expect(new Set(ids).size).toBe(ids.length);
 
