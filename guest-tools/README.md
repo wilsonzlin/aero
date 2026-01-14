@@ -164,6 +164,10 @@ Optional flags:
   - legacy aliases accepted: `testsigning`→`test`, `nointegritychecks`→`none`
 - `setup.cmd /installcerts`  
   Force certificate installation from `certs\` even when `signing_policy=production|none` (advanced; not recommended).
+- `setup.cmd /verify-media`  
+  Verify Guest Tools media integrity by hashing all files listed in `manifest.json` before making any system changes.  
+  If any file is missing or has a SHA-256 mismatch, setup exits with code `14` and prints remediation guidance:
+  "replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions".
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
@@ -177,6 +181,7 @@ Exit codes (for automation):
 - `11`: driver directory missing (`drivers\\<arch>\\`)
 - `12`: required certificate file(s) missing under `certs\\` (when `signing_policy=test`)
 - `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the packaged driver INFs (`drivers\\<arch>\\...`)
+- `14`: Guest Tools media integrity check failed (`/verify-media`)
 
 ## Building Guest Tools media for WHQL / production-signed drivers
 

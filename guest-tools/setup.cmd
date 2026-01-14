@@ -9,6 +9,7 @@ set "EC_ADMIN_REQUIRED=10"
 set "EC_DRIVER_DIR_MISSING=11"
 set "EC_CERTS_MISSING=12"
 set "EC_STORAGE_SERVICE_MISMATCH=13"
+set "EC_MEDIA_INTEGRITY_FAILED=14"
 
 set "SCRIPT_DIR=%~dp0"
 
@@ -46,6 +47,7 @@ set "ARG_INSTALL_CERTS=0"
 set "ARG_NO_REBOOT=0"
 set "ARG_SKIP_STORAGE=0"
 set "ARG_CHECK=0"
+set "ARG_VERIFY_MEDIA=0"
 
 rem Default signing policy (back-compat if manifest.json is missing/old).
 set "SIGNING_POLICY=test"
@@ -85,6 +87,8 @@ for %%A in (%*) do (
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"
   if /i "%%~A"=="/skip-storage" set "ARG_SKIP_STORAGE=1"
+  if /i "%%~A"=="/verify-media" set "ARG_VERIFY_MEDIA=1"
+  if /i "%%~A"=="/verifymedia" set "ARG_VERIFY_MEDIA=1"
 )
 
 rem /force implies fully non-interactive behavior.
@@ -101,6 +105,14 @@ if errorlevel 1 (
   set "RC=%ERRORLEVEL%"
   popd >nul 2>&1
   exit /b %RC%
+)
+if "%ARG_VERIFY_MEDIA%"=="1" (
+  call :verify_media_preflight
+  if errorlevel 1 (
+    set "RC=%ERRORLEVEL%"
+    popd >nul 2>&1
+    exit /b %RC%
+  )
 )
 call :init_logging
 if errorlevel 1 (
@@ -192,6 +204,7 @@ echo   /forcesigningpolicy:none^|test^|production
 echo                        Override the signing_policy read from manifest.json (if present)
 echo                        (legacy aliases: testsigning=test, nointegritychecks=none)
 echo   /installcerts        Force installing certificates from certs\ even when signing_policy is production^|none (advanced; not recommended)
+echo   /verify-media        Verify Guest Tools media integrity (manifest.json SHA-256 file hashes) before installing
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo   /skipstorage         Skip boot-critical virtio-blk storage pre-seeding (alias: /skip-storage; advanced; unsafe to switch boot disk to virtio-blk)
 echo.
@@ -369,6 +382,191 @@ if errorlevel 1 (
   exit /b %EC_ADMIN_REQUIRED%
 )
 exit /b 0
+
+:verify_media_preflight
+setlocal EnableDelayedExpansion
+echo.
+echo Verifying Guest Tools media integrity ^(/verify-media^)...
+
+rem Locate manifest.json (either alongside setup.cmd or one directory above).
+set "MEDIA_ROOT="
+for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
+set "MANIFEST=!MEDIA_ROOT!\manifest.json"
+set "ROOT=!MEDIA_ROOT!"
+if not exist "!MANIFEST!" (
+  set "MANIFEST=%SCRIPT_DIR%manifest.json"
+  set "ROOT=%SCRIPT_DIR%"
+)
+
+if not exist "!MANIFEST!" (
+  echo ERROR: manifest.json not found; cannot verify Guest Tools media integrity.
+  echo Expected:
+  echo   "!MEDIA_ROOT!\manifest.json"
+  echo   "%SCRIPT_DIR%manifest.json"
+  echo Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.
+  endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
+)
+
+echo Manifest: "!MANIFEST!"
+
+call :verify_media_with_powershell "!MANIFEST!" "!ROOT!"
+set "RC=!ERRORLEVEL!"
+if "!RC!"=="0" (
+  endlocal & exit /b 0
+)
+if "!RC!"=="%EC_MEDIA_INTEGRITY_FAILED%" (
+  endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
+)
+
+echo WARNING: PowerShell media verification unavailable or failed (exit code !RC!); falling back to CMD parser.
+call :verify_media_with_cmd "!MANIFEST!" "!ROOT!"
+set "RC=!ERRORLEVEL!"
+endlocal & exit /b !RC!
+
+:verify_media_with_powershell
+setlocal EnableDelayedExpansion
+set "MANIFEST=%~1"
+set "ROOT=%~2"
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+if not exist "%PWSH%" (
+  endlocal & exit /b 2
+)
+
+set "AEROGT_MANIFEST=%MANIFEST%"
+set "AEROGT_MEDIA_ROOT=%ROOT%"
+
+rem Use PowerShell 2.0-compatible JSON parsing (JavaScriptSerializer) and SHA-256 hashing.
+rem Exit codes:
+rem   0  - OK
+rem   14 - integrity failure (missing/mismatch)
+rem   2  - PowerShell unavailable/parse error (caller may fall back to CMD parsing)
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$manifest=$env:AEROGT_MANIFEST; $root=$env:AEROGT_MEDIA_ROOT; " ^
+  "function Get-FileSha256Hex([string]$path){ try{ $stream=[System.IO.File]::OpenRead($path); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; return $sb.ToString() } catch { return $null } }; " ^
+  "function Parse-JsonCompat([string]$json){ try{ [void][System.Reflection.Assembly]::LoadWithPartialName('System.Web.Extensions'); $ser=New-Object System.Web.Script.Serialization.JavaScriptSerializer; $ser.MaxJsonLength=104857600; return $ser.DeserializeObject($json) } catch { return $null } }; " ^
+  "try{ $json=[System.IO.File]::ReadAllText($manifest) } catch { Write-Host ('ERROR: Failed to read manifest.json: ' + $manifest); exit 2 }; " ^
+  "$obj=Parse-JsonCompat $json; if(-not $obj){ Write-Host ('ERROR: Failed to parse manifest.json as JSON: ' + $manifest); exit 2 }; " ^
+  "$files=$obj['files']; if(-not $files -or $files.Count -eq 0){ Write-Host 'ERROR: manifest.json contains no file entries (files[]); cannot verify media integrity.'; Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; " ^
+  "$total=0; $missing=0; $mismatch=0; " ^
+  "foreach($f in $files){ $total++; $rel=(''+$f['path']).Trim(); $exp=(''+$f['sha256']).Trim(); if(-not $rel -or -not $exp){ Write-Host 'ERROR: manifest.json contains an invalid file entry (missing path/sha256).'; $mismatch++; continue }; if($rel -match '^[\\\/]' -or $rel -match '^[A-Za-z]:'){ Write-Host ('ERROR: manifest.json contains an unsafe absolute path: ' + $rel); $mismatch++; continue }; if($rel -match '(\.\.[\\\/])|(\.\.$)'){ Write-Host ('ERROR: manifest.json contains an unsafe path traversal: ' + $rel); $mismatch++; continue }; $relFs=$rel -replace '/', '\'; $full=[System.IO.Path]::Combine($root, $relFs); if(-not (Test-Path -LiteralPath $full -PathType Leaf)){ Write-Host ('ERROR: Missing file: ' + $rel); $missing++; continue }; $act=Get-FileSha256Hex $full; if(-not $act){ Write-Host ('ERROR: Failed to hash file: ' + $rel); $mismatch++; continue }; if($act.ToLower() -ne $exp.ToLower()){ Write-Host ('ERROR: Hash mismatch: ' + $rel); Write-Host ('       expected: ' + $exp); Write-Host ('       actual:   ' + $act); $mismatch++; } }; " ^
+  "Write-Host ('Media integrity summary: files checked=' + $total + ', missing=' + $missing + ', mismatched=' + $mismatch); " ^
+  "if($missing -gt 0 -or $mismatch -gt 0){ Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; exit 0"
+
+endlocal & exit /b %ERRORLEVEL%
+
+:verify_media_with_cmd
+setlocal EnableDelayedExpansion
+set "MANIFEST=%~1"
+set "ROOT=%~2"
+if not "!ROOT:~-1!"=="\" set "ROOT=!ROOT!\"
+
+set /a TOTAL=0
+set /a MISSING=0
+set /a MISMATCH=0
+set "CUR_PATH="
+
+for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
+  set "LINE=%%L"
+
+  echo(!LINE!| "%SYS32%\findstr.exe" /i "\"path\"" >nul 2>&1
+  if not errorlevel 1 (
+    set "VAL="
+    for /f "tokens=1,* delims=:" %%A in ("!LINE!") do set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "CUR_PATH=!VAL!"
+  )
+
+  echo(!LINE!| "%SYS32%\findstr.exe" /i "\"sha256\"" >nul 2>&1
+  if not errorlevel 1 (
+    if defined CUR_PATH (
+      set "VAL="
+      for /f "tokens=1,* delims=:" %%A in ("!LINE!") do set "VAL=%%B"
+      for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+      if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+      set "VAL=!VAL:"=!"
+      set "CUR_SHA=!VAL!"
+
+      set /a TOTAL+=1
+      call :verify_media_one_file_cmd "!CUR_PATH!" "!CUR_SHA!" "!ROOT!"
+      set "RC=!ERRORLEVEL!"
+      if "!RC!"=="1" set /a MISSING+=1
+      if "!RC!"=="2" set /a MISMATCH+=1
+
+      set "CUR_PATH="
+      set "CUR_SHA="
+    )
+  )
+)
+
+if "!TOTAL!"=="0" (
+  echo ERROR: No file entries found in manifest.json; cannot verify media integrity.
+  echo Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.
+  endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
+)
+
+echo Media integrity summary: files checked=!TOTAL!, missing=!MISSING!, mismatched=!MISMATCH!
+if not "!MISSING!"=="0" goto :verify_media_cmd_fail
+if not "!MISMATCH!"=="0" goto :verify_media_cmd_fail
+endlocal & exit /b 0
+
+:verify_media_cmd_fail
+echo Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.
+endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
+
+:verify_media_one_file_cmd
+setlocal EnableDelayedExpansion
+set "REL=%~1"
+set "EXP=%~2"
+set "ROOT=%~3"
+
+rem Basic path safety: refuse absolute paths or traversal entries.
+if "!REL:~1,1!"==":" (
+  echo ERROR: manifest.json contains an unsafe absolute path: !REL!
+  endlocal & exit /b 2
+)
+if "!REL:~0,1!"=="\" (
+  echo ERROR: manifest.json contains an unsafe absolute path: !REL!
+  endlocal & exit /b 2
+)
+if "!REL:~0,1!"=="/" (
+  echo ERROR: manifest.json contains an unsafe absolute path: !REL!
+  endlocal & exit /b 2
+)
+echo(!REL!| "%SYS32%\findstr.exe" /i "\.\." >nul 2>&1
+if not errorlevel 1 (
+  echo ERROR: manifest.json contains an unsafe path traversal: !REL!
+  endlocal & exit /b 2
+)
+
+set "RELFS=!REL:/=\!"
+set "FULL=!ROOT!!RELFS!"
+
+if not exist "!FULL!" (
+  echo ERROR: Missing file: !REL!
+  endlocal & exit /b 1
+)
+
+set "ACTUAL="
+for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "!FULL!" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[0-9a-f][0-9a-f]*$"`) do (
+  if not defined ACTUAL set "ACTUAL=%%H"
+)
+
+if not defined ACTUAL (
+  echo ERROR: Failed to hash file: !REL!
+  endlocal & exit /b 2
+)
+
+if /i not "!ACTUAL!"=="!EXP!" (
+  echo ERROR: Hash mismatch: !REL!
+  echo        expected: !EXP!
+  echo        actual:   !ACTUAL!
+  endlocal & exit /b 2
+)
+
+endlocal & exit /b 0
 
 :log_manifest
 setlocal EnableDelayedExpansion
