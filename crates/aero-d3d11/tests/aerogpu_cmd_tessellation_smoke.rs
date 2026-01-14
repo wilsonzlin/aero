@@ -93,17 +93,17 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
         let verts = [
             Vertex {
                 pos: [-0.8, -0.8, 0.0],
-                // Use a non-black color so the tessellation placeholder DS (which interpolates the
-                // control point color) produces visible output.
-                color: [1.0, 0.0, 0.0, 1.0],
+                // Vertex colors are black so that if tessellation is ignored (VS->PS only),
+                // the result stays black and the test fails.
+                color: [0.0, 0.0, 0.0, 1.0],
             },
             Vertex {
                 pos: [0.0, 0.8, 0.0],
-                color: [1.0, 0.0, 0.0, 1.0],
+                color: [0.0, 0.0, 0.0, 1.0],
             },
             Vertex {
                 pos: [0.8, -0.8, 0.0],
-                color: [1.0, 0.0, 0.0, 1.0],
+                color: [0.0, 0.0, 0.0, 1.0],
             },
         ];
 
@@ -166,14 +166,6 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
             if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
                 return;
             }
-            let msg = err.to_string();
-            if msg.contains("tessellation (HS/DS) compute expansion is not wired up yet") {
-                common::skip_or_panic(
-                    test_name,
-                    "tessellation HS/DS emulation not implemented yet",
-                );
-                return;
-            }
             panic!("execute_cmd_stream should succeed: {err:#}");
         }
         exec.poll_wait();
@@ -193,11 +185,25 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
         assert_eq!(px(0, 0), [0, 0, 0, 255]);
         assert_eq!(px(W - 1, 0), [0, 0, 0, 255]);
 
-        // Inside triangle -> non-black (DS encodes barycentrics into color).
+        // Inside triangle -> barycentric-ish color (DS encodes barycentrics into RGB).
+        //
+        // At the (approx) center of the triangle we expect one component around 0.5 and the other
+        // two around 0.25. We compare sorted RGB channels so the assertion remains correct even if
+        // the fixture encodes the barycentric components in a different RGB order.
         let center = px(W / 2, H / 2);
+        assert_eq!(center[3], 255, "expected opaque alpha, got {center:?}");
+
+        let mut rgb_sorted = [center[0], center[1], center[2]];
+        rgb_sorted.sort();
+        let expected_sorted = [64u8, 64u8, 128u8];
+        let tol = 40u8;
+        let within = rgb_sorted
+            .iter()
+            .zip(expected_sorted)
+            .all(|(&got, exp)| got.abs_diff(exp) <= tol);
         assert!(
-            center[0] != 0 || center[1] != 0 || center[2] != 0,
-            "expected non-black center pixel, got {center:?}"
+            within,
+            "expected barycentric-ish center pixel (~[64,64,128] sorted RGB), got {center:?} (sorted {rgb_sorted:?})"
         );
     });
 }
