@@ -12040,7 +12040,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             headless.vbe_lfb_base(),
-            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
 
         // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
@@ -12055,7 +12055,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), u64::from(aero_gpu_vga::SVGA_LFB_BASE));
+        assert_eq!(vga.vbe_lfb_base(), aero_gpu_vga::SVGA_LFB_BASE);
     }
 
     #[test]
@@ -12081,7 +12081,7 @@ mod tests {
 
         let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
             .expect("LFB base should fit in u32");
-        assert_eq!(m.vbe_lfb_base(), u64::from(expected));
+        assert_eq!(m.vbe_lfb_base(), expected);
     }
 
     #[test]
