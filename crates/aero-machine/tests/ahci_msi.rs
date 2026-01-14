@@ -332,6 +332,12 @@ fn ahci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
             .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
         "MSI pending bit should latch in the device model when message address is invalid"
     );
+    let pending_off = if is_64bit { base + 0x14 } else { base + 0x10 };
+    assert_ne!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible via canonical PCI config space reads"
+    );
 
     // Clear the interrupt condition before completing MSI programming so delivery relies solely on
     // the pending bit.
@@ -354,5 +360,10 @@ fn ahci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector)
+    );
+    assert_eq!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
     );
 }

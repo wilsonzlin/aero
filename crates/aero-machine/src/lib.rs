@@ -8014,6 +8014,24 @@ impl Machine {
                 if let Some((enabled, function_masked)) = msix_state {
                     sync_msix_capability_into_config(cfg, enabled, function_masked);
                 }
+
+                // Mirror device-managed MSI pending bits back into the canonical PCI config space
+                // so guest reads observe them. This does not touch guest RAM, so it is safe in the
+                // `tick_platform(0)` sync-only path.
+                let pending_bits = xhci
+                    .config()
+                    .capability::<MsiCapability>()
+                    .map(|msi| msi.pending_bits())
+                    .unwrap_or(0);
+                drop(xhci);
+
+                if let Some(pci_cfg) = self.pci_cfg.as_ref() {
+                    if let Some(cfg) = pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+                        if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                            msi.set_pending_bits(pending_bits);
+                        }
+                    }
+                }
             }
 
             return;
@@ -8221,6 +8239,23 @@ impl Machine {
             while ticks != 0 {
                 xhci.tick_1ms(&mut self.mem.bus);
                 ticks -= 1;
+            }
+
+            // Mirror device-managed MSI pending bits back into the canonical PCI config space so
+            // guest config reads observe them.
+            let pending_bits = xhci
+                .config()
+                .capability::<MsiCapability>()
+                .map(|msi| msi.pending_bits())
+                .unwrap_or(0);
+            drop(xhci);
+
+            if let Some(pci_cfg) = self.pci_cfg.as_ref() {
+                if let Some(cfg) = pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+                    if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                        msi.set_pending_bits(pending_bits);
+                    }
+                }
             }
         }
     }
@@ -11922,6 +11957,22 @@ impl Machine {
         if bus_master_enabled {
             dev.process(&mut self.mem);
         }
+
+        // Mirror device-managed MSI pending bits back into the canonical PCI config space so
+        // guest reads observe them. The canonical config space cannot infer pending bits on its
+        // own because they are latched by the runtime device model.
+        let pending_bits = dev
+            .config()
+            .capability::<MsiCapability>()
+            .map(|msi| msi.pending_bits())
+            .unwrap_or(0);
+        drop(dev);
+
+        if let Some(cfg) = pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+            if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                msi.set_pending_bits(pending_bits);
+            }
+        }
     }
 
     /// Allow the IDE controller (if present) to make forward progress (Bus Master DMA).
@@ -11994,6 +12045,22 @@ impl Machine {
             }
         }
         dev.process(&mut self.mem);
+
+        // Mirror device-managed MSI pending bits back into the canonical PCI config space so guest
+        // config reads observe them. The canonical config space cannot infer pending bits on its
+        // own because they are latched by the runtime device model.
+        let pending_bits = dev
+            .config()
+            .capability::<MsiCapability>()
+            .map(|msi| msi.pending_bits())
+            .unwrap_or(0);
+        drop(dev);
+
+        if let Some(cfg) = pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+            if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                msi.set_pending_bits(pending_bits);
+            }
+        }
     }
 
     /// Allow the AeroGPU device (if present) to process doorbells and complete fences.

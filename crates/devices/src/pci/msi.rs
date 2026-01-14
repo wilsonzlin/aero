@@ -92,6 +92,20 @@ impl MsiCapability {
         self.pending_bits = 0;
     }
 
+    /// Overwrite the device-managed MSI pending bits.
+    ///
+    /// This is primarily intended for platform integrations that maintain a separate canonical PCI
+    /// config space image (e.g. `aero_machine::Machine`) and need to mirror device-managed pending
+    /// state back into guest-visible config reads.
+    pub fn set_pending_bits(&mut self, pending_bits: u32) {
+        if !self.per_vector_masking {
+            // Pending bits register is not implemented; keep the internal state deterministic.
+            self.pending_bits = 0;
+            return;
+        }
+        self.pending_bits = pending_bits & Self::SUPPORTED_VECTOR_MASK;
+    }
+
     pub fn message(&self) -> MsiMessage {
         MsiMessage {
             address: self.message_address,

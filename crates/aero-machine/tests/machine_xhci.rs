@@ -542,6 +542,10 @@ fn xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
     cfg_write(&mut m, bdf, base + 0x10, 4, 0); // unmask
 
     let ctrl = cfg_read(&mut m, bdf, base + 0x02, 2) as u16;
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(per_vector_masking, "test requires per-vector masking support");
+    let pending_off = if is_64bit { base + 0x14 } else { base + 0x10 };
     cfg_write(&mut m, bdf, base + 0x02, 2, u32::from(ctrl | 1)); // MSI enable
 
     // Mirror canonical MSI state into the device model.
@@ -597,11 +601,24 @@ fn xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
             .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
         "canonical PCI config sync must not clear device-managed MSI pending bits"
     );
+    assert_ne!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible via canonical PCI config space reads"
+    );
 
     xhci.borrow_mut().clear_event_interrupt();
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector)
+    );
+
+    // Sync once more so the canonical PCI config space reflects the pending-bit clear.
+    m.tick_platform(0);
+    assert_eq!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
     );
 }
 
