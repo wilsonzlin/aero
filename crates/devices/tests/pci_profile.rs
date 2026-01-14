@@ -170,8 +170,10 @@ fn canonical_bdfs_are_stable() {
     //
     // In particular:
     // - `00:07.0` is reserved for the AeroGPU (A3A0:0001) device contract.
+    // - `00:0c.0` is reserved for the historical Bochs/QEMU VGA PCI stub identity (1234:1111).
     // - `00:12.0` is reserved for the canonical EHCI (USB2) controller.
     assert_eq!(AEROGPU.bdf, PciBdf::new(0, 0x07, 0));
+    assert_eq!(VGA_TRANSITIONAL_STUB.bdf, PciBdf::new(0, 0x0c, 0));
     assert_eq!(USB_EHCI_ICH9.bdf, PciBdf::new(0, 0x12, 0));
 }
 
