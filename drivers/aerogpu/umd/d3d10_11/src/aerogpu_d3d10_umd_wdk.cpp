@@ -1140,6 +1140,7 @@ struct AeroGpuDevice {
   aerogpu_handle_t current_dsv = 0;
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
+  aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   AeroGpuDepthStencilState* current_dss = nullptr;
@@ -6043,30 +6044,13 @@ HRESULT APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
                                       const D3D10DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                       D3D10DDI_HSHADER hShader,
                                       D3D10DDI_HRTSHADER) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hShader.pDrvPrivate) {
+  if (!pDesc) {
     return E_INVALIDARG;
   }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  if (!dev || !dev->adapter) {
-    return E_FAIL;
-  }
-  std::lock_guard<std::mutex> lock(dev->mutex);
-
-  (void)new (hShader.pDrvPrivate) AeroGpuShader();
-
-  // Geometry shaders are accepted by the Win7 D3D10 runtime at FL10_0, but the
-  // AeroGPU/WebGPU backend currently cannot execute geometry shaders. Treat GS as
-  // a no-op and do not forward DXBC to the host.
-  //
-  // NOTE: The created AeroGpuShader's `handle` intentionally stays 0 so
-  // DestroyShaderCommon does not emit a host-side DESTROY_SHADER for a shader
-  // that was never created.
-  static std::once_flag log_once;
-  std::call_once(log_once, [] {
-    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (GS not supported by AeroGPU/WebGPU yet)");
-  });
-
-  return S_OK;
+  const void* code = nullptr;
+  std::memcpy(&code, pDesc, sizeof(code));
+  const size_t size = dxbc_size_from_header(code);
+  return CreateShaderCommon(hDevice, code, size, hShader, AEROGPU_SHADER_STAGE_GEOMETRY);
 }
 
 void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
@@ -6612,7 +6596,8 @@ void EmitBindShadersLocked(AeroGpuDevice* dev) {
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
-  cmd->reserved0 = 0;
+  // `reserved0` is interpreted as the optional geometry shader handle.
+  cmd->reserved0 = dev->current_gs;
 }
 
 void APIENTRY VsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
@@ -6645,8 +6630,19 @@ void APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
   EmitBindShadersLocked(dev);
 }
 
-void APIENTRY GsSetShader(D3D10DDI_HDEVICE, D3D10DDI_HSHADER) {
-  // Stub (geometry shader stage not yet supported; valid for this stage to be unbound).
+void APIENTRY GsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_gs = hShader.pDrvPrivate ? FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hShader)->handle : 0;
+  EmitBindShadersLocked(dev);
 }
 
 static void SetConstantBuffersLocked(AeroGpuDevice* dev,
@@ -6882,6 +6878,7 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_vs = 0;
   dev->current_ps = 0;
+  dev->current_gs = 0;
   EmitBindShadersLocked(dev);
 
   dev->current_input_layout = 0;

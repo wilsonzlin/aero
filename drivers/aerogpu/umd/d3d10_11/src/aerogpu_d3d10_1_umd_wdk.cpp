@@ -34,6 +34,7 @@
 #include <limits>
 #include <mutex>
 #include <new>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -649,6 +650,7 @@ struct AeroGpuDevice {
   std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> current_ps_samplers{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
+  aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
@@ -5053,30 +5055,12 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
                                               D3D10DDI_HGEOMETRYSHADER hShader,
                                               D3D10DDI_HRTGEOMETRYSHADER) {
   AEROGPU_D3D10_TRACEF("CreateGeometryShader codeSize=%u", pDesc ? static_cast<unsigned>(pDesc->CodeSize) : 0u);
-  if (!hDevice.pDrvPrivate || !pDesc || !hShader.pDrvPrivate) {
+  if (!pDesc) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  if (!dev || !dev->adapter) {
-    AEROGPU_D3D10_RET_HR(E_FAIL);
-  }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  (void)new (hShader.pDrvPrivate) AeroGpuShader();
-
-  // Geometry shaders are accepted by the Win7 D3D10.1 runtime at FL10_0, but
-  // the AeroGPU/WebGPU backend currently cannot execute geometry shaders. Treat
-  // GS as a no-op and do not forward DXBC to the host.
-  //
-  // NOTE: The created AeroGpuShader's `handle` intentionally stays 0 so
-  // DestroyShaderCommon does not emit a host-side DESTROY_SHADER for a shader
-  // that was never created.
-  static std::once_flag log_once;
-  std::call_once(log_once, [] {
-    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (GS not supported by AeroGPU/WebGPU yet)");
-  });
-
-  AEROGPU_D3D10_RET_HR(S_OK);
+  const HRESULT hr =
+      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->CodeSize, hShader, AEROGPU_SHADER_STAGE_GEOMETRY);
+  AEROGPU_D3D10_RET_HR(hr);
 }
 
 template <typename TShaderHandle>
@@ -6851,7 +6835,7 @@ void AEROGPU_APIENTRY VsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HVERTEXSHAD
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
-  cmd->reserved0 = 0;
+  cmd->reserved0 = dev->current_gs;
 }
 
 void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADER hShader) {
@@ -6872,8 +6856,39 @@ void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADE
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
-  cmd->reserved0 = 0;
+  cmd->reserved0 = dev->current_gs;
 }
+
+template <typename FnPtr>
+struct GsSetShaderImpl;
+
+template <typename... Tail>
+struct GsSetShaderImpl<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, Tail...)> {
+  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, Tail... tail) {
+    if (!hDevice.pDrvPrivate) {
+      return;
+    }
+
+    auto args = std::tie(tail...);
+    static_assert(sizeof...(Tail) >= 1, "GsSetShader must take a shader handle");
+    auto hShader = std::get<0>(args);
+
+    AEROGPU_D3D10_TRACEF_VERBOSE("GsSetShader hDevice=%p hShader=%p", hDevice.pDrvPrivate, hShader.pDrvPrivate);
+    auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+    if (!dev) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->current_gs = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+    cmd->vs = dev->current_vs;
+    cmd->ps = dev->current_ps;
+    cmd->cs = 0;
+    cmd->reserved0 = dev->current_gs;
+  }
+};
 
 static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
                                      uint32_t shader_stage,
@@ -7291,6 +7306,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_vs = 0;
   dev->current_ps = 0;
+  dev->current_gs = 0;
   auto* bind_cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
   if (!bind_cmd) {
     set_error(dev, E_OUTOFMEMORY);
@@ -7299,7 +7315,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bind_cmd->vs = 0;
   bind_cmd->ps = 0;
   bind_cmd->cs = 0;
-  bind_cmd->reserved0 = 0;
+  bind_cmd->reserved0 = dev->current_gs;
 
   dev->current_input_layout = 0;
   auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
@@ -8888,11 +8904,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
-    // Geometry shaders are accepted by the Win7 D3D10.1 runtime, but are ignored
-    // by the AeroGPU/WebGPU backend for now.
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
-    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
-    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize =
+        &CalcPrivateGeometryShaderSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader =
+        &CreateGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader =
+        &DestroyGeometryShader;
   }
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
@@ -8964,7 +8981,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnVsSetSamplers = &VsSetSamplers;
   pCreateDevice->pDeviceFuncs->pfnPsSetSamplers = &PsSetSamplers;
 
-  AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetShader, GsSetShader);
+  pCreateDevice->pDeviceFuncs->pfnGsSetShader =
+      &GsSetShaderImpl<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
   AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetConstantBuffers, GsSetConstantBuffers);
   AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetShaderResources, GsSetShaderResources);
   AEROGPU_D3D10_ASSIGN_STUB(pfnGsSetSamplers, GsSetSamplers);
@@ -9098,11 +9116,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
-    // Geometry shaders are accepted by the Win7 D3D10 runtime, but are ignored
-    // by the AeroGPU/WebGPU backend for now.
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
-    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
-    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize =
+        &CalcPrivateGeometryShaderSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader =
+        &CreateGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader =
+        &DestroyGeometryShader;
   }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
@@ -9155,7 +9174,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnVsSetSamplers = &VsSetSamplers;
   pCreateDevice->pDeviceFuncs->pfnPsSetSamplers = &PsSetSamplers;
 
-  pCreateDevice->pDeviceFuncs->pfnGsSetShader = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnGsSetShader =
+      &GsSetShaderImpl<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers =
       &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources =
