@@ -49,15 +49,29 @@
       // Create a real IO worker and expose its shared status view so Playwright can assert receipt.
       const segments = allocateSharedMemorySegments();
       const views = createSharedMemoryViews(segments);
-      window.__ioStatus = views.status;
-      window.__ioReadyIndex = StatusIndex.IoReady;
-       window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
-       window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
+       window.__ioStatus = views.status;
+       window.__ioReadyIndex = StatusIndex.IoReady;
+        window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
+        window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
 
-         const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
-         // io.worker waits for an initial boot disk selection message before reporting READY.
-         // This fixture doesn't mount any disks, but it still needs the worker to reach READY so
-         // input batching can be tested deterministically.
+       // Capture the most recent input batch payload (decoded) so Playwright tests can assert that
+       // specific event types (e.g. consumer/media keys) are present, while still exercising the
+       // real IO worker as the receiver.
+       window.__lastInputBatchEvents = null;
+       const onBeforeSendBatch = (_buffer, words, count, _recycle) => {
+         const out = [];
+         const base = 2;
+         for (let i = 0; i < count; i++) {
+           const off = base + i * 4;
+           out.push([words[off] >>> 0, words[off + 1] >>> 0, words[off + 2] | 0, words[off + 3] | 0]);
+         }
+         window.__lastInputBatchEvents = out;
+       };
+
+          const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", import.meta.url), { type: "module" });
+          // io.worker waits for an initial boot disk selection message before reporting READY.
+          // This fixture doesn't mount any disks, but it still needs the worker to reach READY so
+          // input batching can be tested deterministically.
         ioWorker.postMessage(emptySetBootDisksMessage());
         ioWorker.postMessage({
           kind: "init",
@@ -71,10 +85,11 @@
           scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         });
 
-      window.__capture = new InputCapture(canvas, ioWorker, {
-        flushHz: 1000,
-        mouseSensitivity: 1.0,
-      });
+       window.__capture = new InputCapture(canvas, ioWorker, {
+         flushHz: 1000,
+         mouseSensitivity: 1.0,
+         onBeforeSendBatch,
+       });
 
       window.__capture.start();
     </script>

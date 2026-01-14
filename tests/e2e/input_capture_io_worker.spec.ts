@@ -80,4 +80,22 @@ test("IO worker receives Consumer Control (media key) events", async ({ page }) 
     return Atomics.load(status, (globalThis as any).__ioInputEventCounterIndex);
   });
   expect(after).toBeGreaterThanOrEqual(before + 2);
+
+  const lastBatch = await page.evaluate(() => (globalThis as any).__lastInputBatchEvents);
+  expect(Array.isArray(lastBatch)).toBe(true);
+  // Each entry is [type, eventTimestampUs, a, b].
+  const hidUsage16 = (lastBatch as Array<[number, number, number, number]>).filter((e) => e[0] === 7);
+  // Expect keydown + keyup for AudioVolumeUp (Consumer Page 0x0C, usage 0x00E9).
+  expect(
+    hidUsage16.map(([, , a, b]) => ({
+      usagePage: a & 0xffff,
+      pressed: ((a >>> 16) & 1) !== 0,
+      usageId: b & 0xffff,
+    })),
+  ).toEqual(
+    expect.arrayContaining([
+      { usagePage: 0x0c, pressed: true, usageId: 0x00e9 },
+      { usagePage: 0x0c, pressed: false, usageId: 0x00e9 },
+    ]),
+  );
 });
