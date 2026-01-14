@@ -200,6 +200,29 @@ size_t ShaderCountToken(const Shader* shader, uint32_t token) {
   return count;
 }
 
+bool ShaderReferencesConstRegister(const Shader* shader, uint32_t reg_index) {
+  if (!shader) {
+    return false;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return false;
+  }
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    // D3D9 shader token encoding: constant register operands are encoded with
+    // register-type == CONST (0x2 in the high register-type field).
+    if ((w & 0x70000000u) != 0x20000000u) {
+      continue;
+    }
+    if ((w & 0x7FFu) == (reg_index & 0x7FFu)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
   if (!buf || capacity < sizeof(aerogpu_cmd_stream_header)) {
     return 0;
@@ -9408,6 +9431,196 @@ bool TestFvfXyzNormalDiffuseLightingSelectsLitVs() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseTex1LightingSelectsLitVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/0.0f},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/1.0f, /*v=*/0.0f},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/1.0f},
+  };
+
+  // Lighting off: select the unlit variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=FALSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE|TEX1; lighting=off)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound (unlit)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuseTex1),
+               "VS bytecode == fixedfunc::kVsWvpPosNormalDiffuseTex1 (unlit)")) {
+      return false;
+    }
+  }
+
+  // Lighting on: select the lit TEX1 variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE|TEX1; lighting=on)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound (lit)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpLitPosNormalDiffuseTex1),
+               "VS bytecode == fixedfunc::kVsWvpLitPosNormalDiffuseTex1 (lit)")) {
+      return false;
+    }
+    // Ensure the lit shader references the reserved lighting constant layout
+    // (c208..c236) rather than the legacy c244+ range.
+    if (!Check(ShaderReferencesConstRegister(dev->vs, kFixedfuncLightingStartRegister),
+               "lit VS references lighting start register c208")) {
+      return false;
+    }
+    if (!Check(!ShaderReferencesConstRegister(dev->vs, 244u), "lit VS does not reference legacy c244 layout")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseTex1EmitsLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Global ambient: blue (ARGB).
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF0000FFu);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=blue)")) {
+    return false;
+  }
+
+  // Configure fixed-function lighting state via host-test entrypoints (portable
+  // builds do not expose SetLight/SetMaterial in the device vtable).
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.25f, 0.5f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
+  mat.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
+  mat.Emissive = {0.125f, 0.25f, 0.5f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/0.0f},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/1.0f, /*v=*/0.0f},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/1.0f},
+  };
+
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE|TEX1; lighting constants)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpLitPosNormalDiffuseTex1),
+               "VS bytecode == fixedfunc::kVsWvpLitPosNormalDiffuseTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|NORMAL|DIFFUSE|TEX1 lighting constants)")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
+             "WVP constant upload emitted once (NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 1,
+             "lighting constant upload emitted once (NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  const float* lighting = FindVsConstantsPayload(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(lighting != nullptr, "lighting constants payload present (NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  if (!Check(lighting[kFixedfuncLightingGlobalAmbientRel * 4 + 0] == 0.0f &&
+                 lighting[kFixedfuncLightingGlobalAmbientRel * 4 + 1] == 0.0f &&
+                 lighting[kFixedfuncLightingGlobalAmbientRel * 4 + 2] == 1.0f &&
+                 lighting[kFixedfuncLightingGlobalAmbientRel * 4 + 3] == 1.0f,
+             "global ambient constant reflects D3DRS_AMBIENT (NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -10621,6 +10834,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTransformsPointLightPositionByView()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseTex1LightingSelectsLitVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseTex1EmitsLightingConstants()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {
