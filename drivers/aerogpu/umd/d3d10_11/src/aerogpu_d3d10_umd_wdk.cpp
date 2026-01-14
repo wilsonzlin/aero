@@ -5305,6 +5305,11 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(mip_slice));
       return E_NOTIMPL;
     }
+  } else {
+    // WDK struct layout drift: if we cannot determine the mip slice, we cannot
+    // safely assume this is a subresource-0 view.
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing mip slice fields)");
+    return E_NOTIMPL;
   }
 
   auto* rtv = new (hView.pDrvPrivate) AeroGpuRenderTargetView();
@@ -5449,6 +5454,9 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(mip_slice));
       return E_NOTIMPL;
     }
+  } else {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing mip slice fields)");
+    return E_NOTIMPL;
   }
 
   auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
@@ -5599,6 +5607,9 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(res->mip_levels));
       return E_NOTIMPL;
     }
+  } else {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing mip range fields)");
+    return E_NOTIMPL;
   }
 
   auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
