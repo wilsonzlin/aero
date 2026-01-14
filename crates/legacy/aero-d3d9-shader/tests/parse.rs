@@ -428,6 +428,33 @@ const PS_3_0_TEXKILL: [u32; 17] = [
     0x0000_FFFF,
 ];
 
+const PS_3_0_DSX_DSY: [u32; 18] = [
+    0xFFFF_0300, // ps_3_0
+    // dcl_texcoord0 v0
+    0x0300_001F,
+    0x8000_0005,
+    0x900F_0000,
+    // dsx r0, v0
+    0x0300_0056,
+    0x800F_0000,
+    0x90E4_0000,
+    // dsy r1, v0
+    0x0300_0057,
+    0x800F_0001,
+    0x90E4_0000,
+    // add r0, r0, r1
+    0x0400_0002,
+    0x800F_0000,
+    0x80E4_0000,
+    0x80E4_0001,
+    // mov oC0, r0
+    0x0300_0001,
+    0x800F_0800,
+    0x80E4_0000,
+    // end
+    0x0000_FFFF,
+];
+
 #[test]
 fn parse_vs_2_0_passthrough() {
     let shader = D3d9Shader::parse(&words_to_bytes(&VS_2_0_PASSTHROUGH)).unwrap();
@@ -531,6 +558,31 @@ fn parse_ps_3_0_texkill() {
     ));
     let dis = shader.disassemble();
     assert!(dis.contains("texkill r0"));
+}
+
+#[test]
+fn parse_ps_3_0_derivatives() {
+    let shader = D3d9Shader::parse(&words_to_bytes(&PS_3_0_DSX_DSY)).unwrap();
+    assert_eq!(shader.stage, ShaderStage::Pixel);
+    assert_eq!(shader.model.major, 3);
+    assert!(matches!(
+        shader.instructions[0],
+        Instruction::Op {
+            opcode: Opcode::Dsx,
+            ..
+        }
+    ));
+    assert!(matches!(
+        shader.instructions[1],
+        Instruction::Op {
+            opcode: Opcode::Dsy,
+            ..
+        }
+    ));
+
+    let dis = shader.disassemble();
+    assert!(dis.contains("dsx r0, v0"));
+    assert!(dis.contains("dsy r1, v0"));
 }
 
 #[test]

@@ -244,6 +244,8 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                     | crate::Opcode::Cmp
                     | crate::Opcode::Slt
                     | crate::Opcode::Sge
+                    | crate::Opcode::Dsx
+                    | crate::Opcode::Dsy
                     | crate::Opcode::Texld
                     | crate::Opcode::Texldp
                     | crate::Opcode::Texldb
