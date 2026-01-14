@@ -2750,7 +2750,10 @@ impl AeroGpuDevice {
             // Attribute controller (index/data flip-flop).
             0x03C0 => {
                 if !self.attr_flip_flop {
-                    self.attr_index = value;
+                    // VGA Attribute Controller index uses bits 0..4; bit 5 controls
+                    // "palette access"/display enable on real hardware. Mask to 0x1F for guest
+                    // compatibility (many guests write index | 0x20).
+                    self.attr_index = value & 0x1F;
                     self.attr_flip_flop = true;
                 } else {
                     self.attr_regs[usize::from(self.attr_index)] = value;

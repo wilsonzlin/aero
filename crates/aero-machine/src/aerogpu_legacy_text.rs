@@ -86,6 +86,10 @@ pub fn render_into(
     let page_offset = u64::from(BiosDataArea::read_video_page_offset(mem));
     let base = 0xB8000u64 + page_offset;
 
+    // Attribute Controller mode bits.
+    let line_graphics_enable = (attr_regs[0x10] & (1 << 2)) != 0;
+    let blink_enabled = (attr_regs[0x10] & (1 << 3)) != 0;
+
     // Render glyphs + attributes.
     for row in 0..rows {
         for col in 0..cols {
@@ -95,7 +99,13 @@ pub fn render_into(
             let attr = mem.read_u8(addr + 1);
 
             let fg = vga_color(dac_palette, pel_mask, attr & 0x0F, attr_regs);
-            let bg = vga_color(dac_palette, pel_mask, (attr >> 4) & 0x0F, attr_regs);
+            // Text background color uses only 3 bits when blink is enabled (bit 7 becomes blink).
+            let bg_idx = if blink_enabled {
+                (attr >> 4) & 0x07
+            } else {
+                (attr >> 4) & 0x0F
+            };
+            let bg = vga_color(dac_palette, pel_mask, bg_idx, attr_regs);
 
             let px_x0 = col * TEXT_CHAR_WIDTH;
             let px_y0 = row * TEXT_CHAR_HEIGHT;
@@ -107,7 +117,7 @@ pub fn render_into(
                         ((bits >> (7 - gx)) & 1) != 0
                     } else {
                         let is_line = (0xC0..=0xDF).contains(&ch);
-                        is_line && (bits & 0x01) != 0
+                        line_graphics_enable && is_line && (bits & 0x01) != 0
                     };
                     let dst_x = px_x0 + gx;
                     let dst_y = px_y0 + gy;
@@ -134,7 +144,12 @@ pub fn render_into(
             let addr = base + (cell as u64) * 2;
             let attr = mem.read_u8(addr + 1);
             let fg = vga_color(dac_palette, pel_mask, attr & 0x0F, attr_regs);
-            let bg = vga_color(dac_palette, pel_mask, (attr >> 4) & 0x0F, attr_regs);
+            let bg_idx = if blink_enabled {
+                (attr >> 4) & 0x07
+            } else {
+                (attr >> 4) & 0x0F
+            };
+            let bg = vga_color(dac_palette, pel_mask, bg_idx, attr_regs);
 
             let start = (cursor_start & 0x1F).min((TEXT_CHAR_HEIGHT - 1) as u8) as usize;
             let end = (cursor_end & 0x1F).min((TEXT_CHAR_HEIGHT - 1) as u8) as usize;
