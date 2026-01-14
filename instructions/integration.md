@@ -28,7 +28,8 @@ This is the **coordination hub**. You wire together the work from all other work
 - **Legacy BIOS (HLE) with INT dispatch via ROM stubs + `HLT` hypercall**:
   `crates/firmware/src/bios/mod.rs` (see module-level docs) + ROM generation in
   `crates/firmware/src/bios/rom.rs`.
-- **POST + boot-sector handoff** (IVT/BDA/EBDA init, A20 enable, disk boot, etc.):
+- **POST + boot handoff** (IVT/BDA/EBDA init, A20 enable, then either MBR `0000:7C00` or El Torito
+  no-emulation image depending on `BiosConfig::boot_drive`):
   `crates/firmware/src/bios/post.rs`, `crates/firmware/src/bios/ivt.rs`.
 - **E820 map with PCI holes + >4 GiB high-memory remap**:
   `crates/firmware/src/bios/interrupts.rs::build_e820_map` and PC constants in
@@ -113,10 +114,11 @@ relevant crates/tests.
 
 ### BIOS Tasks
 
-> Note: The canonical Windows 7 storage + boot-media topology (including the **CD-first El Torito
-> install flow**) is defined in [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md)
-> and [`docs/09b-eltorito-cd-boot.md`](../docs/09b-eltorito-cd-boot.md). Treat them as the source of
-> truth.
+> Note: The canonical Windows 7 storage + boot-media topology (including the El Torito install
+> flow) is defined in [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md) and
+> [`docs/09b-eltorito-cd-boot.md`](../docs/09b-eltorito-cd-boot.md). In the current BIOS, the boot
+> path is **selected by the host** via `BiosConfig::boot_drive` (typically `0xE0` for install media,
+> `0x80` for normal HDD boot).
 
 | ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
 |----|------|--------|----------|--------------|------------|----------|
@@ -128,7 +130,7 @@ relevant crates/tests.
 | BI-006 | INT 13h (disk + EDD + CD-ROM + El Torito services) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int13`, `crates/firmware/src/bios/eltorito.rs` |
 | BI-007 | INT 15h (system) | Implemented | P0 | None | Medium | `crates/firmware/src/bios/interrupts.rs::handle_int15` |
 | BI-008 | INT 16h (keyboard) | Implemented | P0 | None | Low | `crates/firmware/src/bios/interrupts.rs::handle_int16` |
-| BI-009 | Boot device selection (Win7 install: CD first, HDD fallback) | Implemented | P0 | BI-006 | Low | `firmware::bios::BiosConfig::boot_drive`, `crates/firmware/src/bios/post.rs` |
+| BI-009 | Boot device selection (host-configured via `BiosConfig::boot_drive`) | Implemented | P0 | BI-006 | Low | `firmware::bios::BiosConfig::boot_drive`, `crates/firmware/src/bios/post.rs::boot` |
 | BI-010 | Boot code loading (HDD MBR/VBR or El Torito no-emulation image) | Implemented | P0 | BI-009 | Low | `crates/firmware/src/bios/post.rs::boot_eltorito` |
 | BI-011 | BIOS test suite | Implemented | P0 | BI-001..BI-010 | Medium | Run `cargo test -p firmware` (see tests in `crates/firmware/src/bios/*`) |
 
@@ -217,8 +219,8 @@ Boot Device Selection
     │
     ▼
 Load boot code:
-  - El Torito CD-ROM boot image (no-emulation) (Win7 install media; see `docs/05-storage-topology-win7.md`)
-  - MBR / boot sector (HDD; normal boot after install)
+  - If `boot_drive` is `0xE0..=0xEF`: El Torito CD-ROM boot image (no-emulation) (Win7 install media; see `docs/09b-eltorito-cd-boot.md`)
+  - Otherwise: MBR / boot sector (HDD/floppy; 512-byte sector)
     │
     ▼
 Jump to loaded boot code
