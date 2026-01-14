@@ -222,6 +222,10 @@ The EHCI operational register block includes:
   from `USBCMD.ASE` / `USBCMD.PSE` (and `USBCMD.RunStop`).
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
+- `USBCMD.IAAD` (Interrupt on Async Advance Doorbell) is implemented:
+  - software can set it to request an async advance interrupt, and
+  - the controller clears it deterministically at the end of a tick and sets `USBSTS.IAA` (W1C).
+  - If `USBINTR.IAA` is enabled, this contributes to `irq_level()`.
 
 ---
 
@@ -408,7 +412,8 @@ Minimum set of causes implemented:
 - `USBINT` (transaction completion; typically IOC-driven)
 - `USBERRINT` (transaction error)
 - `PCD` (Port Change Detect; root hub port change bits)
-- `IAA` (interrupt on async advance; if the doorbell is implemented)
+- `IAA` (interrupt on async advance doorbell)
+  - Aero implements the `USBCMD.IAAD` → `USBSTS.IAA` doorbell/interrupt behavior.
 
 Deassertion occurs once the guest clears the relevant `USBSTS` bits (W1C) and no other enabled
 causes remain pending.
