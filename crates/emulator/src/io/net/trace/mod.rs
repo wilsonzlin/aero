@@ -1271,6 +1271,126 @@ mod tests {
         buf
     }
 
+    fn make_ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
+        let ip_header_len = 20usize;
+        let udp_header_len = 8usize;
+        let total_len = ip_header_len + udp_header_len + payload.len();
+
+        let mut buf = Vec::with_capacity(14 + total_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
+
+        buf.push(0x45); // version + IHL
+        buf.push(0); // dscp/ecn
+        buf.extend_from_slice(&(total_len as u16).to_be_bytes());
+        buf.extend_from_slice(&0u16.to_be_bytes()); // identification
+        buf.extend_from_slice(&0u16.to_be_bytes()); // flags/fragment
+        buf.push(64); // ttl
+        buf.push(17); // protocol: UDP
+        buf.extend_from_slice(&0u16.to_be_bytes()); // hdr checksum (ignored)
+        buf.extend_from_slice(&[10, 0, 2, 15]); // src ip
+        buf.extend_from_slice(&[93, 184, 216, 34]); // dst ip
+
+        buf.extend_from_slice(&12345u16.to_be_bytes()); // src port
+        buf.extend_from_slice(&53u16.to_be_bytes()); // dst port
+        buf.extend_from_slice(&((udp_header_len + payload.len()) as u16).to_be_bytes()); // length
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    fn make_ipv4_icmp_frame(payload: &[u8]) -> Vec<u8> {
+        let ip_header_len = 20usize;
+        let icmp_header_len = 8usize;
+        let total_len = ip_header_len + icmp_header_len + payload.len();
+
+        let mut buf = Vec::with_capacity(14 + total_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
+
+        buf.push(0x45); // version + IHL
+        buf.push(0); // dscp/ecn
+        buf.extend_from_slice(&(total_len as u16).to_be_bytes());
+        buf.extend_from_slice(&0u16.to_be_bytes()); // identification
+        buf.extend_from_slice(&0u16.to_be_bytes()); // flags/fragment
+        buf.push(64); // ttl
+        buf.push(1); // protocol: ICMPv4
+        buf.extend_from_slice(&0u16.to_be_bytes()); // hdr checksum (ignored)
+        buf.extend_from_slice(&[10, 0, 2, 15]); // src ip
+        buf.extend_from_slice(&[93, 184, 216, 34]); // dst ip
+
+        // ICMP echo request header (8 bytes)
+        buf.push(8); // type
+        buf.push(0); // code
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+        buf.extend_from_slice(&0u16.to_be_bytes()); // identifier
+        buf.extend_from_slice(&0u16.to_be_bytes()); // sequence
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    fn make_ipv6_udp_frame(payload: &[u8]) -> Vec<u8> {
+        let udp_header_len = 8usize;
+        let payload_len = udp_header_len + payload.len();
+
+        let mut buf = Vec::with_capacity(14 + 40 + payload_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x86ddu16.to_be_bytes()); // ethertype: IPv6
+
+        buf.push(0x60);
+        buf.extend_from_slice(&[0, 0, 0]);
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        buf.push(17); // next header: UDP
+        buf.push(64);
+        buf.extend_from_slice(&[0u8; 16]); // src ip
+        buf.extend_from_slice(&[0u8; 16]); // dst ip
+
+        buf.extend_from_slice(&12345u16.to_be_bytes()); // src port
+        buf.extend_from_slice(&53u16.to_be_bytes()); // dst port
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes()); // length
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    fn make_ipv6_icmp_frame(payload: &[u8]) -> Vec<u8> {
+        let icmp_header_len = 8usize;
+        let payload_len = icmp_header_len + payload.len();
+
+        let mut buf = Vec::with_capacity(14 + 40 + payload_len);
+
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst mac
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
+        buf.extend_from_slice(&0x86ddu16.to_be_bytes()); // ethertype: IPv6
+
+        buf.push(0x60);
+        buf.extend_from_slice(&[0, 0, 0]);
+        buf.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        buf.push(58); // next header: ICMPv6
+        buf.push(64);
+        buf.extend_from_slice(&[0u8; 16]); // src ip
+        buf.extend_from_slice(&[0u8; 16]); // dst ip
+
+        // ICMPv6 echo request header (8 bytes)
+        buf.push(128); // type
+        buf.push(0); // code
+        buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
+        buf.extend_from_slice(&0u16.to_be_bytes()); // identifier
+        buf.extend_from_slice(&0u16.to_be_bytes()); // sequence
+
+        buf.extend_from_slice(payload);
+        buf
+    }
+
     fn make_ipv6_hop_by_hop_tcp_frame(payload: &[u8]) -> Vec<u8> {
         let tcp = make_tcp_segment(payload);
         let ext_len = 8usize;
@@ -1510,6 +1630,36 @@ mod tests {
     }
 
     #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_udp_ipv4() {
+        let frame = make_ipv4_udp_frame(b"hello udp");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv4/UDP frame");
+
+        assert_eq!(out.len(), 14 + 20 + 8);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_icmp_ipv4() {
+        let frame = make_ipv4_icmp_frame(b"hello icmp");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable IPv4/ICMP frame");
+
+        assert_eq!(out.len(), 14 + 20 + 8);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
     fn headers_only_redactor_keeps_l2_l3_l4_headers_for_tcp_ipv6_with_hop_by_hop() {
         let frame = make_ipv6_hop_by_hop_tcp_frame(b"hello ipv6 ext");
         let redactor = HeadersOnlyRedactor {
@@ -1521,6 +1671,36 @@ mod tests {
             .expect("expected parseable IPv6 Hop-by-Hop/TCP frame");
 
         assert_eq!(out.len(), 14 + 40 + 8 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_udp_ipv6() {
+        let frame = make_ipv6_udp_frame(b"hello udp6");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv6/UDP frame");
+
+        assert_eq!(out.len(), 14 + 40 + 8);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_icmp_ipv6() {
+        let frame = make_ipv6_icmp_frame(b"hello icmp6");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable IPv6/ICMPv6 frame");
+
+        assert_eq!(out.len(), 14 + 40 + 8);
         assert_eq!(out.as_slice(), &frame[..out.len()]);
     }
 
