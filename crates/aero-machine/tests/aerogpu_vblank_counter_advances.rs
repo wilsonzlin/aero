@@ -1,6 +1,6 @@
 use aero_devices::pci::profile;
+use aero_devices_gpu::regs::{irq_bits, mmio};
 use aero_machine::{Machine, MachineConfig};
-use emulator::devices::aerogpu_regs::{irq_bits, mmio};
 
 #[test]
 fn aerogpu_vblank_counter_advances_when_platform_time_advances() {

@@ -4646,8 +4646,10 @@ impl Machine {
     /// Attach an ISO backend as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`)
     /// without changing guest-visible tray/media state.
     ///
-    /// This attaches a host-side ISO backend to the IDE secondary master ATAPI device without
-    /// mutating guest-visible tray/media state (it uses the snapshot-restore attachment path).
+    /// This is intended for snapshot-restore flows: the IDE controller snapshot restores the ATAPI
+    /// device's internal tray/media state (tray open/closed, sense/media_changed, etc), but drops
+    /// the host-side ISO backend. Restoring the snapshot must therefore re-attach the backend
+    /// *without* altering the already-restored device-visible state.
     ///
     /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so this method has a
     /// wasm32-specific signature without the `Send` bound.
