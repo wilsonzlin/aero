@@ -358,19 +358,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   };
 
   // ---------------------------------------------------------------------------
-  // Path 1: SetFVF(XYZ|DIFFUSE|TEX1)
-  // ---------------------------------------------------------------------------
-  hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
-  }
-  int rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp");
-  if (rc != 0) {
-    return rc;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Path 2: SetVertexDeclaration(POSITION float3 @0, COLOR0 D3DCOLOR @12, TEX0 float2 @16)
+  // Path 1: SetVertexDeclaration(POSITION float3 @0, COLOR0 D3DCOLOR @12, TEX0 float2 @16)
   // ---------------------------------------------------------------------------
   const D3DVERTEXELEMENT9 elems[] = {
       {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
@@ -387,7 +375,19 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetVertexDeclaration", hr);
   }
-  rc = DrawAndValidateCenterPixel("vertex_decl", L"d3d9_fixedfunc_textured_wvp_vdecl.bmp");
+  int rc = DrawAndValidateCenterPixel("vertex_decl", L"d3d9_fixedfunc_textured_wvp_vdecl.bmp");
+  if (rc != 0) {
+    return rc;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Path 2: SetFVF(XYZ|DIFFUSE|TEX1)
+  // ---------------------------------------------------------------------------
+  hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
+  }
+  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp");
   if (rc != 0) {
     return rc;
   }
