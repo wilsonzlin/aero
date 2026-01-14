@@ -12,13 +12,17 @@ In the Win7 desktop composition scenario, **DWM (D3D9Ex) consumes DXGI shared ha
 produced by D3D10/D3D11 apps; AeroGPU therefore treats “shared surfaces” as a cross-API mechanism
 (not just D3D9 ↔ D3D9 or D3D11 ↔ D3D11).
 
-That `HANDLE` is an **NT handle**, which means:
+That `HANDLE` is typically an **NT handle** (notably for DXGI shared handles), which means:
 
 - It is only meaningful in the process that owns it (each process has its own handle table).
 - When transferred to another process it must be **duplicated** (`DuplicateHandle`) or inherited.
 - The numeric `HANDLE` value is **not stable** cross-process; the consumer’s handle value commonly differs from the producer’s.
 
 Therefore: **AeroGPU must not use the numeric D3D shared `HANDLE` value as a protocol share identifier.**
+
+Note: some D3D9Ex implementations use “token-style” shared handles that are not real NT handles and cannot be duplicated
+with `DuplicateHandle`. Even in that case, the numeric value is not a robust protocol key: the stable cross-process
+identifier is still `share_token` preserved in WDDM allocation private data.
 
 ## AeroGPU contract: `share_token` is a stable token persisted in WDDM allocation private data
 
@@ -117,6 +121,12 @@ It should:
 
 This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handle values commonly differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
 
+### Validation: cross-bitness shared surfaces (Win7 x64 / WOW64)
+
+On Win7 x64, DWM is 64-bit but many applications are 32-bit (WOW64). Validate this scenario with:
+
+- `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_wow64/` (x86 producer spawns an x64 consumer)
+
 Optional debug-only validation (when supported by the KMD):
 
 - Use `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (via `D3DKMTEscape`) to map a process-local shared `HANDLE` to a stable 32-bit **debug token**.
@@ -125,11 +135,14 @@ Optional debug-only validation (when supported by the KMD):
 
 ## Validation: alloc_id uniqueness under DWM-like batching
 
-Use the multi-producer D3D9Ex test app:
+Use the multi-producer/persistence D3D9Ex test apps:
 
 - `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_many_producers/main.cpp`
+- `drivers/aerogpu/tests/win7/d3d9ex_alloc_id_persistence/main.cpp`
 
-It spawns multiple producer processes and opens their shared surfaces in a
-compositor process, then references all of them in a single `Flush` (one
-submission). This stresses the `alloc_id` uniqueness requirement across processes
-for batched submissions (DWM composition case).
+`d3d9ex_shared_surface_many_producers` spawns multiple producer processes and opens their shared surfaces in a compositor
+process, then references all of them in a single `Flush` (one submission). This stresses the `alloc_id` uniqueness
+requirement across processes for batched submissions (DWM composition case).
+
+`d3d9ex_alloc_id_persistence` is a longer-running two-process ping-pong test that repeatedly references allocations created
+in different processes in a single submission (`StretchRect` uses both src+dst allocations).

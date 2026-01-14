@@ -341,6 +341,8 @@ For quick guest-side sanity checks:
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
   * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` + ShareToken-backed shared-surface interop across runtimes):
     * D3D9Ex: `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` and `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc`
+    * D3D9Ex (Win7 x64 cross-bitness; DWM scenario): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_wow64`
+    * D3D9Ex (alloc_id collision/persistence stress): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_many_producers` and `drivers/aerogpu/tests/win7/d3d9ex_alloc_id_persistence`
     * D3D10: `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc`
     * D3D10.1: `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc`
     * D3D11: `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc`
