@@ -93,6 +93,9 @@ Troubleshooting (some agent environments lose executable bits and/or tracked fix
   - `git checkout -- .` (bigger hammer), or at least:
   - `git checkout -- scripts tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures`
   - Non-git fallback: `find scripts -name '*.sh' -exec chmod +x {} +`
+- If a `git pull`/`git checkout` gets interrupted (e.g. command timeout), you can end up with a partially-updated working tree (lots of modified tracked files) even though you didn't edit anything:
+  - If you have no local work to keep: `git fetch origin && git reset --hard origin/main`
+  - Otherwise: `git stash`, then reset, then re-apply the stash.
 - If Git fails with a stale auto-GC lock (e.g. `fatal: Unable to create '.git/gc.pid.lock': File exists`), remove the lock file and retry:
   - `rm -f .git/gc.pid.lock`
 - When scripting `git commit -m ...` from a shell, avoid backticks in the commit message (they trigger command substitution). Prefer single quotes:
