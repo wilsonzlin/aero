@@ -59,3 +59,29 @@ fn aerogpu_bochs_vbe_dispi_16bpp_display_present_respects_offsets_and_stride() {
     // Expected RGBA8888: 0xFF18AA84.
     assert_eq!(m.display_framebuffer()[0], 0xFF18_AA84);
 }
+
+#[test]
+fn aerogpu_bochs_vbe_dispi_oversized_dimensions_do_not_oom_or_panic() {
+    let mut m = Machine::new(base_cfg()).unwrap();
+    m.reset();
+
+    // Program an intentionally absurd Bochs VBE_DISPI mode. These registers are guest-controlled
+    // and must not cause the host to allocate an unbounded framebuffer.
+    m.io_write(0x01CE, 2, 0x0001);
+    m.io_write(0x01CF, 2, 0xFFFF); // xres
+    m.io_write(0x01CE, 2, 0x0002);
+    m.io_write(0x01CF, 2, 0xFFFF); // yres
+    m.io_write(0x01CE, 2, 0x0003);
+    m.io_write(0x01CF, 2, 32); // bpp
+    m.io_write(0x01CE, 2, 0x0006);
+    m.io_write(0x01CF, 2, 0xFFFF); // virt_width
+    m.io_write(0x01CE, 2, 0x0007);
+    m.io_write(0x01CF, 2, 0xFFFF); // virt_height
+    m.io_write(0x01CE, 2, 0x0004);
+    m.io_write(0x01CF, 2, 0x0041); // enable + lfb
+
+    m.display_present();
+
+    // If the VBE mode is rejected, the machine falls back to BIOS text mode (80x25 -> 720x400).
+    assert_eq!(m.display_resolution(), (720, 400));
+}

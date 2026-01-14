@@ -2720,8 +2720,33 @@ impl AeroGpuDevice {
     }
 
     fn new() -> Self {
+        // `vec![0; len]` aborts the process on OOM. VRAM backing is an implementation detail (the
+        // guest-visible BAR aperture size remains fixed), so allocate fallibly and fall back to a
+        // smaller buffer instead of crashing.
+        let mut vram = Vec::new();
+        if vram.try_reserve_exact(AEROGPU_VRAM_ALLOC_SIZE).is_ok() {
+            vram.resize(AEROGPU_VRAM_ALLOC_SIZE, 0u8);
+        } else {
+            // Best-effort fallbacks: prioritize preserving the legacy VGA window and Bochs VBE
+            // register-visible VRAM prefix for boot output.
+            let candidates = [
+                VBE_LFB_OFFSET.min(AEROGPU_VRAM_ALLOC_SIZE),
+                LEGACY_VGA_WINDOW_SIZE.min(AEROGPU_VRAM_ALLOC_SIZE),
+                0usize,
+            ];
+            for &len in &candidates {
+                if len == 0 {
+                    break;
+                }
+                if vram.try_reserve_exact(len).is_ok() {
+                    vram.resize(len, 0u8);
+                    break;
+                }
+            }
+        }
+
         Self {
-            vram: vec![0u8; AEROGPU_VRAM_ALLOC_SIZE],
+            vram,
             vram_mmio_reads: Cell::new(0),
             vbe_mode_active: false,
             vbe_bank: 0,
@@ -6144,18 +6169,40 @@ impl Machine {
             .saturating_add(start_y.saturating_mul(pitch))
             .saturating_add(start_x.saturating_mul(bytes_per_pixel as u64));
 
-        self.display_width = width;
-        self.display_height = height;
-        self.display_fb
-            .resize(width.saturating_mul(height) as usize, 0);
-
-        let width_usize = usize::try_from(width).unwrap_or(0);
-        let height_usize = usize::try_from(height).unwrap_or(0);
-        let pitch_usize = usize::try_from(pitch).unwrap_or(0);
+        let Ok(width_usize) = usize::try_from(width) else {
+            return false;
+        };
+        let Ok(height_usize) = usize::try_from(height) else {
+            return false;
+        };
+        let Ok(pitch_usize) = usize::try_from(pitch) else {
+            return false;
+        };
         let row_bytes = match width_usize.checked_mul(bytes_per_pixel) {
             Some(n) if n != 0 => n,
             _ => return false,
         };
+
+        // Defensive: avoid guest-driven giant VBE_DISPI dimensions forcing unbounded allocations.
+        const MAX_PRESENTED_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels
+        let Some(pixel_count) = width_usize.checked_mul(height_usize) else {
+            return false;
+        };
+        let Some(expected_bytes) = pixel_count.checked_mul(4) else {
+            return false;
+        };
+        if expected_bytes > MAX_PRESENTED_RGBA8888_BYTES {
+            return false;
+        }
+
+        // Allocate the host framebuffer fallibly to avoid aborting on OOM.
+        self.display_fb.clear();
+        if self.display_fb.try_reserve_exact(pixel_count).is_err() {
+            return false;
+        }
+        self.display_fb.resize(pixel_count, 0);
+        self.display_width = width;
+        self.display_height = height;
 
         // Fast-path: if the VBE LFB base falls within AeroGPU BAR1, read directly from the
         // device's `Vec<u8>` VRAM backing store rather than routing through the PCI MMIO router.
@@ -6212,7 +6259,11 @@ impl Machine {
                 } else {
                     // Render row-by-row to avoid allocating large intermediate buffers (and to keep
                     // the MMIO read path incremental for BAR-backed apertures).
-                    let mut row = vec![0u8; row_bytes];
+                    let mut row = Vec::new();
+                    if row.try_reserve_exact(row_bytes).is_err() {
+                        return false;
+                    }
+                    row.resize(row_bytes, 0u8);
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
@@ -6255,7 +6306,11 @@ impl Machine {
                 } else {
                     // Render row-by-row to avoid allocating large intermediate buffers (and to keep
                     // the MMIO read path incremental for BAR-backed apertures).
-                    let mut row = vec![0u8; row_bytes];
+                    let mut row = Vec::new();
+                    if row.try_reserve_exact(row_bytes).is_err() {
+                        return false;
+                    }
+                    row.resize(row_bytes, 0u8);
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
@@ -6320,7 +6375,11 @@ impl Machine {
                 } else {
                     // Render row-by-row to avoid allocating large intermediate buffers (and to keep
                     // the MMIO read path incremental for BAR-backed apertures).
-                    let mut row = vec![0u8; row_bytes];
+                    let mut row = Vec::new();
+                    if row.try_reserve_exact(row_bytes).is_err() {
+                        return false;
+                    }
+                    row.resize(row_bytes, 0u8);
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
@@ -6636,9 +6695,15 @@ impl Machine {
             return true;
         }
 
+        self.display_fb.clear();
+        if self.display_fb.try_reserve_exact(pixel_count).is_err() {
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
+        }
+        self.display_fb.resize(pixel_count, 0);
         self.display_width = width;
         self.display_height = height;
-        self.display_fb.resize(pixel_count, 0);
 
         for (dst, src) in self
             .display_fb
