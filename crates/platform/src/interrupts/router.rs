@@ -1160,6 +1160,31 @@ mod tests {
     }
 
     #[test]
+    fn lapic_timer_tick_polls_all_lapics() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Ensure both LAPICs are software-enabled (SVR[8] = 1).
+        ints.lapic_mmio_write_for_apic(0, 0xF0, &0x1FFu32.to_le_bytes());
+        ints.lapic_mmio_write_for_apic(1, 0xF0, &0x1FFu32.to_le_bytes());
+
+        // Program LAPIC1 (CPU1) timer:
+        // - Divide config = 0xB => divisor 1 (our model treats it as 1ns per tick).
+        // - LVT timer = vector 0x55, unmasked, one-shot (default).
+        // - Initial count = 10 ticks.
+        ints.lapic_mmio_write_for_apic(1, 0x3E0, &0xBu32.to_le_bytes()); // Divide config
+        ints.lapic_mmio_write_for_apic(1, 0x320, &0x55u32.to_le_bytes()); // LVT Timer
+        ints.lapic_mmio_write_for_apic(1, 0x380, &10u32.to_le_bytes()); // Initial count
+
+        ints.tick(9);
+        assert_eq!(ints.get_pending_for_apic(1), None);
+
+        ints.tick(1);
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x55));
+        assert_ne!(ints.get_pending_for_apic(0), Some(0x55));
+    }
+
+    #[test]
     fn reset_lapic_clears_only_target_lapic_state() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
