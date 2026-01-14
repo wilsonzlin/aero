@@ -531,7 +531,9 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             _ => "load_attr_f32x4".to_owned(),
         },
         DxgiFormatComponentType::F16 => match attr.format.component_count {
-            1 | 2 => "load_attr_f16x2".to_owned(),
+            1 => "load_attr_f16".to_owned(),
+            2 => "load_attr_f16x2".to_owned(),
+            3 => "load_attr_f16x3".to_owned(),
             4 => "load_attr_f16x4".to_owned(),
             _ => "load_attr_f16x4".to_owned(),
         },
@@ -552,6 +554,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
         DxgiFormatComponentType::U16 => match attr.format.component_count {
             1 => "load_attr_u16".to_owned(),
             2 => "load_attr_u16x2".to_owned(),
+            3 => "load_attr_u16x3".to_owned(),
             4 => "load_attr_u16x4".to_owned(),
             _ => "load_attr_u16x4".to_owned(),
         },
@@ -604,50 +607,28 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
 
     let (load_stmt, expand_stmt) = match (attr.format.component_type, attr.format.component_count) {
         // Float formats.
-        (DxgiFormatComponentType::F32, 1) => (
+        (DxgiFormatComponentType::F32, 1) | (DxgiFormatComponentType::F16, 1) => (
             format!(
                 "let v: f32 = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
             "return vec4<f32>(v, 0.0, 0.0, 1.0);".to_owned(),
         ),
-        (DxgiFormatComponentType::F32, 2) => (
+        (DxgiFormatComponentType::F32, 2) | (DxgiFormatComponentType::F16, 2) => (
             format!(
                 "let v: vec2<f32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
             "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
         ),
-        (DxgiFormatComponentType::F32, 3) => (
+        (DxgiFormatComponentType::F32, 3) | (DxgiFormatComponentType::F16, 3) => (
             format!(
                 "let v: vec3<f32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
             "return vec4<f32>(v.x, v.y, v.z, 1.0);".to_owned(),
         ),
-        (DxgiFormatComponentType::F32, 4) => (
-            format!(
-                "let v: vec4<f32> = {load_expr}({slot}u, addr);",
-                slot = attr.pulling_slot
-            ),
-            "return v;".to_owned(),
-        ),
-        (DxgiFormatComponentType::F16, 2) => (
-            format!(
-                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
-                slot = attr.pulling_slot
-            ),
-            "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
-        ),
-        // Scalar float16 is represented as `float16x2` in memory; use the `.x` lane.
-        (DxgiFormatComponentType::F16, 1) => (
-            format!(
-                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
-                slot = attr.pulling_slot
-            ),
-            "return vec4<f32>(v.x, 0.0, 0.0, 1.0);".to_owned(),
-        ),
-        (DxgiFormatComponentType::F16, 4) => (
+        (DxgiFormatComponentType::F32, 4) | (DxgiFormatComponentType::F16, 4) => (
             format!(
                 "let v: vec4<f32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
@@ -758,6 +739,13 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             ),
             "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
         ),
+        (DxgiFormatComponentType::U16, 3) => (
+            format!(
+                "let v: vec3<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+        ),
         (DxgiFormatComponentType::U16, 4) => (
             format!(
                 "let v: vec4<u32> = {load_expr}({slot}u, addr);",
@@ -844,8 +832,22 @@ fn aero_vp_load_loc{loc}(vertex_id: i32, instance_id: u32) -> vec4<f32> {{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
+    use crate::input_layout::{
+        fnv1a_32, InputLayoutBinding, InputLayoutBlobHeader, InputLayoutDesc, InputLayoutElementDxgi,
+        VsInputSignatureElement, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    };
     use std::collections::BTreeMap;
+
+    fn assert_wgsl_validates(wgsl: &str) {
+        let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("generated WGSL failed to validate");
+    }
 
     #[test]
     fn vs_as_compute_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {
@@ -988,5 +990,113 @@ mod tests {
             wgsl.contains("load_attr_unorm8x2(0u, addr)"),
             "expected VS-as-compute WGSL to call load_attr_unorm8x2 for loc0, got:\n{wgsl}"
         );
+    }
+
+    #[test]
+    fn wgsl_load_attr_expanded_supports_f16_u16_u32() {
+        let tex_hash = fnv1a_32(b"TEXCOORD");
+
+        // Layout: three attributes in one slot with explicit offsets.
+        // - loc0: R16G16_FLOAT (F16x2) @ offset 0
+        // - loc1: R16_UINT      (U16x1) @ offset 4 (padded to 4 bytes in our format map)
+        // - loc2: R32_UINT      (U32x1) @ offset 8
+        let layout = InputLayoutDesc {
+            header: InputLayoutBlobHeader {
+                magic: AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+                version: AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+                element_count: 3,
+                flags: 0,
+            },
+            elements: vec![
+                InputLayoutElementDxgi {
+                    semantic_name_hash: tex_hash,
+                    semantic_index: 0,
+                    dxgi_format: 34, // DXGI_FORMAT_R16G16_FLOAT
+                    input_slot: 0,
+                    aligned_byte_offset: 0,
+                    input_slot_class: 0,
+                    instance_data_step_rate: 0,
+                },
+                InputLayoutElementDxgi {
+                    semantic_name_hash: tex_hash,
+                    semantic_index: 1,
+                    dxgi_format: 57, // DXGI_FORMAT_R16_UINT
+                    input_slot: 0,
+                    aligned_byte_offset: 4,
+                    input_slot_class: 0,
+                    instance_data_step_rate: 0,
+                },
+                InputLayoutElementDxgi {
+                    semantic_name_hash: tex_hash,
+                    semantic_index: 2,
+                    dxgi_format: 42, // DXGI_FORMAT_R32_UINT
+                    input_slot: 0,
+                    aligned_byte_offset: 8,
+                    input_slot_class: 0,
+                    instance_data_step_rate: 0,
+                },
+            ],
+        };
+
+        let signature = vec![
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 0,
+                input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 1,
+                input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 2,
+                input_register: 2,
+                mask: 0xF,
+                shader_location: 2,
+            },
+        ];
+
+        let strides = [12u32]; // 3 dwords
+        let binding = InputLayoutBinding::new(&layout, &strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).expect("pulling layout");
+
+        let mut wgsl = pulling.wgsl_prelude();
+        for attr in &pulling.attributes {
+            wgsl.push_str(&wgsl_load_attr_expanded_fn(attr));
+        }
+
+        wgsl.push_str(
+            r#"
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    // Call each generated loader so naga validates the full call graph.
+    let _a0 = aero_vp_load_loc0(0, 0u);
+    let _a1 = aero_vp_load_loc1(0, 0u);
+    let _a2 = aero_vp_load_loc2(0, 0u);
+    _ = gid;
+}
+"#,
+        );
+
+        assert!(
+            wgsl.contains("load_attr_f16x2"),
+            "expected WGSL to reference f16 loader: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("load_attr_u16"),
+            "expected WGSL to reference u16 loader: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("load_attr_u32"),
+            "expected WGSL to reference u32 loader: {wgsl}"
+        );
+
+        assert_wgsl_validates(&wgsl);
     }
 }

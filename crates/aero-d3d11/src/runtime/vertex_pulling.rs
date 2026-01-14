@@ -444,7 +444,13 @@ impl VertexPullingLayout {
         );
         // F16 loads (converted to f32).
         s.push_str(
+            "fn load_attr_f16(slot: u32, addr_bytes: u32) -> f32 {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return unpack2x16float(w).x;\n}\n\n",
+        );
+        s.push_str(
             "fn load_attr_f16x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return unpack2x16float(w);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_f16x3(slot: u32, addr_bytes: u32) -> vec3<f32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let a = unpack2x16float(w0);\n  let b = unpack2x16float(w1);\n  return vec3<f32>(a.x, a.y, b.x);\n}\n\n",
         );
         s.push_str(
             "fn load_attr_f16x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let a = unpack2x16float(w0);\n  let b = unpack2x16float(w1);\n  return vec4<f32>(a.x, a.y, b.x, b.y);\n}\n\n",
@@ -482,6 +488,9 @@ impl VertexPullingLayout {
         );
         s.push_str(
             "fn load_attr_u16x2(slot: u32, addr_bytes: u32) -> vec2<u32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return vec2<u32>(w & 0xFFFFu, (w >> 16u) & 0xFFFFu);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u16x3(slot: u32, addr_bytes: u32) -> vec3<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  return vec3<u32>(w0 & 0xFFFFu, (w0 >> 16u) & 0xFFFFu, w1 & 0xFFFFu);\n}\n\n",
         );
         s.push_str(
             "fn load_attr_u16x4(slot: u32, addr_bytes: u32) -> vec4<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  return vec4<u32>(w0 & 0xFFFFu, (w0 >> 16u) & 0xFFFFu, w1 & 0xFFFFu, (w1 >> 16u) & 0xFFFFu);\n}\n\n",

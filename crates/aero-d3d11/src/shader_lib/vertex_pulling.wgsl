@@ -115,3 +115,54 @@ fn ia_load_r8g8b8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u3
   let a = f32((packed >> 24u) & 0xffu) / 255.0;
   return vec4<f32>(r, g, b, a);
 }
+
+// DXGI_FORMAT_R16G16_FLOAT
+fn ia_load_r16g16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16float(packed);
+}
+
+// DXGI_FORMAT_R16G16B16A16_FLOAT
+fn ia_load_r16g16b16a16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let p0 = ia_load_u32(slot, addr + 0u);
+  let p1 = ia_load_u32(slot, addr + 4u);
+  let a = unpack2x16float(p0);
+  let b = unpack2x16float(p1);
+  return vec4<f32>(a.x, a.y, b.x, b.y);
+}
+
+// DXGI_FORMAT_R32_UINT
+fn ia_load_r32_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> u32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return ia_load_u32(slot, addr);
+}
+
+// DXGI_FORMAT_R16_UINT
+fn ia_load_r16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> u32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return packed & 0xffffu;
+}
+
+// DXGI_FORMAT_R16G16_UINT
+fn ia_load_r16g16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  let x = packed & 0xffffu;
+  let y = packed >> 16u;
+  return vec2<u32>(x, y);
+}
+
+// DXGI_FORMAT_R16G16B16A16_UINT
+fn ia_load_r16g16b16a16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let p0 = ia_load_u32(slot, addr + 0u);
+  let p1 = ia_load_u32(slot, addr + 4u);
+  let x0 = p0 & 0xffffu;
+  let y0 = p0 >> 16u;
+  let x1 = p1 & 0xffffu;
+  let y1 = p1 >> 16u;
+  return vec4<u32>(x0, y0, x1, y1);
+}
