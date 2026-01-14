@@ -121,14 +121,25 @@ static int RunPerfStateSanity(int argc, char** argv) {
       return reporter.Fail("QUERY_PERF flags missing VALID bit (flags=0x%08lX)", (unsigned long)q.flags);
     }
 
-    // If the ring snapshot is marked valid, ensure indices are in range.
+    // If the ring snapshot is marked valid, check that the implied pending range is sane.
+    //
+    // Note: for the newer V1 ring ABI, `head`/`tail` are monotonically increasing indices
+    // (not masked). For the legacy ring registers, they are masked indices in
+    // `[0, entry_count)`. We intentionally avoid asserting `head/tail < entry_count` here.
     if ((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID) != 0 && q.ring0_entry_count != 0) {
-      if (q.ring0_head >= q.ring0_entry_count || q.ring0_tail >= q.ring0_entry_count) {
+      uint32_t pending = 0;
+      if (q.ring0_tail >= q.ring0_head) {
+        pending = q.ring0_tail - q.ring0_head;
+      } else {
+        pending = q.ring0_tail + q.ring0_entry_count - q.ring0_head;
+      }
+      if (pending > q.ring0_entry_count) {
         aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
         aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-        return reporter.Fail("Ring indices out of range (head=%lu tail=%lu entry_count=%lu)",
+        return reporter.Fail("Ring pending out of range (head=%lu tail=%lu pending=%lu entry_count=%lu)",
                              (unsigned long)q.ring0_head,
                              (unsigned long)q.ring0_tail,
+                             (unsigned long)pending,
                              (unsigned long)q.ring0_entry_count);
       }
     }
@@ -166,4 +177,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunPerfStateSanity(argc, argv);
 }
-
