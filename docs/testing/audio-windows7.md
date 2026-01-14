@@ -270,7 +270,12 @@ out?.ringBuffer && {
 
 Alternative (if the web UI exposes it):
 
-- Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing `getMetrics()` + ring indices + IO-worker producer counters.
+- Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing:
+  - AudioWorklet `getMetrics()` + output ring indices/counters
+  - IO-worker producer counters (buffer level + underruns/overruns)
+  - Microphone ring counters (when mic capture is active)
+  - WorkerCoordinator snapshot (worker states + wasm variants + last fatal/nonfatal)
+  - Effective config snapshot (with sensitive fields redacted)
 - Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
   - `audio-metrics.json`
   - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
