@@ -187,27 +187,42 @@ impl AhciController {
         let fis = &table.cfis;
         
         match fis.command {
-            ATA_CMD_READ_DMA_EXT => {
+            ATA_CMD_IDENTIFY => {
+                self.do_identify(port, header, table, memory);
+            }
+
+            // Note: Even for "PIO" opcodes (READ/WRITE SECTORS), AHCI still uses PRDT DMA.
+            ATA_CMD_READ_DMA | ATA_CMD_READ_SECTORS => {
+                let lba = self.extract_lba28(fis)?;
+                let count = self.extract_sector_count_28(fis);
+                self.do_read_dma(port, lba, count, header, table, memory);
+            }
+            ATA_CMD_READ_DMA_EXT | ATA_CMD_READ_SECTORS_EXT => {
                 let lba = self.extract_lba48(fis);
                 let count = self.extract_sector_count(fis);
                 self.do_read_dma(port, lba, count, header, table, memory);
             }
-            ATA_CMD_WRITE_DMA_EXT => {
+            ATA_CMD_WRITE_DMA | ATA_CMD_WRITE_SECTORS => {
+                let lba = self.extract_lba28(fis)?;
+                let count = self.extract_sector_count_28(fis);
+                self.do_write_dma(port, lba, count, header, table, memory);
+            }
+            ATA_CMD_WRITE_DMA_EXT | ATA_CMD_WRITE_SECTORS_EXT => {
                 let lba = self.extract_lba48(fis);
                 let count = self.extract_sector_count(fis);
                 self.do_write_dma(port, lba, count, header, table, memory);
             }
-            ATA_CMD_IDENTIFY => {
-                self.do_identify(port, header, table, memory);
+
+            ATA_CMD_FLUSH_CACHE | ATA_CMD_FLUSH_CACHE_EXT => {
+                self.do_flush(port);
             }
             ATA_CMD_SET_FEATURES => {
                 self.do_set_features(port, fis);
             }
-            ATA_CMD_FLUSH_CACHE_EXT => {
-                self.do_flush(port);
-            }
+
             _ => {
-                log::warn!("Unknown ATA command: 0x{:02x}", fis.command);
+                // Unsupported commands should complete with an ATA abort error (TFES/DHRS in AHCI).
+                self.abort_command(port, fis.command);
             }
         }
     }
@@ -224,7 +239,11 @@ impl AhciController {
         let drive = &self.drives[port];
         let sector_size = drive.sector_size;
         
-        // Read from virtual disk
+        // Read from virtual disk.
+        //
+        // NOTE: This is a simplified example. The real implementation avoids allocating a full
+        // contiguous buffer for large transfers and instead streams through the PRDT
+        // scatter/gather list in bounded chunks.
         let mut data = vec![0u8; (sector_count as usize) * sector_size];
         drive.read_sectors(lba, &mut data);
         
