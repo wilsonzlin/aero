@@ -40,8 +40,12 @@ pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 /// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
 pub const SCANOUT_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
 pub const SCANOUT_FORMAT_B8G8R8A8: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
+pub const SCANOUT_FORMAT_R8G8B8A8: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+pub const SCANOUT_FORMAT_R8G8B8X8: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
 pub const SCANOUT_FORMAT_B8G8R8X8_SRGB: u32 = AerogpuFormat::B8G8R8X8UnormSrgb as u32;
 pub const SCANOUT_FORMAT_B8G8R8A8_SRGB: u32 = AerogpuFormat::B8G8R8A8UnormSrgb as u32;
+pub const SCANOUT_FORMAT_R8G8B8A8_SRGB: u32 = AerogpuFormat::R8G8B8A8UnormSrgb as u32;
+pub const SCANOUT_FORMAT_R8G8B8X8_SRGB: u32 = AerogpuFormat::R8G8B8X8UnormSrgb as u32;
 
 /// Internal bit used to mark `generation` as "being updated".
 ///
@@ -309,6 +313,8 @@ mod tests {
         assert_eq!(AerogpuFormat::Invalid as u32, 0);
         assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
         assert_eq!(SCANOUT_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
+        assert_eq!(SCANOUT_FORMAT_R8G8B8A8, AerogpuFormat::R8G8B8A8Unorm as u32);
+        assert_eq!(SCANOUT_FORMAT_R8G8B8X8, AerogpuFormat::R8G8B8X8Unorm as u32);
         assert_eq!(
             SCANOUT_FORMAT_B8G8R8X8_SRGB,
             AerogpuFormat::B8G8R8X8UnormSrgb as u32
@@ -316,6 +322,14 @@ mod tests {
         assert_eq!(
             SCANOUT_FORMAT_B8G8R8A8_SRGB,
             AerogpuFormat::B8G8R8A8UnormSrgb as u32
+        );
+        assert_eq!(
+            SCANOUT_FORMAT_R8G8B8A8_SRGB,
+            AerogpuFormat::R8G8B8A8UnormSrgb as u32
+        );
+        assert_eq!(
+            SCANOUT_FORMAT_R8G8B8X8_SRGB,
+            AerogpuFormat::R8G8B8X8UnormSrgb as u32
         );
     }
 

@@ -7,6 +7,10 @@ import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_FORMAT_R8G8B8A8,
+  SCANOUT_FORMAT_R8G8B8X8,
+  SCANOUT_FORMAT_R8G8B8A8_SRGB,
+  SCANOUT_FORMAT_R8G8B8X8_SRGB,
   SCANOUT_SOURCE_WDDM,
   SCANOUT_STATE_GENERATION_BUSY_BIT,
   SCANOUT_STATE_BYTE_LEN,
@@ -45,8 +49,12 @@ describe("ipc/scanout_state", () => {
   it("scanout format constants match AerogpuFormat discriminants", () => {
     expect(SCANOUT_FORMAT_B8G8R8X8).toBe(AerogpuFormat.B8G8R8X8Unorm);
     expect(SCANOUT_FORMAT_B8G8R8A8).toBe(AerogpuFormat.B8G8R8A8Unorm);
+    expect(SCANOUT_FORMAT_R8G8B8A8).toBe(AerogpuFormat.R8G8B8A8Unorm);
+    expect(SCANOUT_FORMAT_R8G8B8X8).toBe(AerogpuFormat.R8G8B8X8Unorm);
     expect(SCANOUT_FORMAT_B8G8R8X8_SRGB).toBe(AerogpuFormat.B8G8R8X8UnormSrgb);
     expect(SCANOUT_FORMAT_B8G8R8A8_SRGB).toBe(AerogpuFormat.B8G8R8A8UnormSrgb);
+    expect(SCANOUT_FORMAT_R8G8B8A8_SRGB).toBe(AerogpuFormat.R8G8B8A8UnormSrgb);
+    expect(SCANOUT_FORMAT_R8G8B8X8_SRGB).toBe(AerogpuFormat.R8G8B8X8UnormSrgb);
   });
 
   it("wrapScanoutState validates bounds and 4-byte alignment", () => {
