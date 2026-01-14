@@ -556,6 +556,7 @@ fn exec_op(
         | IrOp::Rcp { dst, modifiers, .. }
         | IrOp::Rsq { dst, modifiers, .. }
         | IrOp::Frc { dst, modifiers, .. }
+        | IrOp::Abs { dst, modifiers, .. }
         | IrOp::Exp { dst, modifiers, .. }
         | IrOp::Log { dst, modifiers, .. }
         | IrOp::Ddx { dst, modifiers, .. }
@@ -708,6 +709,10 @@ fn exec_op(
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let fract = |v: f32| v - v.floor();
             Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w))
+        }
+        IrOp::Abs { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            a.abs()
         }
         IrOp::Exp { src, .. } => {
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
@@ -1119,6 +1124,7 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
         | IrOp::Rcp { src, modifiers, .. }
         | IrOp::Rsq { src, modifiers, .. }
         | IrOp::Frc { src, modifiers, .. }
+        | IrOp::Abs { src, modifiers, .. }
         | IrOp::Exp { src, modifiers, .. }
         | IrOp::Log { src, modifiers, .. }
         | IrOp::Ddx { src, modifiers, .. }

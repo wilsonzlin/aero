@@ -338,6 +338,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src,
                 modifiers,
             })?,
+            Opcode::Abs => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Abs {
+                dst,
+                src,
+                modifiers,
+            })?,
             Opcode::Exp => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Exp {
                 dst,
                 src,
@@ -754,6 +759,11 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src,
             modifiers,
         }
+        | IrOp::Abs {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Exp {
             dst,
             src,
@@ -1044,6 +1054,11 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             modifiers,
         }
         | IrOp::Frc {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Abs {
             dst,
             src,
             modifiers,

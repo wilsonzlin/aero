@@ -414,6 +414,11 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             src,
             modifiers,
         }
+        | IrOp::Abs {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Exp {
             dst,
             src,
@@ -1065,6 +1070,30 @@ fn emit_op_line(
             }
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
+        }
+        IrOp::Abs {
+            dst,
+            src,
+            modifiers,
+        } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if ty != dst_ty {
+                return Err(err("abs between mismatched types"));
+            }
+            match ty {
+                ScalarTy::F32 => {
+                    let e = apply_float_result_modifiers(format!("abs({s})"), modifiers)?;
+                    emit_assign(dst, e)
+                }
+                ScalarTy::I32 => {
+                    if modifiers.saturate || modifiers.shift != ResultShift::None {
+                        return Err(err("result modifiers not supported for integer abs"));
+                    }
+                    emit_assign(dst, format!("abs({s})"))
+                }
+                ScalarTy::Bool => Err(err("abs on bool source")),
+            }
         }
         IrOp::Exp {
             dst,
@@ -1884,6 +1913,7 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Rcp { modifiers, .. }
         | IrOp::Rsq { modifiers, .. }
         | IrOp::Frc { modifiers, .. }
+        | IrOp::Abs { modifiers, .. }
         | IrOp::Exp { modifiers, .. }
         | IrOp::Log { modifiers, .. }
         | IrOp::Ddx { modifiers, .. }

@@ -78,6 +78,7 @@ pub enum Opcode {
     Frc,
     Min,
     Max,
+    Abs,
     Nrm,
     Lit,
     SinCos,
@@ -149,6 +150,7 @@ impl Opcode {
             29 => Self::EndLoop,
             31 => Self::Dcl,
             32 => Self::Pow,
+            35 => Self::Abs,   // 0x23
             36 => Self::Nrm,    // 0x24
             37 => Self::SinCos, // 0x25
             40 => Self::If,
@@ -208,6 +210,7 @@ impl Opcode {
             Self::Frc => "frc",
             Self::Min => "min",
             Self::Max => "max",
+            Self::Abs => "abs",
             Self::Nrm => "nrm",
             Self::Lit => "lit",
             Self::SinCos => "sincos",
@@ -784,6 +787,7 @@ fn decode_operands_and_extras(
         | Opcode::Frc
         | Opcode::Exp
         | Opcode::Log
+        | Opcode::Abs
         | Opcode::Nrm
         | Opcode::Lit => {
             parse_fixed_operands(

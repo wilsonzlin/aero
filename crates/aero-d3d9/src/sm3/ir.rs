@@ -200,6 +200,11 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    Abs {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Nrm {
         dst: Dst,
         src: Src,
@@ -751,6 +756,15 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("frc", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Abs {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("abs", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Exp {
