@@ -32,6 +32,9 @@ extern "C" {
 /* Sentinel used by the helper when a queue index is not known (INTx). */
 #define VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN ((USHORT)0xFFFF)
 
+/* Sentinel used when an interrupt indicates no queue work (config-only). */
+#define VIRTIO_PCI_WDM_QUEUE_INDEX_NONE ((USHORT)0xFFFE)
+
 /* Sentinel used by the helper when there is no message ID (INTx). */
 #define VIRTIO_PCI_WDM_MESSAGE_ID_NONE ((ULONG)0xFFFFFFFFu)
 
@@ -43,6 +46,13 @@ typedef enum _VIRTIO_PCI_WDM_INTERRUPT_MODE {
 
 typedef struct _VIRTIO_PCI_WDM_MESSAGE_ROUTE {
     BOOLEAN IsConfig;
+    /*
+     * QueueIndex routing for MSI/MSI-X.
+     *
+     * - VIRTIO_PCI_WDM_QUEUE_INDEX_NONE: config-only (no queue work)
+     * - VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN: queue work without a specific queue (e.g. all queues / INTx-like)
+     * - otherwise: specific virtqueue index.
+     */
     USHORT QueueIndex;
 } VIRTIO_PCI_WDM_MESSAGE_ROUTE;
 
@@ -60,9 +70,12 @@ typedef VOID EVT_VIRTIO_PCI_WDM_QUEUE_WORK(
  *
  * INTx: invoked once for config and/or queue depending on ISR bits, with:
  *   - MessageId = VIRTIO_PCI_WDM_MESSAGE_ID_NONE
+ *   - QueueIndex = VIRTIO_PCI_WDM_QUEUE_INDEX_NONE for config-only dispatch
  *   - QueueIndex = VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN for queue work
  *
- * MSI/MSI-X: invoked once per message interrupt with the message's routing.
+ * MSI/MSI-X: invoked once or twice per message interrupt, depending on routing:
+ *   - config dispatch: IsConfig=TRUE, QueueIndex=VIRTIO_PCI_WDM_QUEUE_INDEX_NONE
+ *   - optional queue dispatch: IsConfig=FALSE, QueueIndex per routing table
  */
 typedef VOID EVT_VIRTIO_PCI_WDM_DPC(
     _Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts,
@@ -89,7 +102,7 @@ typedef struct _VIRTIO_PCI_WDM_INTERRUPTS {
             /* Opaque connection context returned by IoConnectInterruptEx. */
             PVOID ConnectionContext;
 
-            /* Alias for ConnectionContext when it is an IO_INTERRUPT_MESSAGE_INFO*. */
+            /* IoConnectInterruptEx(CONNECT_MESSAGE_BASED) output describing connected messages. */
             PIO_INTERRUPT_MESSAGE_INFO MessageInfo;
 
             ULONG MessageCount;
@@ -138,4 +151,3 @@ NTSTATUS VirtioPciWdmInterruptSetMessageRoute(
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-

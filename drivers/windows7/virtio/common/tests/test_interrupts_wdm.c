@@ -280,7 +280,7 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
     ctx.expected = &intr;
 
     /* Override routes: msg0=config, msg1=queue2, msg2=queue3. */
-    assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 0, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN) == STATUS_SUCCESS);
+    assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 0, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_NONE) == STATUS_SUCCESS);
     assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 1, FALSE, 2) == STATUS_SUCCESS);
     assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 2, FALSE, 3) == STATUS_SUCCESS);
 
@@ -316,6 +316,36 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
     assert(ctx.dpc_config_calls == 0);
     assert(ctx.config_calls == 0);
     assert(ctx.queue_calls == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
+static void test_message_single_vector_default_mapping_dispatches_queue_work(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(1);
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+    ctx.expected = &intr;
+
+    /*
+     * With only one message available, the default routing must treat message 0
+     * as config + "unknown/all queues" so a virtio device routing all sources to
+     * vector 0 continues to deliver queue completions.
+     */
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 0) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[0]) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.last_queue_index == VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
 
     VirtioPciWdmInterruptDisconnect(&intr);
 }
@@ -426,6 +456,7 @@ int main(void)
     test_connect_validation();
     test_intx_connect_and_dispatch();
     test_message_connect_disconnect_calls_wdk_routines();
+    test_message_single_vector_default_mapping_dispatches_queue_work();
     test_message_isr_does_not_read_isr_status_byte();
     test_message_isr_dpc_routing_and_evt_dpc_override();
     test_connect_failure_zeroes_state();

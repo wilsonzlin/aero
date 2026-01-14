@@ -174,7 +174,20 @@ NTSTATUS VirtioPciWdmInterruptConnect(
              * Drivers can override with VirtioPciWdmInterruptSetMessageRoute.
              */
             Interrupts->u.Message.Routes[i].IsConfig = (i == 0) ? TRUE : FALSE;
-            Interrupts->u.Message.Routes[i].QueueIndex = (i == 0) ? VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN : (USHORT)(i - 1);
+            if (i == 0) {
+                /*
+                 * When only one message interrupt is available, virtio devices
+                 * must route config + all queues to that single message (vector
+                 * 0 fallback). Represent this as config + "unknown/all queues".
+                 *
+                 * Otherwise, message 0 is treated as config-only by default to
+                 * avoid draining queues concurrently with per-queue message DPCs.
+                 */
+                Interrupts->u.Message.Routes[i].QueueIndex =
+                    (messageCount == 1) ? VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN : VIRTIO_PCI_WDM_QUEUE_INDEX_NONE;
+            } else {
+                Interrupts->u.Message.Routes[i].QueueIndex = (USHORT)(i - 1);
+            }
 
             KeInitializeDpc(&Interrupts->u.Message.MessageDpcs[i], VirtioPciWdmMessageDpc, Interrupts);
         }
@@ -340,7 +353,7 @@ static VOID VirtioPciWdmIntxDpc(_Inout_ PVIRTIO_INTX Intx, _In_ UCHAR IsrStatus,
     }
 
     if ((IsrStatus & VIRTIO_PCI_ISR_CONFIG_INTERRUPT) != 0) {
-        VirtioPciWdmDispatch(interrupts, VIRTIO_PCI_WDM_MESSAGE_ID_NONE, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
+        VirtioPciWdmDispatch(interrupts, VIRTIO_PCI_WDM_MESSAGE_ID_NONE, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_NONE);
     }
 
     if ((IsrStatus & VIRTIO_PCI_ISR_QUEUE_INTERRUPT) != 0) {
@@ -428,10 +441,20 @@ static VOID VirtioPciWdmMessageDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _
         route = interrupts->u.Message.Routes[messageId];
     } else {
         route.IsConfig = (messageId == 0) ? TRUE : FALSE;
-        route.QueueIndex = (messageId == 0) ? VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN : (USHORT)(messageId - 1);
+        if (messageId == 0) {
+            route.QueueIndex = (interrupts->u.Message.MessageCount == 1) ? VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN : VIRTIO_PCI_WDM_QUEUE_INDEX_NONE;
+        } else {
+            route.QueueIndex = (USHORT)(messageId - 1);
+        }
     }
 
-    VirtioPciWdmDispatch(interrupts, messageId, route.IsConfig, route.QueueIndex);
+    if (route.IsConfig) {
+        VirtioPciWdmDispatch(interrupts, messageId, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_NONE);
+    }
+
+    if (route.QueueIndex != VIRTIO_PCI_WDM_QUEUE_INDEX_NONE) {
+        VirtioPciWdmDispatch(interrupts, messageId, FALSE, route.QueueIndex);
+    }
 
     remaining = InterlockedDecrement(&interrupts->u.Message.DpcInFlight);
     if (remaining < 0) {
