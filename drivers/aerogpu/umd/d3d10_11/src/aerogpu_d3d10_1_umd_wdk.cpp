@@ -1145,12 +1145,13 @@ static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
     set_error(dev, E_OUTOFMEMORY);
     return;
   }
-  cmd->color_count = dev->current_rtv_count;
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  cmd->color_count = count;
   cmd->depth_stencil = dev->current_dsv;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;
   }
-  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+  for (uint32_t i = 0; i < count; ++i) {
     cmd->colors[i] = dev->current_rtvs[i];
   }
 }
@@ -8631,12 +8632,13 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
       dev->current_rtvs[i] = dev->current_rtv_resources[i] ? dev->current_rtv_resources[i]->handle : 0;
     }
 
-    cmd->color_count = dev->current_rtv_count;
+    const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+    cmd->color_count = count;
     cmd->depth_stencil = dev->current_dsv;
     for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
       cmd->colors[i] = 0;
     }
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    for (uint32_t i = 0; i < count; ++i) {
       cmd->colors[i] = dev->current_rtvs[i];
     }
   }
