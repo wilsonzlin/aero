@@ -6184,20 +6184,6 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
                                          [&](HRESULT hr) { SetError(dev, hr); });
 }
 
-static uint32_t D3D11CullModeToAerogpu(uint32_t cull_mode) {
-  switch (static_cast<D3D11_CULL_MODE>(cull_mode)) {
-    case D3D11_CULL_NONE:
-      return AEROGPU_CULL_NONE;
-    case D3D11_CULL_FRONT:
-      return AEROGPU_CULL_FRONT;
-    case D3D11_CULL_BACK:
-      return AEROGPU_CULL_BACK;
-    default:
-      break;
-  }
-  return AEROGPU_CULL_BACK;
-}
-
 static uint32_t D3D11BlendFactorToAerogpu(uint32_t factor, uint32_t fallback) {
   switch (static_cast<D3D11_BLEND>(factor)) {
     case D3D11_BLEND_ZERO:
@@ -6266,25 +6252,16 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
     return;
   }
 
-  cmd->state.fill_mode = AEROGPU_FILL_SOLID;
-  switch (static_cast<D3D11_FILL_MODE>(fill_mode)) {
-    case D3D11_FILL_SOLID:
-      cmd->state.fill_mode = AEROGPU_FILL_SOLID;
-      break;
-    case D3D11_FILL_WIREFRAME:
-      cmd->state.fill_mode = AEROGPU_FILL_WIREFRAME;
-      break;
-    default: {
-      static std::once_flag once;
-      std::call_once(once, [=] {
-        AEROGPU_D3D10_11_LOG("EmitRasterizerStateLocked: unsupported fill_mode=%u (falling back to SOLID)",
-                             (unsigned)fill_mode);
-      });
-      cmd->state.fill_mode = AEROGPU_FILL_SOLID;
-      break;
-    }
+  cmd->state.fill_mode = D3DFillModeToAerogpu(fill_mode);
+  if (fill_mode != static_cast<uint32_t>(D3D11_FILL_SOLID) &&
+      fill_mode != static_cast<uint32_t>(D3D11_FILL_WIREFRAME)) {
+    static std::once_flag once;
+    std::call_once(once, [=] {
+      AEROGPU_D3D10_11_LOG("EmitRasterizerStateLocked: unsupported fill_mode=%u (falling back to SOLID)",
+                           (unsigned)fill_mode);
+    });
   }
-  cmd->state.cull_mode = D3D11CullModeToAerogpu(cull_mode);
+  cmd->state.cull_mode = D3DCullModeToAerogpu(cull_mode);
   cmd->state.front_ccw = front_ccw ? 1u : 0u;
   cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
   cmd->state.depth_bias = depth_bias;
