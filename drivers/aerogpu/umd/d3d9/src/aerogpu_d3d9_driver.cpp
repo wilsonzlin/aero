@@ -16435,7 +16435,11 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   void* mapped_ptr = nullptr;
-  if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+  // Only map WDDM allocations for guest-backed resources. Host-backed resources
+  // (backing_alloc_id==0) may still carry a runtime-provided hAllocation, but
+  // AeroGPU treats that backing as non-authoritative and uses `res->storage`
+  // + UPLOAD_RESOURCE for updates.
+  if (res->backing_alloc_id != 0 && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
                                            dev->wddm_device,
                                            res->wddm_hAllocation,
