@@ -15,7 +15,7 @@ targeting a different integration strategy:
 
 - `aero-wasm::WasmVm` and `aero-wasm::WasmTieredVm`
   - Purpose: a **CPU-only** stepping loop for the browser **CPU worker runtime**
-    (`web/src/workers/cpu.worker.ts`).
+    (`web/src/workers/cpu.worker.ts`, `vmRuntime=legacy`).
   - Design: executes the x86 CPU core inside WASM, but forwards port I/O and MMIO back to JS via
     shims (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`). (`WasmTieredVm` also calls
     out to JS for Tier-1 JIT blocks via `globalThis.__aero_jit_call`.)
@@ -26,8 +26,9 @@ targeting a different integration strategy:
     `aero_machine::Machine` (`crates/aero-machine`).
   - Owns the machine's PCI/IO/MMIO wiring in Rust/WASM (including the PCI E1000 NIC model) and can
     attach the browser `NET_TX`/`NET_RX` AIPC rings as a network backend.
-  - Used by: `web/src/main.ts` serial boot demo today.
-  - Intended: future “main” web runtime once the worker runtime is migrated.
+  - Used by:
+    - `web/src/workers/machine_cpu.worker.ts` (canonical machine runtime, `vmRuntime=machine`)
+    - `web/src/main.ts` (demo)
 
 - `aero-wasm::PcMachine`
   - Purpose: experimental wasm-bindgen wrapper around `aero_machine::PcMachine`.

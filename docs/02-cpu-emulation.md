@@ -142,8 +142,10 @@ WASM modules **inside a worker**:
     instantiation when `--max-memory` is large.
 
 > Note: `crates/aero-wasm` exposes multiple WASM-facing VM wrappers. The canonical **full-system** export is
-> `aero_wasm::Machine` (backed by `aero_machine::Machine`). The current CPU-worker runtime uses the legacy CPU-only
-> `WasmVm` export (and may use `WasmTieredVm` for tiered/JIT execution).
+> `aero_wasm::Machine` (backed by `aero_machine::Machine`). The web worker runtime has two integration modes:
+> - `vmRuntime=legacy`: CPU worker (`web/src/workers/cpu.worker.ts`) drives the legacy CPU-only `WasmVm` export (and
+>   may use `WasmTieredVm` for tiered/JIT execution).
+> - `vmRuntime=machine`: CPU worker (`web/src/workers/machine_cpu.worker.ts`) drives the canonical `Machine` export.
 >
 > See [`docs/vm-crate-map.md`](./vm-crate-map.md) and [ADR 0014](./adr/0014-canonical-machine-stack.md) for the
 > up-to-date mapping.
