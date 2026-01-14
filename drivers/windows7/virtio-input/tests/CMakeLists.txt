@@ -3,6 +3,8 @@ project(virtio_input_tests C)
 
 enable_testing()
 
+set(VIOINPUT_SRC_DIR ${CMAKE_CURRENT_LIST_DIR}/../src)
+
 set(VIOINPUT_TEST_CFLAGS "")
 
 # Keep assertions enabled even in Release builds.
@@ -16,103 +18,65 @@ elseif (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
 endif ()
 
-add_executable(hid_translate_test
-    hid_translate_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/hid_translate.c
-)
+function(vioinput_list_append_unique list_var)
+    foreach(item IN LISTS ARGN)
+        list(FIND ${list_var} "${item}" idx)
+        if (idx EQUAL -1)
+            list(APPEND ${list_var} "${item}")
+        endif ()
+    endforeach ()
+    set(${list_var} "${${list_var}}" PARENT_SCOPE)
+endfunction()
 
-set_target_properties(hid_translate_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
+file(GLOB VIOINPUT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/*_test.c")
 
-target_compile_options(hid_translate_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME hid_translate_test COMMAND hid_translate_test)
+foreach(test_src IN LISTS VIOINPUT_TEST_SOURCES)
+    get_filename_component(test_name "${test_src}" NAME_WE)
 
-add_executable(led_translate_test
-    led_translate_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/led_translate.c
-)
+    # Convention: if ../src/<name>.c exists (where <name> is the test filename
+    # without the "_test" suffix), link it in automatically.
+    set(module "${test_name}")
+    string(REGEX REPLACE "_test$" "" module "${module}")
 
-set_target_properties(led_translate_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
+    set(sources "${test_src}")
 
-target_compile_options(led_translate_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME led_translate_test COMMAND led_translate_test)
+    if (EXISTS "${VIOINPUT_SRC_DIR}/${module}.c")
+        vioinput_list_append_unique(sources "${VIOINPUT_SRC_DIR}/${module}.c")
+    endif ()
 
-add_executable(led_report_parse_test
-    led_report_parse_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/led_report_parse.c
-)
+    # Optional: allow tests to declare extra translation units to link.
+    # Syntax (single line anywhere in the file):
+    #   // TEST_DEPS: foo.c bar.c
+    # or:
+    #   // TEST_DEPS: foo bar   (".c" is implied)
+    file(STRINGS "${test_src}" deps_lines REGEX "^//[ \t]*TEST_DEPS:[ \t]*")
+    if (deps_lines)
+        list(GET deps_lines 0 deps_line)
+        string(REGEX REPLACE "^//[ \t]*TEST_DEPS:[ \t]*" "" deps_str "${deps_line}")
+        string(STRIP "${deps_str}" deps_str)
+        if (NOT deps_str STREQUAL "")
+            string(REGEX REPLACE "[ \t]+" ";" deps_list "${deps_str}")
+            foreach(dep IN LISTS deps_list)
+                set(dep_file "${dep}")
+                if (NOT dep_file MATCHES "\\.c$")
+                    set(dep_file "${dep_file}.c")
+                endif ()
+                set(dep_path "${VIOINPUT_SRC_DIR}/${dep_file}")
+                if (NOT EXISTS "${dep_path}")
+                    message(FATAL_ERROR "virtio-input test '${test_name}' missing dependency: ${dep_path}")
+                endif ()
+                vioinput_list_append_unique(sources "${dep_path}")
+            endforeach ()
+        endif ()
+    endif ()
 
-set_target_properties(led_report_parse_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
+    add_executable(${test_name} ${sources})
+    set_target_properties(${test_name} PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    target_compile_options(${test_name} PRIVATE ${VIOINPUT_TEST_CFLAGS})
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endforeach ()
 
-target_compile_options(led_report_parse_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME led_report_parse_test COMMAND led_report_parse_test)
-
-add_executable(led_output_pipeline_test
-    led_output_pipeline_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/led_report_parse.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/led_translate.c
-)
-
-set_target_properties(led_output_pipeline_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
-
-target_compile_options(led_output_pipeline_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME led_output_pipeline_test COMMAND led_output_pipeline_test)
-
-add_executable(report_ring_test
-    report_ring_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_input.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/hid_translate.c
-)
-
-set_target_properties(report_ring_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
-
-target_compile_options(report_ring_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME report_ring_test COMMAND report_ring_test)
-
-add_executable(virtio_input_integration_test
-    virtio_input_integration_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_input.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/hid_translate.c
-)
-
-set_target_properties(virtio_input_integration_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
-
-target_compile_options(virtio_input_integration_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME virtio_input_integration_test COMMAND virtio_input_integration_test)
-
-add_executable(virtio_statusq_test
-    virtio_statusq_test.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_statusq.c
-)
-
-set_target_properties(virtio_statusq_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
-
-target_compile_options(virtio_statusq_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
-add_test(NAME virtio_statusq_test COMMAND virtio_statusq_test)
