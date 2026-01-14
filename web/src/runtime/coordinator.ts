@@ -960,7 +960,9 @@ export class WorkerCoordinator {
   }
 
   getMachineCpuBootConfig(): { bootDrive: number; cdBootDrive: number; bootFromCdIfPresent: boolean } | null {
-    return this.machineCpuBootConfig;
+    const cfg = this.machineCpuBootConfig;
+    // Return a defensive copy so callers cannot mutate the coordinator's cached state.
+    return cfg ? { ...cfg } : null;
   }
 
   /**
