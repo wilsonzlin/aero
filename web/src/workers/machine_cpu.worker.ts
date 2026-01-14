@@ -1074,16 +1074,46 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
     throw new Error("Machine wasm export is unavailable; cannot start machine_cpu.worker.");
   }
 
+  // Optional config override: force-disable AeroGPU (enable VGA) for debugging/compatibility.
+  // This requires a newer WASM build that exposes `Machine.new_shared_with_config`.
+  const requestedAerogpu = currentConfig?.machineEnableAerogpu;
+  if (typeof requestedAerogpu === "boolean") {
+    const newSharedWithConfig = (Machine as unknown as { new_shared_with_config?: unknown }).new_shared_with_config;
+    if (typeof newSharedWithConfig === "function") {
+      try {
+        const result = (newSharedWithConfig as (guestBase: number, guestSize: number, enableAerogpu: boolean) => unknown).call(
+          Machine,
+          guestBase,
+          guestSize,
+          requestedAerogpu,
+        );
+        return (await maybeAwait(result)) as InstanceType<WasmApi["Machine"]>;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("[machine_cpu.worker] Failed to construct Machine via Machine.new_shared_with_config:", err);
+      }
+    }
+  }
+
   type Candidate = { name: string; fn: unknown; thisArg: unknown };
+  // Prefer the canonical shared-guest-memory constructor (`MachineConfig::browser_defaults`):
+  // - AeroGPU enabled (VGA disabled)
+  // - E1000 + UHCI enabled (browser runtime expectations)
+  //
+  // When the config explicitly disables AeroGPU (`machineEnableAerogpu=false`) but the build does
+  // not expose `Machine.new_shared_with_config`, fall back to the conservative Win7 storage preset
+  // (VGA enabled, networking/USB disabled) rather than ignoring the user's intent.
+  const preferWin7StorageShared = requestedAerogpu === false;
   const candidates: Candidate[] = [
-    // Prefer the canonical shared-guest-memory constructor (`MachineConfig::browser_defaults`):
-    // - AeroGPU enabled (VGA disabled)
-    // - E1000 + UHCI enabled (browser runtime expectations)
-    //
-    // `new_win7_storage_shared` remains as a fallback for older builds/configurations that want
-    // the conservative Win7 storage preset (VGA enabled, networking/USB disabled).
-    { name: "Machine.new_shared", fn: Machine.new_shared, thisArg: Machine },
-    { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
+    ...(preferWin7StorageShared
+      ? [
+          { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
+          { name: "Machine.new_shared", fn: Machine.new_shared, thisArg: Machine },
+        ]
+      : [
+          { name: "Machine.new_shared", fn: Machine.new_shared, thisArg: Machine },
+          { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
+        ]),
 
     // Back-compat shims for intermediate builds.
     { name: "Machine.new_win7_storage_shared_guest_memory", fn: Machine.new_win7_storage_shared_guest_memory, thisArg: Machine },

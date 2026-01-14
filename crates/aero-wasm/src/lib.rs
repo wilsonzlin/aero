@@ -4037,6 +4037,85 @@ impl Machine {
         })
     }
 
+    /// Construct a shared-guest-memory machine with explicit graphics configuration.
+    ///
+    /// This is the shared-memory equivalent of [`Machine::new_with_config`]. It is intended for
+    /// browser runtimes that need to back guest RAM with the wasm linear memory (`new_shared`) but
+    /// still want to force-enable VGA or force-disable AeroGPU for debugging/compatibility.
+    ///
+    /// `enable_aerogpu` is forwarded to [`aero_machine::MachineConfig::enable_aerogpu`]. When
+    /// `enable_aerogpu` is `true`, VGA is disabled by default (`enable_vga` defaults to
+    /// `!enable_aerogpu`).
+    ///
+    /// Note: `enable_aerogpu` and `enable_vga` are mutually exclusive in the native machine
+    /// configuration; passing `enable_aerogpu=true` and `enable_vga=true` will fail construction.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_shared_with_config(
+        guest_base: u32,
+        guest_size: u32,
+        enable_aerogpu: bool,
+        enable_vga: Option<bool>,
+        cpu_count: Option<u32>,
+    ) -> Result<Self, JsValue> {
+        let guest_size_u64 = crate::validate_shared_guest_ram_layout(
+            "Machine.new_shared_with_config",
+            guest_base,
+            guest_size,
+        )?;
+        if guest_size_u64 == 0 {
+            return Err(js_error(
+                "Machine.new_shared_with_config: guest_size must be non-zero",
+            ));
+        }
+
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
+        cfg.enable_synthetic_usb_hid = true;
+        if let Some(cpu_count) = cpu_count {
+            cfg.cpu_count = Self::validate_cpu_count(cpu_count)?;
+        }
+        cfg.enable_aerogpu = enable_aerogpu;
+        cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
+
+        let mem = memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
+            js_error(format!(
+                "Machine.new_shared_with_config: failed to init shared guest RAM backend: {e}"
+            ))
+        })?;
+        #[allow(unused_mut)]
+        let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        #[cfg(all(
+            target_arch = "wasm32",
+            feature = "wasm-threaded",
+            target_feature = "atomics"
+        ))]
+        let scanout_state = {
+            let scanout_state = Self::scanout_state_ref();
+            let cursor_state = Self::cursor_state_ref();
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
+            scanout_state
+        };
+        Ok(Self {
+            inner,
+            mouse_buttons: 0,
+            mouse_buttons_known: true,
+
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
+            scanout_state,
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
+            last_published_scanout: None,
+        })
+    }
+
     /// Construct a canonical Win7 storage topology machine backed by shared guest RAM.
     ///
     /// This is the shared-memory equivalent of [`Machine::new_win7_storage`].

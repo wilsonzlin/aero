@@ -108,4 +108,44 @@ describe("runtime/wasm_loader (Machine constructor typings)", () => {
 
     expect(true).toBe(true);
   });
+
+  it("requires feature detection for optional Machine.new_shared_with_config", () => {
+    type Machine = InstanceType<WasmApi["Machine"]>;
+    type MachineCtor = WasmApi["Machine"];
+
+    const machine = {
+      free: () => {},
+    } as unknown as Machine;
+
+    const machineCtor = {
+      new_shared_with_config: (
+        _guestBase: number,
+        _guestSize: number,
+        _enableAerogpu: boolean,
+        _enableVga?: boolean,
+        _cpuCount?: number,
+      ) => machine,
+    } as unknown as MachineCtor;
+
+    function assertStrictNullChecksEnforced() {
+      // @ts-expect-error new_shared_with_config may be undefined
+      machineCtor.new_shared_with_config(0, 0, true);
+      // @ts-expect-error guestBase must be number
+      machineCtor.new_shared_with_config?.("0", 0, true);
+      // @ts-expect-error enableAerogpu must be boolean
+      machineCtor.new_shared_with_config?.(0, 0, 1);
+      // @ts-expect-error enableVga must be boolean
+      machineCtor.new_shared_with_config?.(0, 0, true, 1);
+      // @ts-expect-error cpuCount must be number
+      machineCtor.new_shared_with_config?.(0, 0, true, undefined, "2");
+    }
+    void assertStrictNullChecksEnforced;
+
+    if (machineCtor.new_shared_with_config) {
+      const m = machineCtor.new_shared_with_config(0, 1024, true, undefined, 1);
+      m.free();
+    }
+
+    expect(true).toBe(true);
+  });
 });

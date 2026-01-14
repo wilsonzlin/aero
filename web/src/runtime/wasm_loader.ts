@@ -2087,6 +2087,21 @@ export interface WasmApi {
          */
         new_shared?: (guestBase: number, guestSize: number) => MachineHandle;
         /**
+         * Construct a shared-guest-memory machine with explicit graphics configuration.
+         *
+         * This is the shared-memory equivalent of {@link new_with_config} and allows browser
+         * runtimes to force-disable AeroGPU (enable VGA) while still using shared guest RAM.
+         *
+         * Optional for older WASM builds.
+         */
+        new_shared_with_config?: (
+            guestBase: number,
+            guestSize: number,
+            enableAerogpu: boolean,
+            enableVga?: boolean,
+            cpuCount?: number,
+        ) => MachineHandle;
+        /**
          * Construct a machine preset for the canonical Win7 storage topology backed by shared guest RAM.
          *
          * Optional for older WASM builds.

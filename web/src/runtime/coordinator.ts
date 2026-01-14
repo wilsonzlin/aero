@@ -550,6 +550,17 @@ export class WorkerCoordinator {
       return;
     }
 
+    // Machine-runtime graphics selection is baked into the wasm `api.Machine` constructor and cannot
+    // be hot-swapped. Treat changes as requiring a full restart.
+    if (prevConfig && nextVmRuntime === "machine") {
+      const prevMachineAerogpu = prevConfig.machineEnableAerogpu ?? true;
+      const nextMachineAerogpu = config.machineEnableAerogpu ?? true;
+      if (prevMachineAerogpu !== nextMachineAerogpu) {
+        this.restart();
+        return;
+      }
+    }
+
     // Switching the virtio-net PCI transport changes what the guest sees on the PCI bus
     // (device ID, BAR layout, and optional legacy I/O decode). This cannot be safely
     // hot-swapped, so force a full restart to apply the new mode.
@@ -2973,6 +2984,7 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.vramMiB === b.vramMiB &&
     a.enableWorkers === b.enableWorkers &&
     a.enableWebGPU === b.enableWebGPU &&
+    (a.machineEnableAerogpu ?? true) === (b.machineEnableAerogpu ?? true) &&
     a.proxyUrl === b.proxyUrl &&
     a.logLevel === b.logLevel &&
     a.uiScale === b.uiScale &&

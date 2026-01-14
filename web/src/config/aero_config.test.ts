@@ -23,6 +23,7 @@ describe("AeroConfig", () => {
     expect(resolved.effective.vramMiB).toBe(64);
     expect(resolved.effective.enableWorkers).toBe(true);
     expect(resolved.effective.enableWebGPU).toBe(false);
+    expect(resolved.effective.machineEnableAerogpu).toBeUndefined();
     expect(resolved.effective.proxyUrl).toBeNull();
     expect(resolved.effective.activeDiskImage).toBeNull();
     expect(resolved.effective.logLevel).toBe("info");
@@ -113,6 +114,12 @@ describe("AeroConfig", () => {
     expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
     expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
     expect(parsed.overrides.proxyUrl).toBe("https://example.com");
+  });
+
+  it("query parsing: accepts machineAerogpu override", () => {
+    const parsed = parseAeroConfigQueryOverrides("?machineAerogpu=0");
+    expect(parsed.lockedKeys.has("machineEnableAerogpu")).toBe(true);
+    expect(parsed.overrides.machineEnableAerogpu).toBe(false);
   });
 
   it("query parsing: accepts L2 tunnel overrides", () => {

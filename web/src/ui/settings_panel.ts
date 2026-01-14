@@ -50,6 +50,11 @@ export function mountSettingsPanel(
     "This browser does not support OPFS SyncAccessHandle, so the machine runtime is disabled. " +
     "Use a Chromium-based browser (Chrome/Edge) or enable the File System Access APIs.";
 
+  const machineAerogpuHelpText =
+    'Machine runtime graphics device (vmRuntime="machine"). ' +
+    "AeroGPU is the canonical adapter (A3A0:0001); VGA is a legacy fallback for debugging. " +
+    "Changing this requires a restart to apply.";
+
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
   for (const mem of AERO_GUEST_MEMORY_PRESETS_MIB) {
@@ -100,6 +105,19 @@ export function mountSettingsPanel(
   }
   const vmRuntimeHint = document.createElement("div");
   vmRuntimeHint.className = "hint";
+
+  const machineAerogpuSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["aerogpu", "AeroGPU (default)"],
+    ["vga", "VGA (legacy)"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    machineAerogpuSelect.appendChild(option);
+  }
+  const machineAerogpuHint = document.createElement("div");
+  machineAerogpuHint.className = "hint";
 
   const proxyInput = document.createElement("input");
   proxyInput.type = "text";
@@ -205,6 +223,7 @@ export function mountSettingsPanel(
   fieldset.appendChild(makeRow("Enable workers", workersCheckbox, workersHint));
   fieldset.appendChild(makeRow("Enable WebGPU", webgpuCheckbox, webgpuHint));
   fieldset.appendChild(makeRow("VM runtime", vmRuntimeSelect, vmRuntimeHint));
+  fieldset.appendChild(makeRow("Machine GPU", machineAerogpuSelect, machineAerogpuHint));
   fieldset.appendChild(makeRow("Virtio-net mode", virtioNetModeSelect, virtioNetModeHint));
   fieldset.appendChild(makeRow("Virtio-input mode", virtioInputModeSelect, virtioInputModeHint));
   fieldset.appendChild(makeRow("Virtio-snd mode", virtioSndModeSelect, virtioSndModeHint));
@@ -237,6 +256,11 @@ export function mountSettingsPanel(
       return;
     }
     manager.updateStoredConfig({ vmRuntime: value });
+  });
+  machineAerogpuSelect.addEventListener("change", () => {
+    const value = machineAerogpuSelect.value;
+    const enableAerogpu = value === "aerogpu";
+    manager.updateStoredConfig({ machineEnableAerogpu: enableAerogpu });
   });
   logSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ logLevel: logSelect.value as AeroConfig["logLevel"] });
@@ -294,6 +318,7 @@ export function mountSettingsPanel(
     setLocked(vramSelect, vramHint, state, "vramMiB");
     setLocked(logSelect, logHint, state, "logLevel");
     setLocked(vmRuntimeSelect, vmRuntimeHint, state, "vmRuntime");
+    setLocked(machineAerogpuSelect, machineAerogpuHint, state, "machineEnableAerogpu");
     setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
     setLocked(virtioInputModeSelect, virtioInputModeHint, state, "virtioInputMode");
     setLocked(virtioSndModeSelect, virtioSndModeHint, state, "virtioSndMode");
@@ -308,6 +333,9 @@ export function mountSettingsPanel(
     }
     if (!supportsMachineRuntime) {
       vmRuntimeHint.textContent = `${vmRuntimeHint.textContent} ${vmRuntimeOpfsMissingHint}`.trim();
+    }
+    if (!state.lockedKeys.has("machineEnableAerogpu")) {
+      machineAerogpuHint.textContent = machineAerogpuHelpText;
     }
     if (!state.lockedKeys.has("virtioNetMode")) {
       virtioNetModeHint.textContent = virtioNetModeHelpText;
@@ -355,6 +383,7 @@ export function mountSettingsPanel(
 
     logSelect.value = state.effective.logLevel;
     vmRuntimeSelect.value = state.effective.vmRuntime ?? "legacy";
+    machineAerogpuSelect.value = (state.effective.machineEnableAerogpu ?? true) ? "aerogpu" : "vga";
     virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";
     virtioInputModeSelect.value = state.effective.virtioInputMode ?? "modern";
     virtioSndModeSelect.value = state.effective.virtioSndMode ?? "modern";

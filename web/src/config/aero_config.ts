@@ -18,6 +18,17 @@ export interface AeroConfig {
   vramMiB: number;
   enableWorkers: boolean;
   enableWebGPU: boolean;
+  /**
+   * Override the machine runtime's AeroGPU enablement (vmRuntime="machine" only).
+   *
+   * When unset (default), the machine runtime uses the canonical browser machine defaults
+   * (`MachineConfig::browser_defaults`) which enable AeroGPU and disable legacy VGA.
+   *
+   * When set to `false`, the machine runtime will attempt to construct the wasm `api.Machine`
+   * with AeroGPU disabled (and VGA enabled by default) via `Machine.new_shared_with_config`
+   * when available.
+   */
+  machineEnableAerogpu?: boolean;
   proxyUrl: string | null;
   /**
    * Underlying transport for the L2 tunnel (Option C networking).
@@ -466,6 +477,11 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     if (parsed !== undefined) overrides.enableWebGPU = parsed;
   }
 
+  if (hasOwn(input, "machineEnableAerogpu")) {
+    const parsed = parseBoolean(input.machineEnableAerogpu);
+    if (parsed !== undefined) overrides.machineEnableAerogpu = parsed;
+  }
+
   if (hasOwn(input, "proxyUrl")) {
     const parsed = parseAndValidateProxyUrl(input.proxyUrl);
     if (parsed) {
@@ -639,6 +655,15 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
     if (parsed !== undefined) {
       overrides.enableWebGPU = parsed;
       lockedKeys.add("enableWebGPU");
+    }
+  }
+
+  const machineAerogpu = params.get("machineAerogpu");
+  if (machineAerogpu !== null) {
+    const parsed = parseBoolean(machineAerogpu);
+    if (parsed !== undefined) {
+      overrides.machineEnableAerogpu = parsed;
+      lockedKeys.add("machineEnableAerogpu");
     }
   }
 
