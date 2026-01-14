@@ -10618,9 +10618,68 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
     if (!is_guest_backed) {
-      EmitUploadLocked(dev, res, dst_off, bytes);
+      // For buffer uploads, the protocol requires the emitted UPLOAD_RESOURCE
+      // range to be 4-byte aligned. Use a staging buffer for the aligned range
+      // and only commit to the shadow `res->storage` after we successfully
+      // append the upload command (avoids UMD/host drift on OOM).
+      const uint64_t end = dst_off + bytes;
+      const uint64_t upload_offset = dst_off & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      if (upload_end < upload_offset) {
+        SetError(dev, E_INVALIDARG);
+        return;
+      }
+      const uint64_t upload_size = upload_end - upload_offset;
+      if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(dev, E_OUTOFMEMORY);
+        return;
+      }
+      const size_t upload_off = static_cast<size_t>(upload_offset);
+      const size_t upload_sz = static_cast<size_t>(upload_size);
+      if (upload_off > res->storage.size() || upload_sz > res->storage.size() - upload_off) {
+        SetError(dev, E_FAIL);
+        return;
+      }
+
+      // Fast path: the update range is already 4-byte aligned, so the upload
+      // payload can be taken directly from `pSysMem`.
+      const bool is_aligned_upload = (upload_offset == dst_off) && (upload_size == bytes);
+      std::vector<uint8_t> upload_payload;
+      const void* upload_data = nullptr;
+      size_t upload_data_bytes = 0;
+      if (is_aligned_upload) {
+        upload_data = pSysMem;
+        upload_data_bytes = static_cast<size_t>(bytes);
+      } else {
+        try {
+          upload_payload.resize(upload_sz);
+        } catch (...) {
+          SetError(dev, E_OUTOFMEMORY);
+          return;
+        }
+        if (upload_sz) {
+          std::memcpy(upload_payload.data(), res->storage.data() + upload_off, upload_sz);
+        }
+        std::memcpy(upload_payload.data() + static_cast<size_t>(dst_off - upload_offset),
+                    pSysMem,
+                    static_cast<size_t>(bytes));
+        upload_data = upload_payload.data();
+        upload_data_bytes = upload_payload.size();
+      }
+
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, upload_data, upload_data_bytes);
+      if (!cmd) {
+        SetError(dev, E_OUTOFMEMORY);
+        return;
+      }
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = upload_offset;
+      cmd->size_bytes = upload_size;
+
+      std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
       return;
     }
 
@@ -10654,9 +10713,32 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
+    // Only commit the write to both the runtime allocation and the shadow copy
+    // if we can successfully append the corresponding dirty-range command.
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!dirty_cmd) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = dst_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = dst_subresource;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
+    dirty_cmd->resource_handle = res->handle;
+    dirty_cmd->reserved0 = 0;
+    dirty_cmd->offset_bytes = dst_off;
+    dirty_cmd->size_bytes = bytes;
+
     std::memcpy(static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_off),
                 pSysMem,
                 static_cast<size_t>(bytes));
+    std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
 
     D3DDDICB_UNLOCK unlock_args = {};
     unlock_args.hAllocation = lock_args.hAllocation;
@@ -10672,8 +10754,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       SetError(dev, hr);
       return;
     }
-
-    EmitDirtyRangeLocked(dev, res, dst_off, bytes);
     return;
   }
 
