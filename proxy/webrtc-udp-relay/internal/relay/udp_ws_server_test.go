@@ -350,6 +350,46 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 	}
 }
 
+func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_QueryParamAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	c1 := dialWS(t, ts.URL, "/udp?token="+tokenA)
+	ready := readWSJSON(t, c1, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+
+	// apiKey is a query-string alias for jwt mode; it should not bypass sid-based
+	// session locking.
+	c2 := dialWS(t, ts.URL, "/udp?apiKey="+tokenB)
+	errMsg := readWSJSON(t, c2, 2*time.Second)
+	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
+		t.Fatalf("expected session_already_active error, got %#v", errMsg)
+	}
+}
+
 func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessageAuth(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeJWT,
@@ -386,6 +426,52 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 
 	c2 := dialWS(t, ts.URL, "/udp")
 	if err := c2.WriteJSON(map[string]any{"type": "auth", "token": tokenB}); err != nil {
+		t.Fatalf("WriteJSON(auth): %v", err)
+	}
+	errMsg := readWSJSON(t, c2, 2*time.Second)
+	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
+		t.Fatalf("expected session_already_active error, got %#v", errMsg)
+	}
+}
+
+func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessageAuth_AliasField(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	c1 := dialWS(t, ts.URL, "/udp")
+	if err := c1.WriteJSON(map[string]any{"type": "auth", "token": tokenA}); err != nil {
+		t.Fatalf("WriteJSON(auth): %v", err)
+	}
+	ready := readWSJSON(t, c1, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+
+	// apiKey is an alias for token in jwt mode; it should not bypass sid-based
+	// session locking.
+	c2 := dialWS(t, ts.URL, "/udp")
+	if err := c2.WriteJSON(map[string]any{"type": "auth", "apiKey": tokenB}); err != nil {
 		t.Fatalf("WriteJSON(auth): %v", err)
 	}
 	errMsg := readWSJSON(t, c2, 2*time.Second)

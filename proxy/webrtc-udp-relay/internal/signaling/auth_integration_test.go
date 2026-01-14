@@ -646,6 +646,63 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 	}
 }
 
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint_HeaderAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	// First session via the canonical Authorization header.
+	{
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tokenA)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+	}
+
+	// Second session attempt with the api key header alias (forward/compat for
+	// mode-agnostic clients). This must still be rejected based on sid.
+	{
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("X-API-Key", tokenB)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var errResp struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if errResp.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", errResp.Code, "session_already_active")
+		}
+	}
+}
+
 func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_SessionEndpoint(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:    config.AuthModeJWT,
