@@ -407,6 +407,23 @@ fn decode_rejects_dsx_in_vertex_shader() {
 }
 
 #[test]
+fn decode_rejects_dsy_in_vertex_shader() {
+    // vs_3_0 dsy r0, v0
+    //
+    // D3D9 derivatives (`dsx`/`dsy`) are pixel-shader-only.
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        opcode_token(87, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("only valid in pixel shaders"), "{err}");
+}
+
+#[test]
 fn decode_rejects_missing_end_token() {
     // Valid version token but no terminating `end` instruction.
     let tokens = vec![version_token(ShaderStage::Vertex, 3, 0)];
