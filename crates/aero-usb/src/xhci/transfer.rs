@@ -590,6 +590,7 @@ enum ControlEp0State {
         transferred: u32,
         idt: bool,
         immediate: [u8; 8],
+        ioc: bool,
     },
     /// DATA consumed; next TRB should be STATUS.
     ExpectStatus {
@@ -729,6 +730,17 @@ impl ControlEndpoint {
                     let setup = SetupPacket::from_bytes(setup_bytes);
                     match dev.handle_setup(setup) {
                         UsbOutResult::Ack => {
+                            if xhci_trb_ioc(&trb) {
+                                Self::push_event(
+                                    events,
+                                    mem,
+                                    trb_addr,
+                                    CompletionCode::Success,
+                                    0,
+                                    endpoint_id,
+                                    slot_id,
+                                );
+                            }
                             self.ring.consume(&trb);
                             self.state = ControlEp0State::ExpectDataOrStatus;
                             processed_any = true;
@@ -774,8 +786,15 @@ impl ControlEndpoint {
                         let direction = xhci_trb_data_status_direction(&trb);
                         let len = xhci_trb_transfer_len(&trb).min(MAX_CONTROL_DATA_LEN);
                         let idt = xhci_trb_idt(&trb);
-                        let immediate = trb.parameter.to_le_bytes();
+                        let mut immediate = trb.parameter.to_le_bytes();
+                        // For IN immediate-data transfers, we will write the response bytes back
+                        // into the TRB parameter field. Start from zeroed bytes so we do not
+                        // preserve any guest-provided garbage.
+                        if idt && matches!(direction, Direction::In) {
+                            immediate = [0u8; 8];
+                        }
                         let buffer_ptr = trb.parameter;
+                        let ioc = xhci_trb_ioc(&trb);
                         self.state = ControlEp0State::Data {
                             direction,
                             trb_addr,
@@ -784,6 +803,7 @@ impl ControlEndpoint {
                             transferred: 0,
                             idt,
                             immediate,
+                            ioc,
                         };
                         processed_any = true;
                     }
@@ -823,6 +843,7 @@ impl ControlEndpoint {
                     transferred,
                     idt,
                     immediate,
+                    ioc,
                 } => {
                     if *expected_addr != trb_addr
                         || !matches!(trb.trb_type(), XhciTrbType::DataStage)
@@ -852,16 +873,30 @@ impl ControlEndpoint {
 
                         match direction {
                             Direction::In => match dev.handle_in(0, chunk_max) {
-                                UsbInResult::Data(chunk) => {
-                                    if *idt {
-                                        // Immediate data for IN is not implemented; treat as TRB
-                                        // error but do not panic.
-                                        completion = Some(CompletionCode::TrbError);
-                                        break;
+                                UsbInResult::Data(mut chunk) => {
+                                    if chunk.len() > chunk_max {
+                                        chunk.truncate(chunk_max);
                                     }
-                                    let addr = buffer_ptr.wrapping_add(*transferred as u64);
-                                    mem.write_physical(addr, &chunk);
+
                                     let got = chunk.len() as u32;
+                                    if *idt {
+                                        let offset = *transferred as usize;
+                                        let end = offset.saturating_add(chunk.len());
+                                        if end > immediate.len() {
+                                            completion = Some(CompletionCode::TrbError);
+                                            break;
+                                        }
+                                        immediate[offset..end].copy_from_slice(&chunk);
+
+                                        // Write the updated immediate bytes back into the TRB
+                                        // parameter field in guest memory.
+                                        let mut updated_trb = trb;
+                                        updated_trb.parameter = u64::from_le_bytes(*immediate);
+                                        write_xhci_trb(mem, trb_addr, &updated_trb);
+                                    } else {
+                                        let addr = buffer_ptr.wrapping_add(*transferred as u64);
+                                        mem.write_physical(addr, &chunk);
+                                    }
                                     *transferred = transferred.saturating_add(got);
                                     remaining = remaining.saturating_sub(got);
                                     if got < chunk_max as u32 {
@@ -889,8 +924,9 @@ impl ControlEndpoint {
                                     // Immediate data is carried in the parameter field (up to 8
                                     // bytes). This is rare for control transfers; support the basic
                                     // OUT case for robustness.
-                                    let avail = immediate.len().min(chunk_max);
-                                    chunk.extend_from_slice(&immediate[..avail]);
+                                    let offset = (*transferred as usize).min(immediate.len());
+                                    let avail = immediate[offset..].len().min(chunk_max);
+                                    chunk.extend_from_slice(&immediate[offset..offset + avail]);
                                     if avail != chunk_max {
                                         completion = Some(CompletionCode::TrbError);
                                         break;
@@ -949,6 +985,24 @@ impl ControlEndpoint {
                     let expected_data_len = *len;
                     let actual_data_len = *transferred;
                     let short = short_packet || actual_data_len < expected_data_len;
+
+                    if *ioc {
+                        let remaining_len = expected_data_len.saturating_sub(actual_data_len);
+                        let completion = if short {
+                            CompletionCode::ShortPacket
+                        } else {
+                            CompletionCode::Success
+                        };
+                        Self::push_event(
+                            events,
+                            mem,
+                            trb_addr,
+                            completion,
+                            remaining_len,
+                            endpoint_id,
+                            slot_id,
+                        );
+                    }
 
                     // DATA stage completed (possibly short). Advance past the DATA TRB and proceed
                     // to STATUS.

@@ -248,7 +248,7 @@ guest transfer ring:
 
 - Setup Stage / Data Stage / Status Stage TRBs.
 - IN + OUT directions.
-- Data Stage supports buffer pointers (IDT=0); IDT=1 is handled defensively (no panics).
+- Data Stage supports buffer pointers (IDT=0) and immediate data (IDT=1, <=8 bytes).
 - `NAK` leaves the TD pending and retries on the next `tick_1ms` (no busy loops).
 - Emits Transfer Event TRBs into a simple contiguous event ring (used by unit tests).
 
@@ -278,6 +278,7 @@ Dedicated EP0 unit tests also exist:
 - `crates/aero-usb/tests/xhci_control_get_descriptor.rs`
 - `crates/aero-usb/tests/xhci_control_set_configuration.rs`
 - `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
+- `crates/aero-usb/tests/xhci_control_immediate_data.rs`
 
 ### Still MVP-relevant but not implemented yet
 
