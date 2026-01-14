@@ -208,7 +208,7 @@ The blob provides:
 To get DWM compositing and basic D3D9 apps running, the UMD should expose a conservative, minimal set of caps:
 
 - Shader model: at least `vs_2_0` / `ps_2_0` equivalents (DWM heavily relies on pixel shaders)
-- Render target formats: at least `X8R8G8B8` and `A8R8G8B8`
+- Render target formats: at least `X8R8G8B8` (opaque alpha) and `A8R8G8B8`
 - Textures: 2D textures in common formats; no volume textures required for DWM
 - Depth/stencil: optional for DWM; required for many apps (can be introduced after triangle test passes)
 

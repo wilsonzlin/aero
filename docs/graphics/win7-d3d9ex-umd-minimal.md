@@ -68,7 +68,7 @@ While exact values differ by GPU/driver, DWM commonly uses a presentation setup 
 
 * `Windowed = TRUE`
 * `SwapEffect = D3DSWAPEFFECT_FLIPEX` (preferred on Ex) or `D3DSWAPEFFECT_DISCARD`
-* `BackBufferFormat = D3DFMT_X8R8G8B8` (sometimes `A8R8G8B8`)
+* `BackBufferFormat = D3DFMT_X8R8G8B8` (opaque alpha; sometimes `A8R8G8B8`)
 * `BackBufferCount = 1` (double-buffered) or occasionally more
 * `PresentationInterval = D3DPRESENT_INTERVAL_ONE`
 * `hDeviceWindow = <DWM's top-level composition window>`
@@ -357,13 +357,13 @@ Make the following formats work for the usage DWM needs:
 
 **Render target / swap chain:**
 
-* `D3DFMT_X8R8G8B8` (desktop backbuffer common)
+* `D3DFMT_X8R8G8B8` (desktop backbuffer common; opaque alpha)
 * `D3DFMT_A8R8G8B8` (composition surfaces with alpha)
 
 **Texture sampling:**
 
 * `D3DFMT_A8R8G8B8` (window textures)
-* `D3DFMT_X8R8G8B8` (opaque surfaces)
+* `D3DFMT_X8R8G8B8` (opaque surfaces; alpha treated as 1.0)
 
 **Depth/stencil (optional but increases robustness):**
 
