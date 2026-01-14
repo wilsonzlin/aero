@@ -1084,6 +1084,11 @@ impl AeroGpuMmioDevice {
             .and_then(|backend| backend.read_scanout_rgba8(scanout_id))
     }
 
+    pub fn backend_read_scanout_rgba8(&mut self, scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+        let backend = self.backend.as_mut()?;
+        backend.read_scanout_rgba8(scanout_id)
+    }
+
     pub(crate) fn drain_pending_submissions(&mut self) -> Vec<AerogpuSubmission> {
         if self.pending_submissions.is_empty() {
             return Vec::new();

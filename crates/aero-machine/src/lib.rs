@@ -7170,6 +7170,18 @@ impl Machine {
         Ok(())
     }
 
+    /// Read back the most recently presented scanout from the installed in-process AeroGPU backend.
+    ///
+    /// Returns `None` when AeroGPU is not present or no in-process backend is installed.
+    pub fn aerogpu_backend_read_scanout_rgba8(
+        &mut self,
+        scanout_id: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        let mmio = self.aerogpu_mmio.as_ref()?;
+        let scanout = mmio.borrow_mut().backend_read_scanout_rgba8(scanout_id)?;
+        Some((scanout.width, scanout.height, scanout.rgba8))
+    }
+
     /// Returns the PCI INTx router, if present.
     pub fn pci_intx_router(&self) -> Option<Rc<RefCell<PciIntxRouter>>> {
         self.pci_intx.clone()
