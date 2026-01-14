@@ -5942,6 +5942,7 @@ impl Machine {
     ///
     /// - the guest-programmed AeroGPU scanout (WDDM scanout0), if claimed, or
     /// - the active VBE linear framebuffer (if a VBE mode is set), or
+    /// - VGA mode 13h (320x200x256) if selected via BIOS INT 10h, or
     /// - BIOS/boot text mode output by rendering the legacy text buffer at `0xB8000` using BIOS
     ///   Data Area (BDA) state for active page selection and cursor overlay.
     ///
