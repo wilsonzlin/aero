@@ -238,8 +238,8 @@ configuration.
 - Contract v1 requires INTx and permits MSI-X only as an optional enhancement.
 - The host harness includes a best-effort parser for virtio-blk interrupt-mode diagnostics when the guest selftest
   includes interrupt-related key/value fields on the `virtio-blk` marker:
-  - Guest marker (example): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0|msix_queue_vector=1`
-  - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0|msix_queue_vector=1`
+  - Guest marker (example): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001`
+  - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001`
 - This host marker is **diagnostic only** (it does not currently affect overall PASS/FAIL).
 - Newer guest selftest binaries also emit dedicated MSI-X routing markers; the harness mirrors them into stable host markers:
   - virtio-blk:
