@@ -237,14 +237,11 @@ static const UCHAR g_AeroGpuEdid[128] = {
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x45
 };
 
-static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHAR* Edid, _Out_ ULONG* Width, _Out_ ULONG* Height)
+static BOOLEAN AeroGpuIsEdidValid(_In_reads_bytes_(128) const UCHAR* Edid)
 {
-    if (!Edid || !Width || !Height) {
+    if (!Edid) {
         return FALSE;
     }
-
-    *Width = 0;
-    *Height = 0;
 
     /* Validate base EDID header. */
     static const UCHAR kEdidHeader[8] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
@@ -258,6 +255,22 @@ static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHA
         sum = (UCHAR)(sum + Edid[i]);
     }
     if (sum != 0) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHAR* Edid, _Out_ ULONG* Width, _Out_ ULONG* Height)
+{
+    if (!Edid || !Width || !Height) {
+        return FALSE;
+    }
+
+    *Width = 0;
+    *Height = 0;
+
+    if (!AeroGpuIsEdidValid(Edid)) {
         return FALSE;
     }
 
@@ -404,6 +417,81 @@ static VOID AeroGpuModeListAddUnique(_Inout_updates_(Capacity) AEROGPU_DISPLAY_M
     (*Count)++;
 }
 
+static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* Edid,
+                                             _Inout_updates_(Capacity) AEROGPU_DISPLAY_MODE* Modes,
+                                             _Inout_ UINT* Count,
+                                             _In_ UINT Capacity)
+{
+    if (!Edid || !Modes || !Count || Capacity == 0) {
+        return;
+    }
+    if (!AeroGpuIsEdidValid(Edid)) {
+        return;
+    }
+
+    /*
+     * EDID standard timing identifiers: 8 entries at offsets 38..53 (inclusive).
+     *
+     * Byte 0: (horizontal_active / 8) - 31
+     * Byte 1:
+     *   bits 7-6: aspect ratio
+     *   bits 5-0: refresh_rate - 60
+     *
+     * For EDID 1.3/1.4, aspect ratio encoding:
+     *   00 = 16:10, 01 = 4:3, 10 = 5:4, 11 = 16:9
+     */
+    for (UINT i = 0; i < 8; ++i) {
+        const UCHAR b0 = Edid[38 + i * 2];
+        const UCHAR b1 = Edid[38 + i * 2 + 1];
+        if (b0 == 0x01 && b1 == 0x01) {
+            continue;
+        }
+
+        const ULONG hActive = ((ULONG)b0 + 31u) * 8u;
+        const ULONG aspect = (ULONG)(b1 >> 6) & 0x3u;
+
+        ULONG vActive = 0;
+        switch (aspect) {
+        case 0: /* 16:10 */
+            vActive = (hActive * 10u) / 16u;
+            break;
+        case 1: /* 4:3 */
+            vActive = (hActive * 3u) / 4u;
+            break;
+        case 2: /* 5:4 */
+            vActive = (hActive * 4u) / 5u;
+            break;
+        case 3: /* 16:9 */
+            vActive = (hActive * 9u) / 16u;
+            break;
+        default:
+            vActive = 0;
+            break;
+        }
+
+        if (hActive == 0 || vActive == 0) {
+            continue;
+        }
+
+        /*
+         * The spec does not define rounding rules when the ratio doesn't divide
+         * evenly; snap to a multiple of 8 lines to match how common modes are
+         * represented in Windows (for example 1368x768 rather than 1368x769).
+         */
+        vActive &= ~7u;
+        if (vActive == 0) {
+            continue;
+        }
+
+        /* Avoid near-duplicate modes (e.g. 1366x768 vs 1368x768). */
+        if (AeroGpuModeListContainsApprox(Modes, *Count, hActive, vActive, 2u)) {
+            continue;
+        }
+
+        AeroGpuModeListAddUnique(Modes, Count, Capacity, hActive, vActive);
+    }
+}
+
 static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Modes, _In_ UINT Capacity)
 {
     if (!Modes || Capacity == 0) {
@@ -426,6 +514,9 @@ static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Mo
     if (prefW != 0 && prefH != 0) {
         AeroGpuModeListAddUnique(Modes, &count, Capacity, prefW, prefH);
     }
+
+    /* Additional modes derived from EDID standard timings (best-effort). */
+    AeroGpuAppendEdidStandardTimings(g_AeroGpuEdid, Modes, &count, Capacity);
 
     /*
      * Curated fallback list (all modes treated as 60 Hz, progressive).
