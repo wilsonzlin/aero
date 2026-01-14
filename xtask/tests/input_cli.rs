@@ -182,5 +182,6 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("--with-wasm"))
         .stdout(predicate::str::contains("--rust-only"))
         .stdout(predicate::str::contains("--usb-all"))
+        .stdout(predicate::str::contains("--node-dir"))
         .stdout(predicate::str::contains("AERO_NODE_DIR"));
 }

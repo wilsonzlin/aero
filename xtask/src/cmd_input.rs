@@ -15,6 +15,7 @@ struct InputOpts {
     with_wasm: bool,
     usb_all: bool,
     rust_only: bool,
+    node_dir: Option<String>,
     pw_extra_args: Vec<String>,
 }
 
@@ -161,7 +162,7 @@ pub fn print_help() {
 Run the USB/input-focused test suite (Rust + web) with one command.
 
 Usage:
-  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [--with-wasm] [--usb-all] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [--with-wasm] [--usb-all] [--node-dir <path>] [-- <extra playwright args>]
 
 Steps:
   1. cargo test -p aero-devices-input --locked
@@ -181,6 +182,7 @@ Options:
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
   --with-wasm            Also run host-side `aero-wasm` input integration smoke tests (no wasm-pack; does not require `node_modules`).
+  --node-dir <path>     Override the Node workspace directory for the web unit-test step (same as AERO_NODE_DIR).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
@@ -322,7 +324,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    let node_dir = resolve_node_dir_for_input(&repo_root)?;
+    let node_dir = resolve_node_dir_for_input(&repo_root, opts.node_dir.as_deref())?;
 
     // `npm ci` from the repo root installs workspace deps under `./node_modules/`, but some
     // setups may install within `web/` directly. Accept either so `cargo xtask input` can still
@@ -399,6 +401,15 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
             "--rust-only" => opts.rust_only = true,
             "--with-wasm" => opts.with_wasm = true,
             "--usb-all" => opts.usb_all = true,
+            "--node-dir" | "--web-dir" => {
+                opts.node_dir = Some(next_value(&mut iter, &arg)?);
+            }
+            val if val.starts_with("--node-dir=") => {
+                opts.node_dir = Some(val["--node-dir=".len()..].to_string());
+            }
+            val if val.starts_with("--web-dir=") => {
+                opts.node_dir = Some(val["--web-dir=".len()..].to_string());
+            }
             "--" => {
                 opts.pw_extra_args = iter.collect();
                 break;
@@ -423,6 +434,16 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
     }
 
     Ok(Some(opts))
+}
+
+fn next_value(
+    iter: &mut std::iter::Peekable<std::vec::IntoIter<String>>,
+    flag: &str,
+) -> Result<String> {
+    match iter.next() {
+        Some(v) => Ok(v),
+        None => Err(XtaskError::Message(format!("{flag} requires a value"))),
+    }
 }
 
 fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
@@ -499,7 +520,7 @@ fn format_test_flags(tests: &[&str]) -> String {
         .join(" ")
 }
 
-fn resolve_node_dir_for_input(repo_root: &Path) -> Result<PathBuf> {
+fn resolve_node_dir_for_input(repo_root: &Path, cli_override: Option<&str>) -> Result<PathBuf> {
     fn env_nonempty(key: &str) -> Option<String> {
         let value = env::var(key).ok()?;
         let value = value.trim();
@@ -514,7 +535,12 @@ fn resolve_node_dir_for_input(repo_root: &Path) -> Result<PathBuf> {
     // for consistency with CI. `cargo xtask input` intentionally stays sandbox-friendly and avoids
     // requiring Node to execute *additional* detection scripts in test mode, so we resolve the
     // node dir using a simple Rust fallback here.
-    let override_dir = env_nonempty("AERO_NODE_DIR").or_else(|| env_nonempty("AERO_WEB_DIR"));
+    let override_dir = cli_override
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .or_else(|| env_nonempty("AERO_NODE_DIR"))
+        .or_else(|| env_nonempty("AERO_WEB_DIR"));
     if let Some(dir) = override_dir {
         let path = PathBuf::from(&dir);
         let resolved = if path.is_absolute() {
@@ -526,7 +552,7 @@ fn resolve_node_dir_for_input(repo_root: &Path) -> Result<PathBuf> {
             return Ok(resolved);
         }
         return Err(XtaskError::Message(format!(
-            "package.json not found in node dir override `{dir}` (set AERO_NODE_DIR to a directory that contains package.json)"
+            "package.json not found in node dir override `{dir}` (set --node-dir/AERO_NODE_DIR to a directory that contains package.json)"
         )));
     }
 
@@ -559,6 +585,10 @@ fn rust_only_hint(opts: &InputOpts) -> String {
     }
     if opts.with_wasm {
         args.push("--with-wasm".into());
+    }
+    if let Some(node_dir) = &opts.node_dir {
+        args.push("--node-dir".into());
+        args.push(node_dir.clone());
     }
     args.push("--rust-only".into());
     args.join(" ")
