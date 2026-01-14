@@ -708,13 +708,13 @@ pub fn decode_instruction(
         }
         OPCODE_ISUBC => {
             let dst_diff = decode_dst(&mut r)?;
-            let dst_borrow = decode_dst(&mut r)?;
+            let dst_carry = decode_dst(&mut r)?;
             let a = decode_src(&mut r)?;
             let b = decode_src(&mut r)?;
             r.expect_eof()?;
             Ok(Sm4Inst::ISubC {
                 dst_diff,
-                dst_borrow,
+                dst_carry,
                 a,
                 b,
             })

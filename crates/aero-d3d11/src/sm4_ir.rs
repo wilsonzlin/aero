@@ -270,7 +270,11 @@ pub enum Sm4Inst {
     /// Signed integer subtract with borrow.
     ISubC {
         dst_diff: DstOperand,
-        dst_borrow: DstOperand,
+        /// Carry/no-borrow flag output.
+        ///
+        /// Note: despite the "sub" mnemonic, D3D's `isubc` instruction exposes a carry-style flag
+        /// (1 when `a >= b`, 0 when a borrow occurred).
+        dst_carry: DstOperand,
         a: SrcOperand,
         b: SrcOperand,
     },

@@ -1049,6 +1049,74 @@ fn translates_usubb_emits_borrow_and_writes_both_destinations() {
 }
 
 #[test]
+fn translates_isubc_emits_carry_and_writes_both_destinations() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let a = SrcOperand {
+        kind: SrcKind::ImmediateF32([0; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let b = SrcOperand {
+        kind: SrcKind::ImmediateF32([1; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::ISubC {
+                dst_diff: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                dst_carry: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                a,
+                b,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains(
+            "let isubc_carry_0 = select(vec4<u32>(0u), vec4<u32>(1u), isubc_a_0 >= isubc_b_0);"
+        ),
+        "expected carry computation using `a >= b`:\n{}",
+        translated.wgsl
+    );
+
+    assert!(
+        translated
+            .wgsl
+            .contains("r0.x = (bitcast<vec4<f32>>(isubc_diff_0)).x;"),
+        "expected diff to be written to r0:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("r1.x = (bitcast<vec4<f32>>(isubc_carry_0)).x;"),
+        "expected carry to be written to r1:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn rdef_cbuffer_size_overrides_used_registers() {
     // Shader reads only cb0[0], but RDEF declares the cbuffer to be 128 bytes (8 registers).
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];

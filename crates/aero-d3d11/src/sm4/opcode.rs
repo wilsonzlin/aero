@@ -36,7 +36,7 @@ pub const OPCODE_UADDC: u32 = 0x6a;
 pub const OPCODE_USUBB: u32 = 0x6b;
 /// Signed integer add with carry: `iaddc dst_sum, dst_carry, a, b`.
 pub const OPCODE_IADDC: u32 = 0x6c;
-/// Signed integer subtract with borrow/carry: `isubc dst_diff, dst_borrow, a, b`.
+/// Signed integer subtract with carry (no-borrow flag): `isubc dst_diff, dst_carry, a, b`.
 pub const OPCODE_ISUBC: u32 = 0x6d;
 
 /// `udiv dst_quot, dst_rem, a, b` (unsigned integer quotient + remainder).

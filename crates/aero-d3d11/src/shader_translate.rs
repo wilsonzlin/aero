@@ -2923,11 +2923,16 @@ fn emit_temp_and_output_decls(
             }
             Sm4Inst::ISubC {
                 dst_diff,
-                dst_borrow,
+                dst_carry,
                 a,
                 b,
+            } => {
+                scan_reg(dst_diff.reg);
+                scan_reg(dst_carry.reg);
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
             }
-            | Sm4Inst::USubB {
+            Sm4Inst::USubB {
                 dst_diff,
                 dst_borrow,
                 a,
@@ -3559,11 +3564,11 @@ fn emit_instructions(
             }
             Sm4Inst::ISubC {
                 dst_diff,
-                dst_borrow,
+                dst_carry,
                 a,
                 b,
             } => {
-                emit_sub_with_borrow(w, "isubc", inst_index, dst_diff, dst_borrow, a, b, ctx)?;
+                emit_sub_with_carry(w, "isubc", inst_index, dst_diff, dst_carry, a, b, ctx)?;
             }
             Sm4Inst::USubB {
                 dst_diff,
@@ -4729,6 +4734,57 @@ fn emit_sub_with_borrow(
         dst_borrow.reg,
         dst_borrow.mask,
         borrow_bits,
+        inst_index,
+        opcode,
+        ctx,
+    )?;
+
+    Ok(())
+}
+
+fn emit_sub_with_carry(
+    w: &mut WgslWriter,
+    opcode: &'static str,
+    inst_index: usize,
+    dst_diff: &crate::sm4_ir::DstOperand,
+    dst_carry: &crate::sm4_ir::DstOperand,
+    a: &crate::sm4_ir::SrcOperand,
+    b: &crate::sm4_ir::SrcOperand,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), ShaderTranslateError> {
+    let a_expr = emit_src_vec4_u32_int(a, inst_index, opcode, ctx)?;
+    let b_expr = emit_src_vec4_u32_int(b, inst_index, opcode, ctx)?;
+
+    let a_var = format!("{opcode}_a_{inst_index}");
+    let b_var = format!("{opcode}_b_{inst_index}");
+    let diff_var = format!("{opcode}_diff_{inst_index}");
+    let carry_var = format!("{opcode}_carry_{inst_index}");
+
+    w.line(&format!("let {a_var} = {a_expr};"));
+    w.line(&format!("let {b_var} = {b_expr};"));
+    w.line(&format!("let {diff_var} = {a_var} - {b_var};"));
+    // Carry flag for subtraction is the inverse of borrow: 1 when no borrow occurred.
+    w.line(&format!(
+        "let {carry_var} = select(vec4<u32>(0u), vec4<u32>(1u), {a_var} >= {b_var});"
+    ));
+
+    let diff_bits = format!("bitcast<vec4<f32>>({diff_var})");
+    emit_write_masked(
+        w,
+        dst_diff.reg,
+        dst_diff.mask,
+        diff_bits,
+        inst_index,
+        opcode,
+        ctx,
+    )?;
+
+    let carry_bits = format!("bitcast<vec4<f32>>({carry_var})");
+    emit_write_masked(
+        w,
+        dst_carry.reg,
+        dst_carry.mask,
+        carry_bits,
         inst_index,
         opcode,
         ctx,
