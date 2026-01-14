@@ -1195,6 +1195,23 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_bulk_out_payload_over_limit_before_reading_bytes() {
+        // Same as `snapshot_load_rejects_action_payload_over_limit_before_reading_bytes`, but for
+        // the BulkOut action path.
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(4) // BulkOut
+            .u32(1) // action id
+            .u8(0x01) // endpoint
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
     fn snapshot_load_rejects_completion_error_message_over_limit_before_reading_bytes() {
         // Intentionally truncate the snapshot after the oversized error length.
         // If the implementation tried to read the message bytes, we'd get UnexpectedEof instead of
@@ -1207,6 +1224,23 @@ mod tests {
             .u32(1) // completion id
             .u8(4) // Error
             .u32(MAX_ERROR_BYTES + 1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_completion_ok_in_payload_over_limit_before_reading_bytes() {
+        // Same as `snapshot_load_rejects_action_payload_over_limit_before_reading_bytes`, but for
+        // the completion OkIn data path.
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(1)
+            .u32(1) // completion id
+            .u8(1) // OkIn
+            .u32(MAX_DATA_BYTES + 1)
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
