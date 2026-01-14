@@ -158,6 +158,68 @@ bool TestTextureLayout() {
   return ok;
 }
 
+bool TestTextureMipLevelLayout() {
+  bool ok = true;
+
+  aerogpu::Texture2dMipLevelLayout level{};
+
+  // 8x8 RGBA8 mip chain with 4 mips: 8x8 + 4x4 + 2x2 + 1x1.
+  // Offsets are within layer 0.
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(static_cast<D3DDDIFORMAT>(21u), 8, 8, 4, 1, 0, &level),
+              "calc_texture2d_mip_level_layout(level0) returns true");
+  ok &= CheckEqU32(level.width, 8u, "mip0 width");
+  ok &= CheckEqU32(level.height, 8u, "mip0 height");
+  ok &= CheckEqU32(level.row_pitch_bytes, 32u, "mip0 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 256u, "mip0 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 0u, "mip0 offset");
+
+  level = {};
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(static_cast<D3DDDIFORMAT>(21u), 8, 8, 4, 1, 1, &level),
+              "calc_texture2d_mip_level_layout(level1) returns true");
+  ok &= CheckEqU32(level.width, 4u, "mip1 width");
+  ok &= CheckEqU32(level.height, 4u, "mip1 height");
+  ok &= CheckEqU32(level.row_pitch_bytes, 16u, "mip1 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 64u, "mip1 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 256u, "mip1 offset");
+
+  level = {};
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(static_cast<D3DDDIFORMAT>(21u), 8, 8, 4, 1, 2, &level),
+              "calc_texture2d_mip_level_layout(level2) returns true");
+  ok &= CheckEqU32(level.width, 2u, "mip2 width");
+  ok &= CheckEqU32(level.height, 2u, "mip2 height");
+  ok &= CheckEqU32(level.row_pitch_bytes, 8u, "mip2 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 16u, "mip2 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 320u, "mip2 offset");
+
+  level = {};
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(static_cast<D3DDDIFORMAT>(21u), 8, 8, 4, 1, 3, &level),
+              "calc_texture2d_mip_level_layout(level3) returns true");
+  ok &= CheckEqU32(level.width, 1u, "mip3 width");
+  ok &= CheckEqU32(level.height, 1u, "mip3 height");
+  ok &= CheckEqU32(level.row_pitch_bytes, 4u, "mip3 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 4u, "mip3 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 336u, "mip3 offset");
+
+  // BC1 layout uses 4x4 blocks. Test per-mip pitches/offsets for a 5x5 mip chain (2 mips).
+  // Level0: 5x5 => 2x2 blocks => row=16, slice=32.
+  // Level1: 2x2 => 1x1 block => row=8, slice=8. Offset is 32.
+  level = {};
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(aerogpu::kD3dFmtDxt1, 5, 5, 2, 1, 0, &level),
+              "calc_texture2d_mip_level_layout(BC1 level0) returns true");
+  ok &= CheckEqU32(level.row_pitch_bytes, 16u, "BC1 mip0 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 32u, "BC1 mip0 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 0u, "BC1 mip0 offset");
+
+  level = {};
+  ok &= Check(aerogpu::calc_texture2d_mip_level_layout(aerogpu::kD3dFmtDxt1, 5, 5, 2, 1, 1, &level),
+              "calc_texture2d_mip_level_layout(BC1 level1) returns true");
+  ok &= CheckEqU32(level.row_pitch_bytes, 8u, "BC1 mip1 row pitch");
+  ok &= CheckEqU32(level.slice_pitch_bytes, 8u, "BC1 mip1 slice pitch");
+  ok &= CheckEqU64(level.offset_bytes, 32u, "BC1 mip1 offset");
+
+  return ok;
+}
+
 } // namespace
 
 int main() {
@@ -165,6 +227,6 @@ int main() {
   ok &= TestFormatMapping();
   ok &= TestBytesPerPixel();
   ok &= TestTextureLayout();
+  ok &= TestTextureMipLevelLayout();
   return ok ? 0 : 1;
 }
-
