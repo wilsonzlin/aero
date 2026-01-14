@@ -56,7 +56,7 @@ Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few di
 2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
    - Spec (via `-Profile`):
-      - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
+      - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes optional `vioinput`/`viosnd` when present for **both** x86 and amd64)
       - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
    - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
@@ -199,7 +199,7 @@ drivers/virtio/
 Notes:
 
 - For the virtio-win-derived pack, Aero only **requires** `viostor` (storage) + `netkvm` (network).
-- `vioinput` and `viosnd` are optional and may be missing from some virtio-win versions; the packaging scripts handle this by default.
+- `vioinput` and `viosnd` are optional and may be missing from some virtio-win versions. The packaging scripts handle this by default, but will only include them when they exist for **both** x86 and amd64; otherwise they’re omitted (unless `-StrictOptional` is used).
 - CI/release Guest Tools uses **in-tree** driver packages and a different spec/driver naming (`virtio-blk`, `virtio-net`, ...). See `drivers/README.md`.
 
 ### Why we require `.inf` + `.sys` + `.cat`
@@ -331,7 +331,9 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 
   -NoZip
 ```
 
-By default this requires `viostor` + `netkvm` and attempts to include `vioinput` + `viosnd` best-effort (emits a warning if missing). To control this explicitly:
+By default this requires `viostor` + `netkvm` and attempts to include `vioinput` + `viosnd` best-effort.
+
+Important: optional drivers are included only when present for **both** x86 and amd64; if an optional driver exists for only one architecture in the virtio-win source, it is omitted from both (with a warning) so Guest Tools packaging never ships a one-arch-only optional driver. To control this explicitly:
 
 - Minimal pack: `-Drivers viostor,netkvm`
 - Strict optional (fail if audio/input are missing): `-StrictOptional`

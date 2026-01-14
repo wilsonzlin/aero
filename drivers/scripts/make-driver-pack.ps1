@@ -436,6 +436,9 @@ try {
     $includedTargets = @()
     $missingTargets = @()
     $targetErrors = @{}
+    $normalizedFromPartial = $false
+    $originalIncludedTargets = @()
+    $originalMissingTargets = @()
 
     foreach ($t in $targets) {
       try {
@@ -448,6 +451,33 @@ try {
       }
     }
 
+    # Optional drivers are best-effort, but we must never ship them for only one architecture.
+    #
+    # When -StrictOptional is NOT set and an optional driver is present for only one target,
+    # normalize it to "missing" by deleting the extracted directory so downstream packaging
+    # never sees a partial (one-arch-only) optional driver.
+    if (-not $isRequired -and -not $StrictOptional -and $includedTargets.Count -gt 0 -and $missingTargets.Count -gt 0) {
+      $normalizedFromPartial = $true
+      $originalIncludedTargets = @($includedTargets)
+      $originalMissingTargets = @($missingTargets)
+
+      foreach ($t in $targets) {
+        if (Test-Path -LiteralPath $t.DestDir -PathType Container) {
+          Remove-Item -LiteralPath $t.DestDir -Recurse -Force
+        }
+      }
+
+      # Record the final ("normalized") state: missing on all targets.
+      $includedTargets = @()
+      $missingTargets = @($targets | ForEach-Object { $_.Id })
+
+      foreach ($tid in $originalIncludedTargets) {
+        if (-not $targetErrors.ContainsKey($tid)) {
+          $targetErrors[$tid] = "Omitted from pack because the optional driver was missing for one or more other targets."
+        }
+      }
+    }
+
     $status = "included"
     if ($includedTargets.Count -eq 0) {
       $status = "missing"
@@ -455,7 +485,7 @@ try {
       $status = "partial"
     }
 
-    if ($includedTargets.Count -gt 0) {
+    if ($status -eq "included") {
       $includedDrivers.Add($name) | Out-Null
     }
 
@@ -470,7 +500,11 @@ try {
     }
 
     if ($missingTargets.Count -gt 0) {
-      $summary = "Driver '$name' ($up) missing for: $($missingTargets -join ', ')."
+      $summary = if ($normalizedFromPartial) {
+        "Optional driver '$name' ($up) was present only for: $($originalIncludedTargets -join ', ') and missing for: $($originalMissingTargets -join ', '); omitting it from all targets to keep Guest Tools packaging consistent (require_optional_drivers_on_all_arches)."
+      } else {
+        "Driver '$name' ($up) missing for: $($missingTargets -join ', ')."
+      }
       if ($isRequired) {
         $detail = ""
         if ($targetErrors.Count -gt 0) {
