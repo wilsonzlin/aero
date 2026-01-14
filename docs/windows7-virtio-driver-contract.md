@@ -1075,7 +1075,7 @@ Harness validation (non-normative, QEMU):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|...`
 - Newer guest selftests also emit a dedicated checksum-offload counter marker (derived from the virtio-net diagnostics IOCTL):
-  - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...`
+  - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...|...`
   - The host harness can optionally require `tx_csum > 0` via:
     - PowerShell: `-RequireNetCsumOffload`
     - Python: `--require-net-csum-offload`

@@ -79,7 +79,8 @@ How to validate (in-tree harness):
 - The marker includes deterministic large transfer diagnostics (`large_*`, `upload_*`) which can be used to compare
   throughput and integrity across configurations.
 - The guest selftest also emits a checksum offload counter marker derived from the driver diagnostics IOCTL:
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>|...`
+    - Newer builds may append per-protocol breakdown fields (e.g. `tx_tcp4`, `tx_udp6`, `rx_tcp`, `rx_udp`, etc).
   - The host harness can optionally require `tx_csum > 0`:
     - PowerShell: `-RequireNetCsumOffload`
     - Python: `--require-net-csum-offload`

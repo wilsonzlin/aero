@@ -1511,7 +1511,13 @@ This is informational only and does not affect overall PASS/FAIL.
 
 The guest selftest emits a dedicated machine-readable marker surfacing virtio-net checksum offload behavior:
 
-- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>|...`
+
+Newer guest/selftest builds may append additional breakdown fields (best-effort), for example:
+
+- `tx_tcp`, `tx_udp`, `rx_tcp`, `rx_udp`
+- `tx_tcp4`, `tx_tcp6`, `tx_udp4`, `tx_udp6`
+- `rx_tcp4`, `rx_tcp6`, `rx_udp4`, `rx_udp6`
 
 These counters are queried from the driver via the `\\.\AeroVirtioNetDiag` diagnostics device using the IOCTL
 `AEROVNET_IOCTL_QUERY_OFFLOAD_STATS` (see `drivers/windows7/virtio-net/include/aero_virtio_net.h`).

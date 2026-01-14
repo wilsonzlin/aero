@@ -142,7 +142,7 @@ drivers/windows7/tests/
   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
   # Checksum offload counters (via \\.\AeroVirtioNetDiag IOCTL):
-  AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...|...
   AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
