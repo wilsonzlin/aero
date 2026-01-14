@@ -10329,9 +10329,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!adapter->Bar0) {
             return STATUS_DEVICE_NOT_READY;
         }
-        if (!poweredOn) {
-            return STATUS_DEVICE_NOT_READY;
-        }
 
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
