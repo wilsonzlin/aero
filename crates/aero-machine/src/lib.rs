@@ -5379,7 +5379,8 @@ impl Machine {
 
         const WIDTH: usize = 320;
         const HEIGHT: usize = 200;
-        const FB_BYTES: usize = WIDTH * HEIGHT;
+        const PIXELS: usize = WIDTH * HEIGHT;
+        const WINDOW_BYTES: usize = 64 * 1024;
 
         let (pal, pel_mask) = {
             let dev = aerogpu.borrow();
@@ -5401,16 +5402,28 @@ impl Machine {
 
         self.display_width = WIDTH as u32;
         self.display_height = HEIGHT as u32;
-        self.display_fb.resize(WIDTH * HEIGHT, 0);
+        self.display_fb.resize(PIXELS, 0);
 
         // VGA mode 13h uses a simple linear 64KiB window at A0000. Under AeroGPU this is aliased
         // into the start of BAR1-backed VRAM (see `AeroGpuDevice::legacy_vga_read_u8`).
         let dev = aerogpu.borrow();
-        if dev.vram.len() < FB_BYTES {
+        if dev.vram.len() < WINDOW_BYTES {
             return false;
         }
-        for (dst, src) in self.display_fb.iter_mut().zip(dev.vram[..FB_BYTES].iter()) {
-            *dst = lut[*src as usize];
+
+        // Respect VGA CRTC start address + byte mode semantics so mode13h panning works.
+        let start_word = (usize::from(dev.crtc_regs[0x0C]) << 8) | usize::from(dev.crtc_regs[0x0D]);
+        let byte_mode = (dev.crtc_regs[0x17] & 0x40) != 0;
+        let start = if byte_mode {
+            start_word
+        } else {
+            start_word << 1
+        } & 0xFFFF;
+
+        for (linear, dst) in self.display_fb.iter_mut().enumerate() {
+            let addr = start.wrapping_add(linear) & 0xFFFF;
+            let idx = dev.vram[addr];
+            *dst = lut[idx as usize];
         }
 
         true
