@@ -84,6 +84,9 @@ Tessellation draws come from the D3D11 IA stage with a **patchlist** topology:
 - The patch count is:
   - non-indexed: `patch_count = vertex_count / N`
   - indexed: `patch_count = index_count / N`
+  - instanced: `patch_count_total = patch_count * instance_count` (the patch stream is replicated per
+    instance). Many compute passes flatten `(instance_id, patch_id)` into a single
+    `patch_instance_id = instance_id * patch_count + patch_id` (see `docs/16-d3d10-11-translation.md`).
 
 In native D3D11, VS runs per control point, HS runs per patch (and per output control point), and
 DS runs per generated domain point.
