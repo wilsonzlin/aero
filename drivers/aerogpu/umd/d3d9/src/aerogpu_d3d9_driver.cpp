@@ -14656,6 +14656,18 @@ HRESULT device_set_texture_stage_state_dispatch(Args... args) {
   return D3DERR_NOTAVAILABLE;
 }
 
+// Portable DDI entrypoint.
+//
+// WDK builds may require a different signature; those entrypoints call the
+// templated dispatch via thunks.
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value) {
+  return device_set_texture_stage_state_dispatch(hDevice, stage, state, value);
+}
+
 template <typename StageT, typename StateT, typename ValueT>
 HRESULT device_get_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT* pValue) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTextureStageState,

@@ -14567,6 +14567,319 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
 }
 
+bool TestStage0TextureStageStateRebindsFixedfuncPsForXyz() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hTex{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_tex = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_tex && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hTex);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // Create a tiny host-backed texture and upload some bytes.
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = kD3dRTypeTexture; // D3DRTYPE_TEXTURE
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 2;
+  create_tex.height = 2;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pKmdAllocPrivateData = nullptr;
+  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
+  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource returned texture handle")) {
+    return false;
+  }
+  cleanup.hTex = create_tex.hResource;
+  cleanup.has_tex = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_tex.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+  if (!Check(hr == S_OK, "Lock(texture)")) {
+    return false;
+  }
+  if (!Check(locked.pData != nullptr, "Lock(texture) returns pData")) {
+    return false;
+  }
+
+  for (uint32_t y = 0; y < 2; ++y) {
+    uint8_t* row = reinterpret_cast<uint8_t*>(locked.pData) + static_cast<size_t>(y) * locked.RowPitch;
+    for (uint32_t x = 0; x < 2; ++x) {
+      row[x * 4 + 0] = 0xFF; // B
+      row[x * 4 + 1] = 0x00; // G
+      row[x * 4 + 2] = 0x00; // R
+      row[x * 4 + 3] = 0xFF; // X/A
+    }
+  }
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_tex.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(texture)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
+  if (!Check(hr == S_OK, "SetTexture(0)")) {
+    return false;
+  }
+
+  // XYZ | DIFFUSE | TEX1:
+  //   POSITION float3 @0
+  //   COLOR0    D3DCOLOR @12
+  //   TEXCOORD0 float2 @16
+  //   END
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      create_dev.hDevice, elems, static_cast<uint32_t>(sizeof(elems)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // D3DTSS_* values.
+  constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
+  constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
+  constexpr uint32_t kD3dTssColorArg2 = 3u;  // D3DTSS_COLORARG2
+  constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
+  constexpr uint32_t kD3dTssAlphaArg2 = 6u;  // D3DTSS_ALPHAARG2
+  // D3DTOP_*.
+  constexpr uint32_t kD3dTopSelectArg1 = 2u; // D3DTOP_SELECTARG1
+  constexpr uint32_t kD3dTopModulate = 4u;   // D3DTOP_MODULATE
+  // D3DTA_*.
+  constexpr uint32_t kD3dTaDiffuse = 0u;     // D3DTA_DIFFUSE
+  constexpr uint32_t kD3dTaTexture = 2u;     // D3DTA_TEXTURE
+
+  // Make stage0 sample TEXTURE for both color and alpha (SELECTARG1/TEXTURE).
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG2=DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {-0.5f, -0.5f, 0.5f, kWhite, 0.0f, 0.0f};
+  verts[1] = {0.5f, -0.5f, 0.5f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 0.5f, 0.5f, kWhite, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  const aerogpu_handle_t old_ps_handle = dev->ps ? dev->ps->handle : 0;
+  if (!Check(old_ps_handle != 0, "fixed-function PS bound after draw")) {
+    return false;
+  }
+
+  const size_t split_offset = dev->cmd.bytes_used();
+
+  // Flip only COLOROP to MODULATE. With COLORARG1=TEXTURE and COLORARG2=DIFFUSE
+  // already set, this forces a different fixed-function PS variant. The driver
+  // should immediately emit CREATE_SHADER_DXBC + BIND_SHADERS to swap to the new
+  // PS (no draw-time fallback needed).
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopModulate);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=MODULATE)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(split_offset < len, "stage0 change appended commands")) {
+    return false;
+  }
+
+  aerogpu_handle_t created_ps_handle = 0;
+  size_t create_offset = 0;
+  {
+    size_t offset = split_offset;
+    while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+      const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+      if (hdr->opcode == AEROGPU_CMD_CREATE_SHADER_DXBC) {
+        const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+        if (cmd->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+          created_ps_handle = cmd->shader_handle;
+          create_offset = offset;
+          break;
+        }
+      }
+      if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
+        break;
+      }
+      offset += hdr->size_bytes;
+    }
+  }
+  if (!Check(created_ps_handle != 0, "stage0 change emits CREATE_SHADER_DXBC(PS)")) {
+    return false;
+  }
+
+  bool found_bind = false;
+  aerogpu_handle_t bound_ps_handle = 0;
+  {
+    size_t offset = create_offset;
+    while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+      const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+      if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS) {
+        const auto* cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+        bound_ps_handle = cmd->ps;
+        found_bind = true;
+        break;
+      }
+      if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
+        break;
+      }
+      offset += hdr->size_bytes;
+    }
+  }
+  if (!Check(found_bind, "stage0 change emits BIND_SHADERS")) {
+    return false;
+  }
+  if (!Check(bound_ps_handle == created_ps_handle, "BIND_SHADERS binds newly created PS")) {
+    return false;
+  }
+  if (!Check(bound_ps_handle != old_ps_handle, "BIND_SHADERS updates PS handle")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
 bool TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -28564,6 +28877,7 @@ int main() {
   failures += !aerogpu::TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestStage0TextureStageStateRebindsFixedfuncPsForXyz();
   failures += !aerogpu::TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly();
   failures += !aerogpu::TestFixedFuncPsSelectionTextureBoundColorOpDisableIgnoresAlphaTextureUsesColorOnly();
   failures += !aerogpu::TestFixedFuncPsSelectionSetTextureUpdatesBoundPsToModulateWithoutDraw();
