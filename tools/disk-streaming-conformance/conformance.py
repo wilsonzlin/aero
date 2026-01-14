@@ -1989,6 +1989,20 @@ def _test_x_content_type_options_nosniff(*, name: str, resp: HttpResponse | None
     return TestResult(name=name, status="PASS")
 
 
+def _test_manifest_mime_type(*, name: str, manifest: ChunkedDiskManifest | None) -> TestResult:
+    if manifest is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no manifest)")
+    # The format spec currently defines chunk objects as binary disk bytes.
+    # Keep this as WARN-only for forward compatibility (e.g. if we ever add per-chunk compression formats).
+    if _media_type(manifest.mime_type) != "application/octet-stream":
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=f"unexpected manifest.mimeType {manifest.mime_type!r} (expected application/octet-stream)",
+        )
+    return TestResult(name=name, status="PASS")
+
+
 def _main_chunked(args: argparse.Namespace) -> int:
     origin: str | None = args.origin
     timeout_s: float = args.timeout
@@ -2047,6 +2061,7 @@ def _main_chunked(args: argparse.Namespace) -> int:
 
     manifest_schema, manifest = _test_chunked_manifest_schema(raw=manifest_json)
     results.append(manifest_schema)
+    results.append(_test_manifest_mime_type(name="manifest: mimeType is application/octet-stream", manifest=manifest))
 
     # Manifest headers.
     results.append(
@@ -2054,6 +2069,12 @@ def _main_chunked(args: argparse.Namespace) -> int:
             name="manifest: Content-Type is application/json",
             resp=manifest_resp,
             expected="application/json",
+        )
+    )
+    results.append(
+        _test_x_content_type_options_nosniff(
+            name="manifest: X-Content-Type-Options is nosniff",
+            resp=manifest_resp,
         )
     )
     cache_control_name = (

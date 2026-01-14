@@ -138,6 +138,15 @@ python3 tools/disk-streaming-conformance/conformance.py \
 
 Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
 
+### Private chunked image (Authorization header)
+
+If you provide `--token` / `TOKEN` in chunked mode, the tool treats the image as private and will additionally check:
+
+- unauthenticated GETs to `manifest.json` and a sample chunk are denied (`401/403`)
+- authenticated responses are not publicly cacheable (`Cache-Control` must not include `public`; `no-store` is recommended)
+
+Note: Using `Authorization` on cross-origin chunk GETs will reintroduce CORS preflight. Prefer signed URLs/cookies if you are using chunked mode specifically to avoid preflight.
+
 Safety knobs:
 
 - `--max-body-bytes`: per-request read cap (manifest + chunk bodies)
