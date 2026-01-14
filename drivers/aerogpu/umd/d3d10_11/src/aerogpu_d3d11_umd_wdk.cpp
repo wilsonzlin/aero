@@ -865,7 +865,20 @@ static void TrackComputeStateLocked(Device* dev) {
 
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuDeviceContext>(hCtx);
-  return ctx ? ctx->dev : nullptr;
+  Device* dev = ctx ? ctx->dev : nullptr;
+  if (!dev) {
+    return nullptr;
+  }
+  // Avoid touching `Device` state (including its mutex) after DestroyDevice has
+  // run. DestroyDevice intentionally zeros the cookie before invoking the
+  // destructor, so reading the first 4 bytes is a safe liveness check even
+  // during teardown races.
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, dev, sizeof(cookie));
+  if (cookie != kDeviceDestroyLiveCookie) {
+    return nullptr;
+  }
+  return dev;
 }
 
 static void ReportNotImpl(D3D11DDI_HDEVICE hDevice) {
