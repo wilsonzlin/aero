@@ -3037,7 +3037,7 @@ pub struct CpuWorkerDemo {
     guest_counter_offset_bytes: u32,
 
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-    framebuffer: SharedFramebufferWriter,
+    framebuffer: SharedFramebuffer,
 }
 
 #[wasm_bindgen]
@@ -3146,7 +3146,7 @@ impl CpuWorkerDemo {
 
             Ok(Self {
                 guest_counter_offset_bytes,
-                framebuffer: SharedFramebufferWriter::new(shared),
+                framebuffer: shared,
             })
         }
 
@@ -3185,7 +3185,19 @@ impl CpuWorkerDemo {
     pub fn render_frame(&self, _frame_seq: u32, now_ms: f64) -> u32 {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
-            self.framebuffer.write_frame(|buf, dirty, layout| {
+            let header = self.framebuffer.header();
+            // `frame_dirty` is a producer->consumer "new frame available" flag. The JS side clears
+            // it after presentation; treat it as an acknowledgement that the last published frame
+            // is no longer in use.
+            //
+            // This throttles the demo producer to at most one outstanding frame, avoiding
+            // overwriting a buffer that the JS presenter might still be reading.
+            if header.frame_dirty.load(Ordering::SeqCst) != 0 {
+                return header.frame_seq.load(Ordering::SeqCst);
+            }
+
+            let writer = SharedFramebufferWriter::new(self.framebuffer);
+            writer.write_frame(|buf, dirty, layout| {
                 let width = layout.width as usize;
                 let height = layout.height as usize;
                 let stride = layout.stride_bytes as usize;

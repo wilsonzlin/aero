@@ -198,6 +198,17 @@ export class SharedLayoutPresenter {
     encodeLinearRgba8ToSrgbInPlace(new Uint8Array(dst.buffer, dst.byteOffset, dst.byteLength));
 
     this.ctx.putImageData(image, 0, 0);
+
+    // Clear the producer->consumer "new frame" flag. This is optional, but doing so allows
+    // producers to detect consumer liveness and (in some configurations) can be used to throttle
+    // publishing to avoid overwriting a buffer that is still being read.
+    //
+    // Avoid clearing a newer frame if the producer published again while we were copying.
+    const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+    if (seqNow === seq) {
+      Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+      Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_DIRTY);
+    }
     this.lastPresentedSeq = seq;
   }
 }
