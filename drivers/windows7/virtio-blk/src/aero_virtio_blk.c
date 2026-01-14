@@ -1500,6 +1500,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   devExt->Vdev.QueueNotifyAddrCache = devExt->QueueNotifyAddrCache;
   devExt->Vdev.QueueNotifyAddrCacheCount = RTL_NUMBER_OF(devExt->QueueNotifyAddrCache);
 
+  /* BAR0 layout validation (strict vs permissive is controlled at build time by AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT). */
   if (!AeroVirtioValidateContractV1Bar0Layout(&devExt->Vdev)) {
     return SP_RETURN_NOT_FOUND;
   }

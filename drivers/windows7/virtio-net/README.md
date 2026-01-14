@@ -2,8 +2,13 @@
 
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
-> **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a fixed **BAR0 MMIO** layout and PCI interrupts:
+> **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a **BAR0 MMIO** layout and PCI interrupts:
 > **INTx required**, with optional **MSI/MSI-X** (message-signaled) when enabled via INF. It binds to `PCI\VEN_1AF4&DEV_1041&REV_01`.
+>
+> **BAR0 layout validation (strict vs permissive):** by default the driver enforces the contract v1 **fixed BAR0 offsets** (§1.4).
+> Developers can disable fixed-offset enforcement at build time (useful for compatibility testing / diagnosing layout issues) by defining:
+>
+> - `AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT=0`
 >
 > When using QEMU, pass:
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)

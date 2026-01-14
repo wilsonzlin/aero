@@ -118,6 +118,70 @@ static void build_test_pci_config(uint8_t cfg[256])
     cfg_write_le32(cfg, 0x78 + 12, TEST_DEVICE_CFG_LEN);
 }
 
+static void build_contract_v1_pci_config_relocated_bar0_caps(uint8_t cfg[256])
+{
+    /*
+     * Build a valid virtio-pci modern capability set where all required caps are
+     * within BAR0, but the offsets are *not* the AERO contract v1 fixed offsets.
+     */
+    const uint32_t common_off = 0x0100u;
+    const uint32_t notify_off = 0x1100u;
+    const uint32_t isr_off = 0x2100u;
+    const uint32_t device_off = 0x3100u;
+
+    memset(cfg, 0, 256);
+
+    /* BAR0: memory BAR at 0x1000 (flags=0). */
+    cfg_write_le32(cfg, 0x10, 0x1000u);
+
+    /* PCI status: capability list present. */
+    cfg_write_le16(cfg, 0x06, (uint16_t)(1u << 4));
+
+    /* Capability list head. */
+    cfg[0x34] = 0x40;
+
+    /* Common cfg cap @ 0x40. */
+    cfg[0x40 + 0] = 0x09; /* VNDR */
+    cfg[0x40 + 1] = 0x50; /* next */
+    cfg[0x40 + 2] = 16;   /* cap_len */
+    cfg[0x40 + 3] = 1;    /* COMMON */
+    cfg[0x40 + 4] = 0;    /* bar */
+    cfg[0x40 + 5] = 0;    /* id */
+    cfg_write_le32(cfg, 0x40 + 8, common_off);
+    cfg_write_le32(cfg, 0x40 + 12, AERO_CONTRACT_V1_COMMON_LEN);
+
+    /* Notify cfg cap @ 0x50. */
+    cfg[0x50 + 0] = 0x09;
+    cfg[0x50 + 1] = 0x68;
+    cfg[0x50 + 2] = 20; /* notify cap is 20 bytes */
+    cfg[0x50 + 3] = 2;  /* NOTIFY */
+    cfg[0x50 + 4] = 0;
+    cfg[0x50 + 5] = 0;
+    cfg_write_le32(cfg, 0x50 + 8, notify_off);
+    cfg_write_le32(cfg, 0x50 + 12, AERO_CONTRACT_V1_NOTIFY_LEN);
+    cfg_write_le32(cfg, 0x50 + 16, TEST_NOTIFY_OFF_MULT);
+
+    /* ISR cfg cap @ 0x68. */
+    cfg[0x68 + 0] = 0x09;
+    cfg[0x68 + 1] = 0x78;
+    cfg[0x68 + 2] = 16;
+    cfg[0x68 + 3] = 3; /* ISR */
+    cfg[0x68 + 4] = 0;
+    cfg[0x68 + 5] = 0;
+    cfg_write_le32(cfg, 0x68 + 8, isr_off);
+    cfg_write_le32(cfg, 0x68 + 12, AERO_CONTRACT_V1_ISR_LEN);
+
+    /* Device cfg cap @ 0x78. */
+    cfg[0x78 + 0] = 0x09;
+    cfg[0x78 + 1] = 0x00;
+    cfg[0x78 + 2] = 16;
+    cfg[0x78 + 3] = 4; /* DEVICE */
+    cfg[0x78 + 4] = 0;
+    cfg[0x78 + 5] = 0;
+    cfg_write_le32(cfg, 0x78 + 8, device_off);
+    cfg_write_le32(cfg, 0x78 + 12, AERO_CONTRACT_V1_DEVICE_LEN);
+}
+
 static void build_test_pci_config_dup_common(uint8_t cfg[256])
 {
     memset(cfg, 0, 256);
@@ -245,7 +309,12 @@ static void test_aero_validate_contract_v1_bar0_layout_region_offset_mismatch_fa
     VIRTIO_PCI_DEVICE dev;
     dev = make_contract_v1_device();
     dev.NotifyOffset = AERO_CONTRACT_V1_NOTIFY_OFF + 4u;
+#if AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT
     assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
+#else
+    /* Permissive mode does not require fixed offsets. */
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == TRUE);
+#endif
 }
 
 static void test_aero_validate_contract_v1_bar0_layout_region_length_too_small_fails(void)
@@ -253,7 +322,12 @@ static void test_aero_validate_contract_v1_bar0_layout_region_length_too_small_f
     VIRTIO_PCI_DEVICE dev;
     dev = make_contract_v1_device();
     dev.IsrLength = AERO_CONTRACT_V1_ISR_LEN - 1u;
+#if AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT
     assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == FALSE);
+#else
+    /* Permissive mode does not require the contract minimum region lengths. */
+    assert(AeroVirtioValidateContractV1Bar0Layout(&dev) == TRUE);
+#endif
 }
 
 static void test_init_ok(void)
@@ -312,6 +386,35 @@ static void test_init_prefers_largest_common_cfg_cap(void)
 
     assert(dev.NotifyOffset == 0x300u);
     assert(dev.NotifyOffMultiplier == TEST_NOTIFY_OFF_MULT);
+
+    free(bar0);
+}
+
+static void test_contract_v1_relocated_bar0_caps_layout_validation(void)
+{
+    uint8_t* bar0;
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+    BOOLEAN ok;
+
+    bar0 = (uint8_t*)calloc(1, AERO_CONTRACT_V1_BAR0_LEN);
+    assert(bar0 != NULL);
+
+    build_contract_v1_pci_config_relocated_bar0_caps(pci_cfg);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, AERO_CONTRACT_V1_BAR0_LEN, pci_cfg, 256);
+    assert(st == STATUS_SUCCESS);
+
+    ok = AeroVirtioValidateContractV1Bar0Layout(&dev);
+
+#if AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT
+    /* Strict: fixed offsets are required; relocated offsets should be rejected. */
+    assert(ok == FALSE);
+#else
+    /* Permissive: fixed offsets are not required; relocated offsets should be accepted. */
+    assert(ok == TRUE);
+#endif
 
     free(bar0);
 }
@@ -2839,6 +2942,7 @@ int main(void)
     test_aero_validate_contract_v1_bar0_layout_notify_multiplier_mismatch_fails();
     test_aero_validate_contract_v1_bar0_layout_region_offset_mismatch_fails();
     test_aero_validate_contract_v1_bar0_layout_region_length_too_small_fails();
+    test_contract_v1_relocated_bar0_caps_layout_validation();
     test_read_device_features();
     test_status_helpers();
     test_write_driver_features_direct();

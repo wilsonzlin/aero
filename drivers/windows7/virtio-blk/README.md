@@ -5,6 +5,11 @@
 > **AERO-W7-VIRTIO contract v1:** this driver binds to the virtio-blk **modern-only**
 > PCI ID `PCI\VEN_1AF4&DEV_1042&REV_01` and validates `REV_01` at runtime.
 >
+> **BAR0 layout validation (strict vs permissive):** by default the driver enforces the contract v1 **fixed BAR0 offsets** (§1.4).
+> Developers can disable fixed-offset enforcement at build time (useful for compatibility testing / diagnosing layout issues) by defining:
+>
+> - `AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT=0`
+>
 > When using QEMU, pass:
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1042`)
 > - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)

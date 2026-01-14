@@ -589,6 +589,7 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   Adapter->Vdev.QueueNotifyAddrCache = Adapter->QueueNotifyAddrCache;
   Adapter->Vdev.QueueNotifyAddrCacheCount = (USHORT)RTL_NUMBER_OF(Adapter->QueueNotifyAddrCache);
 
+  /* BAR0 layout validation (strict vs permissive is controlled at build time by AERO_VIRTIO_MINIPORT_ENFORCE_FIXED_LAYOUT). */
   if (!AeroVirtioValidateContractV1Bar0Layout(&Adapter->Vdev)) {
     NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
     Adapter->Bar0Va = NULL;
