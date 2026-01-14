@@ -556,6 +556,39 @@ fn assert_restart_gap_line_strip(pixels: &[u8], width: u32, height: u32) {
     assert_eq!(px(mid_x, top_y), &[0, 0, 0, 255]);
 }
 
+fn assert_restart_gap_line_strip_u32(pixels: &[u8], width: u32, height: u32) {
+    assert_eq!(pixels.len(), width as usize * height as usize * 4);
+    let w = width as usize;
+    let px = |x: usize, y: usize| -> &[u8] {
+        let idx = (y * w + x) * 4;
+        &pixels[idx..idx + 4]
+    };
+
+    // The geometry draws two vertical lines (left and right). If primitive restart is *disabled*,
+    // the `0xFFFF_FFFF` index becomes an out-of-bounds vertex fetch which WebGPU/wgpu's robust
+    // buffer access resolves to zero. This turns the strip into:
+    //   left_line -> (left_top -> origin) -> (origin -> right_top) -> right_line
+    // and should draw a diagonal bridge through the upper-left quadrant.
+    //
+    // Sample a few pixels along that expected diagonal (y == -x) that are far away from the
+    // intended vertical lines.
+    let left_x = 8usize;
+    let right_x = 55usize;
+    let mid_y = 32usize;
+
+    assert_eq!(px(left_x, mid_y), &[255, 255, 255, 255], "left line missing");
+    assert_eq!(px(right_x, mid_y), &[255, 255, 255, 255], "right line missing");
+
+    let bg = &[0, 0, 0, 255];
+    for (x, y) in [(20usize, 20usize), (24, 24), (28, 28)] {
+        assert_eq!(
+            px(x, y),
+            bg,
+            "expected diagonal bridge pixel ({x},{y}) to remain background (primitive restart broken?)"
+        );
+    }
+}
+
 #[test]
 fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip() {
     pollster::block_on(async {
@@ -772,6 +805,79 @@ fn aerogpu_cmd_enables_primitive_restart_for_line_strip_u16() {
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
         assert_restart_gap_line_strip(&pixels, WIDTH, HEIGHT);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_enables_primitive_restart_for_line_strip_u32() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const WIDTH: u32 = 64;
+        const HEIGHT: u32 = 64;
+        const RT: u32 = 3;
+
+        // Place the vertical lines on exact pixel centers (same convention as the existing u16
+        // line-strip test):
+        // - x=-47/64 => pixel x=8
+        // - x=+47/64 => pixel x=55
+        // - y=±47/64 => pixel y=8/55
+        let x_left = -47.0 / 64.0;
+        let x_right = 47.0 / 64.0;
+        let y_top = 47.0 / 64.0;
+        let y_bottom = -47.0 / 64.0;
+
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let vertices = [
+            Vertex {
+                pos: [x_left, y_bottom, 0.0],
+                color: white,
+            },
+            Vertex {
+                pos: [x_left, y_top, 0.0],
+                color: white,
+            },
+            Vertex {
+                pos: [x_right, y_top, 0.0],
+                color: white,
+            },
+            Vertex {
+                pos: [x_right, y_bottom, 0.0],
+                color: white,
+            },
+        ];
+        let vb_bytes = bytemuck::bytes_of(&vertices);
+
+        // Line strip indices with a primitive-restart value between the strips.
+        //
+        // We can't allocate enough vertices for 0xFFFF_FFFF to be in-bounds. This relies on
+        // WebGPU/wgpu's robust buffer access behavior: if primitive restart is *not* enabled, the
+        // out-of-bounds vertex fetch should produce a zeroed position at the origin, which stitches
+        // the strip and draws a diagonal bridge.
+        let indices: [u32; 5] = [0, 1, 0xFFFF_FFFF, 2, 3];
+        let ib_bytes = bytemuck::bytes_of(&indices);
+
+        let stream = build_stream(
+            vb_bytes,
+            ib_bytes,
+            AerogpuPrimitiveTopology::LineStrip,
+            1,
+            indices.len() as u32,
+        );
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        assert_restart_gap_line_strip_u32(&pixels, WIDTH, HEIGHT);
     });
 }
 
