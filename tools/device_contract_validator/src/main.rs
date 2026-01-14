@@ -1855,9 +1855,10 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     // Optional: validate the legacy filename alias INF (if present). This alias is kept for
                     // compatibility with workflows/tools that still reference `virtio-input.inf`.
                     //
-                    // Policy: if present, the alias INF must be byte-for-byte identical to the canonical
-                    // INF from the first section header (`[Version]`) onward (leading banner/comments are
-                    // ignored). It does not change HWID matching behavior.
+                    // Policy: if present, the alias INF is a filename-only compatibility shim. From the
+                    // first section header (`[Version]`) onward it must remain byte-for-byte identical to
+                    // the canonical INF (leading banner/comments are ignored). It does not change HWID
+                    // matching behavior.
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
