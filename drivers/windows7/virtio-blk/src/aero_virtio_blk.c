@@ -1840,10 +1840,10 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
   UCHAR isr;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
-  if (devExt == NULL || devExt->Removed) {
+  if (devExt == NULL || devExt->SurpriseRemoved) {
     /*
-     * Avoid MMIO access after stop/remove (including surprise removal). If the
-     * device is gone, reading the ISR byte may fault.
+     * Avoid MMIO access after surprise removal / hot-unplug. If the device is
+     * gone, reading the ISR byte may fault.
      */
     return FALSE;
   }
