@@ -25,7 +25,10 @@ fn framebuffer_hash_rgba8888(framebuffer: &[u32]) -> u64 {
 fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     // Use a non-default base to ensure snapshots don't have a hidden dependency on
     // `aero_gpu_vga::SVGA_LFB_BASE` (important for AeroGPU BAR1 integration).
-    let lfb_base: u32 = 0xE100_0000;
+    //
+    // Place it outside the BIOS PCI BAR allocator default MMIO window
+    // (`0xE000_0000..0xF000_0000`) to ensure snapshot restore doesn't depend on that sub-window.
+    let lfb_base: u32 = 0xD000_0000;
 
     let cfg = MachineConfig {
         ram_size_bytes: 64 * 1024 * 1024,

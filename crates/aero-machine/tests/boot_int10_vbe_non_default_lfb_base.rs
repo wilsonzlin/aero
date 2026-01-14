@@ -41,7 +41,11 @@ fn run_until_halt(m: &mut Machine) {
 fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
     // Use a non-default LFB base to ensure there are no hidden dependencies on
     // `aero_gpu_vga::SVGA_LFB_BASE` (e.g. AeroGPU BAR1 integration needs a different base).
-    let lfb_base: u32 = 0xE100_0000;
+    //
+    // Pick a base outside the BIOS PCI BAR allocator default window
+    // (`PciResourceAllocatorConfig::default().mmio_base..+mmio_size`, currently
+    // `0xE000_0000..0xF000_0000`) to ensure the legacy VGA/VBE path doesn't rely on that window.
+    let lfb_base: u32 = 0xD000_0000;
     let boot = build_int10_vbe_set_mode_boot_sector();
 
     let mut m = Machine::new(MachineConfig {
