@@ -1494,6 +1494,7 @@ fn collect_used_pixel_inputs(block: &Block, out: &mut BTreeSet<(RegFile, u32)>) 
     }
 }
 
+#[deny(unreachable_patterns)]
 fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
     match op {
         IrOp::Mov { src, modifiers, .. }
