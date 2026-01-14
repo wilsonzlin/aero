@@ -214,6 +214,13 @@ Implement enough for mode `0x03` (80x25 color text):
 - The renderer converts this to pixels using an 8x16 or 9x16 font (any consistent VGA-ish font is acceptable for the emulator).
 - Basic cursor support is optional for Windows boot, but BIOS POST benefits from it; implement CRTC cursor registers if available.
 
+### Mode 13h: optional behavior
+
+Mode `0x13` (320x200x256) is not required for Windows 7 boot (which uses VBE LFB modes), but some
+bootloaders and DOS-style guests use it. A minimal implementation can model mode 13h as a simple
+linear 64KiB framebuffer at `0xA0000` with 8-bit palette indices and render it using the VGA DAC
+palette.
+
 ### VGA ports: minimal subset
 
 For early boot stability, most VGA ports can be permissive no-ops, but these should behave plausibly:

@@ -113,6 +113,7 @@ Test pointers:
 - [x] host-side presentation fallback when VGA is disabled:
   - WDDM scanout0 if claimed (`SCANOUT0_ENABLE`), otherwise
   - VBE LFB (from BIOS state), otherwise
+  - VGA mode 13h (320×200×256) (from BIOS state), otherwise
   - text mode (scan `0xB8000`)
 
 Code pointers:
