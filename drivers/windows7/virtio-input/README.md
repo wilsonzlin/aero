@@ -30,7 +30,7 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 >   Device Manager names.
 > - The legacy alias INF is allowed to differ from `inf/aero_virtio_input.inf` in the models sections
 >   (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an **opt-in**, strict **REV-gated** generic fallback HWID match
->   for environments that do not expose subsystem IDs.
+>   (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose subsystem IDs.
 > - Outside the models sections, it is expected to stay in sync with `inf/aero_virtio_input.inf`
 >   (helper: `scripts/check-inf-alias.py`; CI: `scripts/ci/check-windows7-virtio-contract-consistency.py`).
 >

@@ -2,7 +2,7 @@ use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE,
     VIRTIO_NET, VIRTIO_SND,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -125,6 +125,64 @@ fn inf_installs_service(contents: &str, expected_service: &str) -> bool {
 
         installed_service == expected_service
     })
+}
+
+fn strip_inf_inline_comment(line: &str) -> String {
+    // INF comments start with ';' outside of quoted strings.
+    let mut in_quote = false;
+    let mut out = String::new();
+    for ch in line.chars() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            out.push(ch);
+            continue;
+        }
+        if ch == ';' && !in_quote {
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn normalized_inf_lines_without_sections(contents: &str, drop_sections: &[&str]) -> Vec<String> {
+    // Normalization rules (aligned with `drivers/windows7/virtio-input/scripts/check-inf-alias.py`):
+    // - strips full-line and inline comments (INF comments start with ';' outside quoted strings)
+    // - drops empty lines
+    // - removes entire sections (by name, case-insensitive)
+    // - normalizes section headers to lowercase (INF section names are case-insensitive)
+    let drop: BTreeSet<String> = drop_sections
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+
+    let mut out = Vec::new();
+    let mut dropping = false;
+
+    for raw in contents.lines() {
+        let line = strip_inf_inline_comment(raw);
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            let section_name = line[1..line.len() - 1].trim();
+            dropping = drop.contains(&section_name.to_ascii_lowercase());
+            if !dropping {
+                out.push(format!("[{}]", section_name.to_ascii_lowercase()));
+            }
+            continue;
+        }
+
+        if dropping {
+            continue;
+        }
+
+        out.push(line.to_string());
+    }
+
+    out
 }
 
 fn inf_model_entry_for_hwid(
@@ -490,69 +548,16 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     let inf_contents =
         std::fs::read_to_string(&alias_path).expect("read virtio-input alias INF from repository");
 
-    // From the first section header (`[Version]`) onward, the alias is expected to stay in sync
-    // with the canonical INF outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
-    //
-    // Keep this check resilient to drift in comments/whitespace by normalizing:
-    // - strip INF comments (full-line + inline, without quote awareness)
-    // - drop empty lines
-    // - drop the two models sections entirely
-    // - lowercase section headers
     let canonical_contents = std::fs::read_to_string(inf_dir.join("aero_virtio_input.inf"))
         .expect("read virtio-input canonical INF from repository");
 
-    fn inf_body_from_first_section(s: &str) -> String {
-        // Keep this logic simple and close to `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
-        let mut start_idx = None;
-        for (i, line) in s.lines().enumerate() {
-            let trimmed = line.trim_start_matches([' ', '\t']);
-            if trimmed.starts_with('[') {
-                start_idx = Some(i);
-                break;
-            }
-            if trimmed.starts_with(';') || trimmed.trim().is_empty() {
-                continue;
-            }
-            // Unexpected functional content before the first section header: treat it as start.
-            start_idx = Some(i);
-            break;
-        }
-        let start_idx = start_idx.expect("expected INF to contain at least one section header");
-        // `str::lines()` drops newlines; compare normalized content with `\n` separators.
-        s.lines().skip(start_idx).collect::<Vec<_>>().join("\n")
-    }
-
-    fn inf_body_without_models(s: &str) -> String {
-        let body = inf_body_from_first_section(s);
-        let mut out = Vec::new();
-        let mut dropping = false;
-
-        for raw in body.lines() {
-            let line = raw.split(';').next().unwrap_or("").trim();
-            if line.is_empty() {
-                continue;
-            }
-            if line.starts_with('[') && line.ends_with(']') {
-                let section = line[1..line.len() - 1].trim().to_ascii_lowercase();
-                dropping = section == "aero.ntx86" || section == "aero.ntamd64";
-                if !dropping {
-                    out.push(format!("[{section}]"));
-                }
-                continue;
-            }
-            if dropping {
-                continue;
-            }
-            out.push(line.to_string());
-        }
-
-        out.join("\n")
-    }
-
-    // Compare using normalized `\n` line separators to avoid platform EOL differences in this test.
+    // The legacy filename alias INF is allowed to diverge from the canonical INF in the models
+    // sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict generic fallback HWID.
+    // Outside those models sections, it must stay in sync.
+    let drop_sections = ["Aero.NTx86", "Aero.NTamd64"];
     assert_eq!(
-        inf_body_without_models(&inf_contents),
-        inf_body_without_models(&canonical_contents),
+        normalized_inf_lines_without_sections(&inf_contents, &drop_sections),
+        normalized_inf_lines_without_sections(&canonical_contents, &drop_sections),
         "virtio-input alias INF must match canonical INF outside models sections"
     );
 
