@@ -30,9 +30,25 @@ struct ByteAddressBuffer {
 @group(2) @binding(8) var<storage, read> ia_vb7: ByteAddressBuffer;
 
 fn ia_bab_load_u32(buf: ptr<storage, ByteAddressBuffer, read>, byte_addr: u32) -> u32 {
-  // D3D11 input element offsets are 4-byte aligned; vertex pulling assumes the caller provides a
-  // 4-byte aligned `byte_addr`.
-  return (*buf).data[byte_addr >> 2u];
+  // Load a single dword from a byte address, handling unaligned byte addresses by stitching two
+  // adjacent u32 reads (mirrors D3D's ByteAddressBuffer behavior).
+  //
+  // This matters because D3D11 IA vertex-buffer base offsets are byte-granular, but WebGPU storage
+  // buffer bindings typically require 256-byte alignment, so the runtime binds the full buffer at
+  // offset 0 and applies the D3D offset in shader code.
+  let word_index: u32 = byte_addr >> 2u;
+  let shift: u32 = (byte_addr & 3u) * 8u;
+  let word_count: u32 = arrayLength(&(*buf).data);
+  if (word_index >= word_count) {
+    return 0u;
+  }
+  let lo: u32 = (*buf).data[word_index];
+  if (shift == 0u) {
+    return lo;
+  }
+  let hi: u32 =
+      select(0u, (*buf).data[word_index + 1u], (word_index + 1u) < word_count);
+  return (lo >> shift) | (hi << (32u - shift));
 }
 
 fn ia_load_u32(slot: u32, byte_addr: u32) -> u32 {
