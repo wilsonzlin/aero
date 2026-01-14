@@ -5,7 +5,11 @@ use aero_devices_gpu::regs::{irq_bits, ring_control, AeroGpuRegs};
 use aero_devices_gpu::ring::{
     AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
     AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
-    RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET,
+    RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET,
+    SUBMIT_DESC_CMD_GPA_OFFSET, SUBMIT_DESC_CMD_RESERVED0_OFFSET, SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+    SUBMIT_DESC_CONTEXT_ID_OFFSET, SUBMIT_DESC_ENGINE_ID_OFFSET, SUBMIT_DESC_FLAGS_OFFSET,
+    SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_PRESENT_FLAG_VSYNC;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -24,12 +28,12 @@ fn write_ring_header(
         u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride))
             .expect("ring size fits u32");
 
-    mem.write_u32(gpa, AEROGPU_RING_MAGIC);
-    mem.write_u32(gpa + 4, abi_version);
-    mem.write_u32(gpa + 8, size_bytes);
-    mem.write_u32(gpa + 12, entry_count);
-    mem.write_u32(gpa + 16, stride);
-    mem.write_u32(gpa + 20, 0);
+    mem.write_u32(gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(gpa + RING_ABI_VERSION_OFFSET, abi_version);
+    mem.write_u32(gpa + RING_SIZE_BYTES_OFFSET, size_bytes);
+    mem.write_u32(gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, stride);
+    mem.write_u32(gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(gpa + RING_HEAD_OFFSET, head);
     mem.write_u32(gpa + RING_TAIL_OFFSET, tail);
 
@@ -44,13 +48,13 @@ fn write_submit_desc(
     signal_fence: u64,
     flags: u32,
 ) {
-    mem.write_u32(gpa, AeroGpuSubmitDesc::SIZE_BYTES);
-    mem.write_u32(gpa + 4, flags);
-    mem.write_u32(gpa + 8, 0); // context_id
-    mem.write_u32(gpa + 12, 0); // engine_id
-    mem.write_u64(gpa + 16, cmd_gpa);
-    mem.write_u32(gpa + 24, cmd_size_bytes);
-    mem.write_u32(gpa + 28, 0); // cmd_reserved0
+    mem.write_u32(gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(gpa + SUBMIT_DESC_FLAGS_OFFSET, flags);
+    mem.write_u32(gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(gpa + SUBMIT_DESC_CMD_RESERVED0_OFFSET, 0); // cmd_reserved0
     mem.write_u64(gpa + 32, 0); // alloc_table_gpa
     mem.write_u32(gpa + 40, 0); // alloc_table_size_bytes
     mem.write_u32(gpa + 44, 0); // alloc_table_reserved0

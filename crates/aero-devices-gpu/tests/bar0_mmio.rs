@@ -691,17 +691,17 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
 
     let cmd0_gpa = 0x4000u64;
     // Wrong magic -> BadHeader.
-    mem.write_u32(cmd0_gpa, 0);
-    mem.write_u32(cmd0_gpa + 4, AEROGPU_ABI_VERSION_U32);
-    mem.write_u32(cmd0_gpa + 8, 16);
-    mem.write_u32(cmd0_gpa + 12, 0);
+    mem.write_u32(cmd0_gpa + CMD_STREAM_MAGIC_OFFSET, 0);
+    mem.write_u32(cmd0_gpa + CMD_STREAM_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(cmd0_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, 16);
+    mem.write_u32(cmd0_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
 
     let cmd1_gpa = 0x5000u64;
     // Wrong ABI version (but correct magic) -> BadHeader as well.
-    mem.write_u32(cmd1_gpa, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd1_gpa + 4, 0);
-    mem.write_u32(cmd1_gpa + 8, 16);
-    mem.write_u32(cmd1_gpa + 12, 0);
+    mem.write_u32(cmd1_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd1_gpa + CMD_STREAM_ABI_VERSION_OFFSET, 0);
+    mem.write_u32(cmd1_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, 16);
+    mem.write_u32(cmd1_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
 
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     mem.write_u32(
