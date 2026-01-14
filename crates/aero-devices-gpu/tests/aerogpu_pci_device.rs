@@ -1137,6 +1137,64 @@ fn snapshot_roundtrip_preserves_pending_fence_completion_until_dma_is_enabled() 
 }
 
 #[test]
+fn snapshot_roundtrip_preserves_pending_scanout_and_cursor_fb_gpa_updates() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let mut dev = new_test_device(cfg.clone());
+
+    // Start from stable scanout/cursor framebuffer addresses.
+    let scanout_fb0 = 0x1111_2222_3333_4444u64;
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, scanout_fb0);
+    dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, scanout_fb0 >> 32);
+    assert_eq!(dev.regs.scanout0.fb_gpa, scanout_fb0);
+
+    let cursor_fb0 = 0x5555_6666_7777_8888u64;
+    dev.write(mmio::CURSOR_FB_GPA_LO, 4, cursor_fb0);
+    dev.write(mmio::CURSOR_FB_GPA_HI, 4, cursor_fb0 >> 32);
+    assert_eq!(dev.regs.cursor.fb_gpa, cursor_fb0);
+
+    // Begin updating each base address by writing only the LO dword.
+    let scanout_fb1 = 0x9999_AAAA_BBBB_CCCDu64;
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, scanout_fb1);
+    assert_eq!(
+        dev.regs.scanout0.fb_gpa, scanout_fb0,
+        "LO-only write must not immediately commit scanout fb_gpa"
+    );
+
+    let cursor_fb1 = 0x0123_4567_89AB_CDEFu64;
+    dev.write(mmio::CURSOR_FB_GPA_LO, 4, cursor_fb1);
+    assert_eq!(
+        dev.regs.cursor.fb_gpa, cursor_fb0,
+        "LO-only write must not immediately commit cursor fb_gpa"
+    );
+
+    // Snapshot/restore should preserve the pending LO values so the subsequent HI write commits the
+    // combined 64-bit address.
+    let snap = dev.save_state();
+
+    let mut restored = new_test_device(cfg);
+    restored.load_state(&snap).unwrap();
+
+    assert_eq!(restored.regs.scanout0.fb_gpa, scanout_fb0);
+    assert_eq!(restored.regs.cursor.fb_gpa, cursor_fb0);
+
+    restored.write(mmio::SCANOUT0_FB_GPA_HI, 4, scanout_fb1 >> 32);
+    assert_eq!(
+        restored.regs.scanout0.fb_gpa, scanout_fb1,
+        "HI write must commit using the pending LO value preserved across snapshot"
+    );
+
+    restored.write(mmio::CURSOR_FB_GPA_HI, 4, cursor_fb1 >> 32);
+    assert_eq!(
+        restored.regs.cursor.fb_gpa, cursor_fb1,
+        "HI write must commit using the pending LO value preserved across snapshot"
+    );
+}
+
+#[test]
 fn drain_pending_submissions_returns_completed_fences_as_well() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
