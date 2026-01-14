@@ -1087,6 +1087,10 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 > Implementation note (non-normative): many QEMU virtio PCI device models report `REV_00` by default.
 > For contract-v1 testing under QEMU, pass `x-pci-revision=0x01` on each `-device virtio-*-pci,...`
 > argument (the Win7 host harness in `drivers/windows7/tests/host-harness/` does this automatically).
+> To fail fast when QEMU/device args are misconfigured (for example, if your QEMU build ignores `x-pci-revision`
+> and still reports `REV_00`), the host harness also includes an **opt-in** QMP `query-pci` preflight:
+> - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -QemuPreflightPci` (alias: `-QmpPreflightPci`)
+> - Python: `invoke_aero_virtio_win7_tests.py --qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
 >
 > Packaging note (non-normative): Aero’s in-tree Windows 7 virtio driver packages are also typically
 > **revision-gated in the INF** (`...&REV_01`) to avoid Windows installing a driver on a non-contract
