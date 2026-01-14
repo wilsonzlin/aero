@@ -29,9 +29,14 @@ class PowerShellVirtioSndBufferLimitsReasonTokenTests(unittest.TestCase):
         # The guest may emit SKIP/FAIL markers like:
         #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set
         # so the harness should mirror the plain token into reason=... for stable log scraping.
+        # Allow either FAIL/SKIP ordering in the condition.
         self.assertRegex(
             fn,
-            r"\$status\s*-eq\s*['\"]SKIP['\"]\s*-or\s*\$status\s*-eq\s*['\"]FAIL['\"]",
+            r"(?:"
+            r"\$status\s*-eq\s*['\"]FAIL['\"]\s*-or\s*\$status\s*-eq\s*['\"]SKIP['\"]"
+            r"|"
+            r"\$status\s*-eq\s*['\"]SKIP['\"]\s*-or\s*\$status\s*-eq\s*['\"]FAIL['\"]"
+            r")",
         )
         self.assertRegex(fn, r"\$toks\[\$i\]\.Trim\(\)\s*-eq\s*\$status")
         self.assertRegex(fn, r"\$fields\[\s*['\"]reason['\"]\s*\]\s*=")
@@ -39,4 +44,3 @@ class PowerShellVirtioSndBufferLimitsReasonTokenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

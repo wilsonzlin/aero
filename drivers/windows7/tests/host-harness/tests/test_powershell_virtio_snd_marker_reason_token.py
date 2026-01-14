@@ -30,9 +30,14 @@ class PowerShellVirtioSndMarkerReasonTokenTests(unittest.TestCase):
         #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend|...
         #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing|...
         # by copying the plain token into a stable reason=... field.
+        # Allow either FAIL/SKIP ordering in the condition.
         self.assertRegex(
             fn,
-            r"\$status\s*-eq\s*['\"]FAIL['\"]\s*-or\s*\$status\s*-eq\s*['\"]SKIP['\"]",
+            r"(?:"
+            r"\$status\s*-eq\s*['\"]FAIL['\"]\s*-or\s*\$status\s*-eq\s*['\"]SKIP['\"]"
+            r"|"
+            r"\$status\s*-eq\s*['\"]SKIP['\"]\s*-or\s*\$status\s*-eq\s*['\"]FAIL['\"]"
+            r")",
         )
         self.assertRegex(fn, r"\$toks\[\$i\]\.Trim\(\)\s*-eq\s*\$status")
         self.assertRegex(fn, r"\$fields\[\s*['\"]reason['\"]\s*\]\s*=")
@@ -40,4 +45,3 @@ class PowerShellVirtioSndMarkerReasonTokenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
