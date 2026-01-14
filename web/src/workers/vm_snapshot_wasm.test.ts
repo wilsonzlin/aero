@@ -44,6 +44,17 @@ describe("workers/vm_snapshot_wasm", () => {
     }
   });
 
+  it("supports camelCase free-function save exports when present", () => {
+    const save = () => {};
+    const api = { vmSnapshotSaveToOpfs: save } as unknown as WasmApi;
+    const res = resolveVmSnapshotSaveToOpfsExport(api);
+    expect(res).not.toBeNull();
+    expect(res?.kind).toBe("free-function");
+    if (res?.kind === "free-function") {
+      expect(res.fn).toBe(save);
+    }
+  });
+
   it("falls back to WorkerVmSnapshot for save when free-functions are absent", () => {
     class FakeBuilder {}
     const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
@@ -65,6 +76,17 @@ describe("workers/vm_snapshot_wasm", () => {
     class FakeBuilder {}
 
     const api = { vm_snapshot_restore_from_opfs: restore, WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+    const res = resolveVmSnapshotRestoreFromOpfsExport(api);
+    expect(res).not.toBeNull();
+    expect(res?.kind).toBe("free-function");
+    if (res?.kind === "free-function") {
+      expect(res.fn).toBe(restore);
+    }
+  });
+
+  it("supports camelCase free-function restore exports when present", () => {
+    const restore = () => {};
+    const api = { vmSnapshotRestoreFromOpfs: restore } as unknown as WasmApi;
     const res = resolveVmSnapshotRestoreFromOpfsExport(api);
     expect(res).not.toBeNull();
     expect(res?.kind).toBe("free-function");

@@ -57,21 +57,31 @@ export const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
 export const VM_SNAPSHOT_SAVE_TO_OPFS_EXPORT_NAMES = [
   // Preferred names (Task 1078).
   "vm_snapshot_save_to_opfs",
+  "vmSnapshotSaveToOpfs",
   "save_vm_snapshot_to_opfs",
+  "saveVmSnapshotToOpfs",
   // Legacy/alternate spellings.
   "snapshot_vm_to_opfs",
+  "snapshotVmToOpfs",
   "snapshot_worker_vm_to_opfs",
+  "snapshotWorkerVmToOpfs",
   "worker_vm_snapshot_to_opfs",
+  "workerVmSnapshotToOpfs",
 ] as const;
 
 export const VM_SNAPSHOT_RESTORE_FROM_OPFS_EXPORT_NAMES = [
   // Preferred names (Task 1078).
   "vm_snapshot_restore_from_opfs",
+  "vmSnapshotRestoreFromOpfs",
   "restore_vm_snapshot_from_opfs",
+  "restoreVmSnapshotFromOpfs",
   // Legacy/alternate spellings.
   "restore_snapshot_vm_from_opfs",
+  "restoreSnapshotVmFromOpfs",
   "restore_worker_vm_snapshot_from_opfs",
+  "restoreWorkerVmSnapshotFromOpfs",
   "snapshot_restore_vm_from_opfs",
+  "snapshotRestoreVmFromOpfs",
 ] as const;
 
 export type VmSnapshotSaveToOpfsExport =
