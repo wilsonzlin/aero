@@ -634,7 +634,9 @@ No other reflection is required for “triangle/texture/depth” bring-up.
 * UAVs and compute
 * Deferred contexts / command lists (if the runtime exposes them through your chosen D3D11 DDI interface version)
 
-If you claim `D3D_FEATURE_LEVEL_10_0` but do not implement compute shaders, ensure the corresponding capability is reported as unsupported (for API-facing caps this is typically via `D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS::ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE`).
+If you claim `D3D_FEATURE_LEVEL_10_0` but do **not** implement compute shaders, ensure the corresponding capability is reported as unsupported (for API-facing caps this is typically via `D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS::ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE`).
+
+Once you *do* implement the D3D11 compute stage (CS) end-to-end (compute shader objects, buffer SRV/UAV binding, and `Dispatch`), flip this capability to `TRUE` so D3D11 apps can opt into SM4.0 compute work at FL10\_x.
 
 ### 6.2 Roadmap to FL11_0 (SM5.0)
 
