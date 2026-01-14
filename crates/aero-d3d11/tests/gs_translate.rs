@@ -1103,6 +1103,48 @@ fn sm4_gs_movc_translates_to_wgsl_compute_prepass() {
 }
 
 #[test]
+fn sm4_gs_movc_respects_saturate() {
+    let mut tokens = base_gs_tokens();
+
+    // movc_sat o0.xyzw, l(0,1,0,1), l(2,2,2,2), l(-1,-1,-1,-1)
+    //
+    // This test is intentionally string-based: it ensures the GS prepass translator:
+    // - lowers movc via WGSL `select` with a vector boolean condition
+    // - applies the saturate flag via `clamp` *around* the select expression
+    let mut inst = vec![opcode_token(OPCODE_MOVC, 0) | OPCODE_EXTENDED_BIT];
+    // Extended opcode token (type=0) with saturate bit set (bit 13).
+    inst.push(1u32 << 13);
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]));
+    inst.extend_from_slice(&imm32_vec4([2.0f32.to_bits(); 4]));
+    inst.extend_from_slice(&imm32_vec4([(-1.0f32).to_bits(); 4]));
+    inst[0] = opcode_token(OPCODE_MOVC, inst.len() as u32) | OPCODE_EXTENDED_BIT;
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("select(("),
+        "expected generated WGSL to contain a select() call for movc:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("!= vec4<u32>(0u)"),
+        "expected movc condition to be implemented via bitcast/!=0:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("clamp((select(("),
+        "expected saturate flag to wrap the movc select() via clamp():\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn gs_translate_rejects_regfile_output_depth_source() {
     let module = Sm4Module {
         stage: ShaderStage::Geometry,
