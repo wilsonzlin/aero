@@ -5,12 +5,14 @@ use aero_devices_gpu::ring::{
     RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET,
     RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET,
     RING_TAIL_OFFSET, SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET,
-    SUBMIT_DESC_SIZE_BYTES_OFFSET,
+    SUBMIT_DESC_SIZE_BYTES_OFFSET, SUBMIT_DESC_CMD_GPA_OFFSET, SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::{
     irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig, AeroGpuFormat,
     AeroGpuFenceCompletionMode, AeroGpuPciDevice, ImmediateAeroGpuBackend,
 };
+use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuErrorCode;
 use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AEROGPU_MMIO_MAGIC};
 use memory::MemoryBus;
 use memory::MmioHandler;
@@ -500,4 +502,90 @@ fn disabling_vblank_irq_clears_pending_status_bit() {
     dev.write(mmio::IRQ_ENABLE, 4, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(!dev.irq_level());
+}
+
+#[test]
+fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
+    let mut mem = memory::Bus::new(0x20_000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    dev.set_backend(Box::new(ImmediateAeroGpuBackend::new()));
+
+    // Ring with two malformed submissions so ERROR_COUNT increments and ERROR_FENCE reflects the
+    // latest error.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2);
+
+    let cmd0_gpa = 0x4000u64;
+    // Wrong magic -> BadHeader.
+    mem.write_u32(cmd0_gpa + 0, 0);
+    mem.write_u32(cmd0_gpa + 4, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(cmd0_gpa + 8, 16);
+    mem.write_u32(cmd0_gpa + 12, 0);
+
+    let cmd1_gpa = 0x5000u64;
+    // Wrong ABI version (but correct magic) -> BadHeader as well.
+    mem.write_u32(cmd1_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd1_gpa + 4, 0);
+    mem.write_u32(cmd1_gpa + 8, 16);
+    mem.write_u32(cmd1_gpa + 12, 0);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd0_gpa);
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 16);
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 100);
+
+    let desc1_gpa = desc0_gpa + u64::from(entry_stride);
+    mem.write_u32(
+        desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd1_gpa);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 16);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 200);
+
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+
+    // Enable ERROR IRQ so it asserts the line.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
+
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+
+    assert_ne!(dev.read(mmio::IRQ_STATUS, 4) as u32 & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::CmdDecode as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 200);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 2);
+
+    // Acknowledge the IRQ: this should clear the status bit but not wipe the latched payload.
+    dev.write(mmio::IRQ_ACK, 4, irq_bits::ERROR as u64);
+    assert_eq!(dev.read(mmio::IRQ_STATUS, 4) as u32 & irq_bits::ERROR, 0);
+    assert!(!dev.irq_level());
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::CmdDecode as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 200);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 2);
 }
