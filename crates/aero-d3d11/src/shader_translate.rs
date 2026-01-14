@@ -306,7 +306,7 @@ pub fn translate_sm4_module_to_wgsl(
 ///
 /// Note: The binding model reserves:
 /// - `@group(2)` for compute resources
-/// - `@group(3)` for geometry shader resources (used by compute-emulated GS)
+/// - `@group(3)` for D3D11 extended stage resources (GS/HS/DS; executed via compute emulation)
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
     Ok(scan_resources(module, None)?.bindings(module.stage))
 }
@@ -1879,7 +1879,7 @@ impl ResourceUsage {
             ShaderStage::Vertex => 0,
             ShaderStage::Pixel => 1,
             ShaderStage::Compute => 2,
-            ShaderStage::Geometry => 3,
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => 3,
             _ => 0,
         }
     }
@@ -1892,7 +1892,7 @@ impl ResourceUsage {
             // Geometry shaders are executed via a compute emulation path, but still use their own
             // stage-scoped bind group (`@group(3)`) so they don't collide with true compute shader
             // resources (`@group(2)`).
-            ShaderStage::Geometry => wgpu::ShaderStages::COMPUTE,
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => wgpu::ShaderStages::COMPUTE,
             _ => wgpu::ShaderStages::empty(),
         };
         let group = Self::stage_bind_group(stage);

@@ -18,7 +18,7 @@ use crate::binding_model::{
 /// - `@group(0)` = vertex shader resources
 /// - `@group(1)` = pixel/fragment shader resources
 /// - `@group(2)` = compute shader resources
-/// - `@group(3)` = geometry shader resources (compute-emulated)
+/// - `@group(3)` = D3D11 extended stage resources (GS/HS/DS; executed via compute emulation)
 ///
 /// Callers can override the maximum group index via
 /// [`build_pipeline_bindings_info_with_max_group`].
