@@ -17,8 +17,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::resources::{
     BindingDef, BindingKind, BufferResource, ComputePipelineResource, D3D11Resources,
-    RenderPipelineResource, SamplerResource, ShaderModuleResource, Texture2dDesc, TextureResource,
-    TextureViewResource,
+    RenderPipelineResource, RenderPipelineVariants, SamplerResource, ShaderModuleResource,
+    Texture2dDesc, TextureResource, TextureViewResource,
 };
 use super::state::{
     BoundIndexBuffer, BoundResource, BoundVertexBuffer, D3D11State, PipelineBinding,
@@ -999,45 +999,68 @@ impl D3D11Runtime {
             Some("aero-d3d11 pipeline layout"),
         );
 
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aero-d3d11 render pipeline"),
-                layout: Some(pipeline_layout.as_ref()),
-                vertex: wgpu::VertexState {
-                    module: &vs.module,
-                    entry_point: "vs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &vertex_buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &fs.module,
-                    entry_point: "fs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: color_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+        let color_target_states = [Some(wgpu::ColorTargetState {
+            format: color_format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        // WebGPU requires `PrimitiveState.strip_index_format` to be specified in the render
+        // pipeline when using indexed strip topologies (`LineStrip` / `TriangleStrip`). Since the
+        // protocol models D3D11's decoupled state (index buffer bound separately from pipeline
+        // creation), we build pipeline variants for each possible index format and select the
+        // correct variant at draw time.
+        let is_strip_topology = matches!(
+            topology,
+            wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip
+        );
+
+        let create_pipeline = |strip_index_format: Option<wgpu::IndexFormat>| {
+            self.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aero-d3d11 render pipeline"),
+                    layout: Some(pipeline_layout.as_ref()),
+                    vertex: wgpu::VertexState {
+                        module: &vs.module,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &vertex_buffers,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs.module,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &color_target_states,
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology,
+                        strip_index_format,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: depth_stencil.clone(),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                })
+        };
+
+        let pipelines = if is_strip_topology {
+            RenderPipelineVariants::Strip {
+                non_indexed: create_pipeline(None),
+                u16: create_pipeline(Some(wgpu::IndexFormat::Uint16)),
+                u32: create_pipeline(Some(wgpu::IndexFormat::Uint32)),
+            }
+        } else {
+            RenderPipelineVariants::NonStrip(create_pipeline(None))
+        };
 
         self.resources.render_pipelines.insert(
             pipeline_id,
             RenderPipelineResource {
-                pipeline,
+                pipelines,
                 bind_group_layout,
                 bindings,
             },
@@ -1312,7 +1335,7 @@ impl D3D11Runtime {
             occlusion_query_set: None,
         });
 
-        let mut bound_pipeline: Option<u32> = None;
+        let mut bound_pipeline: Option<BoundRenderPipeline> = None;
         let mut bound_bind_group: Option<*const wgpu::BindGroup> = None;
         let mut bound_vertex_buffers = vec![None; state.vertex_buffers.len()];
         let mut bound_index_buffer: Option<BoundIndexBuffer> = None;
@@ -1331,11 +1354,12 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
                         bail!("SetPipeline inside render pass did not select a render pipeline");
                     };
-                    let pipeline_changed = bound_pipeline != Some(pipeline_id);
+                    let pipeline_changed = bound_pipeline.as_ref().map(|b| b.id) != Some(pipeline_id);
                     sync_render_pipeline(
                         &mut render_pass,
                         resources,
                         pipeline_id,
+                        state.index_buffer.map(|ib| ib.format),
                         &mut bound_pipeline,
                     )?;
                     if pipeline_changed {
@@ -1400,6 +1424,7 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
+                        state.index_buffer.map(|ib| ib.format),
                         &mut bound_pipeline,
                     )?;
                     let pipeline = resources
@@ -1464,6 +1489,7 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
+                        state.index_buffer.map(|ib| ib.format),
                         &mut bound_pipeline,
                     )?;
                     let pipeline = resources
@@ -1865,21 +1891,40 @@ fn build_bind_group(
     Ok(cache.get_or_create(device, layout, &entries))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoundRenderPipeline {
+    id: u32,
+    strip_index_format: Option<wgpu::IndexFormat>,
+}
+
 fn sync_render_pipeline<'a>(
     pass: &mut wgpu::RenderPass<'a>,
     resources: &'a D3D11Resources,
     pipeline_id: u32,
-    bound: &mut Option<u32>,
+    strip_index_format: Option<wgpu::IndexFormat>,
+    bound: &mut Option<BoundRenderPipeline>,
 ) -> Result<()> {
-    if bound == &Some(pipeline_id) {
-        return Ok(());
-    }
     let pipeline = resources
         .render_pipelines
         .get(&pipeline_id)
         .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
-    pass.set_pipeline(&pipeline.pipeline);
-    *bound = Some(pipeline_id);
+
+    let strip_index_format = if pipeline.pipelines.uses_strip_index_format() {
+        strip_index_format
+    } else {
+        None
+    };
+
+    let desired = BoundRenderPipeline {
+        id: pipeline_id,
+        strip_index_format,
+    };
+    if bound == &Some(desired) {
+        return Ok(());
+    }
+
+    pass.set_pipeline(pipeline.pipelines.get(strip_index_format));
+    *bound = Some(desired);
     Ok(())
 }
 

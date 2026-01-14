@@ -59,8 +59,39 @@ pub struct BindingDef {
 }
 
 #[derive(Debug)]
+pub enum RenderPipelineVariants {
+    NonStrip(wgpu::RenderPipeline),
+    Strip {
+        non_indexed: wgpu::RenderPipeline,
+        u16: wgpu::RenderPipeline,
+        u32: wgpu::RenderPipeline,
+    },
+}
+
+impl RenderPipelineVariants {
+    pub fn get(&self, strip_index_format: Option<wgpu::IndexFormat>) -> &wgpu::RenderPipeline {
+        match self {
+            Self::NonStrip(p) => p,
+            Self::Strip {
+                non_indexed,
+                u16,
+                u32,
+            } => match strip_index_format {
+                Some(wgpu::IndexFormat::Uint16) => u16,
+                Some(wgpu::IndexFormat::Uint32) => u32,
+                None => non_indexed,
+            },
+        }
+    }
+
+    pub fn uses_strip_index_format(&self) -> bool {
+        matches!(self, Self::Strip { .. })
+    }
+}
+
+#[derive(Debug)]
 pub struct RenderPipelineResource {
-    pub pipeline: wgpu::RenderPipeline,
+    pub pipelines: RenderPipelineVariants,
     pub bind_group_layout: CachedBindGroupLayout,
     pub bindings: Vec<BindingDef>,
 }
