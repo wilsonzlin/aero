@@ -44,9 +44,9 @@ param(
   # When set (> 0), the harness appends `,vectors=<N>` to the virtio-net/blk/input/snd
   # `-device` args that it creates.
   #
-  # This knob is best-effort: older QEMU builds may not expose the `vectors` property on
-  # virtio devices, in which case QEMU typically exits early with an "unknown property"
-  # error when `vectors=<N>` is passed.
+  # This knob is best-effort: the harness probes whether each QEMU device advertises the
+  # `vectors` property (via `-device <name>,help`). If unsupported, it warns and runs
+  # without the override.
   #
   # Typical values: 2, 4, 8. Windows may still allocate fewer MSI-X messages than
   # requested; the Aero drivers are expected to fall back to the number of vectors
