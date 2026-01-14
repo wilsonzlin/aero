@@ -1,10 +1,48 @@
 use aero_d3d11::runtime::gs_translate::{translate_gs_module_to_wgsl_compute_prepass, GsTranslateError};
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
-use aero_d3d11::{ShaderModel, ShaderStage, Sm4Program};
+use aero_d3d11::{ShaderModel, ShaderStage, Sm4Program, Swizzle, WriteMask};
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
     opcode | (len_dwords << OPCODE_LEN_SHIFT)
+}
+
+fn operand_token(
+    ty: u32,
+    num_components: u32,
+    selection_mode: u32,
+    component_sel: u32,
+    index_dim: u32,
+) -> u32 {
+    let mut token = 0u32;
+    token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
+    token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
+    token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
+    token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
+    token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
+    token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX2_REP_SHIFT;
+    token
+}
+
+fn swizzle_bits(swz: [u8; 4]) -> u32 {
+    (swz[0] as u32) | ((swz[1] as u32) << 2) | ((swz[2] as u32) << 4) | ((swz[3] as u32) << 6)
+}
+
+fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1),
+        idx,
+    ]
+}
+
+fn reg_src(ty: u32, idx: u32) -> Vec<u32> {
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_SWIZZLE, swizzle_bits(Swizzle::XYZW.0), 1),
+        idx,
+    ]
 }
 
 fn assert_wgsl_validates(wgsl: &str) {
@@ -268,6 +306,71 @@ fn sm4_gs_emitthen_cut_translates_to_wgsl_compute_prepass() {
     assert!(
         wgsl.contains("// emitthen_cut"),
         "expected generated WGSL to tag emitthen_cut lowering"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm5_gs_instance_id_translates_to_wgsl_compute_prepass() {
+    // D3D name token for `SV_GSInstanceID`.
+    const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
+    const DCL_DUMMY: u32 = 0x100;
+
+    let version_token = 0x0003_0050u32; // nominal gs_5_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    // Geometry metadata declarations.
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(3); // triangle (tokenized shader format)
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    // Use the D3D primitive-topology constant here to ensure the translator tolerates both
+    // tokenized-format and topology-style encodings.
+    tokens.push(5); // triangle_strip
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(1);
+    tokens.push(opcode_token(OPCODE_DCL_GS_INSTANCE_COUNT, 2));
+    tokens.push(2);
+
+    // dcl_input_siv v0.x, SV_GSInstanceID
+    tokens.push(opcode_token(DCL_DUMMY, 4));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    tokens.push(D3D_NAME_GS_INSTANCE_ID);
+
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(DCL_DUMMY + 1, 3));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    // dcl_output o1.xyzw
+    tokens.push(opcode_token(DCL_DUMMY + 2, 3));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+
+    // mov o1.xyzw, v0.x
+    tokens.push(opcode_token(OPCODE_MOV, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, 0));
+
+    // emit; ret
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 5, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("const GS_INSTANCE_COUNT: u32 = 2u;"),
+        "expected GS instance count to be reflected in WGSL constants"
+    );
+    assert!(
+        wgsl.contains("gs_instance_id"),
+        "expected generated WGSL to reference gs_instance_id system value"
     );
 
     assert_wgsl_validates(&wgsl);

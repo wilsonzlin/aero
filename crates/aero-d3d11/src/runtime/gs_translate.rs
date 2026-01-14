@@ -52,7 +52,6 @@ struct InputSivInfo {
     sys_value: u32,
     mask: WriteMask,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GsTranslateError {
     NotGeometryStage(ShaderStage),
@@ -208,12 +207,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     let mut input_primitive: Option<u32> = None;
     let mut output_topology: Option<u32> = None;
     let mut max_output_vertices: Option<u32> = None;
+    let mut gs_instance_count: Option<u32> = None;
     let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
             Sm4Decl::GsOutputTopology { topology } => output_topology = Some(*topology),
             Sm4Decl::GsMaxOutputVertexCount { max } => max_output_vertices = Some(*max),
+            Sm4Decl::GsInstanceCount { count } => gs_instance_count = Some(*count),
             Sm4Decl::InputSiv {
                 reg,
                 mask,
@@ -243,6 +244,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
         output_topology.ok_or(GsTranslateError::MissingDecl("dcl_outputtopology"))?;
     let max_output_vertices =
         max_output_vertices.ok_or(GsTranslateError::MissingDecl("dcl_maxvertexcount"))?;
+    let gs_instance_count = gs_instance_count.unwrap_or(1).max(1);
 
     let verts_per_primitive = match input_primitive {
         D3D10_SB_PRIMITIVE_POINT => 1,
@@ -407,6 +409,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     w.line(&format!(
         "const GS_MAX_VERTEX_COUNT: u32 = {max_output_vertices}u;"
     ));
+    w.line(&format!(
+        "const GS_INSTANCE_COUNT: u32 = {gs_instance_count}u;"
+    ));
     w.line("");
 
     w.line("@group(0) @binding(0) var<storage, read_write> out_vertices: ExpandedVertexBuffer;");
@@ -526,6 +531,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     w.line("fn gs_exec_primitive(");
     w.indent();
     w.line("prim_id: u32,");
+    w.line("gs_instance_id_in: u32,");
     w.line("out_vertex_count: ptr<function, u32>,");
     w.line("out_index_count: ptr<function, u32>,");
     w.line("overflow: ptr<function, bool>,");
@@ -549,7 +555,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     w.line("");
     w.line("// Synthetic system values for compute-based GS emulation.");
     w.line("let primitive_id: u32 = prim_id;"); // SV_PrimitiveID
-    w.line("let gs_instance_id: u32 = 0u;"); // SV_GSInstanceID (GS instancing not implemented yet)
+    w.line("let gs_instance_id: u32 = gs_instance_id_in;"); // SV_GSInstanceID
     w.line("");
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
@@ -607,7 +613,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
         "for (var prim_id: u32 = 0u; prim_id < params.primitive_count; prim_id = prim_id + 1u) {",
     );
     w.indent();
-    w.line("gs_exec_primitive(prim_id, &out_vertex_count, &out_index_count, &overflow);");
+    w.line(
+        "for (var gs_instance_id: u32 = 0u; gs_instance_id < GS_INSTANCE_COUNT; gs_instance_id = gs_instance_id + 1u) {",
+    );
+    w.indent();
+    w.line("gs_exec_primitive(prim_id, gs_instance_id, &out_vertex_count, &out_index_count, &overflow);");
+    w.line("if (overflow) { break; }");
+    w.dedent();
+    w.line("}");
     w.line("if (overflow) { break; }");
     w.dedent();
     w.line("}");
@@ -691,6 +704,8 @@ fn scan_src_operand(
                     }
                 }
                 other => {
+                    // Keep this non-exhaustive: new `RegFile` variants should not break GS
+                    // translation compilation; instead they should yield a descriptive runtime error.
                     let msg = match other {
                         RegFile::OutputDepth => {
                             "RegFile::OutputDepth is not supported in GS prepass".to_owned()
@@ -800,7 +815,6 @@ fn emit_src_vec4(
                         ),
                     }
                 })?;
-
                 let u32_expr = match info.sys_value {
                     D3D_NAME_PRIMITIVE_ID => "primitive_id",
                     D3D_NAME_GS_INSTANCE_ID => "gs_instance_id",
@@ -815,18 +829,7 @@ fn emit_src_vec4(
                         })
                     }
                 };
-
-                let mut lanes = [String::new(), String::new(), String::new(), String::new()];
-                for (i, bit) in [1u8, 2, 4, 8].into_iter().enumerate() {
-                    if (info.mask.0 & bit) != 0 {
-                        lanes[i] = format!("bitcast<f32>({u32_expr})");
-                    } else if i == 3 {
-                        lanes[i] = "1.0".to_owned();
-                    } else {
-                        lanes[i] = "0.0".to_owned();
-                    }
-                }
-                format!("vec4<f32>({}, {}, {}, {})", lanes[0], lanes[1], lanes[2], lanes[3])
+                expand_u32_to_vec4(u32_expr, info.mask)
             }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
@@ -856,6 +859,26 @@ fn emit_src_vec4(
     }
     expr = apply_modifier(expr, src.modifier);
     Ok(expr)
+}
+
+fn expand_u32_to_vec4(expr_u32: &str, mask: WriteMask) -> String {
+    // For system values, follow the same missing-component defaults as regular vertex inputs:
+    // (0, 0, 0, 1).
+    let bits = mask.0 & 0xF;
+    let lane = |bit: u8, default: &str| -> String {
+        if (bits & bit) != 0 {
+            format!("bitcast<f32>({expr_u32})")
+        } else {
+            default.to_owned()
+        }
+    };
+    format!(
+        "vec4<f32>({}, {}, {}, {})",
+        lane(1, "0.0"),
+        lane(2, "0.0"),
+        lane(4, "0.0"),
+        lane(8, "1.0"),
+    )
 }
 
 fn component_char(c: u8) -> char {
@@ -1007,7 +1030,7 @@ mod tests {
             "expected primitive_id mapping in WGSL:\n{wgsl}"
         );
         assert!(
-            wgsl.contains("let gs_instance_id: u32 = 0u;"),
+            wgsl.contains("let gs_instance_id: u32 = gs_instance_id_in;"),
             "expected gs_instance_id mapping in WGSL:\n{wgsl}"
         );
         assert!(
