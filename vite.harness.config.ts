@@ -208,6 +208,7 @@ export default defineConfig({
         ipc_demo: fileURLToPath(new URL('./web/demo/ipc_demo.html', import.meta.url)),
         vm_boot_vga_serial_smoke: fileURLToPath(new URL('./web/vm-boot-vga-serial-smoke.html', import.meta.url)),
         wddm_scanout_smoke: fileURLToPath(new URL('./web/wddm-scanout-smoke.html', import.meta.url)),
+        wddm_scanout_vram_smoke: fileURLToPath(new URL('./web/wddm-scanout-vram-smoke.html', import.meta.url)),
         wddm_scanout_debug: fileURLToPath(new URL('./web/wddm-scanout-debug.html', import.meta.url)),
       },
     },
