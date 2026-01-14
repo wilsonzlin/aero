@@ -1,7 +1,7 @@
 use std::any::Any;
 
 use aero_io_snapshot::io::state::{SnapshotError, SnapshotResult};
-use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use aero_platform::interrupts::msi::{is_xapic_msi_address, MsiMessage, MsiTrigger};
 
 use super::capabilities::{PciCapability, PCI_CONFIG_SPACE_SIZE};
 
@@ -31,16 +31,6 @@ pub struct MsixCapability {
 }
 
 impl MsixCapability {
-    /// Returns `true` if `addr` targets the xAPIC Local APIC MMIO MSI window (0xFEE0_0000).
-    ///
-    /// The platform interrupt controller currently only models xAPIC-style MSI delivery. If a
-    /// guest programs an MSI-X table entry with an address outside of this window, the platform
-    /// will drop the message; treat that as "blocked delivery" so devices can latch the PBA pending
-    /// bit and retry once the guest finishes programming a valid MSI address.
-    fn is_xapic_msi_address(addr: u64) -> bool {
-        (addr >> 32) == 0 && (addr & 0xFFF0_0000) == 0xFEE0_0000
-    }
-
     fn mask_unused_pba_bits(&mut self) {
         let bits = usize::from(self.table_size) % 64;
         if bits == 0 {
@@ -327,8 +317,8 @@ impl MsixCapability {
     /// - When MSI-X is disabled (MSI-X Enable = 0), this returns `None` and does not mutate the
     ///   Pending Bit Array (PBA).
     /// - When MSI-X is enabled but delivery is blocked (function mask, vector mask, or the table
-    ///   entry is not fully programmed), this returns `None` and sets the PBA pending bit for
-    ///   the vector.
+    ///   entry is not fully programmed / programmed with an MSI address outside the xAPIC LAPIC
+    ///   MSI window), this returns `None` and sets the PBA pending bit for the vector.
     /// - When delivery is successful, the pending bit is cleared.
     pub fn trigger(&mut self, vector: u16) -> Option<MsiMessage> {
         if !self.enabled {
@@ -346,7 +336,7 @@ impl MsixCapability {
             return None;
         }
         let msg = self.entry_message(vector)?;
-        if !Self::is_xapic_msi_address(msg.address) {
+        if !is_xapic_msi_address(msg.address) {
             self.set_pending(vector, true);
             return None;
         }
@@ -391,7 +381,7 @@ impl MsixCapability {
             let Some(msg) = self.entry_message(vector) else {
                 continue;
             };
-            if !Self::is_xapic_msi_address(msg.address) {
+            if !is_xapic_msi_address(msg.address) {
                 continue;
             }
 

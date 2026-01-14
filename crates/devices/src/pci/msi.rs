@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use aero_platform::interrupts::msi::{is_xapic_msi_address, MsiMessage, MsiTrigger};
 
 use super::capabilities::{PciCapability, PCI_CONFIG_SPACE_SIZE};
 
@@ -120,9 +120,7 @@ impl MsiCapability {
         // (0xFEE0_0000). If the guest has not yet programmed a valid MSI address, treat delivery as
         // blocked and latch the pending bit so callers can re-trigger after the guest completes
         // programming.
-        let addr = self.message_address;
-        let addr_valid = (addr >> 32) == 0 && (addr & 0xFFF0_0000) == 0xFEE0_0000;
-        if !addr_valid {
+        if !is_xapic_msi_address(self.message_address) {
             if self.per_vector_masking {
                 self.pending_bits |= 1;
             }

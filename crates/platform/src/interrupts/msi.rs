@@ -9,6 +9,20 @@ pub struct MsiMessage {
     pub data: u16,
 }
 
+/// Base address of the xAPIC Local APIC MMIO window used for MSI delivery.
+pub const XAPIC_LAPIC_MSI_ADDRESS_BASE: u64 = 0xFEE0_0000;
+/// Mask that selects the fixed high bits of an xAPIC MSI address.
+pub const XAPIC_LAPIC_MSI_ADDRESS_MASK: u64 = 0xFFF0_0000;
+
+/// Returns `true` if `address` targets the xAPIC Local APIC MSI window.
+///
+/// This platform currently models xAPIC-style MSI delivery (a write into the Local APIC MMIO
+/// window). x2APIC MSI (where the destination is encoded differently) is not modelled yet.
+#[inline]
+pub fn is_xapic_msi_address(address: u64) -> bool {
+    (address >> 32) == 0 && (address & XAPIC_LAPIC_MSI_ADDRESS_MASK) == XAPIC_LAPIC_MSI_ADDRESS_BASE
+}
+
 impl MsiMessage {
     pub fn vector(self) -> u8 {
         (self.data & 0x00ff) as u8
@@ -26,6 +40,11 @@ impl MsiMessage {
     /// Returns `true` if the MSI address selects xAPIC logical destination mode (address bit 2).
     pub fn destination_is_logical(self) -> bool {
         ((self.address >> 2) & 0x1) != 0
+    }
+
+    /// Returns `true` if this message targets the xAPIC Local APIC MSI window.
+    pub fn is_xapic_address(self) -> bool {
+        is_xapic_msi_address(self.address)
     }
 }
 
@@ -85,7 +104,7 @@ impl MsiTrigger for PlatformInterrupts {
         // spuriously injecting interrupts, drop MSIs that do not target the LAPIC window.
         //
         // Note: x2APIC MSI (where the destination is encoded differently) is not modelled yet.
-        if (message.address >> 32) != 0 || (message.address & 0xFFF0_0000) != 0xFEE0_0000 {
+        if !message.is_xapic_address() {
             return;
         }
 
