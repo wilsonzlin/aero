@@ -3506,17 +3506,15 @@ impl AerogpuD3d11Executor {
                 _pad0: 0,
             };
             let params_bytes = params.to_le_bytes();
-            let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("aerogpu_cmd index pulling params"),
-                size: params_bytes.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            {
-                let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
-                mapped.copy_from_slice(&params_bytes);
-            }
-            params_buffer.unmap();
+            let params_alloc = self
+                .expansion_scratch
+                .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+                .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
+            self.queue.write_buffer(
+                params_alloc.buffer.as_ref(),
+                params_alloc.offset,
+                &params_bytes,
+            );
 
             let ip_bgl_entries = [
                 wgpu::BindGroupLayoutEntry {
@@ -3549,7 +3547,11 @@ impl AerogpuD3d11Executor {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: INDEX_PULLING_PARAMS_BINDING,
-                        resource: params_buffer.as_entire_binding(),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: params_alloc.buffer.as_ref(),
+                            offset: params_alloc.offset,
+                            size: wgpu::BufferSize::new(params_alloc.size),
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: INDEX_PULLING_BUFFER_BINDING,
@@ -3576,7 +3578,13 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(expanded_vertex_size),
+                    // Keep this layout independent of the current primitive count so we can reuse
+                    // the compute pipeline across draws with different expansion sizes.
+                    //
+                    // We still bind the exact output slice via `wgpu::BufferBinding::size`.
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                    ),
                 },
                 count: None,
             },
@@ -3586,7 +3594,7 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(expanded_index_size),
+                    min_binding_size: wgpu::BufferSize::new(4),
                 },
                 count: None,
             },
@@ -15888,6 +15896,88 @@ fn cs_main() {
             assert_eq!(
                 cap_after, cap_before,
                 "expansion scratch backing buffer should be reused across GS prepass draws"
+            );
+        });
+    }
+
+    #[test]
+    fn gs_prepass_reuses_compute_pipeline_across_primitive_counts() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let stats_before = exec.pipeline_cache.stats();
+
+            // Minimal stream that triggers `exec_draw_with_compute_prepass` by binding a non-zero
+            // geometry shader handle. Use two draws with different primitive counts so the
+            // expansion output buffer sizes differ.
+            const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+            const GS: u32 = 4;
+
+            const DXBC_VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const DXBC_PS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                4,
+                4,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_with_gs(VS, GS, PS, 0);
+
+            // TriangleList: 3 vertices = 1 primitive, 6 vertices = 2 primitives.
+            writer.draw(3, 1, 0, 0);
+            writer.draw(6, 1, 0, 0);
+
+            let stream = writer.finish();
+            let mut guest_mem = VecGuestMemory::new(0);
+            match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("Unsupported") && msg.contains("compute") {
+                        skip_or_panic(module_path!(), &format!("compute unsupported ({msg})"));
+                        return;
+                    }
+                    panic!("unexpected execute_cmd_stream error: {e:#}");
+                }
+            }
+
+            let stats_after = exec.pipeline_cache.stats();
+            assert_eq!(
+                stats_after.compute_pipelines - stats_before.compute_pipelines,
+                1,
+                "expected exactly one compute pipeline for geometry prepass, got before={stats_before:?} after={stats_after:?}"
+            );
+            assert_eq!(
+                stats_after.compute_pipeline_misses - stats_before.compute_pipeline_misses,
+                1,
+                "expected a single compute pipeline miss (first draw) when primitive counts differ"
+            );
+            assert_eq!(
+                stats_after.compute_pipeline_hits - stats_before.compute_pipeline_hits,
+                1,
+                "expected a compute pipeline cache hit on the second draw with a different primitive count"
             );
         });
     }

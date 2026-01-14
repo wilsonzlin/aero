@@ -124,6 +124,59 @@ impl fmt::Display for GsTranslateError {
 
 impl std::error::Error for GsTranslateError {}
 
+fn opcode_name(inst: &Sm4Inst) -> &'static str {
+    match inst {
+        Sm4Inst::If { .. } => "if",
+        Sm4Inst::Else => "else",
+        Sm4Inst::EndIf => "endif",
+        Sm4Inst::Loop => "loop",
+        Sm4Inst::EndLoop => "endloop",
+        Sm4Inst::Mov { .. } => "mov",
+        Sm4Inst::Movc { .. } => "movc",
+        Sm4Inst::Utof { .. } => "utof",
+        Sm4Inst::And { .. } => "and",
+        Sm4Inst::Add { .. } => "add",
+        Sm4Inst::IAddC { .. } => "iaddc",
+        Sm4Inst::UAddC { .. } => "uaddc",
+        Sm4Inst::ISubC { .. } => "isubc",
+        Sm4Inst::USubB { .. } => "usubb",
+        Sm4Inst::Mul { .. } => "mul",
+        Sm4Inst::Mad { .. } => "mad",
+        Sm4Inst::Dp3 { .. } => "dp3",
+        Sm4Inst::Dp4 { .. } => "dp4",
+        Sm4Inst::Min { .. } => "min",
+        Sm4Inst::Max { .. } => "max",
+        Sm4Inst::IMin { .. } => "imin",
+        Sm4Inst::IMax { .. } => "imax",
+        Sm4Inst::UMin { .. } => "umin",
+        Sm4Inst::UMax { .. } => "umax",
+        Sm4Inst::IAbs { .. } => "iabs",
+        Sm4Inst::INeg { .. } => "ineg",
+        Sm4Inst::UDiv { .. } => "udiv",
+        Sm4Inst::IDiv { .. } => "idiv",
+        Sm4Inst::Rcp { .. } => "rcp",
+        Sm4Inst::Rsq { .. } => "rsq",
+        Sm4Inst::Bfi { .. } => "bfi",
+        Sm4Inst::Ubfe { .. } => "ubfe",
+        Sm4Inst::Ibfe { .. } => "ibfe",
+        Sm4Inst::Cmp { .. } => "cmp",
+        Sm4Inst::Bfrev { .. } => "bfrev",
+        Sm4Inst::CountBits { .. } => "countbits",
+        Sm4Inst::Sample { .. } => "sample",
+        Sm4Inst::SampleL { .. } => "sample_l",
+        Sm4Inst::Ld { .. } => "ld",
+        Sm4Inst::LdRaw { .. } => "ld_raw",
+        Sm4Inst::StoreRaw { .. } => "store_raw",
+        Sm4Inst::LdStructured { .. } => "ld_structured",
+        Sm4Inst::StoreStructured { .. } => "store_structured",
+        Sm4Inst::Emit { .. } => "emit",
+        Sm4Inst::Cut { .. } => "cut",
+        Sm4Inst::Ret => "ret",
+        Sm4Inst::Unknown { .. } => "unknown",
+        _ => "unimplemented",
+    }
+}
+
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
 /// geometry prepass.
 ///
@@ -243,47 +296,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
             other => {
                 return Err(GsTranslateError::UnsupportedInstruction {
                     inst_index,
-                    opcode: match other {
-                        Sm4Inst::If { .. } => "if",
-                        Sm4Inst::Else => "else",
-                        Sm4Inst::EndIf => "endif",
-                        Sm4Inst::Loop => "loop",
-                        Sm4Inst::EndLoop => "endloop",
-                        Sm4Inst::Movc { .. } => "movc",
-                        Sm4Inst::Utof { .. } => "utof",
-                        Sm4Inst::And { .. } => "and",
-                        Sm4Inst::Mul { .. } => "mul",
-                        Sm4Inst::Mad { .. } => "mad",
-                        Sm4Inst::Dp3 { .. } => "dp3",
-                        Sm4Inst::Dp4 { .. } => "dp4",
-                        Sm4Inst::Min { .. } => "min",
-                        Sm4Inst::Max { .. } => "max",
-                        Sm4Inst::IAddC { .. } => "iaddc",
-                        Sm4Inst::UAddC { .. } => "uaddc",
-                        Sm4Inst::ISubC { .. } => "isubc",
-                        Sm4Inst::USubB { .. } => "usubb",
-                        Sm4Inst::UDiv { .. } => "udiv",
-                        Sm4Inst::IDiv { .. } => "idiv",
-                        Sm4Inst::Rcp { .. } => "rcp",
-                        Sm4Inst::Rsq { .. } => "rsq",
-                        Sm4Inst::Bfi { .. } => "bfi",
-                        Sm4Inst::Ubfe { .. } => "ubfe",
-                        Sm4Inst::Ibfe { .. } => "ibfe",
-                        Sm4Inst::Sample { .. } => "sample",
-                        Sm4Inst::SampleL { .. } => "sample_l",
-                        Sm4Inst::Ld { .. } => "ld",
-                        Sm4Inst::LdRaw { .. } => "ld_raw",
-                        Sm4Inst::StoreRaw { .. } => "store_raw",
-                        Sm4Inst::LdStructured { .. } => "ld_structured",
-                        Sm4Inst::StoreStructured { .. } => "store_structured",
-                        Sm4Inst::Unknown { .. } => "unknown",
-                        Sm4Inst::Emit { .. } => "emit",
-                        Sm4Inst::Cut { .. } => "cut",
-                        Sm4Inst::Ret => "ret",
-                        Sm4Inst::Add { .. } => "add",
-                        Sm4Inst::Mov { .. } => "mov",
-                        _ => "unsupported",
-                    },
+                    opcode: opcode_name(other),
                 });
             }
         }
@@ -515,47 +528,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
             other => {
                 return Err(GsTranslateError::UnsupportedInstruction {
                     inst_index,
-                    opcode: match other {
-                        Sm4Inst::If { .. } => "if",
-                        Sm4Inst::Else => "else",
-                        Sm4Inst::EndIf => "endif",
-                        Sm4Inst::Loop => "loop",
-                        Sm4Inst::EndLoop => "endloop",
-                        Sm4Inst::Movc { .. } => "movc",
-                        Sm4Inst::Utof { .. } => "utof",
-                        Sm4Inst::And { .. } => "and",
-                        Sm4Inst::Mul { .. } => "mul",
-                        Sm4Inst::Mad { .. } => "mad",
-                        Sm4Inst::Dp3 { .. } => "dp3",
-                        Sm4Inst::Dp4 { .. } => "dp4",
-                        Sm4Inst::Min { .. } => "min",
-                        Sm4Inst::Max { .. } => "max",
-                        Sm4Inst::IAddC { .. } => "iaddc",
-                        Sm4Inst::UAddC { .. } => "uaddc",
-                        Sm4Inst::ISubC { .. } => "isubc",
-                        Sm4Inst::USubB { .. } => "usubb",
-                        Sm4Inst::UDiv { .. } => "udiv",
-                        Sm4Inst::IDiv { .. } => "idiv",
-                        Sm4Inst::Rcp { .. } => "rcp",
-                        Sm4Inst::Rsq { .. } => "rsq",
-                        Sm4Inst::Bfi { .. } => "bfi",
-                        Sm4Inst::Ubfe { .. } => "ubfe",
-                        Sm4Inst::Ibfe { .. } => "ibfe",
-                        Sm4Inst::Sample { .. } => "sample",
-                        Sm4Inst::SampleL { .. } => "sample_l",
-                        Sm4Inst::Ld { .. } => "ld",
-                        Sm4Inst::LdRaw { .. } => "ld_raw",
-                        Sm4Inst::StoreRaw { .. } => "store_raw",
-                        Sm4Inst::LdStructured { .. } => "ld_structured",
-                        Sm4Inst::StoreStructured { .. } => "store_structured",
-                        Sm4Inst::Unknown { .. } => "unknown",
-                        Sm4Inst::Emit { .. } => "emit",
-                        Sm4Inst::Cut { .. } => "cut",
-                        Sm4Inst::Ret => "ret",
-                        Sm4Inst::Add { .. } => "add",
-                        Sm4Inst::Mov { .. } => "mov",
-                        _ => "unsupported",
-                    },
+                    opcode: opcode_name(other),
                 });
             }
         }
@@ -734,11 +707,16 @@ fn emit_src_vec4(
                     msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
                 })
             }
-            RegFile::OutputDepth => {
+            other => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
-                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                    msg: match other {
+                        RegFile::OutputDepth => {
+                            "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+                        }
+                        other => format!("unsupported source register file {other:?}"),
+                    },
                 })
             }
         },
