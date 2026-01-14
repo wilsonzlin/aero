@@ -134,6 +134,26 @@ EOF
     echo "  ✓ .cargo/config.toml: created"
 fi
 
+# ---- Set up per-checkout Cargo home (optional but recommended for agents) ----
+#
+# When many agent sandboxes share the same host, Cargo's global registry cache lock can cause
+# massive slowdowns (cargo prints: "Blocking waiting for file lock on package cache").
+#
+# `scripts/agent-env.sh` will automatically use `$REPO_ROOT/.cargo-home` as `CARGO_HOME` when that
+# directory exists (and `CARGO_HOME` is unset or left at the default `$HOME/.cargo`). Creating this
+# directory here makes the "fast path" the default for agents without changing behavior for normal
+# developers that don't run this setup script.
+echo ""
+echo "Setting up per-checkout Cargo home..."
+
+CARGO_HOME_DIR="$REPO_ROOT/.cargo-home"
+if [[ -d "$CARGO_HOME_DIR" ]]; then
+    echo "  ✓ .cargo-home: already exists"
+else
+    mkdir -p "$CARGO_HOME_DIR"
+    echo "  ✓ .cargo-home: created (will be used by scripts/agent-env.sh)"
+fi
+
 # ---- Check for orphaned processes ----
 
 echo ""
