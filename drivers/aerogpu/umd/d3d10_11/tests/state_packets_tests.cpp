@@ -559,8 +559,8 @@ bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
   }
 
   AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
-  // Invalid: `cull_mode` is `enum aerogpu_cull_mode` (0..2).
   desc.fill_mode = AEROGPU_FILL_WIREFRAME;
+  // Invalid: `cull_mode` is `enum aerogpu_cull_mode` (0..2).
   desc.cull_mode = AEROGPU_CULL_BACK + 1u;
   desc.front_ccw = 0;
   desc.scissor_enable = 0;
@@ -696,7 +696,65 @@ bool TestSetNullRasterizerStateEmitsDefaultPacket() {
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
 }
- 
+
+bool TestCreateDepthStencilStateRejectsInvalidDepthFunc() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(dss invalid depth_func)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE desc = {};
+  desc.depth_enable = 1;
+  desc.depth_write_enable = 1;
+  // Invalid: `depth_func` is `enum aerogpu_compare_func` (0..7).
+  desc.depth_func = AEROGPU_COMPARE_ALWAYS + 1u;
+  desc.stencil_enable = 0;
+  desc.stencil_read_mask = 0xFFu;
+  desc.stencil_write_mask = 0xFFu;
+
+  D3D10DDI_HDEPTHSTENCILSTATE hState = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateDepthStencilStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateDepthStencilStateSize returned non-trivial size (invalid depth_func)")) {
+    return false;
+  }
+
+  // Fill the private memory with a sentinel so we can validate that
+  // CreateDepthStencilState constructs a safe default state even when it
+  // returns E_INVALIDARG.
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hState.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateDepthStencilState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_INVALIDARG, "CreateDepthStencilState should return E_INVALIDARG for invalid depth_func")) {
+    return false;
+  }
+
+  aerogpu_depth_stencil_state expected{};
+  expected.depth_enable = 1u;
+  expected.depth_write_enable = 1u;
+  expected.depth_func = AEROGPU_COMPARE_LESS;
+  expected.stencil_enable = 0u;
+  expected.stencil_read_mask = 0xFFu;
+  expected.stencil_write_mask = 0xFFu;
+  expected.reserved0[0] = 0;
+  expected.reserved0[1] = 0;
+
+  if (!Check(storage.size() >= sizeof(expected), "depth-stencil state storage has expected size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(storage.data(), &expected, sizeof(expected)) == 0,
+             "CreateDepthStencilState(invalid) should still write default state")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroyDepthStencilState(dev.hDevice, hState);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestDepthDisableDisablesDepthWrites() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(depth disable)")) {
@@ -875,6 +933,7 @@ int main() {
   ok &= TestCreateRasterizerStateRejectsUnsupportedCullMode();
   ok &= TestSetRasterizerStateEmitsPacket();
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
+  ok &= TestCreateDepthStencilStateRejectsInvalidDepthFunc();
   ok &= TestDepthDisableDisablesDepthWrites();
   ok &= TestSetDepthStencilStateEmitsPacket();
   ok &= TestSetNullDepthStencilStateEmitsDefaultPacket();

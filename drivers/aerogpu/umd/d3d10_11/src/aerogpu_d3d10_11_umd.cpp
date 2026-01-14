@@ -4319,6 +4319,12 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
   state.reserved0[0] = 0;
   state.reserved0[1] = 0;
 
+  // Always construct the state object so DestroyDepthStencilState is safe even
+  // if we reject the descriptor (some runtimes may still call Destroy on
+  // failure).
+  auto* s = new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+  s->state = state;
+
   if (pDesc) {
     if (pDesc->depth_enable > 1u || pDesc->depth_write_enable > 1u || pDesc->stencil_enable > 1u) {
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
@@ -4334,10 +4340,8 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
     state.stencil_enable = pDesc->stencil_enable ? 1u : 0u;
     state.stencil_read_mask = pDesc->stencil_read_mask;
     state.stencil_write_mask = pDesc->stencil_write_mask;
+    s->state = state;
   }
-
-  auto* s = new (hState.pDrvPrivate) AeroGpuDepthStencilState();
-  s->state = state;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
