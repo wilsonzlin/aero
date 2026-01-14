@@ -312,6 +312,9 @@ export class WgpuWebGl2Presenter implements Presenter {
     const prevReadBuffer = gl.getParameter(gl.READ_BUFFER) as number;
     const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING) as WebGLBuffer | null;
     const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT) as number;
+    const prevPackRowLength = gl.getParameter(gl.PACK_ROW_LENGTH) as number;
+    const prevPackSkipPixels = gl.getParameter(gl.PACK_SKIP_PIXELS) as number;
+    const prevPackSkipRows = gl.getParameter(gl.PACK_SKIP_ROWS) as number;
     try {
       // Ensure we read from the default framebuffer (the actual canvas output), not whatever
       // internal FBO wgpu last used.
@@ -319,6 +322,9 @@ export class WgpuWebGl2Presenter implements Presenter {
       // Ensure readPixels writes into client memory (not a PIXEL_PACK_BUFFER).
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
       try {
         gl.readBuffer(gl.BACK);
       } catch {
@@ -328,6 +334,9 @@ export class WgpuWebGl2Presenter implements Presenter {
     } finally {
       // Restore state to avoid surprising the wasm/wgpu rendering pipeline.
       gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, prevPackRowLength);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, prevPackSkipPixels);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, prevPackSkipRows);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
       try {
