@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::{
-    PciDeviceProfile, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE, VIRTIO_NET,
+    PciDeviceProfile, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE, VIRTIO_INPUT_TABLET,
+    VIRTIO_NET,
 };
 use aero_devices::pci::{PciBarDefinition, PciConfigSpace, PciDevice as _};
 
@@ -282,6 +283,20 @@ fn virtio_pci_config_space_matches_canonical_profiles() {
         );
         let mut profile_cfg = VIRTIO_INPUT_MOUSE.build_config_space();
         assert_config_space_matches_profile(dev.config_mut(), &mut profile_cfg, VIRTIO_INPUT_MOUSE);
+    }
+
+    // virtio-input tablet (optional function 2)
+    {
+        let mut dev = VirtioPciDevice::new(
+            Box::new(VirtioInput::new(VirtioInputDeviceKind::Tablet)),
+            Box::new(InterruptLog::default()),
+        );
+        let mut profile_cfg = VIRTIO_INPUT_TABLET.build_config_space();
+        assert_config_space_matches_profile(
+            dev.config_mut(),
+            &mut profile_cfg,
+            VIRTIO_INPUT_TABLET,
+        );
     }
 
     // virtio-snd

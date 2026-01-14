@@ -1,7 +1,7 @@
 use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL, VIRTIO_BLK, VIRTIO_CAP_COMMON,
     VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY, VIRTIO_INPUT_KEYBOARD,
-    VIRTIO_INPUT_MOUSE, VIRTIO_NET,
+    VIRTIO_INPUT_MOUSE, VIRTIO_INPUT_TABLET, VIRTIO_NET,
 };
 
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
@@ -144,6 +144,12 @@ fn virtio_pci_device_ids_match_canonical_profile() {
         Box::new(InterruptLog::default()),
     );
     assert_virtio_identity_matches_profile(&mut mouse, VIRTIO_INPUT_MOUSE);
+
+    let mut tablet = VirtioPciDevice::new(
+        Box::new(VirtioInput::new(VirtioInputDeviceKind::Tablet)),
+        Box::new(InterruptLog::default()),
+    );
+    assert_virtio_identity_matches_profile(&mut tablet, VIRTIO_INPUT_TABLET);
 
     #[cfg(feature = "snd")]
     {

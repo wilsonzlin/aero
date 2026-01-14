@@ -1034,6 +1034,25 @@ pub const VIRTIO_INPUT_MOUSE: PciDeviceProfile = PciDeviceProfile {
     capabilities: &VIRTIO_INPUT_CAPS,
 };
 
+/// Optional virtio-input absolute pointer function (tablet).
+///
+/// See `docs/windows7-virtio-driver-contract.md` §3.3: function 2 is an optional EV_ABS tablet that
+/// shares the same Vendor/Device ID as the keyboard/mouse functions but uses subsystem ID 0x0012.
+pub const VIRTIO_INPUT_TABLET: PciDeviceProfile = PciDeviceProfile {
+    name: "virtio-input-tablet",
+    bdf: PciBdf::new(0, 10, 2),
+    vendor_id: PCI_VENDOR_ID_VIRTIO,
+    device_id: PCI_DEVICE_ID_VIRTIO_INPUT_MODERN,
+    subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
+    subsystem_id: 0x0012,
+    revision_id: 1,
+    class: PciClassCode::new(0x09, 0x80, 0x00),
+    header_type: 0x00,
+    interrupt_pin: Some(PciInterruptPin::IntA),
+    bars: &VIRTIO_BARS,
+    capabilities: &VIRTIO_INPUT_CAPS,
+};
+
 pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
     name: "virtio-snd",
     bdf: PciBdf::new(0, 11, 0),

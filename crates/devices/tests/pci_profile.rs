@@ -110,11 +110,13 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(VIRTIO_BLK.class.as_u32(), 0x010000);
     assert_eq!(VIRTIO_INPUT_KEYBOARD.class.as_u32(), 0x098000);
     assert_eq!(VIRTIO_INPUT_MOUSE.class.as_u32(), 0x098000);
+    assert_eq!(VIRTIO_INPUT_TABLET.class.as_u32(), 0x098000);
     assert_eq!(VIRTIO_SND.class.as_u32(), 0x040100);
 
     // AERO-W7-VIRTIO v1: virtio-input is exposed as keyboard + mouse functions.
     assert_eq!(VIRTIO_INPUT_KEYBOARD.subsystem_id, 0x0010);
     assert_eq!(VIRTIO_INPUT_MOUSE.subsystem_id, 0x0011);
+    assert_eq!(VIRTIO_INPUT_TABLET.subsystem_id, 0x0012);
 }
 
 #[test]
@@ -330,6 +332,7 @@ fn virtio_msix_capability_table_size_and_offsets_are_stable() {
         // virtio-input: 2 queues (event/status) + config vector = 3.
         (VIRTIO_INPUT_KEYBOARD, 3u16, 0x3130u32),
         (VIRTIO_INPUT_MOUSE, 3u16, 0x3130u32),
+        (VIRTIO_INPUT_TABLET, 3u16, 0x3130u32),
         // virtio-snd: 4 queues + config vector = 5.
         (VIRTIO_SND, 5u16, 0x3150u32),
     ];
