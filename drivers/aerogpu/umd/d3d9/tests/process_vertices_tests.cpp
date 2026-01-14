@@ -859,10 +859,11 @@ void test_copy_xyzrhw_diffuse_offsets() {
     write_u32(src.storage, base + 16, colors[i]);
   }
 
-  // Destination VB: 6 vertices of XYZRHW|DIFFUSE.
+  // Destination VB: leave room before and after the written range so we can detect
+  // DestIndex handling bugs and out-of-bounds writes.
   Resource dst;
   dst.kind = ResourceKind::Buffer;
-  dst.size_bytes = 6 * 20;
+  dst.size_bytes = 10 * 20;
   dst.storage.resize(dst.size_bytes);
   std::memset(dst.storage.data(), 0xCD, dst.storage.size());
 
@@ -896,16 +897,25 @@ void test_copy_xyzrhw_diffuse_offsets() {
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
 
-  // Destination indices [0..2] should remain untouched (0xCD fill), verifying
-  // DestIndex handling.
-  for (size_t i = 0; i < 3 * 20; ++i) {
+  const size_t dst_stride = 20;
+  const size_t dst_begin = static_cast<size_t>(pv.DestIndex) * dst_stride;
+  const size_t dst_end = dst_begin + static_cast<size_t>(pv.VertexCount) * dst_stride;
+
+  // Prefix should remain untouched (0xCD fill), verifying DestIndex handling.
+  for (size_t i = 0; i < dst_begin; ++i) {
+    assert(dst.storage[i] == 0xCD);
+  }
+  // Suffix should remain untouched (0xCD fill), catching overruns past VertexCount.
+  for (size_t i = dst_end; i < dst.storage.size(); ++i) {
     assert(dst.storage[i] == 0xCD);
   }
 
   // Destination indices [3..5] should match source indices [1..3].
   const size_t src_off = 1 * 20;
-  const size_t dst_off = 3 * 20;
-  assert(std::memcmp(dst.storage.data() + dst_off, src.storage.data() + src_off, 3 * 20) == 0);
+  const size_t dst_off = static_cast<size_t>(pv.DestIndex) * dst_stride;
+  assert(std::memcmp(dst.storage.data() + dst_off,
+                     src.storage.data() + src_off,
+                     static_cast<size_t>(pv.VertexCount) * dst_stride) == 0);
 }
 
 void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
