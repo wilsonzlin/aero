@@ -3032,6 +3032,150 @@ test("evicts UDP remote allowlist entries when MAX_ALLOWED_REMOTES_PER_BINDING i
   }
 });
 
+test("treats MAX_ALLOWED_REMOTES_PER_BINDING as a per-guest-port limit (not per-session)", async ({ page }) => {
+  const echoA = await startUdpServerWithDelayedRepeat("udp4", "127.0.0.1", {
+    delayMs: 1_200,
+    latePayload: Buffer.from("late from A"),
+  });
+  const echoB = await startUdpEchoServer("udp4", "127.0.0.1");
+  test.skip(!echoA || !echoB, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({
+    MAX_ALLOWED_REMOTES_PER_BINDING: "1",
+    UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: "10s",
+  });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+  const allowlistEvictMetric = "udp_remote_allowlist_evictions_total";
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPortA, echoPortB }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const waitForDatagram = async ({ timeoutMs }) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    return;
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  return;
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(null);
+            }, timeoutMs);
+            ws.addEventListener("message", onMessage);
+          });
+
+        const buildFrame = (guestPort, remotePort, text) => {
+          const payload = new TextEncoder().encode(text);
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (remotePort >> 8) & 0xff;
+          frame[7] = remotePort & 0xff;
+          frame.set(payload, 8);
+          return frame;
+        };
+
+        const sendAndRecvText = async (guestPort, remotePort, text) => {
+          const frame = buildFrame(guestPort, remotePort, text);
+          const respPromise = waitForDatagram({ timeoutMs: 10_000 });
+          ws.send(frame);
+          const resp = await respPromise;
+          if (!resp) throw new Error(`timed out waiting for echoed datagram for ${text}`);
+          if (resp.length < 8) throw new Error("echoed frame too short");
+          const gotText = new TextDecoder().decode(resp.slice(8));
+          const gotGuestPort = (resp[0] << 8) | resp[1];
+          const gotRemotePort = (resp[6] << 8) | resp[7];
+          return { gotText, gotGuestPort, gotRemotePort };
+        };
+
+        // Use two different guest ports so each gets its own allowlist/binding.
+        const guestPortA = 10_000;
+        const guestPortB = 10_001;
+
+        const respA = await sendAndRecvText(guestPortA, echoPortA, "hello A");
+        const respB = await sendAndRecvText(guestPortB, echoPortB, "hello B");
+
+        const late = await waitForDatagram({ timeoutMs: 4_000 });
+        if (!late) throw new Error("timed out waiting for delayed datagram");
+        if (late.length < 8) throw new Error("late frame too short");
+        const lateGuestPort = (late[0] << 8) | late[1];
+        const lateRemotePort = (late[6] << 8) | late[7];
+        const lateText = new TextDecoder().decode(late.slice(8));
+
+        ws.close();
+        return { respA, respB, lateGuestPort, lateRemotePort, lateText };
+      },
+      { relayPort: relay.port, echoPortA: echoA.port, echoPortB: echoB.port },
+    );
+
+    expect(res.respA.gotText).toBe("hello A");
+    expect(res.respA.gotGuestPort).toBe(10_000);
+    expect(res.respA.gotRemotePort).toBe(echoA.port);
+
+    expect(res.respB.gotText).toBe("hello B");
+    expect(res.respB.gotGuestPort).toBe(10_001);
+    expect(res.respB.gotRemotePort).toBe(echoB.port);
+
+    expect(res.lateText).toBe("late from A");
+    expect(res.lateGuestPort).toBe(10_000);
+    expect(res.lateRemotePort).toBe(echoA.port);
+
+    const counters = await getRelayEventCounters(relay.port);
+    expect(getCounter(counters, allowlistEvictMetric)).toBe(0);
+    expect(getCounter(counters, allowlistDropMetric)).toBe(0);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echoA?.close(), echoB?.close()]);
+  }
+});
+
 test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallback (v2)", async ({ page }) => {
   const echo = await startUdpEchoServer("udp6", "::1");
   test.skip(!echo, "ipv6 not supported in test environment");
