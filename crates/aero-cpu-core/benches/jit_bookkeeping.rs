@@ -2,8 +2,14 @@
 fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
+use aero_cpu_core::jit::JitMetricsSink;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
 #[cfg(not(target_arch = "wasm32"))]
@@ -14,6 +20,56 @@ use aero_cpu_core::jit::runtime::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct CountingMetricsSink {
+    cache_hit: AtomicU64,
+    cache_miss: AtomicU64,
+    install: AtomicU64,
+    evict: AtomicU64,
+    invalidate: AtomicU64,
+    stale_install_reject: AtomicU64,
+    compile_request: AtomicU64,
+    cache_bytes_used: AtomicU64,
+    cache_bytes_capacity: AtomicU64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl JitMetricsSink for CountingMetricsSink {
+    fn record_cache_hit(&self) {
+        self.cache_hit.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_cache_miss(&self) {
+        self.cache_miss.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_install(&self) {
+        self.install.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_evict(&self, n: u64) {
+        self.evict.fetch_add(n, Ordering::Relaxed);
+    }
+
+    fn record_invalidate(&self) {
+        self.invalidate.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_stale_install_reject(&self) {
+        self.stale_install_reject.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_compile_request(&self) {
+        self.compile_request.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn set_cache_bytes(&self, used: u64, capacity: u64) {
+        self.cache_bytes_used.store(used, Ordering::Relaxed);
+        self.cache_bytes_capacity.store(capacity, Ordering::Relaxed);
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
@@ -370,6 +426,59 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
                 black_box(jit.prepare_block(black_box(rip)));
             }
             black_box(jit.hotness(rip));
+        });
+    });
+
+    group.bench_function("prepare_block_hit_metrics_sink", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let metrics = Arc::new(CountingMetricsSink::default());
+        let mut jit =
+            JitRuntime::new(config, NullBackend, NullCompileSink).with_metrics_sink(metrics.clone());
+        let rip = 0x6000u64;
+        jit.install_handle(dummy_handle(rip, 1, 16));
+
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for _ in 0..OPS_PER_ITER {
+                let h = jit.prepare_block(black_box(rip));
+                checksum ^= h.map(|h| u64::from(h.table_index)).unwrap_or(0);
+            }
+            black_box(checksum);
+            black_box(metrics.cache_hit.load(Ordering::Relaxed));
+        });
+    });
+
+    group.bench_function("prepare_block_miss_metrics_sink", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: u32::MAX,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let metrics = Arc::new(CountingMetricsSink::default());
+        let mut jit =
+            JitRuntime::new(config, NullBackend, NullCompileSink).with_metrics_sink(metrics.clone());
+        let rip = 0x7000u64;
+        // Pre-seed the hotness table entry so we don't benchmark first-hit HashMap allocation.
+        black_box(jit.prepare_block(rip));
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                black_box(jit.prepare_block(black_box(rip)));
+            }
+            black_box(jit.hotness(rip));
+            black_box(metrics.cache_miss.load(Ordering::Relaxed));
         });
     });
 
