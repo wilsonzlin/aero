@@ -15046,8 +15046,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       return hr;
     }
     // State blocks can capture and re-apply VS constant registers even when the
-    // app uses fixed-function rendering. Since the fixed-function fallback shader
-    // consumes c0-c3 for WVP, re-emit those constants after the block is applied.
+    // app uses fixed-function rendering. If the fixed-function fallback is using
+    // the internal WVP VS (reserved range c240..c243), treat the range as
+    // clobbered and re-upload the matrix after the block is applied.
     if (fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
     }
@@ -15597,8 +15598,11 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // Most fixed-function DDIs are cached-only and are not emitted as explicit
 // fixed-function GPU state in the AeroGPU command stream. However, the UMD does
 // emulate a minimal fixed-function pipeline:
-// - WORLD/VIEW/PROJECTION matrices drive internal WVP vertex shaders for `FVF
-//   XYZ*` when no user shaders are bound.
+// - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior:
+//   - `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}`: CPU-transform vertices to clip-space at
+//     draw time (`convert_xyz_to_clipspace_locked()`).
+//   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse): internal VS using WVP constants in a
+//     reserved range (`c240..c243`).
 // - Stage0 texture stage state selects a fixed-function PS variant.
 //
 // Cache state so Set*/Get* and state blocks round-trip for legacy apps that treat
