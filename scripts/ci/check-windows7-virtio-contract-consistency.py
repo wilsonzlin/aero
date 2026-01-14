@@ -339,11 +339,6 @@ def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -
         # virtio-net binding check inside VirtioNetTest().
         # Accept either `kExpectedService = L"..."` or `kExpectedService[] = L"..."`.
         "virtio-net": re.compile(r'\bkExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
-        # virtio-input expected service name (PCI binding validation).
-        # Accept both pointer + array style declarations:
-        #   static constexpr const wchar_t* kVirtioInputExpectedService = L"...";
-        #   static constexpr const wchar_t kVirtioInputExpectedService[] = L"...";
-        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-snd modern / transitional service name expectations.
         "virtio-snd": re.compile(
             r'\bkVirtioSndExpectedServiceModern\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'
@@ -351,6 +346,11 @@ def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -
         "virtio-snd-transitional": re.compile(
             r'\bkVirtioSndExpectedServiceTransitional\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'
         ),
+        # virtio-input expected service name (PCI binding validation).
+        # Accept both pointer + array style declarations:
+        #   static constexpr const wchar_t* kVirtioInputExpectedService = L"...";
+        #   static constexpr const wchar_t kVirtioInputExpectedService[] = L"...";
+        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
     }
 
     out: dict[str, LocatedString] = {}
@@ -1652,7 +1652,8 @@ def validate_virtio_input_model_lines(
     - The INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs
       (distinct naming).
     - If `require_fallback=True`, it must include the strict REV-qualified generic
-      fallback HWID (no SUBSYS). If `require_fallback=False`, it must not include that
+      fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
+      IDs are absent/ignored. If `require_fallback=False`, it must not include that
       fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
@@ -1661,6 +1662,10 @@ def validate_virtio_input_model_lines(
     The `require_fallback` flag controls which policy is enforced:
       - `require_fallback=False`: forbid the strict fallback HWID.
       - `require_fallback=True`: require the strict fallback HWID.
+
+    The legacy filename alias is expected to stay in sync with the canonical INF
+    outside the models sections (CI enforces this via an alias drift check) so it
+    cannot silently drift in behavior.
     """
 
     model_entries = parse_inf_model_entries(inf_path)
@@ -3967,11 +3972,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                # The canonical aero_virtio_input.inf is SUBSYS-gated only (no generic fallback
-                # HWID), to avoid binding the driver to non-contract virtio-input devices.
-                # Opt-in fallback binding is provided via the legacy alias INF
-                # (virtio-input.inf{.disabled}).
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
