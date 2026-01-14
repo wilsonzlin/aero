@@ -598,12 +598,18 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
         ram_size,
         options,
         code_version_table_len,
-        prefill_tlbs,
-        &[],
+        CodeVersionTableInit {
+            prefill_tlbs,
+            initial_table: &[],
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct CodeVersionTableInit<'a> {
+    prefill_tlbs: &'a [(u64, u64)],
+    initial_table: &'a [u32],
+}
 fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
     block: &aero_jit_x86::tier1::ir::IrBlock,
     cpu: CpuState,
@@ -611,11 +617,10 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
     ram_size: u64,
     options: Tier1WasmOptions,
     code_version_table_len: u32,
-    prefill_tlbs: &[(u64, u64)],
-    initial_table: &[u32],
+    init: CodeVersionTableInit<'_>,
 ) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
     assert!(
-        initial_table.len() <= code_version_table_len as usize,
+        init.initial_table.len() <= code_version_table_len as usize,
         "initial_table longer than code_version_table_len"
     );
 
@@ -646,7 +651,7 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
     };
     ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
 
-    for &(vaddr, tlb_data) in prefill_tlbs {
+    for &(vaddr, tlb_data) in init.prefill_tlbs {
         let vpn = vaddr >> PAGE_SHIFT;
         let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
         let entry_addr = (JIT_CTX_PTR as usize)
@@ -666,7 +671,7 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
         .copy_from_slice(&code_version_table_len.to_le_bytes());
 
     // Initialize code-version entries (defaults to all-zero when `initial_table` is empty).
-    for (i, v) in initial_table.iter().enumerate() {
+    for (i, v) in init.initial_table.iter().enumerate() {
         let off = table_ptr as usize + i * 4;
         mem[off..off + 4].copy_from_slice(&v.to_le_bytes());
     }
@@ -2971,8 +2976,10 @@ fn tier1_inline_tlb_store_code_version_bump_wraps_u32() {
                 ..Default::default()
             },
             1,
-            &[],
-            &[u32::MAX],
+            CodeVersionTableInit {
+                prefill_tlbs: &[],
+                initial_table: &[u32::MAX],
+            },
         );
 
     assert_eq!(next_rip, 0x3000);
@@ -3018,8 +3025,10 @@ fn tier1_inline_tlb_cross_page_store_code_version_bump_wraps_u32() {
                 ..Default::default()
             },
             2,
-            &[],
-            &[u32::MAX, u32::MAX],
+            CodeVersionTableInit {
+                prefill_tlbs: &[],
+                initial_table: &[u32::MAX, u32::MAX],
+            },
         );
 
     assert_eq!(next_rip, 0x3000);
@@ -3153,8 +3162,10 @@ fn tier1_inline_tlb_store_slow_helper_does_not_bump_code_page_version_when_inlin
                 ..Default::default()
             },
             2,
-            &[],
-            &initial_table,
+            CodeVersionTableInit {
+                prefill_tlbs: &[],
+                initial_table: &initial_table,
+            },
         );
 
     assert_eq!(next_rip, 0x3000);
@@ -3205,8 +3216,10 @@ fn tier1_inline_tlb_cross_page_store_mmio_slow_helper_does_not_bump_code_page_ve
                 ..Default::default()
             },
             2,
-            &[],
-            &initial_table,
+            CodeVersionTableInit {
+                prefill_tlbs: &[],
+                initial_table: &initial_table,
+            },
         );
 
     assert_eq!(next_rip, 0x3000);
