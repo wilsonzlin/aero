@@ -48,6 +48,9 @@ jobs:
       - name: fuzz_dxbc_sm4_parse (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_sm4_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
 
+      - name: fuzz_d3d11_sm4_translate (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d11_sm4_translate -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d11_sm4_translate.dict
+
       - name: fuzz_d3d9_sm3_decode (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_decode -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 

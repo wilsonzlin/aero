@@ -53,6 +53,7 @@ cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 # DXBC / shaders
   cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
   cargo +"$nightly" fuzz run fuzz_dxbc_parse
+  cargo +"$nightly" fuzz run fuzz_d3d11_sm4_translate
   cargo +"$nightly" fuzz run fuzz_d3d9_sm3_decode
   cargo +"$nightly" fuzz run fuzz_d3d9_sm3_wgsl
   cargo +"$nightly" fuzz run fuzz_d3d9_shader_parse
@@ -176,6 +177,12 @@ cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find DXBC/signature chunk IDs faster
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
+  
+# D3D11 SM4/SM5 decode + WGSL translation
+cd fuzz && cargo fuzz run fuzz_d3d11_sm4_translate -- -runs=10000
+
+# Optional: use the bundled dictionary to help libFuzzer find DXBC/signature + SM token patterns faster
+cd fuzz && cargo fuzz run fuzz_d3d11_sm4_translate -- -runs=10000 -dict=fuzz_targets/fuzz_d3d11_sm4_translate.dict
  
 # D3D9 SM2/SM3 bytecode decode + IR build
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
