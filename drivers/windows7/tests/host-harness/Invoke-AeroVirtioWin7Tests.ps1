@@ -112,7 +112,7 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$FailOnBlkRecovery,
 
-  # If set, require the guest virtio-blk-reset marker to PASS (treat SKIP/missing as failure).
+  # If set, require the guest virtio-blk-reset marker to PASS (treat SKIP/FAIL/missing as failure).
   #
   # Note: The guest image must be provisioned with `--test-blk-reset` (or env var equivalent) so the
   # guest selftest runs the miniport reset/recovery test.
