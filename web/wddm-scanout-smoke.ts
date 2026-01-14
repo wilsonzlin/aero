@@ -19,15 +19,27 @@ declare global {
       error?: string;
       hash?: string;
       expectedHash?: string;
+      sourceHash?: string;
+      expectedSourceHash?: string;
       pass?: boolean;
       samplePixels?: () => Promise<{
         backend: string;
-        width: number;
-        height: number;
-        topLeft: number[];
-        topRight: number[];
-        bottomLeft: number[];
-        bottomRight: number[];
+        source: {
+          width: number;
+          height: number;
+          topLeft: number[];
+          topRight: number[];
+          bottomLeft: number[];
+          bottomRight: number[];
+        };
+        presented: {
+          width: number;
+          height: number;
+          topLeft: number[];
+          topRight: number[];
+          bottomLeft: number[];
+          bottomRight: number[];
+        };
       }>;
     };
   }
@@ -201,6 +213,7 @@ async function main(): Promise<void> {
 
     let nextRequestId = 1;
     const pendingScreenshot = new Map<number, { resolve: (msg: any) => void; reject: (err: unknown) => void }>();
+    const pendingPresentedScreenshot = new Map<number, { resolve: (msg: any) => void; reject: (err: unknown) => void }>();
 
     worker.addEventListener("message", (event) => {
       const msg = event.data as any;
@@ -215,6 +228,13 @@ async function main(): Promise<void> {
           const pending = pendingScreenshot.get(msg.requestId);
           if (!pending) break;
           pendingScreenshot.delete(msg.requestId);
+          pending.resolve(msg);
+          break;
+        }
+        case "screenshot_presented": {
+          const pending = pendingPresentedScreenshot.get(msg.requestId);
+          if (!pending) break;
+          pendingPresentedScreenshot.delete(msg.requestId);
           pending.resolve(msg);
           break;
         }
@@ -260,10 +280,11 @@ async function main(): Promise<void> {
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
         options: {
-          // Use the wasm-backed presenter so screenshot readback is the deterministic
-          // *source framebuffer bytes* (not canvas readPixels). This makes the test
-          // sensitive to the BGRX alpha=255 policy (X bytes are 0 in the pattern).
-          forceBackend: "webgl2_wgpu",
+          // Prefer the raw WebGL2 backend for stability in headless Chromium.
+          // The test validates:
+          // - presented pixels via `screenshot_presented`
+          // - source pixels (including alpha=255 policy) via `screenshot`
+          forceBackend: "webgl2_raw",
           disableWebGpu: true,
           outputWidth: width,
           outputHeight: height,
@@ -312,36 +333,74 @@ async function main(): Promise<void> {
       });
     };
 
-    const shot = await requestScreenshot();
-    const rgba8 = new Uint8Array(shot.rgba8);
-    const expected = createExpectedTestPattern(width, height);
+    const requestPresentedScreenshot = (): Promise<any> => {
+      const requestId = nextRequestId++;
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot_presented", requestId });
+      return new Promise((resolve, reject) => {
+        pendingPresentedScreenshot.set(requestId, { resolve, reject });
+        setTimeout(() => {
+          const pending = pendingPresentedScreenshot.get(requestId);
+          if (!pending) return;
+          pendingPresentedScreenshot.delete(requestId);
+          reject(new Error("screenshot_presented request timed out"));
+        }, 5000);
+      });
+    };
 
-    const hash = fnv1a32Hex(rgba8);
-    const expectedHash = fnv1a32Hex(expected);
-    const pass = hash === expectedHash;
+    const sourceShot = await requestScreenshot();
+    const presentedShot = await requestPresentedScreenshot();
 
-    const sample = (x: number, y: number): number[] => {
-      const i = (y * width + x) * 4;
-      return [rgba8[i + 0] ?? 0, rgba8[i + 1] ?? 0, rgba8[i + 2] ?? 0, rgba8[i + 3] ?? 0];
+    const sourceWidth = Number(sourceShot.width) | 0;
+    const sourceHeight = Number(sourceShot.height) | 0;
+    const sourceRgba8 = new Uint8Array(sourceShot.rgba8);
+    const sourceExpected = createExpectedTestPattern(sourceWidth, sourceHeight);
+    const sourceHash = fnv1a32Hex(sourceRgba8);
+    const expectedSourceHash = fnv1a32Hex(sourceExpected);
+
+    const presentedWidth = Number(presentedShot.width) | 0;
+    const presentedHeight = Number(presentedShot.height) | 0;
+    const presentedRgba8 = new Uint8Array(presentedShot.rgba8);
+    const presentedExpected = createExpectedTestPattern(presentedWidth, presentedHeight);
+    const hash = fnv1a32Hex(presentedRgba8);
+    const expectedHash = fnv1a32Hex(presentedExpected);
+
+    const pass = hash === expectedHash && sourceHash === expectedSourceHash;
+
+    const sample = (rgba: Uint8Array, width_: number, x: number, y: number): number[] => {
+      const i = (y * width_ + x) * 4;
+      return [rgba[i + 0] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0, rgba[i + 3] ?? 0];
     };
 
     log(`backend=${backend}`);
     log(`hash=${hash} expected=${expectedHash} ${pass ? "PASS" : "FAIL"}`);
+    log(`sourceHash=${sourceHash} expectedSource=${expectedSourceHash}`);
 
     window.__aeroTest = {
       ready: true,
       backend,
       hash,
       expectedHash,
+      sourceHash,
+      expectedSourceHash,
       pass,
       samplePixels: async () => ({
         backend,
-        width,
-        height,
-        topLeft: sample(8, 8),
-        topRight: sample(width - 9, 8),
-        bottomLeft: sample(8, height - 9),
-        bottomRight: sample(width - 9, height - 9),
+        source: {
+          width: sourceWidth,
+          height: sourceHeight,
+          topLeft: sample(sourceRgba8, sourceWidth, 8, 8),
+          topRight: sample(sourceRgba8, sourceWidth, sourceWidth - 9, 8),
+          bottomLeft: sample(sourceRgba8, sourceWidth, 8, sourceHeight - 9),
+          bottomRight: sample(sourceRgba8, sourceWidth, sourceWidth - 9, sourceHeight - 9),
+        },
+        presented: {
+          width: presentedWidth,
+          height: presentedHeight,
+          topLeft: sample(presentedRgba8, presentedWidth, 8, 8),
+          topRight: sample(presentedRgba8, presentedWidth, presentedWidth - 9, 8),
+          bottomLeft: sample(presentedRgba8, presentedWidth, 8, presentedHeight - 9),
+          bottomRight: sample(presentedRgba8, presentedWidth, presentedWidth - 9, presentedHeight - 9),
+        },
       }),
     };
   } catch (err) {

@@ -23,23 +23,40 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
       backend: api.backend ?? "unknown",
       hash: api.hash,
       expectedHash: api.expectedHash,
+      sourceHash: api.sourceHash,
+      expectedSourceHash: api.expectedSourceHash,
       samples,
     };
   });
 
-  expect(result.backend).toBe("webgl2_wgpu");
+  expect(result.backend).toBe("webgl2_raw");
   expect(result.hash).toBe(result.expectedHash);
+  expect(result.sourceHash).toBe(result.expectedSourceHash);
   expect(result.samples).not.toBeNull();
-  expect(result.samples.width).toBe(64);
-  expect(result.samples.height).toBe(64);
+  expect(result.samples.source.width).toBe(64);
+  expect(result.samples.source.height).toBe(64);
+  expect(result.samples.presented.width).toBe(64);
+  expect(result.samples.presented.height).toBe(64);
 
-  expect(result.samples.topLeft).toEqual([255, 0, 0, 255]);
-  expect(result.samples.topRight).toEqual([0, 255, 0, 255]);
-  expect(result.samples.bottomLeft).toEqual([0, 0, 255, 255]);
-  expect(result.samples.bottomRight).toEqual([255, 255, 255, 255]);
+  // Source framebuffer samples (validates BGRX->RGBA swizzle + alpha policy).
+  expect(result.samples.source.topLeft).toEqual([255, 0, 0, 255]);
+  expect(result.samples.source.topRight).toEqual([0, 255, 0, 255]);
+  expect(result.samples.source.bottomLeft).toEqual([0, 0, 255, 255]);
+  expect(result.samples.source.bottomRight).toEqual([255, 255, 255, 255]);
+
+  // Presented output samples (validates that the scanout path is actually presented).
+  expect(result.samples.presented.topLeft).toEqual([255, 0, 0, 255]);
+  expect(result.samples.presented.topRight).toEqual([0, 255, 0, 255]);
+  expect(result.samples.presented.bottomLeft).toEqual([0, 0, 255, 255]);
+  expect(result.samples.presented.bottomRight).toEqual([255, 255, 255, 255]);
 
   // Validate the "X" byte in BGRX is ignored and alpha is forced to 255.
-  for (const sample of [result.samples.topLeft, result.samples.topRight, result.samples.bottomLeft, result.samples.bottomRight]) {
+  for (const sample of [
+    result.samples.source.topLeft,
+    result.samples.source.topRight,
+    result.samples.source.bottomLeft,
+    result.samples.source.bottomRight,
+  ]) {
     expect(sample[3]).toBe(255);
   }
 });
