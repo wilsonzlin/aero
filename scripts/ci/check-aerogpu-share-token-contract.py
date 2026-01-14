@@ -210,14 +210,19 @@ def check_no_pool_ops_under_allocations_lock_in_func(
             )
 
 
-def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
+def check_no_pool_ops_under_allocations_lock(errors: list[str]) -> None:
     """
     Guardrail for AGPU-ShareToken refcount tracking:
 
-    - `AeroGpuShareTokenRefIncrementLocked` must not perform pool operations
-      while `Adapter->AllocationsLock` is held.
-    - The implementation is expected to drop the spin lock, allocate, then
-      re-acquire and re-check before inserting.
+    Share-token ref bookkeeping is protected by `Adapter->AllocationsLock` (spin lock).
+    To keep hold times low, the KMD must not perform potentially expensive pool
+    operations while the lock is held.
+
+    Enforced functions:
+
+    - `AeroGpuShareTokenRefIncrementLocked` (entered with AllocationsLock held)
+    - `AeroGpuShareTokenRefDecrement`
+    - `AeroGpuFreeAllShareTokenRefs`
     """
 
     kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
@@ -281,7 +286,7 @@ def main() -> int:
             if required not in text:
                 errors.append(f"{path.relative_to(ROOT)}: missing required reference: {required}")
 
-    check_no_pool_alloc_under_allocations_lock(errors)
+    check_no_pool_ops_under_allocations_lock(errors)
     check_track_allocation_share_token_order(errors)
     check_track_allocation_returns_boolean(errors)
     check_track_allocation_return_value_checked(errors)
