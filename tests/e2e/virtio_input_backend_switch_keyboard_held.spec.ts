@@ -41,6 +41,7 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     // Keep guest RAM modest; the test only needs enough space for the virtio queue.
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
@@ -83,7 +84,7 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     });
 
     // io.worker waits for an initial boot disk selection message before reporting READY.
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    ioWorker.postMessage(emptySetBootDisksMessage());
     ioWorker.postMessage({
       kind: "init",
       role: "io",

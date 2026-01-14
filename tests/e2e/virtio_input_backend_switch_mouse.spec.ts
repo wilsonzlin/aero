@@ -38,6 +38,7 @@ test(
 
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     const views = createSharedMemoryViews(segments);
@@ -605,7 +606,7 @@ test(
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
-      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+      ioWorker.postMessage(emptySetBootDisksMessage());
 
       await waitFor(() => Atomics.load(status, StatusIndex.IoReady) === 1, 20_000, "StatusIndex.IoReady");
 

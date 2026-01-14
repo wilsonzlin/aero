@@ -42,6 +42,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const { dynamicHubPort, externalHubPortCount } = opts as { dynamicHubPort: number; externalHubPortCount: number };
     const { allocateSharedMemorySegments, createSharedMemoryViews } = await import("/web/src/runtime/shared_layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     const views = createSharedMemoryViews(segments);
@@ -168,7 +169,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
     });
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    ioWorker.postMessage(emptySetBootDisksMessage());
 
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const waitFor = async (predicate: () => boolean, timeoutMs: number, name: string) => {

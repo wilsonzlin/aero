@@ -37,6 +37,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     const views = createSharedMemoryViews(segments);
@@ -648,7 +649,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
-      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+      ioWorker.postMessage(emptySetBootDisksMessage());
 
       await waitForAtomic(StatusIndex.IoReady, 1, 20_000);
 

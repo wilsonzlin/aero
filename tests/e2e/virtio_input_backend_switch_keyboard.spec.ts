@@ -41,6 +41,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     // Keep the guest RAM allocation modest to avoid unnecessary memory pressure when Playwright
     // runs tests fully-parallel across multiple browsers.
@@ -90,7 +91,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
     });
 
     // io.worker waits for an initial boot disk selection message before reporting READY.
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    ioWorker.postMessage(emptySetBootDisksMessage());
     ioWorker.postMessage({
       kind: "init",
       role: "io",

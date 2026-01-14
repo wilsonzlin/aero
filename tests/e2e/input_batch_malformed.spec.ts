@@ -34,6 +34,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     // Disable VRAM allocation; this test only exercises the input pipeline and does not
     // require a BAR1 aperture.
@@ -175,7 +176,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       await ioWorkerImported;
 
       // io.worker waits for an initial boot disk selection message before reporting READY.
-      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+      ioWorker.postMessage(emptySetBootDisksMessage());
       ioWorker.postMessage({
         kind: "init",
         role: "io",

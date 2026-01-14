@@ -44,6 +44,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     );
     const { ringCtrl } = await import("/web/src/ipc/layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
+    const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
     const { requiredBytes: audioRequiredBytes, wrapRingBuffer: wrapAudioRingBuffer } = await import("/web/src/audio/audio_worklet_ring.ts");
     const { openRingByKind } = await import("/web/src/ipc/ipc.ts");
     const { queueKind } = await import("/web/src/ipc/layout.ts");
@@ -195,7 +196,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     });
 
     // io.worker waits for `setBootDisks` before reporting READY.
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    ioWorker.postMessage(emptySetBootDisksMessage());
 
     await waitForMessage((data) => {
       if (!data || typeof data !== "object") return false;
