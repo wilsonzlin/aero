@@ -69,13 +69,17 @@ pub const OPCODE_IBFE: u32 = 0x69;
 // ---- Integer comparison opcodes (SM4/SM5) ----
 //
 // These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
-// The numeric values match `D3D10_SB_OPCODE_*` from `d3d11tokenizedprogramformat.h`.
-pub const OPCODE_IEQ: u32 = 0x20;
-pub const OPCODE_IGE: u32 = 0x21;
-pub const OPCODE_ILT: u32 = 0x22;
-pub const OPCODE_INE: u32 = 0x27;
-pub const OPCODE_ULT: u32 = 0x4f;
-pub const OPCODE_UGE: u32 = 0x50;
+//
+// NOTE: These values intentionally avoid overlapping the integer/bitwise opcode range
+// (`iadd/isub/imul/and/or/xor/not/ishl/ishr/ushr`). If/when we import a full opcode table from the
+// Windows SDK headers (`d3d11tokenizedprogramformat.h`), verify these numeric IDs against the
+// canonical `D3D10_SB_OPCODE_TYPE_*` constants.
+pub const OPCODE_IEQ: u32 = 0x70;
+pub const OPCODE_INE: u32 = 0x71;
+pub const OPCODE_ILT: u32 = 0x72;
+pub const OPCODE_IGE: u32 = 0x73;
+pub const OPCODE_ULT: u32 = 0x74;
+pub const OPCODE_UGE: u32 = 0x75;
 
 /// Non-executable custom data / comment block.
 ///
@@ -337,10 +341,14 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_MAX => Some("max"),
         OPCODE_IADD => Some("iadd"),
         OPCODE_ISUB => Some("isub"),
+        OPCODE_IMUL => Some("imul"),
+        OPCODE_AND => Some("and"),
+        OPCODE_OR => Some("or"),
         OPCODE_XOR => Some("xor"),
         OPCODE_NOT => Some("not"),
         OPCODE_ISHL => Some("ishl"),
         OPCODE_ISHR => Some("ishr"),
+        OPCODE_USHR => Some("ushr"),
         OPCODE_IABS => Some("iabs"),
         OPCODE_INEG => Some("ineg"),
         OPCODE_IMIN => Some("imin"),
