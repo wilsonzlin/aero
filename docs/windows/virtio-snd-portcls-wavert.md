@@ -848,6 +848,7 @@ Notes:
     * `...\Device Parameters\Parameters\ForceNullBackend`
     * `...\Device Parameters\Parameters\AllowPollingOnly`
   * Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
+  * Backwards compatibility: older installs may instead store these values under the per-device driver key; the driver checks the device key first and falls back.
 * When message interrupts are used, drivers must still program virtio MSI-X routing (`msix_config`, `queue_msix_vector`).
   - On Aero contract devices, if MSI-X is enabled at the PCI layer but a virtio MSI-X selector remains
     `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are

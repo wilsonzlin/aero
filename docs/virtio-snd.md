@@ -294,6 +294,7 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
     - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
       - `1`: force the silent null backend and allow `START_DEVICE` to succeed even when virtio transport bring-up fails
     - Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
+    - Backwards compatibility: older installs may store these values under the device/driver software key; the driver checks the per-device `Device Parameters` key first and falls back.
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
