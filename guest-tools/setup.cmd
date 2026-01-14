@@ -133,7 +133,6 @@ if "%ARG_SKIP_STORAGE%"=="0" (
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
 call :load_signing_policy
-call :write_installed_media_state
 call :warn_if_unexpected_certs
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
@@ -155,6 +154,8 @@ if "%ARG_SKIP_STORAGE%"=="1" (
   call :clear_storage_skip_marker
   call :preseed_storage_boot || goto :fail
 )
+
+call :write_installed_media_state
 
 call :log ""
 call :log "Setup complete."
@@ -423,6 +424,14 @@ if "!RC!"=="%EC_MEDIA_INTEGRITY_FAILED%" (
   endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
 )
 
+rem In /check mode, avoid certutil-based hashing fallbacks to keep validation non-destructive.
+rem PowerShell is expected to be available on Windows 7 (inbox) for /verify-media.
+if "%ARG_CHECK%"=="1" (
+  echo ERROR: PowerShell media verification unavailable or failed (exit code !RC!); cannot verify media integrity in /check mode.
+  echo Remediation: run /verify-media without /check, or run /check on a system with PowerShell 2.0 available.
+  endlocal & exit /b %EC_MEDIA_INTEGRITY_FAILED%
+)
+
 echo WARNING: PowerShell media verification unavailable or failed (exit code !RC!); falling back to CMD parser.
 call :verify_media_with_cmd "!MANIFEST!" "!ROOT!"
 set "RC=!ERRORLEVEL!"
@@ -446,7 +455,7 @@ rem Exit codes:
 rem   0  - OK
 rem   14 - integrity failure (missing/mismatch)
 rem   2  - PowerShell unavailable/parse error (caller may fall back to CMD parsing)
-"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$manifest=$env:AEROGT_MANIFEST; $root=$env:AEROGT_MEDIA_ROOT; function Get-FileSha256Hex([string]$path){ try{ $stream=[System.IO.File]::OpenRead($path); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; return $sb.ToString() } catch { return $null } }; function Parse-JsonCompat([string]$json){ try{ [void][System.Reflection.Assembly]::LoadWithPartialName('System.Web.Extensions'); $ser=New-Object System.Web.Script.Serialization.JavaScriptSerializer; $ser.MaxJsonLength=104857600; return $ser.DeserializeObject($json) } catch { return $null } }; try{ $json=[System.IO.File]::ReadAllText($manifest) } catch { Write-Host ('ERROR: Failed to read manifest.json: ' + $manifest); exit 2 }; $obj=Parse-JsonCompat $json; if(-not $obj){ Write-Host ('ERROR: Failed to parse manifest.json as JSON: ' + $manifest); exit 2 }; $files=$obj['files']; if(-not $files -or $files.Count -eq 0){ Write-Host 'ERROR: manifest.json contains no file entries (files[]); cannot verify media integrity.'; Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; $total=0; $missing=0; $mismatch=0; foreach($f in $files){ $total++; $rel=(''+$f['path']).Trim(); $exp=(''+$f['sha256']).Trim(); if(-not $rel -or -not $exp){ Write-Host 'ERROR: manifest.json contains an invalid file entry (missing path/sha256).'; $mismatch++; continue }; if($rel -match '^[\\/]' -or $rel -match '^[A-Za-z]:'){ Write-Host ('ERROR: manifest.json contains an unsafe absolute path: ' + $rel); $mismatch++; continue }; if($rel -match '(\.\.[\\/])|(\.\.$)'){ Write-Host ('ERROR: manifest.json contains an unsafe path traversal: ' + $rel); $mismatch++; continue }; $relFs=$rel -replace '/', '\\'; $full=[System.IO.Path]::Combine($root, $relFs); if(-not (Test-Path -LiteralPath $full -PathType Leaf)){ Write-Host ('ERROR: Missing file: ' + $rel); $missing++; continue }; $act=Get-FileSha256Hex $full; if(-not $act){ Write-Host ('ERROR: Failed to hash file: ' + $rel); $mismatch++; continue }; if($act.ToLower() -ne $exp.ToLower()){ Write-Host ('ERROR: Hash mismatch: ' + $rel); Write-Host ('       expected: ' + $exp); Write-Host ('       actual:   ' + $act); $mismatch++; } }; Write-Host ('Media integrity summary: files checked=' + $total + ', missing=' + $missing + ', mismatched=' + $mismatch); if($missing -gt 0 -or $mismatch -gt 0){ Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; exit 0"
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$manifest=$env:AEROGT_MANIFEST; $root=$env:AEROGT_MEDIA_ROOT; function Get-FileSha256Hex([string]$path){ try{ $stream=[System.IO.File]::OpenRead($path); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; return $sb.ToString() } catch { return $null } }; function Parse-JsonCompat([string]$json){ try{ [void][System.Reflection.Assembly]::LoadWithPartialName('System.Web.Extensions'); $ser=New-Object System.Web.Script.Serialization.JavaScriptSerializer; $ser.MaxJsonLength=104857600; return $ser.DeserializeObject($json) } catch { return $null } }; try{ $json=[System.IO.File]::ReadAllText($manifest) } catch { Write-Host ('ERROR: Failed to read manifest.json: ' + $manifest); exit 2 }; $obj=Parse-JsonCompat $json; if(-not $obj){ Write-Host ('ERROR: Failed to parse manifest.json as JSON: ' + $manifest); exit 2 }; $files=$obj['files']; if(-not $files -or $files.Count -eq 0){ Write-Host 'ERROR: manifest.json contains no file entries (files[]); cannot verify media integrity.'; Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; $total=0; $missing=0; $mismatch=0; foreach($f in $files){ $total++; $rel=(''+$f['path']).Trim(); $exp=(''+$f['sha256']).Trim(); if(-not $rel -or -not $exp){ Write-Host 'ERROR: manifest.json contains an invalid file entry (missing path/sha256).'; $mismatch++; continue }; if($rel -match '^[\\/]' -or $rel -match '^[A-Za-z]:'){ Write-Host ('ERROR: manifest.json contains an unsafe absolute path: ' + $rel); $mismatch++; continue }; if($rel -match '(\.\.[\\/])|(\.\.$)'){ Write-Host ('ERROR: manifest.json contains an unsafe path traversal: ' + $rel); $mismatch++; continue }; $relFs=$rel -replace '/', '\\'; $full=[System.IO.Path]::Combine($root, $relFs); if(-not (Test-Path -LiteralPath $full -PathType Leaf)){ Write-Host ('ERROR: Missing file: ' + $rel); $missing++; continue }; $expSize=$null; try{ $expSize=$f['size'] }catch{ $expSize=$null }; if($expSize -ne $null -and (''+$expSize).Trim().Length -gt 0){ $actSize=$null; try{ $actSize=(Get-Item -LiteralPath $full).Length }catch{ $actSize=$null }; $expSize64=$null; try{ $expSize64=[Int64]$expSize }catch{ $expSize64=$null }; if($actSize -ne $null -and $expSize64 -ne $null -and [Int64]$actSize -ne $expSize64){ Write-Host ('ERROR: Size mismatch: ' + $rel); Write-Host ('       expected: ' + $expSize64 + ' bytes'); Write-Host ('       actual:   ' + $actSize + ' bytes'); $mismatch++; continue } }; $act=Get-FileSha256Hex $full; if(-not $act){ Write-Host ('ERROR: Failed to hash file: ' + $rel); $mismatch++; continue }; if($act.ToLower() -ne $exp.ToLower()){ Write-Host ('ERROR: Hash mismatch: ' + $rel); Write-Host ('       expected: ' + $exp); Write-Host ('       actual:   ' + $act); $mismatch++; } }; Write-Host ('Media integrity summary: files checked=' + $total + ', missing=' + $missing + ', mismatched=' + $mismatch); if($missing -gt 0 -or $mismatch -gt 0){ Write-Host 'Remediation: replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.'; exit 14 }; exit 0"
 
 endlocal & exit /b %ERRORLEVEL%
 
@@ -460,6 +469,8 @@ set /a TOTAL=0
 set /a MISSING=0
 set /a MISMATCH=0
 set "CUR_PATH="
+set "CUR_SHA="
+set "CUR_SIZE="
 
 for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
   set "LINE=%%L"
@@ -472,6 +483,8 @@ for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "CUR_PATH=!VAL!"
+    set "CUR_SHA="
+    set "CUR_SIZE="
   )
 
   echo(!LINE!| "%SYS32%\findstr.exe" /i "\"sha256\"" >nul 2>&1
@@ -483,15 +496,34 @@ for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
       if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
       set "VAL=!VAL:"=!"
       set "CUR_SHA=!VAL!"
+    )
+  )
 
+  echo(!LINE!| "%SYS32%\findstr.exe" /i "\"size\"" >nul 2>&1
+  if not errorlevel 1 (
+    if defined CUR_PATH (
+      set "VAL="
+      for /f "tokens=1,* delims=:" %%A in ("!LINE!") do set "VAL=%%B"
+      for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+      if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+      set "VAL=!VAL:"=!"
+      set "CUR_SIZE=!VAL!"
+    )
+  )
+
+  rem Verify once we've reached the end of a file entry object (normally a line like "}," or "}").
+  echo(!LINE!| "%SYS32%\findstr.exe" /r /c:"^[ ]*}[ ]*,*[ ]*$" >nul 2>&1
+  if not errorlevel 1 (
+    if defined CUR_PATH if defined CUR_SHA (
       set /a TOTAL+=1
-      call :verify_media_one_file_cmd "!CUR_PATH!" "!CUR_SHA!" "!ROOT!"
+      call :verify_media_one_file_cmd "!CUR_PATH!" "!CUR_SHA!" "!ROOT!" "!CUR_SIZE!"
       set "RC=!ERRORLEVEL!"
       if "!RC!"=="1" set /a MISSING+=1
       if "!RC!"=="2" set /a MISMATCH+=1
 
       set "CUR_PATH="
       set "CUR_SHA="
+      set "CUR_SIZE="
     )
   )
 )
@@ -516,6 +548,7 @@ setlocal EnableDelayedExpansion
 set "REL=%~1"
 set "EXP=%~2"
 set "ROOT=%~3"
+set "EXP_SIZE=%~4"
 
 rem Basic path safety: refuse absolute paths or traversal entries.
 if "!REL:~1,1!"==":" (
@@ -541,6 +574,21 @@ set "FULL=!ROOT!!RELFS!"
 if not exist "!FULL!" (
   echo ERROR: Missing file: !REL!
   endlocal & exit /b 1
+)
+
+rem Optional: validate file size if manifest.json provides it.
+if defined EXP_SIZE (
+  echo(!EXP_SIZE!| "%SYS32%\findstr.exe" /r /c:"^[0-9][0-9]*$" >nul 2>&1
+  if not errorlevel 1 (
+    set "ACT_SIZE="
+    for %%F in ("!FULL!") do set "ACT_SIZE=%%~zF"
+    if defined ACT_SIZE if not "!ACT_SIZE!"=="!EXP_SIZE!" (
+      echo ERROR: Size mismatch: !REL!
+      echo        expected: !EXP_SIZE! bytes
+      echo        actual:   !ACT_SIZE! bytes
+      endlocal & exit /b 2
+    )
+  )
 )
 
 set "ACTUAL="
@@ -713,6 +761,18 @@ endlocal & (
 :write_installed_media_state
 setlocal EnableDelayedExpansion
 set "OUT=%STATE_INSTALLED_MEDIA%"
+set "MANIFEST_SHA256="
+
+rem Optional: record the manifest SHA-256 to help diagnose mixed/corrupted media even when
+rem version/build_id are ambiguous.
+if defined GT_MANIFEST (
+  if exist "!GT_MANIFEST!" if exist "%SYS32%\certutil.exe" (
+    for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "!GT_MANIFEST!" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[ ]*[0-9a-f][0-9a-f ]*$"`) do (
+      if not defined MANIFEST_SHA256 set "MANIFEST_SHA256=%%H"
+    )
+    set "MANIFEST_SHA256=!MANIFEST_SHA256: =!"
+  )
+)
 
 rem Record which Guest Tools media build ran setup.cmd (helps diagnose mixed ISO/zip problems).
 rem This is intentionally plain text so it can be attached to bug reports and parsed by verify.ps1.
@@ -723,6 +783,7 @@ rem This is intentionally plain text so it can be attached to bug reports and pa
   ) else (
     echo manifest_path=manifest not found
   )
+  echo manifest_sha256=!MANIFEST_SHA256!
   echo GT_VERSION=!GT_VERSION!
   echo GT_BUILD_ID=!GT_BUILD_ID!
   echo GT_SIGNING_POLICY=!GT_SIGNING_POLICY!
@@ -1074,8 +1135,6 @@ call :log ""
 rem In production/none mode, never import certificates by default. Production media should not ship cert files.
 if /i not "%SIGNING_POLICY%"=="test" if not "%ARG_INSTALL_CERTS%"=="1" (
   call :log "signing_policy=%SIGNING_POLICY%: skipping certificate installation by policy."
-  call :log "WARNING: Certificate files should NOT be present on production/WHQL Guest Tools media."
-  call :log "         Remove certs\*.cer, certs\*.crt, and certs\*.p7b from the media. (Advanced override: /installcerts)"
   exit /b 0
 )
 
