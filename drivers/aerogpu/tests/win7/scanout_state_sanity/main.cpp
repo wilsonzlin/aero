@@ -93,6 +93,18 @@ static int RunScanoutStateSanity(int argc, char** argv) {
                                (unsigned long)q.base.reserved0);
   }
 
+  if (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) {
+    const unsigned long flags = (unsigned long)q.base.reserved0;
+    const bool flagsValid = (q.base.reserved0 & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+    if (flagsValid) {
+      const bool postDisplayReleased =
+          (q.base.reserved0 & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+      if (postDisplayReleased) {
+        return reporter.Fail("post_display_ownership_released flag is set (flags=0x%08lX)", flags);
+      }
+    }
+  }
+
   if (q.base.cached_enable == 0) {
     return reporter.Fail("cached_enable==0 (expected scanout enabled)");
   }
