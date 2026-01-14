@@ -3570,15 +3570,11 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   }
   if (dev->current_ib_res == res) {
     dev->current_ib_res = nullptr;
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-    if (!cmd) {
-      SetError(hDevice, E_OUTOFMEMORY);
-    } else {
-      cmd->buffer = 0;
-      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-      cmd->offset_bytes = 0;
-      cmd->reserved0 = 0;
-    }
+    (void)aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                         /*buffer=*/0,
+                                                         AEROGPU_INDEX_FORMAT_UINT16,
+                                                         /*offset_bytes=*/0,
+                                                         [&](HRESULT hr) { SetError(hDevice, hr); });
   }
 
   // Unbind constant buffers that reference the resource being destroyed.
@@ -7146,13 +7142,11 @@ void APIENTRY IaSetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT
     handle = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout)->handle;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      handle,
+                                                      [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  cmd->input_layout_handle = handle;
-  cmd->reserved0 = 0;
   dev->current_input_layout = handle;
 }
 
@@ -7268,15 +7262,14 @@ void APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hBuf
 
   auto* ib_res = hBuffer.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hBuffer) : nullptr;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(
+          dev,
+          ib_res ? ib_res->handle : 0,
+          dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format)),
+          offset,
+          [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  cmd->buffer = ib_res ? ib_res->handle : 0;
-  cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
-  cmd->offset_bytes = offset;
-  cmd->reserved0 = 0;
   dev->current_ib_res = ib_res;
 }
 
@@ -7683,13 +7676,11 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_ps = 0;
   dev->current_gs = 0;
 
-  auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!il_cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      /*input_layout_handle=*/0,
+                                                      [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  il_cmd->input_layout_handle = 0;
-  il_cmd->reserved0 = 0;
   dev->current_input_layout = 0;
 
   auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
@@ -7717,15 +7708,13 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     dev->current_vb_resources[slot] = nullptr;
   }
 
-  auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!ib_cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                      /*buffer=*/0,
+                                                      AEROGPU_INDEX_FORMAT_UINT16,
+                                                      /*offset_bytes=*/0,
+                                                      [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  ib_cmd->buffer = 0;
-  ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-  ib_cmd->offset_bytes = 0;
-  ib_cmd->reserved0 = 0;
   dev->current_ib_res = nullptr;
 
   // Reset fixed-function state to D3D10 defaults. Without this, a previous

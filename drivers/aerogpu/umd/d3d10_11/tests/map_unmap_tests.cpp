@@ -915,6 +915,150 @@ bool TestSetVertexBuffersHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetInputLayoutHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  DummyDevice dev{};
+  const bool ok = EmitSetInputLayoutCmdLocked(&dev,
+                                              /*input_layout_handle=*/static_cast<aerogpu_handle_t>(123),
+                                              [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetInputLayoutCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetInputLayoutCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_input_layout),
+             "SET_INPUT_LAYOUT packet emitted")) {
+    return false;
+  }
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_set_input_layout*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_INPUT_LAYOUT, "SET_INPUT_LAYOUT opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(aerogpu_cmd_set_input_layout), "SET_INPUT_LAYOUT hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->input_layout_handle == 123, "SET_INPUT_LAYOUT input_layout_handle")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_INPUT_LAYOUT reserved0 cleared")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetInputLayoutCmdLocked(&tiny,
+                                               /*input_layout_handle=*/static_cast<aerogpu_handle_t>(1),
+                                               [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetInputLayoutCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestSetIndexBufferHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  DummyDevice dev{};
+  const bool ok = EmitSetIndexBufferCmdLocked(&dev,
+                                             /*buffer=*/static_cast<aerogpu_handle_t>(55),
+                                             /*format=*/AEROGPU_INDEX_FORMAT_UINT32,
+                                             /*offset_bytes=*/12,
+                                             [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetIndexBufferCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetIndexBufferCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_index_buffer),
+             "SET_INDEX_BUFFER packet emitted")) {
+    return false;
+  }
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_INDEX_BUFFER, "SET_INDEX_BUFFER opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(aerogpu_cmd_set_index_buffer), "SET_INDEX_BUFFER hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->buffer == 55, "SET_INDEX_BUFFER buffer")) {
+    return false;
+  }
+  if (!Check(pkt->format == AEROGPU_INDEX_FORMAT_UINT32, "SET_INDEX_BUFFER format")) {
+    return false;
+  }
+  if (!Check(pkt->offset_bytes == 12, "SET_INDEX_BUFFER offset_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_INDEX_BUFFER reserved0 cleared")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetIndexBufferCmdLocked(&tiny,
+                                               /*buffer=*/static_cast<aerogpu_handle_t>(1),
+                                               /*format=*/AEROGPU_INDEX_FORMAT_UINT16,
+                                               /*offset_bytes=*/0,
+                                               [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetIndexBufferCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -10170,6 +10314,8 @@ int main() {
   ok &= TestSetSamplersHelperEncodesPacket();
   ok &= TestSetConstantBuffersHelperEncodesPacket();
   ok &= TestSetVertexBuffersHelperEncodesPacket();
+  ok &= TestSetInputLayoutHelperEncodesPacket();
+  ok &= TestSetIndexBufferHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();

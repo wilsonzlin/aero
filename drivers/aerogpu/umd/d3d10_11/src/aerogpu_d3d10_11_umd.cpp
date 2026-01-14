@@ -4968,13 +4968,11 @@ void AEROGPU_APIENTRY SetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENT
     handle = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout)->handle;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      handle,
+                                                      [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->input_layout_handle = handle;
-  cmd->reserved0 = 0;
   dev->current_input_layout = handle;
 }
 
@@ -5048,15 +5046,13 @@ void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURC
     ib_alloc = res ? res->alloc_handle : 0;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                      ib_handle,
+                                                      dxgi_index_format_to_aerogpu(format),
+                                                      offset,
+                                                      [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->buffer = ib_handle;
-  cmd->format = dxgi_index_format_to_aerogpu(format);
-  cmd->offset_bytes = offset;
-  cmd->reserved0 = 0;
   dev->current_ib_alloc = ib_alloc;
   // Index buffers are read by DrawIndexed.
   track_alloc_for_submit_locked(dev, ib_alloc, /*write=*/false);

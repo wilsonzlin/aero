@@ -2536,6 +2536,70 @@ inline bool EmitSetVertexBuffersCmdLocked(DeviceT* dev,
 }
 
 // -------------------------------------------------------------------------------------------------
+// Input assembler helpers (SET_INPUT_LAYOUT)
+// -------------------------------------------------------------------------------------------------
+//
+// The caller is expected to hold `dev->mutex`.
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetInputLayoutCmdLocked(DeviceT* dev, aerogpu_handle_t input_layout_handle, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->input_layout_handle = input_layout_handle;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetInputLayoutNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetInputLayoutCmdLocked(DeviceT* dev, aerogpu_handle_t input_layout_handle) {
+  return EmitSetInputLayoutCmdLocked(dev, input_layout_handle, EmitSetInputLayoutNoopSetError{});
+}
+
+// -------------------------------------------------------------------------------------------------
+// Input assembler helpers (SET_INDEX_BUFFER)
+// -------------------------------------------------------------------------------------------------
+//
+// The caller is expected to hold `dev->mutex`.
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetIndexBufferCmdLocked(DeviceT* dev,
+                                        aerogpu_handle_t buffer,
+                                        uint32_t format,
+                                        uint32_t offset_bytes,
+                                        SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->buffer = buffer;
+  cmd->format = format;
+  cmd->offset_bytes = offset_bytes;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetIndexBufferNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetIndexBufferCmdLocked(DeviceT* dev, aerogpu_handle_t buffer, uint32_t format, uint32_t offset_bytes) {
+  return EmitSetIndexBufferCmdLocked(dev, buffer, format, offset_bytes, EmitSetIndexBufferNoopSetError{});
+}
+
+// -------------------------------------------------------------------------------------------------
 // Resource binding helpers (SET_TEXTURE)
 // -------------------------------------------------------------------------------------------------
 //

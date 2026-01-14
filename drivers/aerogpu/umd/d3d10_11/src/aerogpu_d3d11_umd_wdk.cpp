@@ -1686,15 +1686,11 @@ static void UnbindResourceFromInputAssemblerLocked(Device* dev, const Resource* 
     dev->current_ib_format = kDxgiFormatUnknown;
     dev->current_ib_offset_bytes = 0;
 
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-    if (!cmd) {
-      SetError(dev, E_OUTOFMEMORY);
-    } else {
-      cmd->buffer = 0;
-      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-      cmd->offset_bytes = 0;
-      cmd->reserved0 = 0;
-    }
+    (void)aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                         /*buffer=*/0,
+                                                         AEROGPU_INDEX_FORMAT_UINT16,
+                                                         /*offset_bytes=*/0,
+                                                         [&](HRESULT hr) { SetError(dev, hr); });
   }
 }
 
@@ -6285,16 +6281,11 @@ void AEROGPU_APIENTRY IaSetInputLayout11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   InputLayout* layout = hLayout.pDrvPrivate ? FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout) : nullptr;
   const aerogpu_handle_t handle = layout ? layout->handle : 0;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev, handle, [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   dev->current_input_layout_obj = layout;
   dev->current_input_layout = handle;
-
-  cmd->input_layout_handle = handle;
-  cmd->reserved0 = 0;
 }
 
 void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -6428,20 +6419,18 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
     aerogpu_format = AEROGPU_INDEX_FORMAT_UINT16;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(
+          dev,
+          ib ? ib->handle : 0,
+          aerogpu_format,
+          offset_bytes,
+          [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
 
   dev->current_ib = ib;
   dev->current_ib_format = stored_dxgi_format;
   dev->current_ib_offset_bytes = offset_bytes;
-
-  cmd->buffer = ib ? ib->handle : 0;
-  cmd->format = aerogpu_format;
-  cmd->offset_bytes = offset_bytes;
-  cmd->reserved0 = 0;
 }
 
 void AEROGPU_APIENTRY IaSetTopology11(D3D11DDI_HDEVICECONTEXT hCtx, D3D10_DDI_PRIMITIVE_TOPOLOGY topology) {
@@ -7645,13 +7634,11 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   // UMD-side tracked state without emitting the corresponding commands, the
   // host-side command executor can continue using stale input layout / VB / IB
   // bindings across ClearState.
-  auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!il_cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      /*input_layout_handle=*/0,
+                                                      [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
-  il_cmd->input_layout_handle = 0;
-  il_cmd->reserved0 = 0;
   dev->current_input_layout = 0;
   dev->current_input_layout_obj = nullptr;
 
@@ -7681,15 +7668,13 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_vb_stride_bytes = 0;
   dev->current_vb_offset_bytes = 0;
 
-  auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!ib_cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                      /*buffer=*/0,
+                                                      AEROGPU_INDEX_FORMAT_UINT16,
+                                                      /*offset_bytes=*/0,
+                                                      [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
-  ib_cmd->buffer = 0;
-  ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-  ib_cmd->offset_bytes = 0;
-  ib_cmd->reserved0 = 0;
   dev->current_ib = nullptr;
   dev->current_ib_format = kDxgiFormatUnknown;
   dev->current_ib_offset_bytes = 0;

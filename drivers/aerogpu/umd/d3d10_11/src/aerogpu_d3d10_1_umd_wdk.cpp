@@ -3768,15 +3768,11 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   }
   if (dev->current_ib_res == res) {
     dev->current_ib_res = nullptr;
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
-    } else {
-      cmd->buffer = 0;
-      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-      cmd->offset_bytes = 0;
-      cmd->reserved0 = 0;
-    }
+    (void)aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                         /*buffer=*/0,
+                                                         AEROGPU_INDEX_FORMAT_UINT16,
+                                                         /*offset_bytes=*/0,
+                                                         [&](HRESULT hr) { set_error(dev, hr); });
   }
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
@@ -7367,13 +7363,11 @@ void AEROGPU_APIENTRY IaSetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEME
     handle = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout)->handle;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      handle,
+                                                      [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
-  cmd->input_layout_handle = handle;
-  cmd->reserved0 = 0;
   dev->current_input_layout = handle;
 }
 
@@ -7498,15 +7492,14 @@ void AEROGPU_APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice,
 
   auto* ib_res = hBuffer.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hBuffer) : nullptr;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(
+          dev,
+          ib_res ? ib_res->handle : 0,
+          dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format)),
+          offset,
+          [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
-  cmd->buffer = ib_res ? ib_res->handle : 0;
-  cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
-  cmd->offset_bytes = offset;
-  cmd->reserved0 = 0;
   dev->current_ib_res = ib_res;
 }
 
@@ -8095,13 +8088,11 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_ps = 0;
   dev->current_gs = 0;
 
-  auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!il_cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetInputLayoutCmdLocked(dev,
+                                                      /*input_layout_handle=*/0,
+                                                      [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
-  il_cmd->input_layout_handle = 0;
-  il_cmd->reserved0 = 0;
   dev->current_input_layout = 0;
 
   auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
@@ -8128,15 +8119,13 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_vb_stride = 0;
   dev->current_vb_offset = 0;
 
-  auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!ib_cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetIndexBufferCmdLocked(dev,
+                                                      /*buffer=*/0,
+                                                      AEROGPU_INDEX_FORMAT_UINT16,
+                                                      /*offset_bytes=*/0,
+                                                      [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
-  ib_cmd->buffer = 0;
-  ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-  ib_cmd->offset_bytes = 0;
-  ib_cmd->reserved0 = 0;
   dev->current_ib_res = nullptr;
 
   // Reset blend state to D3D10 defaults (disabled, write RGBA).
