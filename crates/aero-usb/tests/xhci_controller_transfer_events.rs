@@ -67,7 +67,6 @@ fn ring_endpoint_doorbell(ctrl: &mut XhciController, mem: &mut TestMemory, slot_
     let dboff = ctrl.mmio_read_u32(mem, regs::REG_DBOFF) as u64;
     let doorbell = dboff + u64::from(slot_id) * 4;
     ctrl.mmio_write(mem, doorbell, 4, endpoint_id as u32);
-    ctrl.tick(mem);
 }
 
 fn configure_event_ring(ctrl: &mut XhciController, mem: &mut TestMemory, erstba: u64, ring_base: u64, ring_size_trbs: u32) {

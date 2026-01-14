@@ -1861,6 +1861,16 @@ impl XhciController {
                 let target = ((off - doorbell_base) / 4) as u8;
                 let write_val = merge(0);
                 self.write_doorbell(target, write_val);
+                // Endpoint doorbells should trigger transfer execution promptly even if the outer
+                // integration does not model a periodic controller tick (mirroring how we process
+                // the command ring when doorbell 0 is rung).
+                //
+                // For bulk/interrupt endpoints this runs at most one TD per call via the transfer
+                // executor.
+                if target != 0 {
+                    self.tick(mem);
+                    self.service_event_ring(mem);
+                }
             }
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
