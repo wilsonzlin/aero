@@ -283,6 +283,7 @@ export default defineConfig({
         webusb_diagnostics: resolve(rootDir, "webusb_diagnostics.html"),
         webgl2_fallback_demo: resolve(rootDir, "webgl2_fallback_demo.html"),
         wddm_scanout_smoke: resolve(rootDir, "wddm-scanout-smoke.html"),
+        wddm_scanout_vram_smoke: resolve(rootDir, "wddm-scanout-vram-smoke.html"),
         wddm_scanout_debug: resolve(rootDir, "wddm-scanout-debug.html"),
       },
     },
