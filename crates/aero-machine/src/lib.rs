@@ -136,6 +136,54 @@ use crate::aerogpu::AeroGpuMmioDevice;
 mod pci_firmware;
 use pci_firmware::SharedPciConfigPortsBiosAdapter;
 
+/// A minimal `MemoryBus` that reads from a snapshot of AeroGPU BAR1-backed VRAM.
+///
+/// This is used as a host-side scanout/cursor readback fast-path to avoid routing reads through the
+/// PCI MMIO router when the guest points scanout surfaces directly at BAR1.
+struct AeroGpuBar1VramReadbackBus<'a> {
+    vram: &'a [u8],
+    bar1_base: u64,
+}
+
+impl<'a> AeroGpuBar1VramReadbackBus<'a> {
+    #[inline]
+    fn new(vram: &'a [u8], bar1_base: u64) -> Self {
+        Self { vram, bar1_base }
+    }
+}
+
+impl memory::MemoryBus for AeroGpuBar1VramReadbackBus<'_> {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        let Some(off_u64) = paddr.checked_sub(self.bar1_base) else {
+            buf.fill(0);
+            return;
+        };
+        let Ok(off) = usize::try_from(off_u64) else {
+            buf.fill(0);
+            return;
+        };
+        if off >= self.vram.len() {
+            buf.fill(0);
+            return;
+        }
+
+        let available = self.vram.len() - off;
+        let to_copy = available.min(buf.len());
+        buf[..to_copy].copy_from_slice(&self.vram[off..off + to_copy]);
+        if to_copy < buf.len() {
+            buf[to_copy..].fill(0);
+        }
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+        // Readback-only bus; ignore writes.
+    }
+}
+
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const DEFAULT_VIRTIO_NET_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x57];
@@ -4989,7 +5037,137 @@ impl Machine {
             return true;
         }
 
-        let Some(mut fb) = state.read_rgba8888(&mut self.mem) else {
+        // -----------------------------------------------------------------
+        // BAR1 VRAM readback fast-path
+        // -----------------------------------------------------------------
+        //
+        // If the guest points scanout/cursor buffers into the AeroGPU BAR1 VRAM aperture, routing
+        // those reads through the physical `MemoryBus` causes the PCI MMIO router to bounce back
+        // into the AeroGPU BAR1 handler for every row read.
+        //
+        // Detect BAR1-backed surfaces and read directly from `AeroGpuDevice.vram` instead.
+        let bar1_base = self.aerogpu_bar1_base();
+        let bar1_end = bar1_base.and_then(|base| {
+            base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE as u64)
+        });
+
+        let scanout_row_bytes = || -> Option<u64> {
+            use aero_protocol::aerogpu::aerogpu_pci as pci;
+            let bytes_per_pixel = match state.format {
+                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 => 4u64,
+                x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
+                    || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => 2u64,
+                _ => return None,
+            };
+            u64::from(state.width).checked_mul(bytes_per_pixel)
+        };
+
+        let scanout_is_bar1_backed = || -> bool {
+            let (Some(bar1_base), Some(bar1_end)) = (bar1_base, bar1_end) else {
+                return false;
+            };
+            let Some(row_bytes) = scanout_row_bytes() else {
+                return false;
+            };
+            if state.fb_gpa < bar1_base || state.fb_gpa >= bar1_end {
+                return false;
+            }
+            let pitch = u64::from(state.pitch_bytes);
+            if pitch == 0 {
+                return false;
+            }
+            if pitch < row_bytes {
+                return false;
+            }
+            let height = u64::from(state.height);
+            if height == 0 {
+                return false;
+            }
+            let Some(last_row) = height.checked_sub(1).and_then(|h| h.checked_mul(pitch)) else {
+                return false;
+            };
+            let Some(last_row_gpa) = state.fb_gpa.checked_add(last_row) else {
+                return false;
+            };
+            let Some(end_gpa) = last_row_gpa.checked_add(row_bytes) else {
+                return false;
+            };
+            end_gpa <= bar1_end
+        };
+
+        let cursor_is_bar1_backed = || -> bool {
+            if !cursor.enable {
+                return false;
+            }
+            let (Some(bar1_base), Some(bar1_end)) = (bar1_base, bar1_end) else {
+                return false;
+            };
+            if cursor.fb_gpa < bar1_base || cursor.fb_gpa >= bar1_end {
+                return false;
+            }
+            let width = u64::from(cursor.width);
+            let height = u64::from(cursor.height);
+            if width == 0 || height == 0 {
+                return false;
+            }
+
+            use aero_protocol::aerogpu::aerogpu_pci as pci;
+            let is_32bpp = matches!(
+                cursor.format,
+                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
+            );
+            if !is_32bpp {
+                return false;
+            }
+
+            let Some(row_bytes) = width.checked_mul(4) else {
+                return false;
+            };
+            let pitch = u64::from(cursor.pitch_bytes);
+            if pitch == 0 {
+                return false;
+            }
+            if pitch < row_bytes {
+                return false;
+            }
+            let Some(last_row) = height.checked_sub(1).and_then(|h| h.checked_mul(pitch)) else {
+                return false;
+            };
+            let Some(last_row_gpa) = cursor.fb_gpa.checked_add(last_row) else {
+                return false;
+            };
+            let Some(end_gpa) = last_row_gpa.checked_add(row_bytes) else {
+                return false;
+            };
+            end_gpa <= bar1_end
+        };
+
+        let scanout_in_vram = scanout_is_bar1_backed() && self.aerogpu.is_some();
+        let cursor_in_vram = cursor_is_bar1_backed() && self.aerogpu.is_some();
+
+        let Some(mut fb) = (if scanout_in_vram {
+            // Avoid borrowing `self.mem` while holding the AeroGPU VRAM borrow.
+            let aerogpu = self.aerogpu.as_ref().expect("checked above");
+            let dev = aerogpu.borrow();
+            let mut vram_bus = AeroGpuBar1VramReadbackBus::new(&dev.vram, bar1_base.unwrap_or(0));
+            state.read_rgba8888(&mut vram_bus)
+        } else {
+            state.read_rgba8888(&mut self.mem)
+        }) else {
             self.display_fb.clear();
             self.display_width = 0;
             self.display_height = 0;
@@ -4997,7 +5175,17 @@ impl Machine {
         };
 
         if cursor.enable {
-            if let Some(cursor_fb) = cursor.read_rgba8888(&mut self.mem) {
+            let cursor_fb = if cursor_in_vram {
+                let aerogpu = self.aerogpu.as_ref().expect("checked above");
+                let dev = aerogpu.borrow();
+                let mut vram_bus =
+                    AeroGpuBar1VramReadbackBus::new(&dev.vram, bar1_base.unwrap_or(0));
+                cursor.read_rgba8888(&mut vram_bus)
+            } else {
+                cursor.read_rgba8888(&mut self.mem)
+            };
+
+            if let Some(cursor_fb) = cursor_fb {
                 aerogpu::composite_cursor_rgba8888_over_scanout(
                     &mut fb,
                     state.width,
