@@ -15,3 +15,4 @@ corpus/fuzz_aerogpu_trace_read/*
 !corpus/fuzz_aerogpu_trace_read/begin_frame
 !corpus/fuzz_aerogpu_trace_read/begin_packet_present
 !corpus/fuzz_aerogpu_trace_read/blob_header
+!corpus/fuzz_aerogpu_trace_read/meta_begin_frame
