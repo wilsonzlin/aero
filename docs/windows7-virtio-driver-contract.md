@@ -1037,6 +1037,13 @@ Compatibility note (non-normative):
   - The driver generates `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` so user-mode can refresh plug/unplug state without polling.
   - Devices may optionally report `DEVICE_CFG.jacks = 2` to match the driver’s fixed two-jack topology.
 
+Harness diagnostics (non-normative, QEMU):
+
+- Newer guest selftest binaries may emit an informational marker reporting virtio-snd `eventq` counters:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`
+- The host harness mirrors this into a stable host-side marker for log scraping:
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|...`
+
 #### 3.5.4 virtio-snd: multi-format negotiation (optional)
 
 Contract v1 defines only a minimal fixed PCM capability (§3.4.4), but some virtio-snd implementations may advertise
