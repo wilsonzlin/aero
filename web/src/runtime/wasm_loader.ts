@@ -933,6 +933,17 @@ export interface WasmApi {
     };
 
     /**
+     * Legacy shared-guest-memory Machine factories (free-function exports).
+     *
+     * Newer WASM builds prefer static constructors on {@link Machine} (e.g. `Machine.new_shared` /
+     * `Machine.new_win7_storage_shared`). Keep these optional for compatibility with older bundles
+     * and intermediate refactors.
+     */
+    create_win7_machine_shared_guest_memory?: (guestBase: number, guestSize: number) => MachineHandle | Promise<MachineHandle>;
+    create_machine_win7_shared_guest_memory?: (guestBase: number, guestSize: number) => MachineHandle | Promise<MachineHandle>;
+    create_machine_shared_guest_memory_win7?: (guestBase: number, guestSize: number) => MachineHandle | Promise<MachineHandle>;
+
+    /**
      * Tiered VM Tier-1 JIT ABI layout constants.
      *
      * Exposed so JS code can locate the per-call commit flag and inline TLB region without
@@ -1755,6 +1766,19 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         new_win7_storage_shared?: (guestBase: number, guestSize: number) => MachineHandle;
+        /**
+         * Back-compat shared-guest-memory factory naming variants.
+         *
+         * These were exported by intermediate wasm-bindgen surfaces before the canonical
+         * `Machine.new_shared` / `Machine.new_win7_storage_shared` naming stabilized.
+         *
+         * Optional for older WASM builds.
+         */
+        new_win7_storage_shared_guest_memory?: (guestBase: number, guestSize: number) => MachineHandle;
+        new_shared_guest_memory_win7_storage?: (guestBase: number, guestSize: number) => MachineHandle;
+        new_shared_guest_memory?: (guestBase: number, guestSize: number) => MachineHandle;
+        from_shared_guest_memory_win7_storage?: (guestBase: number, guestSize: number) => MachineHandle;
+        from_shared_guest_memory?: (guestBase: number, guestSize: number) => MachineHandle;
         /**
          * Construct a machine preset for the canonical Win7 storage topology backed by internal guest RAM.
          *

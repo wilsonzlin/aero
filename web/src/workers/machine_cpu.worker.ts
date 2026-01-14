@@ -199,8 +199,10 @@ function isNodeWorkerThreads(): boolean {
 }
 
 async function maybeAwait(result: unknown): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const then = (result as any)?.then;
+  if (!result || (typeof result !== "object" && typeof result !== "function")) {
+    return result;
+  }
+  const then = (result as { then?: unknown }).then;
   if (typeof then === "function") {
     return await (result as Promise<unknown>);
   }
@@ -308,9 +310,7 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
   const guestBase = layout.guest_base >>> 0;
   const guestSize = layout.guest_size >>> 0;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const anyApi = api as any;
-  const Machine = anyApi.Machine;
+  const Machine = api.Machine;
   if (!Machine) {
     throw new Error("Machine wasm export is unavailable; cannot start machine_cpu.worker.");
   }
@@ -328,9 +328,9 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
     { name: "Machine.from_shared_guest_memory", fn: Machine.from_shared_guest_memory, thisArg: Machine },
 
     // Free-function factories (older wasm-bindgen exports).
-    { name: "create_win7_machine_shared_guest_memory", fn: anyApi.create_win7_machine_shared_guest_memory, thisArg: anyApi },
-    { name: "create_machine_win7_shared_guest_memory", fn: anyApi.create_machine_win7_shared_guest_memory, thisArg: anyApi },
-    { name: "create_machine_shared_guest_memory_win7", fn: anyApi.create_machine_shared_guest_memory_win7, thisArg: anyApi },
+    { name: "create_win7_machine_shared_guest_memory", fn: api.create_win7_machine_shared_guest_memory, thisArg: api },
+    { name: "create_machine_win7_shared_guest_memory", fn: api.create_machine_win7_shared_guest_memory, thisArg: api },
+    { name: "create_machine_shared_guest_memory_win7", fn: api.create_machine_shared_guest_memory_win7, thisArg: api },
   ];
 
   for (const c of candidates) {
@@ -520,13 +520,15 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         (await tryReadAerosparseBlockSizeBytesFromOpfs(cow.overlayPath)) ??
         // Default for newly-created overlays when no metadata/header is available.
         1024 * 1024;
-      // Some builds may extend the API to accept a block size hint; preserve compatibility.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const anyFn = setPrimary as any;
-      const arity = typeof anyFn.length === "number" ? (anyFn.length as number) : 0;
-      const res =
-        arity >= 3 ? anyFn.call(m, cow.basePath, cow.overlayPath, blockSizeBytes) : anyFn.call(m, cow.basePath, cow.overlayPath);
-      await maybeAwait(res);
+      // Always pass a non-zero block size hint. Older builds that accept only 2 args will ignore it.
+      await maybeAwait(
+        (setPrimary as (basePath: string, overlayPath: string, overlayBlockSizeBytes: number) => unknown).call(
+          m,
+          cow.basePath,
+          cow.overlayPath,
+          blockSizeBytes,
+        ),
+      );
       changed = true;
     }
   }
