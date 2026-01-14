@@ -86,6 +86,19 @@ To run time-bounded:
 cargo +"$nightly" fuzz run fuzz_mmu_translate -- -max_total_time=10
 ```
 
+### Tier-0 CPU single-step fuzzer
+
+`fuzz_tier0_step` executes a single Tier-0 interpreter step against a small (64KiB) guest RAM image
+constructed from the fuzzer input. The property is simply "no panic/UB" (exceptions are allowed).
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz run fuzz_tier0_step -- -runs=200000
+
+# If you already built it (or want to bypass cargo-fuzz wrapper flags), you can also run the binary
+# directly:
+cd fuzz && ./target/x86_64-unknown-linux-gnu/release/fuzz_tier0_step -runs=200000 corpus/fuzz_tier0_step
+```
+
 ## Resource limits / AddressSanitizer note
 
 `cargo-fuzz` enables AddressSanitizer by default. ASan reserves a very large *virtual* address
