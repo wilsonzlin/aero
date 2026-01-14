@@ -75,6 +75,13 @@ Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-vblank", "--vblan
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-vblank", "--vblank-interval-ms", "nope")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-createalloc", "--csv", "a.csv", "--csv", "b.csv")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--json=")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "4", "--size", "8", "--read-gpa", "0x0")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "a.bin", "--out", "b.bin")
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--size", "4", "--read-gpa", "0x0", "8")
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "nope")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--out", "foo.bin")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", "foo.bin")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "foo.bin")
 
 Write-Host "OK: dbgctl JSON output parsed successfully"
 

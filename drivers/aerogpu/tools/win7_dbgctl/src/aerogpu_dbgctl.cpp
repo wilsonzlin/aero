@@ -10074,6 +10074,11 @@ int wmain(int argc, wchar_t **argv) {
       if (readGpaSizeBytes != 0) {
         fwprintf(stderr, L"--size specified multiple times\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--size specified multiple times", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *arg = argv[++i];
@@ -10107,6 +10112,11 @@ int wmain(int argc, wchar_t **argv) {
       if (readGpaOutPath) {
         fwprintf(stderr, L"--out specified multiple times\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--out specified multiple times", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *out = argv[++i];
@@ -10218,6 +10228,12 @@ int wmain(int argc, wchar_t **argv) {
           if (readGpaSizeBytes != 0) {
             fwprintf(stderr, L"--read-gpa size specified multiple times\n");
             PrintUsage();
+            if (g_json_output) {
+              std::string json;
+              JsonWriteTopLevelError(&json, "read-gpa", NULL, "--read-gpa size specified multiple times",
+                                     STATUS_INVALID_PARAMETER);
+              WriteJsonToDestination(json);
+            }
             return 1;
           }
 
@@ -10225,6 +10241,12 @@ int wmain(int argc, wchar_t **argv) {
           const unsigned long sizeUl = wcstoul(maybeSize, &endSize, 0);
           if (!endSize || endSize == maybeSize || *endSize != 0) {
             fwprintf(stderr, L"Invalid size value: %s\n", maybeSize);
+            if (g_json_output) {
+              std::string json;
+              const std::string msg = std::string("Invalid size value: ") + WideToUtf8(maybeSize);
+              JsonWriteTopLevelError(&json, "read-gpa", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+              WriteJsonToDestination(json);
+            }
             return 1;
           }
           readGpaSizeBytes = (uint32_t)sizeUl;
@@ -10657,6 +10679,13 @@ int wmain(int argc, wchar_t **argv) {
   if (readGpaOutPath && cmd != CMD_READ_GPA && cmd != CMD_DUMP_LAST_CMD) {
     fwprintf(stderr, L"--out is only supported with --read-gpa and --dump-last-submit/--dump-last-cmd\n");
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "parse-args", NULL,
+                             "--out is only supported with --read-gpa and --dump-last-submit/--dump-last-cmd",
+                             STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
@@ -10665,11 +10694,25 @@ int wmain(int argc, wchar_t **argv) {
   if (dumpLastCmdOutPath && !readGpaOutPath && cmd != CMD_DUMP_LAST_CMD) {
     fwprintf(stderr, L"--cmd-out is only supported with --dump-last-submit/--dump-last-cmd\n");
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "parse-args", NULL,
+                             "--cmd-out is only supported with --dump-last-submit/--dump-last-cmd",
+                             STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
   if (dumpLastCmdAllocOutPath && cmd != CMD_DUMP_LAST_CMD) {
     fwprintf(stderr, L"--alloc-out is only supported with --dump-last-submit/--dump-last-cmd\n");
     PrintUsage();
+    if (g_json_output) {
+      std::string json;
+      JsonWriteTopLevelError(&json, "parse-args", NULL,
+                             "--alloc-out is only supported with --dump-last-submit/--dump-last-cmd",
+                             STATUS_INVALID_PARAMETER);
+      WriteJsonToDestination(json);
+    }
     return 1;
   }
 
