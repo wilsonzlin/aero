@@ -155,6 +155,41 @@ See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.
 * `docs/abi/aerogpu-pci-identity.md` for the canonical PCI IDs and the matching emulator device models.
 
+## Fence ID width mismatch (Win7 `u32` vs AeroGPU `u64`)
+
+Windows 7 / WDDM 1.1 exposes DMA fences to the miniport via a **32-bit** field:
+
+- `DXGKARG_SUBMITCOMMAND::SubmissionFenceId` (`ULONG`)
+
+However the versioned AeroGPU ring ABI uses **64-bit** fences:
+
+- `struct aerogpu_submit_desc::signal_fence` (`uint64_t`)
+- `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI` (64-bit)
+- Optional fence page `aerogpu_fence_page::completed_fence` (64-bit)
+
+### Why this matters
+
+Naively zero-extending the WDDM `ULONG` fence into the protocol `uint64_t` fence breaks forward progress after enough
+submissions: when the WDDM fence wraps at `2^32`, the guest-visible fence value becomes small again, and host-side
+executors that assume monotonic `u64` fences can treat new work as "stale" and drop/ignore completions (leading to hangs).
+
+### Required behavior (AGPU / v1 ABI)
+
+For versioned devices (`AbiKind == AEROGPU_ABI_KIND_V1`), the KMD must extend the 32-bit WDDM fence into a monotonically
+increasing 64-bit fence domain before writing ring descriptors:
+
+- Track a per-adapter wrap epoch:
+  - if `fence32 < last_fence32`, increment `epoch`
+  - `fence64 = (epoch << 32) | fence32`
+- Use `fence64` for:
+  - `aerogpu_submit_desc.signal_fence`
+  - internal `LastSubmittedFence` / `LastCompletedFence` bookkeeping
+  - error reporting (`LastNotifiedErrorFence`, `MMIO_REG_ERROR_FENCE_*`)
+- When reporting fence completions/faults to dxgkrnl (`DxgkCbNotifyInterrupt`), truncate to the low 32 bits:
+  - `notify.DmaCompleted.SubmissionFenceId = (ULONG)fence64`
+
+The implementation lives in `drivers/aerogpu/kmd/src/aerogpu_kmd.c` (`AeroGpuV1ExtendFenceLocked`).
+
 ## Canonical MMIO discovery (AGPU bring-up checklist)
 
 When running against the **versioned** AGPU device, treat BAR0 as the canonical MMIO block
