@@ -3,8 +3,8 @@ use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::wasm_codegen::{Tier2WasmCodegen, Tier2WasmOptions};
 use aero_jit_x86::wasm::{
-    IMPORT_MEM_READ_U32, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE,
-    IMPORT_MODULE,
+    IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
 };
 use aero_types::Width;
 use wasmparser::{Operator, Parser, Payload, TypeRef};
@@ -139,6 +139,41 @@ fn tier2_inline_tlb_cross_page_only_trace_elides_mmu_translate_import() {
             .iter()
             .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
         "expected cross-page-only trace to not import env.mmu_translate, got {imports:?}"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_cross_page_only_u64_load_elides_mmu_translate_import() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::LoadMem {
+            dst: ValueId(0),
+            addr: Operand::Const(aero_jit_x86::PAGE_SIZE - 2),
+            width: Width::W64,
+        }],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    let imports = import_names(&wasm);
+    assert!(
+        imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MEM_READ_U64),
+        "expected env.mem_read_u64 import for cross-page load, got {imports:?}"
+    );
+    assert!(
+        !imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
+        "expected cross-page-only u64 load trace to not import env.mmu_translate, got {imports:?}"
     );
 }
 
@@ -330,6 +365,41 @@ fn tier2_inline_tlb_cross_page_only_store_elides_mmu_translate_import() {
             .iter()
             .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
         "expected cross-page-only store trace to not import env.mmu_translate, got {imports:?}"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_cross_page_only_u64_store_elides_mmu_translate_import() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(aero_jit_x86::PAGE_SIZE - 2),
+            src: Operand::Const(0x1122_3344_5566_7788),
+            width: Width::W64,
+        }],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    let imports = import_names(&wasm);
+    assert!(
+        imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U64),
+        "expected env.mem_write_u64 import for cross-page store, got {imports:?}"
+    );
+    assert!(
+        !imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
+        "expected cross-page-only u64 store trace to not import env.mmu_translate, got {imports:?}"
     );
 }
 
