@@ -4577,6 +4577,26 @@ pub struct Machine {
     // - 1: synthetic USB consumer-control device
     // - 2: virtio-input keyboard (media keys subset)
     consumer_usage_backend: [u8; 0x0400],
+    // Host-side pressed key tracking for `Machine::inject_input_batch` keyboard backend switching.
+    //
+    // The input batch stream includes both:
+    // - PS/2 Set-2 scancodes (`InputEventType::KeyScancode`), and
+    // - USB HID keyboard usages (`InputEventType::KeyHidUsage`).
+    //
+    // `Machine::inject_input_batch` selects one keyboard backend (virtio/USB/PS2) based on driver
+    // readiness and device configuration. Without tracking pressed state, that selection could
+    // change between a press and release, leaving the previous backend "stuck" (no matching
+    // release). Track pressed HID usages so we can keep the keyboard backend stable while any key
+    // is held.
+    input_batch_pressed_keyboard_usages: [u8; 256],
+    input_batch_pressed_keyboard_usage_count: u16,
+    // Cached keyboard backend selection used by `Machine::inject_input_batch`.
+    //
+    // Encoding:
+    // - 0: PS/2 i8042 (KeyScancode)
+    // - 1: synthetic USB HID keyboard (KeyHidUsage)
+    // - 2: virtio-input keyboard (KeyHidUsage -> Linux KEY_*)
+    input_batch_keyboard_backend: u8,
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
@@ -4792,6 +4812,9 @@ impl Machine {
             debugcon_log: Rc::new(RefCell::new(Vec::new())),
             ps2_mouse_buttons: 0,
             consumer_usage_backend: [0u8; 0x0400],
+            input_batch_pressed_keyboard_usages: [0u8; 256],
+            input_batch_pressed_keyboard_usage_count: 0,
+            input_batch_keyboard_backend: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
             guest_time: GuestTime::default(),
@@ -8951,7 +8974,7 @@ impl Machine {
         // - Gamepad: synthetic USB HID gamepad (no PS/2 fallback).
         let ps2_available = self.i8042.is_some();
 
-        let use_virtio_keyboard = self.virtio_input_keyboard_driver_ok();
+        let virtio_keyboard_driver_ok = self.virtio_input_keyboard_driver_ok();
         let use_virtio_mouse = self.virtio_input_mouse_driver_ok();
 
         let usb_keyboard_present = self.usb_hid_keyboard.is_some();
@@ -8965,13 +8988,30 @@ impl Machine {
             .as_ref()
             .is_some_and(|mouse| mouse.configured());
 
-        let use_usb_keyboard = !use_virtio_keyboard
-            && if ps2_available {
-                usb_keyboard_ready
+        // Keyboard backend selection: keep the backend stable while any key is held down to avoid
+        // press/release pairs being delivered to different devices ("stuck keys").
+        //
+        // This mirrors the browser worker selection logic in `web/src/input/input_backend_selection.ts`.
+        let usb_keyboard_ok = if ps2_available {
+            usb_keyboard_ready
+        } else {
+            usb_keyboard_present
+        };
+        let keyboard_keys_held = self.input_batch_pressed_keyboard_usage_count != 0
+            || self.consumer_usage_backend.iter().any(|&b| b != 0);
+        if !keyboard_keys_held {
+            self.input_batch_keyboard_backend = if virtio_keyboard_driver_ok {
+                2
+            } else if usb_keyboard_ok {
+                1
             } else {
-                usb_keyboard_present
+                0
             };
-        let use_ps2_keyboard = !use_virtio_keyboard && !use_usb_keyboard && ps2_available;
+        }
+        let use_virtio_keyboard_hid =
+            self.input_batch_keyboard_backend == 2 && virtio_keyboard_driver_ok;
+        let use_usb_keyboard = self.input_batch_keyboard_backend == 1 && usb_keyboard_present;
+        let use_ps2_keyboard = self.input_batch_keyboard_backend == 0 && ps2_available;
 
         let use_usb_mouse = !use_virtio_mouse
             && if ps2_available {
@@ -9163,7 +9203,26 @@ impl Machine {
                     //   b = unused
                     let usage = (a & 0xff) as u8;
                     let pressed = ((a >> 8) & 1) != 0;
-                    if use_virtio_keyboard {
+
+                    // Track pressed keyboard usages regardless of the current backend selection so
+                    // backend switching can be gated on "any key is held".
+                    let idx = usage as usize;
+                    let prev_pressed = self.input_batch_pressed_keyboard_usages[idx] != 0;
+                    if pressed {
+                        if !prev_pressed {
+                            self.input_batch_pressed_keyboard_usages[idx] = 1;
+                            self.input_batch_pressed_keyboard_usage_count = self
+                                .input_batch_pressed_keyboard_usage_count
+                                .saturating_add(1);
+                        }
+                    } else if prev_pressed {
+                        self.input_batch_pressed_keyboard_usages[idx] = 0;
+                        self.input_batch_pressed_keyboard_usage_count = self
+                            .input_batch_pressed_keyboard_usage_count
+                            .saturating_sub(1);
+                    }
+
+                    if use_virtio_keyboard_hid {
                         let Some(code) = hid_usage_to_linux_key(usage) else {
                             continue;
                         };
@@ -9213,7 +9272,7 @@ impl Machine {
 
                                 // Prefer virtio-input when the virtio keyboard driver is active and the
                                 // usage is representable as a Linux `KEY_*` code (media keys subset).
-                                if use_virtio_keyboard {
+                                if virtio_keyboard_driver_ok {
                                     let usage16 = usage_id as u16;
                                     if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
                                         let Some(kbd) = &self.virtio_input_keyboard else {
@@ -9399,6 +9458,20 @@ impl Machine {
             }
         }
 
+        // Re-evaluate keyboard backend selection after processing the batch: key-up events can make
+        // it safe to switch away from PS/2 or USB injection.
+        let keyboard_keys_held_after = self.input_batch_pressed_keyboard_usage_count != 0
+            || self.consumer_usage_backend.iter().any(|&b| b != 0);
+        if !keyboard_keys_held_after {
+            self.input_batch_keyboard_backend = if virtio_keyboard_driver_ok {
+                2
+            } else if usb_keyboard_ok {
+                1
+            } else {
+                0
+            };
+        }
+
         if virtio_input_dirty {
             // Poll once to forward any newly enqueued input events into guest virtqueues.
             self.process_virtio_input();
@@ -9486,6 +9559,9 @@ impl Machine {
         self.debugcon_log.borrow_mut().clear();
         self.ps2_mouse_buttons = 0;
         self.consumer_usage_backend.fill(0);
+        self.input_batch_pressed_keyboard_usages.fill(0);
+        self.input_batch_pressed_keyboard_usage_count = 0;
+        self.input_batch_keyboard_backend = 0;
         self.guest_time.reset();
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
@@ -14509,6 +14585,12 @@ impl snapshot::SnapshotTarget for Machine {
         // applied into a new machine instance that lacks this host-side pairing state, so drop any
         // cached mapping after restore to avoid misrouting subsequent events.
         self.consumer_usage_backend.fill(0);
+        // Snapshot restore can rewind input device state (including held keys) without capturing
+        // host-side pressed-key tracking used for `inject_input_batch` backend switching. Drop the
+        // cached pressed set so the next batch can re-sync based on new host input.
+        self.input_batch_pressed_keyboard_usages.fill(0);
+        self.input_batch_pressed_keyboard_usage_count = 0;
+        self.input_batch_keyboard_backend = 0;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         self.display_fb.clear();
