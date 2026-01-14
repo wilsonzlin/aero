@@ -479,57 +479,124 @@ mod tests {
 
 #[cfg(all(test, feature = "loom"))]
 mod loom_tests {
+    // Loom concurrency tests.
+    //
+    // Run with:
+    // `cargo test -p aero-shared --features loom`
     use super::*;
 
     use loom::sync::Arc;
     use loom::thread;
 
     #[test]
-    fn snapshot_never_observes_partial_publish() {
-        loom::model(|| {
+    fn publish_snapshot_protocol_holds_under_contention() {
+        const GEN_MASK: u32 = !SCANOUT_STATE_GENERATION_BUSY_BIT;
+        const WRITER_PUBLISHES: usize = 2;
+        const SNAPSHOTS_PER_READER: usize = 2;
+
+        fn update_for_generation(generation: u32) -> ScanoutStateUpdate {
+            // Encode the published generation into every field so that readers can detect:
+            // - observing a "new" generation with "old" fields (generation published too early),
+            // - observing a mix of fields from multiple publishes.
+            //
+            // Use wrapping arithmetic so the test remains valid across the 31-bit wrap boundary.
+            ScanoutStateUpdate {
+                source: generation.wrapping_add(10),
+                base_paddr_lo: generation.wrapping_add(11),
+                base_paddr_hi: generation.wrapping_add(12),
+                width: generation.wrapping_add(13),
+                height: generation.wrapping_add(14),
+                pitch_bytes: generation.wrapping_add(15),
+                format: generation.wrapping_add(16),
+            }
+        }
+
+        fn assert_snapshot_is_self_consistent(snap: ScanoutStateSnapshot) {
+            assert_eq!(snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+            let g = snap.generation;
+
+            assert_eq!(snap.source, g.wrapping_add(10));
+            assert_eq!(snap.base_paddr_lo, g.wrapping_add(11));
+            assert_eq!(snap.base_paddr_hi, g.wrapping_add(12));
+            assert_eq!(snap.width, g.wrapping_add(13));
+            assert_eq!(snap.height, g.wrapping_add(14));
+            assert_eq!(snap.pitch_bytes, g.wrapping_add(15));
+            assert_eq!(snap.format, g.wrapping_add(16));
+        }
+
+        fn assert_generation_monotonic(prev: u32, curr: u32, max_delta: u32) {
+            assert_eq!(prev & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+            assert_eq!(curr & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+
+            // Treat `generation` as a 31-bit wrapping counter (high bit reserved as busy bit).
+            let delta = (curr.wrapping_sub(prev)) & GEN_MASK;
+            assert!(
+                delta <= max_delta,
+                "generation went backwards: prev={prev:#010x}, curr={curr:#010x}, delta={delta:#010x}"
+            );
+        }
+
+        // Keep the model small, but ensure we still explore interleavings where:
+        // - the writer is mid-publish while readers snapshot,
+        // - the counter wraps (31-bit counter; bit 31 is reserved).
+        // This code intentionally uses spin-wait loops (both in `publish` and `snapshot`).
+        // Raise Loom's branch limit so the model checker can explore enough schedules to
+        // validate the protocol without aborting early.
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100_000;
+        builder.max_permutations = Some(10_000);
+        builder.check(|| {
             let state = Arc::new(ScanoutState::new());
 
-            // Initialize to a coherent state using the same invariant relation as the update.
-            state.publish(ScanoutStateUpdate {
-                source: SCANOUT_SOURCE_WDDM,
-                base_paddr_lo: 3,
-                base_paddr_hi: 4,
-                width: 0,
-                height: 1,
-                pitch_bytes: 2,
-                format: SCANOUT_FORMAT_B8G8R8X8,
-            });
+            // Initialize to a coherent state up-front (before any concurrent access).
+            //
+            // We start near the wrap boundary so this short model crosses it. The high bit is
+            // reserved as the busy bit.
+            let initial_gen = 0x7fff_fffe;
+            let init = update_for_generation(initial_gen);
+            state.source.store(init.source, Ordering::SeqCst);
+            state
+                .base_paddr_lo
+                .store(init.base_paddr_lo, Ordering::SeqCst);
+            state
+                .base_paddr_hi
+                .store(init.base_paddr_hi, Ordering::SeqCst);
+            state.width.store(init.width, Ordering::SeqCst);
+            state.height.store(init.height, Ordering::SeqCst);
+            state.pitch_bytes.store(init.pitch_bytes, Ordering::SeqCst);
+            state.format.store(init.format, Ordering::SeqCst);
+            state.generation.store(initial_gen, Ordering::SeqCst);
 
             let writer_state = state.clone();
-            let reader_state = state.clone();
-
             let writer = thread::spawn(move || {
-                writer_state.publish(ScanoutStateUpdate {
-                    source: SCANOUT_SOURCE_WDDM,
-                    base_paddr_lo: 4,
-                    base_paddr_hi: 5,
-                    width: 1,
-                    height: 2,
-                    pitch_bytes: 3,
-                    format: SCANOUT_FORMAT_B8G8R8X8,
-                });
+                for _ in 0..WRITER_PUBLISHES {
+                    let cur = writer_state.generation.load(Ordering::SeqCst) & GEN_MASK;
+                    let next = cur.wrapping_add(1) & GEN_MASK;
+                    let published = writer_state.publish(update_for_generation(next));
+                    assert_eq!(published, next);
+                    assert_eq!(published & SCANOUT_STATE_GENERATION_BUSY_BIT, 0);
+                }
             });
 
+            let reader_state = state.clone();
             let reader = thread::spawn(move || {
-                let snap = reader_state.snapshot();
+                let mut last_gen: Option<u32> = None;
+                for _ in 0..SNAPSHOTS_PER_READER {
+                    let snap = reader_state.snapshot();
+                    assert_snapshot_is_self_consistent(snap);
 
-                assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
-                assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
-
-                let token = snap.width;
-                assert_eq!(snap.height, token.wrapping_add(1));
-                assert_eq!(snap.pitch_bytes, token.wrapping_add(2));
-                assert_eq!(snap.base_paddr_lo, token.wrapping_add(3));
-                assert_eq!(snap.base_paddr_hi, token.wrapping_add(4));
+                    if let Some(prev) = last_gen {
+                        assert_generation_monotonic(prev, snap.generation, WRITER_PUBLISHES as u32);
+                    }
+                    last_gen = Some(snap.generation);
+                }
             });
 
             writer.join().unwrap();
             reader.join().unwrap();
+
+            // Final snapshot should still be coherent.
+            assert_snapshot_is_self_consistent(state.snapshot());
         });
     }
 }
