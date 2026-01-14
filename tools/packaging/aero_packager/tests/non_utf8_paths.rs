@@ -184,6 +184,52 @@ fn packaging_fails_on_non_utf8_guest_tools_paths() -> anyhow::Result<()> {
 }
 
 #[test]
+fn packaging_fails_on_non_utf8_guest_tools_tools_paths() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools");
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+
+    // Inject a file with a non-UTF8 filename under guest-tools/tools/ (in a UTF-8 subdirectory so
+    // the old behavior would have produced a mangled-but-valid package path).
+    let invalid_name = OsString::from_vec(vec![b'b', b'a', b'd', 0xFF, b'.', b'e', b'x', b'e']);
+    let invalid_path = guest_tools_tmp
+        .path()
+        .join("tools")
+        .join("subdir")
+        .join(invalid_name);
+    fs::create_dir_all(invalid_path.parent().unwrap())?;
+    fs::write(&invalid_path, b"bad\n")?;
+
+    let spec_path = testdata.join("spec.json");
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("non-UTF8 path component") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn packaging_fails_on_non_utf8_guest_tools_dir_component() -> anyhow::Result<()> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
