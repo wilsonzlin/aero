@@ -573,7 +573,15 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
         uint16_t old;
 
         old = vq->last_kick_avail;
-        virtio_rmb(vq->os, vq->os_ctx);
+        /*
+         * Full barrier: ensure our avail ring updates are visible to the device
+         * before we read the device's notification threshold (avail_event).
+         *
+         * Without this store->load ordering, a device could go to sleep after
+         * observing an old avail index, while the driver decides to suppress a
+         * kick based on an old avail_event value.
+         */
+        virtio_mb(vq->os, vq->os_ctx);
         event = *vq->avail_event;
         if (virtqueue_split_need_event(event, new_idx, old) != VIRTIO_FALSE) {
             vq->last_kick_avail = new_idx;
@@ -582,7 +590,8 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
         return VIRTIO_FALSE;
     }
 
-    virtio_rmb(vq->os, vq->os_ctx);
+    /* Ensure avail ring stores are visible before reading used->flags. */
+    virtio_mb(vq->os, vq->os_ctx);
     if ((vq->used->flags & VRING_USED_F_NO_NOTIFY) != 0) {
         return VIRTIO_FALSE;
     }
