@@ -4600,78 +4600,8 @@ impl AerogpuD3d11Executor {
 
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
-        let mut render_bind_groups: Vec<Arc<wgpu::BindGroup>> =
-            Vec::with_capacity(pipeline_bindings.group_layouts.len());
-        for group_index in 0..pipeline_bindings.group_layouts.len() {
-            if pipeline_bindings.group_bindings[group_index].is_empty() {
-                let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                let bg = self.bind_group_cache.get_or_create(
-                    &self.device,
-                    &pipeline_bindings.group_layouts[group_index],
-                    &entries,
-                );
-                render_bind_groups.push(bg);
-            } else {
-                let stage = group_index_to_stage(group_index as u32)?;
-                let stage_bindings = self.bindings.stage_mut(stage);
-                if stage_bindings.is_dirty() {
-                    let provider = CmdExecutorBindGroupProvider {
-                        resources: &self.resources,
-                        legacy_constants: &self.legacy_constants,
-                        cbuffer_scratch: &self.cbuffer_scratch,
-                        srv_buffer_scratch: &self.srv_buffer_scratch,
-                        storage_align: (self.device.limits().min_storage_buffer_offset_alignment
-                            as u64)
-                            .max(1),
-                        max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
-                            as u64,
-                        dummy_uniform: &self.dummy_uniform,
-                        dummy_storage: &self.dummy_storage,
-                        dummy_texture_view: &self.dummy_texture_view,
-                        default_sampler: &self.default_sampler,
-                        stage,
-                        stage_state: stage_bindings,
-                    };
-                    let bg = reflection_bindings::build_bind_group(
-                        &self.device,
-                        &mut self.bind_group_cache,
-                        &pipeline_bindings.group_layouts[group_index],
-                        &pipeline_bindings.group_bindings[group_index],
-                        &provider,
-                    )?;
-                    stage_bindings.clear_dirty();
-                    render_bind_groups.push(bg);
-                } else {
-                    // Stage not dirty; reuse cached bind group if possible by rebuilding with the
-                    // current state. This is still cheap due to BindGroupCache.
-                    let provider = CmdExecutorBindGroupProvider {
-                        resources: &self.resources,
-                        legacy_constants: &self.legacy_constants,
-                        cbuffer_scratch: &self.cbuffer_scratch,
-                        srv_buffer_scratch: &self.srv_buffer_scratch,
-                        storage_align: (self.device.limits().min_storage_buffer_offset_alignment
-                            as u64)
-                            .max(1),
-                        max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
-                            as u64,
-                        dummy_uniform: &self.dummy_uniform,
-                        dummy_storage: &self.dummy_storage,
-                        dummy_texture_view: &self.dummy_texture_view,
-                        default_sampler: &self.default_sampler,
-                        stage,
-                        stage_state: stage_bindings,
-                    };
-                    let bg = reflection_bindings::build_bind_group(
-                        &self.device,
-                        &mut self.bind_group_cache,
-                        &pipeline_bindings.group_layouts[group_index],
-                        &pipeline_bindings.group_bindings[group_index],
-                        &provider,
-                    )?;
-                    render_bind_groups.push(bg);
-                }
-            }
-        }
+        let render_bind_groups =
+            self.build_stage_bind_groups(ShaderStage::Geometry, &pipeline_bindings)?;
 
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can keep using executor state while the render pass is alive.
@@ -11789,6 +11719,66 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
+    fn build_stage_bind_groups(
+        &mut self,
+        stage: ShaderStage,
+        pipeline_bindings: &reflection_bindings::PipelineBindingsInfo,
+    ) -> Result<Vec<Arc<wgpu::BindGroup>>> {
+        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
+            Vec::with_capacity(pipeline_bindings.group_layouts.len());
+
+        for group_index in 0..pipeline_bindings.group_layouts.len() {
+            let group_bindings = &pipeline_bindings.group_bindings[group_index];
+            if group_bindings.is_empty() {
+                let entries: [BindGroupCacheEntry<'_>; 0] = [];
+                bind_groups.push(self.bind_group_cache.get_or_create(
+                    &self.device,
+                    &pipeline_bindings.group_layouts[group_index],
+                    &entries,
+                ));
+                continue;
+            }
+
+            // Most group indices map 1:1 to a D3D11 shader stage, but group 3 is shared by the
+            // "extended" stages (GS/HS/DS). When running a compute emulation pass for one of those
+            // stages, we need to source group(3) bindings from the correct stage bucket instead of
+            // assuming Geometry.
+            let group_stage = if group_index as u32 == stage.as_bind_group_index() {
+                stage
+            } else {
+                group_index_to_stage(group_index as u32)?
+            };
+
+            let stage_bindings = self.bindings.stage_mut(group_stage);
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &self.resources,
+                legacy_constants: &self.legacy_constants,
+                cbuffer_scratch: &self.cbuffer_scratch,
+                srv_buffer_scratch: &self.srv_buffer_scratch,
+                storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size as u64,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+                stage: group_stage,
+                stage_state: stage_bindings,
+            };
+
+            bind_groups.push(reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                &pipeline_bindings.group_layouts[group_index],
+                group_bindings,
+                &provider,
+            )?);
+            stage_bindings.clear_dirty();
+        }
+
+        Ok(bind_groups)
+    }
+
     fn ensure_bound_resources_uploaded(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -15448,6 +15438,7 @@ mod tests {
     };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use std::collections::BTreeMap;
+    use crate::runtime::bindings::BoundBuffer;
     use std::sync::Arc;
 
     fn require_webgpu() -> bool {
@@ -16717,6 +16708,214 @@ mod tests {
                     "{label} buffer must be bindable as STORAGE for vertex pulling, got: {err:?}"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn hs_compute_pass_builds_group3_from_hull_bucket() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            let allocs = AllocTable::new(None).unwrap();
+
+            // Create a hull and geometry constant buffer with different contents so we can detect
+            // which stage bucket was used to build the bind group for @group(3).
+            const HULL_CB: u32 = 1;
+            const GEOM_CB: u32 = 2;
+            const OUT: u32 = 3;
+
+            for (handle, usage_flags, size_bytes) in [
+                (HULL_CB, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, 16u64),
+                (GEOM_CB, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, 16u64),
+                // Needs STORAGE so the compute shader can write into it; a vertex buffer implicitly
+                // gets STORAGE for vertex pulling / tessellation emulation.
+                (OUT, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 4u64),
+            ] {
+                let mut cmd_bytes = Vec::new();
+                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&handle.to_le_bytes());
+                cmd_bytes.extend_from_slice(&usage_flags.to_le_bytes());
+                cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(cmd_bytes.len(), 40);
+
+                exec.exec_create_buffer(&cmd_bytes, &allocs)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            let hull_bytes = [
+                42u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+            ]
+            .concat();
+            let geom_bytes = [
+                7u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+                0u32.to_le_bytes(),
+            ]
+            .concat();
+            exec.queue.write_buffer(
+                &exec.resources.buffers.get(&HULL_CB).unwrap().buffer,
+                0,
+                &hull_bytes,
+            );
+            exec.queue.write_buffer(
+                &exec.resources.buffers.get(&GEOM_CB).unwrap().buffer,
+                0,
+                &geom_bytes,
+            );
+
+            exec.bindings.stage_mut(ShaderStage::Hull).set_constant_buffer(
+                0,
+                Some(BoundConstantBuffer {
+                    buffer: HULL_CB,
+                    offset: 0,
+                    size: None,
+                }),
+            );
+            exec.bindings.stage_mut(ShaderStage::Geometry).set_constant_buffer(
+                0,
+                Some(BoundConstantBuffer {
+                    buffer: GEOM_CB,
+                    offset: 0,
+                    size: None,
+                }),
+            );
+            exec.bindings.stage_mut(ShaderStage::Compute).set_uav_buffer(
+                0,
+                Some(BoundBuffer {
+                    buffer: OUT,
+                    offset: 0,
+                    size: None,
+                }),
+            );
+
+            let bindings = [
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 1,
+                    },
+                },
+                crate::Binding {
+                    group: 2,
+                    binding: crate::binding_model::BINDING_BASE_UAV,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::UavBuffer { slot: 0 },
+                },
+            ];
+            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [bindings.as_slice()],
+            )
+            .expect("build_pipeline_bindings_info should succeed");
+
+            let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+                .group_layouts
+                .iter()
+                .map(|l| l.layout.as_ref())
+                .collect();
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu_cmd HS group3 bucket test pipeline layout"),
+                    bind_group_layouts: &layout_refs,
+                    push_constant_ranges: &[],
+                });
+
+            let wgsl = format!(
+                r#"
+@group(3) @binding(0) var<uniform> cb: vec4<u32>;
+@group(2) @binding({}) var<storage, read_write> out: array<u32>;
+
+@compute @workgroup_size(1)
+fn main() {{
+    out[0] = cb.x;
+}}
+"#,
+                crate::binding_model::BINDING_BASE_UAV
+            );
+            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu_cmd HS group3 bucket test shader"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(wgsl)),
+            });
+
+            let pipeline = exec
+                .device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("aerogpu_cmd HS group3 bucket test pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: "main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
+
+            let bind_groups = exec
+                .build_stage_bind_groups(ShaderStage::Hull, &pipeline_bindings)
+                .expect("bind groups should build");
+
+            let out_buf = &exec.resources.buffers.get(&OUT).unwrap().buffer;
+            let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd HS group3 bucket test staging"),
+                size: 4,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd HS group3 bucket test encoder"),
+                });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aerogpu_cmd HS group3 bucket test pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&pipeline);
+                for (group_index, bg) in bind_groups.iter().enumerate() {
+                    pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
+                }
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            encoder.copy_buffer_to_buffer(out_buf, 0, &staging, 0, 4);
+            exec.queue.submit([encoder.finish()]);
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |res| {
+                sender.send(res).unwrap();
+            });
+            exec.poll_wait();
+            receiver
+                .receive()
+                .await
+                .expect("map_async callback should run")
+                .expect("map_async should succeed");
+            let mapped = slice.get_mapped_range();
+            let value = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+            drop(mapped);
+            staging.unmap();
+
+            assert_eq!(
+                value, 42,
+                "group(3) for HS compute passes must use Hull stage bindings (not Geometry)"
+            );
         });
     }
 
