@@ -48,8 +48,8 @@ This is the **coordination hub**. You wire together the work from all other work
   - AHCI (MSI) and NVMe (MSI + single-vector MSI-X) in both `aero-machine` and `aero-pc-platform`
     (see `crates/aero-machine/src/lib.rs::{process_ahci,process_nvme}` and
     `crates/aero-pc-platform/src/lib.rs::{process_ahci,process_nvme}`), and
-  - xHCI (MSI) in `aero-pc-platform` when enabled (see `crates/devices/src/usb/xhci.rs` and
-    `crates/devices/tests/xhci_msi_integration.rs`), and
+  - xHCI (MSI + single-vector MSI-X) in `aero-pc-platform` when enabled (see
+    `crates/devices/src/usb/xhci.rs` and `crates/devices/tests/xhci_msi_integration.rs`), and
   - virtio-pci MSI-X delivery in canonical integrations (virtio-blk in both stacks;
     virtio-net/virtio-input in `aero-machine`) via real virtio interrupt sinks plus MSI-X
     enable/function-mask mirroring in `VirtioPciBar0Mmio` (see VTP-009).
