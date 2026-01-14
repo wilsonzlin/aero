@@ -449,6 +449,15 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
             continue;
         }
 
+        /*
+         * We only support a ~60 Hz scanout cadence today. Standard timing entries
+         * encode refresh as (rate - 60) in the low 6 bits; require an exact 60 Hz
+         * entry here and rely on the curated fallback list for additional modes.
+         */
+        if ((b1 & 0x3Fu) != 0) {
+            continue;
+        }
+
         const ULONG hActive = ((ULONG)b0 + 31u) * 8u;
         const ULONG aspect = (ULONG)(b1 >> 6) & 0x3u;
 
