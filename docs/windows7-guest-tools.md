@@ -129,6 +129,13 @@ In Aero, create a new Windows 7 VM/guest and select the **baseline / compatibili
 - **Input:** PS/2 keyboard + mouse (or Aero’s default input devices)
 - **Audio:** HDA / Intel HD Audio (optional)
 
+Boot drive selection note (BIOS `DL`):
+
+- To boot the **installer ISO**, select **CD0** as the BIOS boot drive (`DL=0xE0`) *before* reset/restart.
+- After installation (and for normal boots), select **HDD0** as the BIOS boot drive (`DL=0x80`) *before* reset/restart.
+- Aero’s legacy BIOS does **not** probe a “boot order” list; the host/runtime must select `DL`.
+  See [`docs/05-storage-topology-win7.md#boot-flows-normative`](./05-storage-topology-win7.md#boot-flows-normative).
+
 Then:
 
 1. Attach your Windows 7 ISO as the virtual CD/DVD.
