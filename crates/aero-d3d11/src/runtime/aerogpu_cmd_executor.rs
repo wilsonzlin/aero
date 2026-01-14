@@ -567,8 +567,8 @@ impl SharedSurfaceTable {
             .import(out_handle, share_token)
             .map_err(|e| match e {
                 SharedSurfaceError::UnknownToken(share_token) => anyhow!(
-                "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
-            ),
+                    "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
+                ),
                 other => anyhow!("IMPORT_SHARED_SURFACE: {other}"),
             })
     }

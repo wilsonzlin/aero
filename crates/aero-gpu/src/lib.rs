@@ -97,6 +97,7 @@ pub use protocol::{
 };
 pub use readback::{readback_buffer, readback_depth32f, readback_rgba8, readback_stencil8};
 pub use recovery::{BackendAvailability, GpuRecoveryMachine, RecoveryOutcome, RecoveryState};
+pub use shared_surface::{SharedSurfaceError, SharedSurfaceTable};
 pub use surface::{
     present_with_retry, GpuPresenter, GpuSurfaceError, PresentOutcome, SimulatedSurface,
     SurfaceFrame, SurfaceProvider,

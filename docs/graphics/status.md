@@ -514,8 +514,7 @@ Where to start verifying:
 - Two command execution paths exist in the web runtime:
   - TypeScript CPU executor: [`web/src/workers/aerogpu-acmd-executor.ts`](../../web/src/workers/aerogpu-acmd-executor.ts)
   - Rust/WASM executor: [`crates/aero-gpu/src/acmd_executor.rs`](../../crates/aero-gpu/src/acmd_executor.rs) (surfaced via `crates/aero-gpu-wasm/`)
-- Shared-surface bookkeeping is centralized in `aero-gpu`:
-  - canonical: [`crates/aero-gpu/src/shared_surface.rs`](../../crates/aero-gpu/src/shared_surface.rs) (`SharedSurfaceTable`, used by the D3D9 executor + command processors + D3D11 executor)
+- Shared-surface bookkeeping is centralized in [`crates/aero-gpu/src/shared_surface.rs`](../../crates/aero-gpu/src/shared_surface.rs) (`SharedSurfaceTable`) and used by both the D3D9 and D3D11 executors.
 
 ---
 
