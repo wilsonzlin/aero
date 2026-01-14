@@ -86,6 +86,23 @@ def _label_block(text: str, label: str) -> str | None:
     return text[start:end]
 
 
+def _strip_label_block(text: str, label: str) -> str:
+    """
+    Return `text` with the best-effort label block `:<label>` removed.
+
+    Useful for invariants that must apply to the "install mode" flow and should not
+    be satisfied by logic that exists only in a dry-run label like :check_mode.
+    """
+
+    m = re.search(rf"(?im)^:{re.escape(label)}\b", text)
+    if not m:
+        return text
+    start = m.start()
+    m2 = re.search(r"(?im)^:[A-Za-z0-9_]+\b", text[m.end() :])
+    end = m.end() + m2.start() if m2 else len(text)
+    return text[:start] + "\n" + text[end:]
+
+
 def _strip_batch_comment_lines(text: str) -> str:
     """
     Best-effort removal of batch comment lines.
@@ -378,10 +395,10 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="/skipstorage gates virtio-blk storage INF validation (setup does not require packaged storage driver)",
             expected_hint='If "%ARG_SKIP_STORAGE%"=="1" (...) else ( call :validate_storage_service_infs ... )',
-            predicate=_regex(
+            predicate=lambda text: _regex(
                 r'if\s+"%ARG_SKIP_STORAGE%"\s*==\s*"1"\s*\([\s\S]{0,2000}?else\s*\([\s\S]{0,2000}?call\s+:?validate_storage_service_infs\b',
                 flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
-            ),
+            )(_strip_label_block(text, "check_mode")),
         ),
         Invariant(
             description="/skipstorage gates boot-critical storage pre-seeding (skips preseed_storage_boot)",
