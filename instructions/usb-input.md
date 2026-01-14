@@ -144,7 +144,7 @@ In the web runtime, capture uses `ps2Set2ScancodeForCode` from `web/src/input/sc
 Per ADR 0015, `crates/aero-usb` is the **canonical USB stack**. It provides:
 
 - UHCI controller emulation (USB 1.1, full/low-speed)
-- EHCI bring-up (USB 2.0, high-speed; regs + root hub; schedule engine staged)
+- EHCI bring-up (USB 2.0, high-speed; regs + root hub + minimal async/periodic schedule engines)
 - xHCI bring-up (USB 3.x; in progress)
 - USB device enumeration
 - HID class driver

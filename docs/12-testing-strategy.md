@@ -232,8 +232,8 @@ Keep correctness locked down with:
 
 - Rust unit/integration tests under `crates/aero-usb`:
   - UHCI schedule + passthrough mapping tests
-  - EHCI bring-up tests (regs + root hub timers), and later schedule-walker tests once qTD/QH
-    processing lands (see [`docs/usb-ehci.md`](./usb-ehci.md))
+  - EHCI tests (regs + root hub timers + async/periodic schedule walking + snapshot roundtrips),
+    see [`docs/usb-ehci.md`](./usb-ehci.md)
   - xHCI controller tests (MMIO/ring plumbing, transfers, robustness), see [`docs/usb-xhci.md`](./usb-xhci.md)
 - TypeScript unit/integration tests under `web/src/usb/*test.ts` (including coverage for the
   SharedArrayBuffer ring fast path negotiated by `usb.ringAttach`/`usb.ringDetach` in
