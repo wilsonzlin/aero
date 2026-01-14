@@ -181,6 +181,9 @@ Supported:
 - `point` (`D3D11_PRIMITIVE_TOPOLOGY_POINTLIST`)
 - `triangle` (`D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST`)
 
+Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated directly from
+IA vertex buffers via vertex pulling (VS-as-compute feeding is not implemented yet).
+
 Not yet supported end-to-end:
 
 - `line` input primitives
@@ -332,8 +335,9 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
 
-Both tests require compute shaders and indirect execution, so they may skip on downlevel backends
+These tests require compute shaders and indirect execution, so they may skip on downlevel backends
 (e.g. WebGL2).
 
 Example:
@@ -341,6 +345,7 @@ Example:
 ```bash
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle
 ```
 
 For synthetic-expansion/scaffolding coverage, see:
