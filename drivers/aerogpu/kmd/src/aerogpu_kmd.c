@@ -454,6 +454,38 @@ static __forceinline ULONG AeroGpuComputeVblankLineCountForActiveHeight(_In_ ULO
     return vblankLines;
 }
 
+static __forceinline ULONG AeroGpuComputeHblankPixelCountForActiveWidth(_In_ ULONG ActiveWidth)
+{
+    /*
+     * Conservative synthetic horizontal blanking.
+     *
+     * We do not model real detailed timing descriptors today, but returning
+     * TotalSize.cx == ActiveSize.cx (i.e. 0 horizontal blanking) can confuse
+     * parts of the Win7 display stack that expect some blanking interval.
+     *
+     * Use a simple heuristic tuned to produce plausible CVT-like totals for
+     * common desktop modes.
+     */
+    const ULONG w = ActiveWidth ? ActiveWidth : 1u;
+    ULONG hblank = w / 4;
+    if (hblank < 8u) {
+        hblank = 8u;
+    }
+    if (hblank > 320u) {
+        hblank = 320u;
+    }
+    return hblank;
+}
+
+static __forceinline ULONG AeroGpuComputeTotalWidthForActiveWidth(_In_ ULONG ActiveWidth)
+{
+    const ULONG blank = AeroGpuComputeHblankPixelCountForActiveWidth(ActiveWidth);
+    if (ActiveWidth > (0xFFFFFFFFu - blank)) {
+        return ActiveWidth;
+    }
+    return ActiveWidth + blank;
+}
+
 static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING RegistryPath)
 {
     g_AeroGpuDisplayModeConfig.PreferredWidth = 0;
@@ -5153,7 +5185,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
         modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
         modeInfo->VideoSignalInfo.ActiveSize.cx = w;
         modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-        modeInfo->VideoSignalInfo.TotalSize.cx = w;
+        modeInfo->VideoSignalInfo.TotalSize.cx = AeroGpuComputeTotalWidthForActiveWidth(w);
         modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
         modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
         modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
@@ -5474,7 +5506,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                 modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
                 modeInfo->VideoSignalInfo.ActiveSize.cx = w;
                 modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-                modeInfo->VideoSignalInfo.TotalSize.cx = w;
+                modeInfo->VideoSignalInfo.TotalSize.cx = AeroGpuComputeTotalWidthForActiveWidth(w);
                 modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
                 modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
                 modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
@@ -5992,7 +6024,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
         modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
         modeInfo->VideoSignalInfo.ActiveSize.cx = w;
         modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-        modeInfo->VideoSignalInfo.TotalSize.cx = w;
+        modeInfo->VideoSignalInfo.TotalSize.cx = AeroGpuComputeTotalWidthForActiveWidth(w);
         modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
         modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
         modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
