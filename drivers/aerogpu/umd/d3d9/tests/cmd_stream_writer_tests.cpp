@@ -3881,6 +3881,132 @@ bool TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites() {
   return Check(got1 == static_cast<uint16_t>(texel1 | 0x8000u), "texel1 alpha bit forced to 1 for misaligned write");
 }
 
+bool TestCreateSwapChainComputes16BitBackbufferPitchAndFormat() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  constexpr uint32_t kWidth = 13;
+  constexpr uint32_t kHeight = 7;
+  constexpr uint32_t kExpectedRowPitch = kWidth * 2;
+
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = kWidth;
+  create_sc.present_params.backbuffer_height = kHeight;
+  create_sc.present_params.backbuffer_format = 23u; // D3DFMT_R5G6B5
+  create_sc.present_params.backbuffer_count = 1;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 1;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain(R5G6B5)")) {
+    return false;
+  }
+  if (!Check(create_sc.hSwapChain.pDrvPrivate != nullptr, "CreateSwapChain returned swapchain handle")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* bb = reinterpret_cast<Resource*>(create_sc.hBackBuffer.pDrvPrivate);
+  if (!Check(bb != nullptr, "CreateSwapChain returned backbuffer handle")) {
+    return false;
+  }
+
+  if (!Check(bb->row_pitch == kExpectedRowPitch, "R5G6B5 backbuffer row_pitch bytes")) {
+    return false;
+  }
+  if (!Check(bb->slice_pitch == kExpectedRowPitch * kHeight, "R5G6B5 backbuffer slice_pitch bytes")) {
+    return false;
+  }
+  if (!Check(bb->size_bytes == bb->slice_pitch, "R5G6B5 backbuffer size_bytes matches slice_pitch")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+
+  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+  if (!Check(cmd->format == AEROGPU_FORMAT_B5G6R5_UNORM, "CREATE_TEXTURE2D format==B5G6R5")) {
+    return false;
+  }
+  if (!Check(cmd->row_pitch_bytes == kExpectedRowPitch, "CREATE_TEXTURE2D row_pitch_bytes")) {
+    return false;
+  }
+  if (!Check((cmd->usage_flags & AEROGPU_RESOURCE_USAGE_RENDER_TARGET) != 0, "CREATE_TEXTURE2D usage_flags includes RT")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2d() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -20099,6 +20225,7 @@ int main() {
   failures += !aerogpu::TestLockInfersMipLevelPitchFromOffsetBytes();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();
+  failures += !aerogpu::TestCreateSwapChainComputes16BitBackbufferPitchAndFormat();
   failures += !aerogpu::TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes();
   failures += !aerogpu::TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2d();
