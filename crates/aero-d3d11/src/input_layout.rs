@@ -506,6 +506,63 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_type: DxgiFormatComponentType::F16,
             component_count: 4,
         },
+        // R16G16B16A16_UNORM
+        11 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Unorm16x4,
+            size: 8,
+            align: 4,
+        },
+        // R16G16B16A16_UINT
+        12 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Uint16x4,
+            size: 8,
+            align: 4,
+        },
+        // R16G16B16A16_SNORM
+        13 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Snorm16x4,
+            size: 8,
+            align: 4,
+        },
+        // R16G16B16A16_SINT
+        14 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Sint16x4,
+            size: 8,
+            align: 4,
+        },
+        // R16G16_UNORM
+        35 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Unorm16x2,
+            size: 4,
+            align: 4,
+        },
+        // R16G16_UINT
+        36 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Uint16x2,
+            size: 4,
+            align: 4,
+        },
+        // R16G16_SNORM
+        37 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Snorm16x2,
+            size: 4,
+            align: 4,
+        },
+        // R16G16_SINT
+        38 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Sint16x2,
+            size: 4,
+            align: 4,
+        },
+        // R10G10B10A2_UNORM
+        //
+        // WebGPU / wgpu does not currently expose a packed 10:10:10:2 vertex format. We expose the
+        // raw 32-bit payload as `uint32` so shader translation can unpack and normalize to float.
+        24 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Uint32,
+            size: 4,
+            align: 4,
+        },
         // R32_UINT
         42 => DxgiFormatInfo {
             wgpu_vertex_format: wgpu::VertexFormat::Uint32,
@@ -513,6 +570,36 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             align_bytes: 4,
             component_type: DxgiFormatComponentType::U32,
             component_count: 1,
+        },
+        // R32_SINT
+        43 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Sint32,
+            size: 4,
+            align: 4,
+        },
+        // R8G8_UNORM
+        49 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Unorm8x2,
+            size: 2,
+            align: 4,
+        },
+        // R8G8_UINT
+        50 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Uint8x2,
+            size: 2,
+            align: 4,
+        },
+        // R8G8_SNORM
+        51 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Snorm8x2,
+            size: 2,
+            align: 4,
+        },
+        // R8G8_SINT
+        52 => VertexFormatInfo {
+            format: wgpu::VertexFormat::Sint8x2,
+            size: 2,
+            align: 4,
         },
         // R16_UINT
         //
