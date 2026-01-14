@@ -9091,8 +9091,9 @@ static BOOLEAN AeroGpuCmdStreamRequiresAllocTable(_In_reads_bytes_opt_(SizeBytes
             return FALSE;
         }
  
-        const ULONG end = offset + hdr.size_bytes;
-        if (end > streamSize) {
+        ULONG end = 0;
+        NTSTATUS st = RtlULongAdd(offset, hdr.size_bytes, &end);
+        if (!NT_SUCCESS(st) || end > streamSize) {
             return FALSE;
         }
 

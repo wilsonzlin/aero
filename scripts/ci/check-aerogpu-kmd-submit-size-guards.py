@@ -324,6 +324,35 @@ def main() -> int:
     except Exception as e:  # pragma: no cover (best-effort guard script)
         errors.append(f"{SRC.relative_to(ROOT)}: {e}")
 
+    # --- AeroGpuCmdStreamRequiresAllocTable (avoid ULONG wrap/infinite loops) ---
+    #
+    # This helper does minimal parsing of the DMA buffer to decide whether a v1 submission
+    # requires an allocation table. The stream is untrusted; avoid `offset + hdr.size_bytes`
+    # overflow which can otherwise wrap `end` and make the loop non-terminating.
+    try:
+        body = _extract_function(text, "AeroGpuCmdStreamRequiresAllocTable")
+        body_nocomments = _strip_c_comments(body)
+        errors.extend(
+            e
+            for e in [
+                _require(
+                    body,
+                    "AeroGpuCmdStreamRequiresAllocTable overflow-checked end",
+                    r"NTSTATUS\s+(?P<st_var>[A-Za-z0-9_]+)\s*=\s*RtlULongAdd\s*\(\s*offset\s*,\s*hdr\.size_bytes\s*,\s*&(?P<end_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"\bNT_SUCCESS\s*\(\s*(?P=st_var)\s*\).*?"
+                    r"\b(?P=end_var)\b\s*>\s*streamSize",
+                ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuCmdStreamRequiresAllocTable unsafe end arithmetic",
+                    r"offset\s*\+\s*hdr\.size_bytes",
+                ),
+            ]
+            if e
+        )
+    except Exception as e:  # pragma: no cover
+        errors.append(f"{SRC.relative_to(ROOT)}: {e}")
+
     # --- AeroGpuDdiSubmitCommand (legacy descriptor sizing) ---
     try:
         body = _extract_function(text, "AeroGpuDdiSubmitCommand")
