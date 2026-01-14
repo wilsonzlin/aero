@@ -100,11 +100,14 @@ powershell -ExecutionPolicy Bypass -File Verify-VirtioInputStaged.ps1 -ImagePath
 echo %ERRORLEVEL%
 ```
 
-### Legacy / deprecated script name
+### Legacy / deprecated script names
 
-`Inject-VirtioInputDriver.ps1` is kept for backward compatibility but is **deprecated**.
-It is now a thin wrapper around `inject-driver.ps1` and maps the old `-DriverPackageDir`
-parameter name to the new `-DriverDir`. Prefer `inject-driver.ps1` / `inject-driver.cmd`.
+These scripts are kept for backward compatibility but are **deprecated**. Prefer
+`inject-driver.ps1` / `inject-driver.cmd`.
+
+- `Inject-VirtioInputDriver.ps1` (WIM mode wrapper): maps `-DriverPackageDir` → `-DriverDir`
+- `Inject-VirtioInputDriverOffline.ps1` (offline directory wrapper): maps `-ImagePath` → `-OfflineDir` and
+  `-DriverPackageDir` → `-DriverDir`
 
 ## Choose the correct driver (x86 vs x64)
 
@@ -221,19 +224,12 @@ On first boot of the installed OS, Windows will enumerate the virtio-input hardw
 
 This is useful if you already have a Windows 7 VM disk image and want the driver present on next boot without reinstalling.
 
-### Quick start (offline OS dir)
+### Scripted injection
 
-This directory also includes [`Inject-VirtioInputDriverOffline.ps1`](./Inject-VirtioInputDriverOffline.ps1), which automates the DISM `/Add-Driver` step for an **already-installed** offline Windows directory and then runs [`Verify-VirtioInputStaged.ps1`](./Verify-VirtioInputStaged.ps1).
+Use `inject-driver.ps1` in offline directory mode (see [Quick start (scripted)](#quick-start-scripted)).
 
-From an **elevated PowerShell** prompt:
-
-```powershell
-.\Inject-VirtioInputDriverOffline.ps1 `
-  -ImagePath W:\ `
-  -DriverPackageDir C:\src\aero\out\packages\windows7\virtio-input\x64
-```
-
-If you need `/ForceUnsigned` (test-only), add `-ForceUnsigned`.
+`Inject-VirtioInputDriverOffline.ps1` is kept for backward compatibility but is **deprecated** and now
+forwards to `inject-driver.ps1` (see “Legacy / deprecated script names” above).
 
 ### Manual DISM steps (for reference)
 
