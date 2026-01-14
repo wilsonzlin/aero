@@ -493,7 +493,7 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
     // - select bind group layouts (view_dimension)
     //
     // When cached reflection is stale/corrupt, the masks can become inconsistent with the cached
-    // WGSL. Derive masks from WGSL declarations for validation on persistent cache hits.
+    // WGSL. Derive metadata from WGSL declarations for validation on persistent cache hits.
     let mut used = 0u16;
     let mut sampler_dim_key = 0u32;
 
@@ -521,11 +521,13 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
         }
         let bit = 1u16 << idx;
         used |= bit;
-        let dim_code = if line.contains("texture_cube<f32>") {
+
+        // Match the encoding described in `Shader::sampler_dim_key`.
+        let dim_code = if line.contains("texture_cube<") {
             1u32
-        } else if line.contains("texture_3d<f32>") {
+        } else if line.contains("texture_3d<") {
             2u32
-        } else if line.contains("texture_1d<f32>") {
+        } else if line.contains("texture_1d<") {
             3u32
         } else {
             0u32
