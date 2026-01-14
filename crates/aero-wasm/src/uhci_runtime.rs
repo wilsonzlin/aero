@@ -31,6 +31,7 @@ const WEBUSB_ROOT_PORT: usize = 1;
 const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WEBHID_SNAPSHOT_DEVICES: usize = 1024;
 const MAX_USB_STRING_DESCRIPTOR_UTF16_UNITS: usize = 126;
+const MAX_WEBHID_FEATURE_REPORT_REQUESTS_PER_DRAIN: usize = 256;
 
 const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
 const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -538,10 +539,18 @@ impl UhciRuntime {
         // Keep the hot poll path allocation-free when idle by returning `null` until we observe the
         // first queued request.
         let mut out: Option<Array> = None;
+        let mut remaining = MAX_WEBHID_FEATURE_REPORT_REQUESTS_PER_DRAIN;
         for (&device_id, state) in self.webhid_devices.iter_mut() {
-            while let Some(req) = state.dev.pop_feature_report_request() {
+            while remaining > 0 {
+                let Some(req) = state.dev.pop_feature_report_request() else {
+                    break;
+                };
                 let arr = out.get_or_insert_with(Array::new);
                 arr.push(&webhid_feature_report_request_to_js(device_id, req));
+                remaining -= 1;
+            }
+            if remaining == 0 {
+                break;
             }
         }
         out.map(|arr| arr.into()).unwrap_or(JsValue::NULL)
@@ -607,14 +616,44 @@ impl UhciRuntime {
         };
 
         if ok {
-            let data = bytes.as_deref().unwrap_or(&[]);
-            state
+            let payload = bytes.as_deref().unwrap_or(&[]);
+            let _ = state
                 .dev
-                .complete_feature_report_request(request_id, report_id, data);
+                .complete_feature_report_request(request_id, report_id, payload);
         } else {
-            state.dev.fail_feature_report_request(request_id, report_id);
+            let _ = state.dev.fail_feature_report_request(request_id, report_id);
         }
         Ok(())
+    }
+
+    pub fn webhid_complete_feature_report_request(
+        &mut self,
+        device_id: u32,
+        request_id: u32,
+        report_id: u32,
+        ok: bool,
+        data: Option<Uint8Array>,
+    ) -> bool {
+        let Some(state) = self.webhid_devices.get(&device_id) else {
+            return false;
+        };
+        let Ok(report_id) = u8::try_from(report_id) else {
+            return false;
+        };
+        if ok {
+            let bytes = if let Some(data) = data {
+                let mut out = vec![0u8; data.length() as usize];
+                data.copy_to(out.as_mut_slice());
+                out
+            } else {
+                Vec::new()
+            };
+            state
+                .dev
+                .complete_feature_report_request(request_id, report_id, bytes.as_slice())
+        } else {
+            state.dev.fail_feature_report_request(request_id, report_id)
+        }
     }
 
     pub fn webusb_attach(&mut self, preferred_port: Option<u8>) -> Result<u32, JsValue> {

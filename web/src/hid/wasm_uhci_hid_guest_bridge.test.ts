@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { WasmUhciHidGuestBridge, type UhciRuntimeHidApi } from "./wasm_uhci_hid_guest_bridge";
-import type { HidAttachMessage, HidFeatureReportResultMessage } from "./hid_proxy_protocol";
+import type { HidAttachMessage } from "./hid_proxy_protocol";
 import {
   EXTERNAL_HUB_ROOT_PORT,
   UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
@@ -183,12 +183,13 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     expect(Array.from(arg.slice(0, 3))).toEqual([1, 2, 3]);
   });
 
-  it("forwards drained feature report requests to the host sink", () => {
+  it("forwards feature report requests and completes them via the UHCI runtime API", () => {
     const webhid_attach = vi.fn(() => 0);
     const webhid_detach = vi.fn();
     const webhid_push_input_report = vi.fn();
     const webhid_drain_output_reports = vi.fn(() => []);
-    const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 10, reportId: 2 }]);
+    const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 7, reportId: 3 }]);
+    const webhid_complete_feature_report_request = vi.fn(() => true);
 
     const uhci: UhciRuntimeHidApi = {
       webhid_attach,
@@ -196,6 +197,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       webhid_push_input_report,
       webhid_drain_output_reports,
       webhid_drain_feature_report_requests,
+      webhid_complete_feature_report_request,
     };
 
     const host = {
@@ -208,23 +210,36 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     const guest = new WasmUhciHidGuestBridge({ uhci, host });
     guest.poll();
 
-    expect(webhid_drain_feature_report_requests).toHaveBeenCalled();
-    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 10, reportId: 2 });
+    expect(webhid_drain_feature_report_requests).toHaveBeenCalledTimes(1);
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 7, reportId: 3 });
+
+    const data = new Uint8Array([1, 2, 3]);
+    expect(guest.completeFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, data })).toBe(true);
+    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, true, data);
+
+    expect(guest.failFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, error: "nope" })).toBe(true);
+    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, false);
   });
 
-  it("applies feature report results back into the UHCI runtime API", () => {
+  it("caps feature report forwarding per tick", () => {
     const webhid_attach = vi.fn(() => 0);
     const webhid_detach = vi.fn();
     const webhid_push_input_report = vi.fn();
     const webhid_drain_output_reports = vi.fn(() => []);
-    const webhid_push_feature_report_result = vi.fn();
+    const queued = Array.from({ length: 32 }, (_, idx) => ({ deviceId: 1, requestId: idx + 1, reportId: 3 }));
+    const webhid_drain_feature_report_requests = vi
+      .fn()
+      .mockReturnValueOnce(queued)
+      .mockReturnValue([]);
+    const webhid_complete_feature_report_request = vi.fn(() => true);
 
     const uhci: UhciRuntimeHidApi = {
       webhid_attach,
       webhid_detach,
       webhid_push_input_report,
       webhid_drain_output_reports,
-      webhid_push_feature_report_result,
+      webhid_drain_feature_report_requests,
+      webhid_complete_feature_report_request,
     };
 
     const host = {
@@ -236,16 +251,14 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const guest = new WasmUhciHidGuestBridge({ uhci, host });
 
-    const res: HidFeatureReportResultMessage = {
-      type: "hid.featureReportResult",
-      deviceId: 3,
-      requestId: 99,
-      reportId: 1,
-      ok: true,
-      data: Uint8Array.of(1, 2, 3),
-    };
-    guest.completeFeatureReportRequest({ deviceId: res.deviceId, requestId: res.requestId, reportId: res.reportId, data: res.data! });
+    guest.poll();
+    expect(host.requestFeatureReport).toHaveBeenCalledTimes(16);
+    expect(host.requestFeatureReport).toHaveBeenNthCalledWith(1, { deviceId: 1, requestId: 1, reportId: 3 });
+    expect(host.requestFeatureReport).toHaveBeenNthCalledWith(16, { deviceId: 1, requestId: 16, reportId: 3 });
 
-    expect(webhid_push_feature_report_result).toHaveBeenCalledWith(3, 99, 1, true, res.data);
+    guest.poll();
+    expect(host.requestFeatureReport).toHaveBeenCalledTimes(32);
+    expect(host.requestFeatureReport).toHaveBeenNthCalledWith(17, { deviceId: 1, requestId: 17, reportId: 3 });
+    expect(host.requestFeatureReport).toHaveBeenNthCalledWith(32, { deviceId: 1, requestId: 32, reportId: 3 });
   });
 });

@@ -6,7 +6,7 @@ import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
-const MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK = 64;
+const MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK = 16;
 
 export type UhciRuntimeHidApi = {
   webhid_attach(
@@ -36,6 +36,17 @@ export type UhciRuntimeHidApi = {
   webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null;
 
   webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
+  webhid_complete_feature_report_request?(
+    deviceId: number,
+    requestId: number,
+    reportId: number,
+    ok: boolean,
+    data?: Uint8Array,
+  ): boolean;
+
+  /**
+   * Legacy completion API (pre `webhid_complete_feature_report_request`) used by older WASM builds.
+   */
   webhid_push_feature_report_result?(
     deviceId: number,
     requestId: number,
@@ -68,7 +79,8 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   readonly #uhci: UhciRuntimeHidApi;
   readonly #host: HidHostSink;
   readonly #attached = new Set<number>();
-  readonly #pendingFeatureRequests: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
+  #pendingFeatureRequests: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
+  #pendingFeatureRequestsHead = 0;
 
   constructor(opts: { uhci: UhciRuntimeHidApi; host: HidHostSink }) {
     this.#uhci = opts.uhci;
@@ -167,8 +179,15 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     }
 
     const drainFeatureRequests = this.#uhci.webhid_drain_feature_report_requests;
-    // The underlying runtime drain is destructive; only attempt it when supported.
-    if (typeof drainFeatureRequests !== "function") return;
+    const completeFeatureRequest = this.#uhci.webhid_complete_feature_report_request;
+    const legacyComplete = this.#uhci.webhid_push_feature_report_result;
+    // The underlying runtime drain is destructive; only attempt it when supported and when we can
+    // complete requests.
+    if (
+      typeof drainFeatureRequests !== "function" ||
+      (typeof completeFeatureRequest !== "function" && typeof legacyComplete !== "function")
+    )
+      return;
 
     let drainedFeature: Array<{ deviceId: number; requestId: number; reportId: number }> | null = null;
     try {
@@ -178,13 +197,25 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     }
 
     if (Array.isArray(drainedFeature) && drainedFeature.length) {
+      // `webhid_drain_feature_report_requests` is destructive; buffer results so we can enforce a
+      // per-tick cap without losing guest requests.
+      if (this.#pendingFeatureRequestsHead >= this.#pendingFeatureRequests.length) {
+        this.#pendingFeatureRequests = [];
+        this.#pendingFeatureRequestsHead = 0;
+      }
       this.#pendingFeatureRequests.push(...drainedFeature);
     }
 
     let remainingFeature = MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK;
-    while (remainingFeature > 0 && this.#pendingFeatureRequests.length > 0) {
+    while (remainingFeature > 0) {
+      if (this.#pendingFeatureRequestsHead >= this.#pendingFeatureRequests.length) {
+        this.#pendingFeatureRequests = [];
+        this.#pendingFeatureRequestsHead = 0;
+        break;
+      }
       remainingFeature -= 1;
-      const req = this.#pendingFeatureRequests.shift()!;
+      const req = this.#pendingFeatureRequests[this.#pendingFeatureRequestsHead]!;
+      this.#pendingFeatureRequestsHead += 1;
       this.#host.requestFeatureReport({
         deviceId: req.deviceId >>> 0,
         requestId: req.requestId >>> 0,
@@ -194,11 +225,17 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   }
 
   completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
-    const apply = this.#uhci.webhid_push_feature_report_result;
-    if (typeof apply !== "function") return false;
     try {
-      apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
-      return true;
+      const apply = this.#uhci.webhid_complete_feature_report_request;
+      if (typeof apply === "function") {
+        return apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
+      }
+      const legacy = this.#uhci.webhid_push_feature_report_result;
+      if (typeof legacy === "function") {
+        legacy.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
+        return true;
+      }
+      return false;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`UHCI runtime completeFeatureReportRequest failed: ${message}`, msg.deviceId);
@@ -207,11 +244,17 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   }
 
   failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
-    const apply = this.#uhci.webhid_push_feature_report_result;
-    if (typeof apply !== "function") return false;
     try {
-      apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
-      return true;
+      const apply = this.#uhci.webhid_complete_feature_report_request;
+      if (typeof apply === "function") {
+        return apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+      }
+      const legacy = this.#uhci.webhid_push_feature_report_result;
+      if (typeof legacy === "function") {
+        legacy.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+        return true;
+      }
+      return false;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`UHCI runtime failFeatureReportRequest failed: ${message}`, msg.deviceId);
