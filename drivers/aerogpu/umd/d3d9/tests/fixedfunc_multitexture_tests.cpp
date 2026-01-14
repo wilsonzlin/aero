@@ -3721,6 +3721,144 @@ bool TestFixedfuncUnboundStage2TextureDoesNotTruncateWhenStage2DoesNotSample() {
   return true;
 }
 
+bool TestFixedfuncStage0DisableTruncatesChainAndIgnoresAlphaAndLaterStages() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
+  D3DDDI_HRESOURCE hTex2{};
+  D3DDDI_HRESOURCE hTex3{};
+  if (!CreateDummyTexture(&cleanup, &hTex0) ||
+      !CreateDummyTexture(&cleanup, &hTex1) ||
+      !CreateDummyTexture(&cleanup, &hTex2) ||
+      !CreateDummyTexture(&cleanup, &hTex3)) {
+    return false;
+  }
+
+  // Bind textures anyway so sampler state is not a factor; stage0 DISABLE must
+  // suppress all fixed-function texturing regardless.
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/2, hTex2);
+  if (!Check(hr == S_OK, "SetTexture(stage2)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/3, hTex3);
+  if (!Check(hr == S_OK, "SetTexture(stage3)")) {
+    return false;
+  }
+
+  // Stage0 disables the entire fixed-function stage chain. Stage0 alpha op is
+  // set to an unsupported value to ensure it is ignored when COLOROP=DISABLE.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=DISABLE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopAddSmooth);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=ADDSMOOTH (ignored)")) {
+    return false;
+  }
+
+  // Stage1-3 use unsupported ops, but must be ignored since stage0 disables the chain.
+  for (uint32_t stage = 1; stage <= 3; ++stage) {
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorOp, kD3dTopAddSmooth);
+    if (!Check(hr == S_OK, "TSS stageN COLOROP=ADDSMOOTH (unsupported, should be ignored)")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorArg1, kD3dTaTexture);
+    if (!Check(hr == S_OK, "TSS stageN COLORARG1=TEXTURE")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssAlphaOp, kD3dTopAddSmooth);
+    if (!Check(hr == S_OK, "TSS stageN ALPHAOP=ADDSMOOTH (unsupported, should be ignored)")) {
+      return false;
+    }
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage0 disable)")) {
+    return false;
+  }
+
+  aerogpu_handle_t ps_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 0, "stage0 disable => PS contains no texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0, "stage0 disable => PS uses no samplers")) {
+      return false;
+    }
+    ps_before = dev->ps->handle;
+  }
+  if (!Check(ps_before != 0, "stage0 disable => bound non-zero PS handle")) {
+    return false;
+  }
+
+  // Changing later-stage state must not create/bind a new PS since stage0 disables
+  // the stage chain.
+  dev->cmd.reset();
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 3, kD3dTssColorOp, kD3dTopAdd);
+  if (!Check(hr == S_OK, "TSS stage3 COLOROP=ADD (ignored)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC).empty(),
+             "stage0 disable => later stage change emits no CREATE_SHADER_DXBC")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS).empty(),
+             "stage0 disable => later stage change emits no BIND_SHADERS")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound")) {
+      return false;
+    }
+    if (!Check(dev->ps->handle == ps_before, "stage0 disable => later stage change keeps PS handle stable")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncStage1DisableTruncatesChainAndIgnoresLaterStages() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -4243,6 +4381,9 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncStage0CurrentIsCanonicalizedToDiffuse()) {
+    return 1;
+  }
+  if (!TestFixedfuncStage0DisableTruncatesChainAndIgnoresAlphaAndLaterStages()) {
     return 1;
   }
   if (!TestFixedfuncUnboundStage2TextureTruncatesBeforeStage3()) {
