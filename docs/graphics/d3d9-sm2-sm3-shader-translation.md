@@ -82,6 +82,36 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 
+### Task 439 — PS MISCTYPE builtins (`vPos`/`vFace` → `misc0`/`misc1`)
+
+**Status:** ✅ Done
+
+**What:** Track PS `misc` input usage and emit the corresponding WGSL builtins:
+
+- `misc0` (`vPos`) → `@builtin(position)`
+- `misc1` (`vFace`) → `@builtin(front_facing)`
+
+**Where:**
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (misc input tracking + builtin emission)
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_ps3_vpos_misctype_builtin_compiles`
+  - `wgsl_ps3_vface_misctype_builtin_compiles`
+
+### Task 468 — PS depth output (`oDepth`/`DepthOut` → WGSL `@builtin(frag_depth)`)
+
+**Status:** ✅ Done
+
+**What:** Support pixel shader depth output by mapping SM3 `oDepth`/`DepthOut` writes to WGSL
+`@builtin(frag_depth)`.
+
+**Where:**
+- `crates/aero-d3d9/src/sm3/wgsl.rs`
+
+**Test:**
+- `crates/aero-d3d9/tests/sm3_wgsl_depth_out.rs`
+
 ### Task 124 — D3D9 half-pixel center convention (`half_pixel_center`)
 
 **Status:** ✅ Done
@@ -102,4 +132,4 @@ position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex s
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
 - The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently only models
-  `Texture2D` sampling; it does not emulate 1D/3D/cube sampling.
+  `Texture2D` and `TextureCube` sampling; it does not emulate 1D/3D sampling yet.

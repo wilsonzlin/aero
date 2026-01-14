@@ -307,6 +307,12 @@ The D3D9 implementation is split into:
   - `texld`/`texldp`/`texldb`/`texldd`/`texldl` lower to WGSL `textureSample*` variants, with texture/sampler binding emission and bind-layout mapping.
   - `texkill` lowers to `discard` when any component of the operand is `< 0`, preserving predication nesting.
   - Details + tests: [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md)
+- [x] SM3 pixel shader MISCTYPE builtins (`vPos`/`vFace`) (✅ Task 439 closed)
+  - Translation: [`crates/aero-d3d9/src/sm3/wgsl.rs`](../../crates/aero-d3d9/src/sm3/wgsl.rs) tracks `misc0`/`misc1` usage and emits WGSL `@builtin(position)` / `@builtin(front_facing)` inputs.
+  - Tests: `crates/aero-d3d9/tests/sm3_wgsl.rs` (`wgsl_ps3_vpos_misctype_builtin_compiles`, `wgsl_ps3_vface_misctype_builtin_compiles`)
+- [x] SM3 pixel shader depth output (`oDepth`) (✅ Task 468 closed)
+  - Translation: [`crates/aero-d3d9/src/sm3/wgsl.rs`](../../crates/aero-d3d9/src/sm3/wgsl.rs) lowers `oDepth`/`DepthOut` writes to WGSL `@builtin(frag_depth)`.
+  - Test: `crates/aero-d3d9/tests/sm3_wgsl_depth_out.rs` (`wgsl_ps30_writes_odepth_emits_frag_depth`)
 - [x] D3D9 shader translation cache (in-memory + WASM-only persistent cache)
   - In-memory cache: [`crates/aero-d3d9/src/shader_translate.rs`](../../crates/aero-d3d9/src/shader_translate.rs) (`ShaderCache`)
   - Persistent cache (WASM): [`crates/aero-d3d9/src/runtime/shader_cache.rs`](../../crates/aero-d3d9/src/runtime/shader_cache.rs) + browser backing store [`web/gpu-cache/persistent_cache.ts`](../../web/gpu-cache/persistent_cache.ts)
