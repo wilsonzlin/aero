@@ -257,8 +257,9 @@ function isQuotaExceededError(err: unknown): boolean {
   // Browser/file system quota failures typically surface as a DOMException named
   // "QuotaExceededError". Firefox uses a different name for the same condition.
   if (!err) return false;
+  const isDomException = typeof DOMException !== "undefined" && err instanceof DOMException;
   const name =
-    err instanceof DOMException || err instanceof Error
+    isDomException || err instanceof Error
       ? err.name
       : typeof err === "object" && "name" in err
         ? ((err as { name?: unknown }).name as unknown)
