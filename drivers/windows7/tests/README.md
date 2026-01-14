@@ -385,6 +385,12 @@ On success, the harness emits a CI-scrapable host marker:
 
 For Linux/CI environments, `host-harness/invoke_aero_virtio_win7_tests.py` provides the same behavior without requiring PowerShell.
 
+For debugging (or CI log introspection), both harnesses support a dry-run mode that prints the computed QEMU argv
+without starting the HTTP/QMP servers or launching QEMU:
+
+- PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -DryRun`
+- Python: `invoke_aero_virtio_win7_tests.py --dry-run` (alias: `--print-qemu-cmd`)
+
 This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrapper around the Python harness:
 
 - [`.github/workflows/win7-virtio-harness.yml`](../../../.github/workflows/win7-virtio-harness.yml)
