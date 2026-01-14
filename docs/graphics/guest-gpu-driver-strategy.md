@@ -1,5 +1,19 @@
 # Guest GPU driver strategy (Windows 7): virtio-gpu reuse vs custom WDDM
 
+## Status (current canonical direction)
+
+This repository’s **canonical** Windows 7 graphics stack is the custom **AeroGPU** WDDM device +
+driver package:
+
+- PCI device/ABI contract: `PCI\\VEN_A3A0&DEV_0001` (see `docs/abi/aerogpu-pci-identity.md` and
+  `drivers/aerogpu/protocol/*`)
+- Canonical machine wiring: `crates/aero-machine` (`MachineConfig::enable_aerogpu=true` at `00:07.0`)
+- In-tree Win7 driver package: `drivers/aerogpu/packaging/win7/`
+
+The virtio-gpu reuse path described below is retained as **historical context / optional prototype**
+work (for example, `crates/virtio-gpu-proto`). It is **not** the Windows driver binding contract
+used by the canonical machine or Guest Tools.
+
 ## Goal
 
 Choose the guest GPU driver path that gets to a **working Windows 7 desktop (and eventually Aero)** with the best leverage:
@@ -160,16 +174,22 @@ Best possible fit, but only once the driver stack exists.
 | Reuse virtio-gpu Windows driver | Low (if Win7-compatible driver exists) | Unclear | Win7/WDDM compatibility + limited 3D | Avoid writing WDDM KMD/UMD early; likely signed driver |
 | Custom AeroGPU WDDM | Very high | Very high | WDDM complexity + signing | Perfect D3D9→WebGPU mapping if completed |
 
-### Recommendation: choose virtio-gpu reuse for “first working desktop”, keep custom WDDM as a parallel/phase-2 plan
+### Recommendation (current repo): custom AeroGPU WDDM is the canonical path
 
-1. **Primary (now):** implement a minimal virtio-gpu 2D device model and attempt to use an existing, signed Windows virtio-gpu driver if it is Win7-compatible.
-   - This is the fastest route to validate the PCI/virtio/device-model layer and get a stable “desktop in a window”.
-2. **Parallel (next):** design the *acceleration* path (D3D9→WebGPU) assuming a custom command stream will be needed, because existing virtio-gpu Windows drivers are unlikely to expose a directly-useful D3D9 submission stream.
-   - Treat “Aero acceleration” as a separate milestone from “basic display”.
+The repo now has an explicit, versioned **AeroGPU** ABI and an in-tree Win7 WDDM driver stack.
+New work that targets the Windows 7 graphics path should generally build on that canonical contract.
 
-This split reduces risk:
-- We get early end-to-end pixels quickly (high feedback).
-- We do not prematurely lock the 3D architecture to virgl/OpenGL-like semantics if the goal is D3D9→WebGPU.
+The virtio-gpu reuse path can still be useful as a *separate* “pixels on screen” exploration, but it
+should not be treated as the project’s Windows 7 acceleration plan or binding contract.
+
+If you are working on virtio-gpu experiments, keep them clearly labeled as prototypes and avoid
+mixing their IDs/contracts with the canonical AeroGPU device (`A3A0:0001`).
+
+Keeping these efforts separate reduces risk:
+- We can still get early “pixels on screen” feedback from a framebuffer-style virtio-gpu prototype
+  without changing the Windows driver contract.
+- We do not prematurely lock the acceleration architecture to virgl/OpenGL-like semantics if the
+  long-term goal is D3D9→WebGPU via AeroGPU.
 
 ## Prototype (in this repo)
 
