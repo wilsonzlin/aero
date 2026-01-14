@@ -251,6 +251,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     emit `...|FAIL|force_null_backend` if the flag is enabled.
     - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
     - Changing this value requires a reboot or disable/enable cycle so Windows re-runs `START_DEVICE`.
+    - Note: the shipped INFs seed this value with `FLG_ADDREG_NOCLOBBER`, so driver reinstall/upgrade does **not** reset it.
   - Additional bring-up flag: `AllowPollingOnly` under the same per-device `Device Parameters\\Parameters` key:
     - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
     - When set to `1`, the driver may start in polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx). Intended for early device-model bring-up.
