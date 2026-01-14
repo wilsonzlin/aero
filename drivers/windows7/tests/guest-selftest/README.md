@@ -409,8 +409,8 @@ Notes:
   standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
   (for example `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msi|messages=4`).
 - Dedicated MSI-X **TEST markers** are also emitted for some devices (used by the host harness when `--require-virtio-*-msix` is enabled):
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`
-    (emitted when the virtio-blk miniport IOCTL includes interrupt diagnostics; the harness can require `mode=msix`)
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/SKIP|mode=intx/msix/unknown|messages=<n>|config_vector=<n>|queue_vector=<n>`
+    (emitted when the virtio-blk miniport IOCTL includes interrupt diagnostics; SKIP indicates the IOCTL is unavailable/too old; the harness can require `mode=msix`)
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
     - Newer virtio-net driver/selftest builds may append additional diagnostic fields (best-effort), for example:
       `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
