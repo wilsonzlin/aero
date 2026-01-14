@@ -9358,6 +9358,162 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  // Keep global ambient deterministic.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  // Configure two directional lights via the host-test entrypoints.
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light1 = light0;
+  light1.Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1);
+  if (!Check(hr == S_OK, "SetLight(1)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // Baseline: with both lights enabled, light0 is packed into slot0 and light1 into slot1.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(baseline; two lights)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(baseline; two lights)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "baseline: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "baseline: lighting constants payload present")) {
+    return false;
+  }
+  constexpr uint32_t kLight0DiffuseRel = (212u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kLight1DiffuseRel = (215u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kLight0DiffuseRel * 4 + 0] == 1.0f && payload[kLight0DiffuseRel * 4 + 1] == 0.0f &&
+             payload[kLight0DiffuseRel * 4 + 2] == 0.0f && payload[kLight0DiffuseRel * 4 + 3] == 1.0f,
+             "baseline: slot0 diffuse == light0 (red)")) {
+    return false;
+  }
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f && payload[kLight1DiffuseRel * 4 + 1] == 1.0f &&
+             payload[kLight1DiffuseRel * 4 + 2] == 0.0f && payload[kLight1DiffuseRel * 4 + 3] == 1.0f,
+             "baseline: slot1 diffuse == light1 (green)")) {
+    return false;
+  }
+
+  // Disable light0: light1 should shift down to slot0 and slot1 should become unused (zero).
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, FALSE);
+  if (!Check(hr == S_OK, "LightEnable(0, FALSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(light0 disabled)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(light0 disabled)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "lighting constant upload re-emitted after disabling light0")) {
+    return false;
+  }
+  payload = FindVsConstantsPayload(buf,
+                                   len,
+                                   kFixedfuncLightingStartRegister,
+                                   kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "lighting constants payload present (light0 disabled)")) {
+    return false;
+  }
+  if (!Check(payload[kLight0DiffuseRel * 4 + 0] == 0.0f && payload[kLight0DiffuseRel * 4 + 1] == 1.0f &&
+             payload[kLight0DiffuseRel * 4 + 2] == 0.0f && payload[kLight0DiffuseRel * 4 + 3] == 1.0f,
+             "slot0 diffuse shifted to light1 after disabling light0")) {
+    return false;
+  }
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f && payload[kLight1DiffuseRel * 4 + 1] == 0.0f &&
+             payload[kLight1DiffuseRel * 4 + 2] == 0.0f && payload[kLight1DiffuseRel * 4 + 3] == 0.0f,
+             "slot1 diffuse cleared after light0 disable shift")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffusePacksMultipleLights() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -9666,6 +9822,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffusePacksMultipleLights()) {
