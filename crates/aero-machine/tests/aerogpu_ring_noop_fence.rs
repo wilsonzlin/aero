@@ -50,10 +50,12 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let ring_gpa = 0x10000u64;
     let fence_gpa = 0x20000u64;
     let cmd_gpa = 0x30000u64;
+    let cmd2_gpa = 0x31000u64;
 
     m.write_physical(cmd_gpa, &[0xDE, 0xAD, 0xBE, 0xEF]);
+    m.write_physical(cmd2_gpa, &[0xAA, 0xBB, 0xCC]);
 
-    // Build a minimal valid ring containing a single submit desc (head=0, tail=1).
+    // Build a minimal valid ring containing two submit descs (head=0, tail=2).
     let entry_count = 8u32;
     let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
     let ring_size_bytes =
@@ -67,7 +69,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     m.write_physical_u32(ring_gpa + 16, entry_stride_bytes);
     m.write_physical_u32(ring_gpa + 20, 0); // flags
     m.write_physical_u32(ring_gpa + 24, 0); // head
-    m.write_physical_u32(ring_gpa + 28, 1); // tail
+    m.write_physical_u32(ring_gpa + 28, 2); // tail
 
     // Submit desc in slot 0.
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
@@ -85,6 +87,22 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     m.write_physical_u32(desc_gpa + 44, 0);
     m.write_physical_u64(desc_gpa + 48, signal_fence);
     m.write_physical_u64(desc_gpa + 56, 0);
+
+    // Submit desc in slot 1 with no fence (signal_fence=0) but a command stream payload. This is
+    // a valid use case: the guest may submit fire-and-forget work that still affects rendering.
+    let desc2_gpa = desc_gpa + u64::from(entry_stride_bytes);
+    m.write_physical_u32(desc2_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc2_gpa + 4, 0); // flags
+    m.write_physical_u32(desc2_gpa + 8, 0); // context_id
+    m.write_physical_u32(desc2_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+    m.write_physical_u64(desc2_gpa + 16, cmd2_gpa);
+    m.write_physical_u32(desc2_gpa + 24, 3); // cmd_size_bytes
+    m.write_physical_u32(desc2_gpa + 28, 0);
+    m.write_physical_u64(desc2_gpa + 32, 0); // alloc_table_gpa
+    m.write_physical_u32(desc2_gpa + 40, 0); // alloc_table_size_bytes
+    m.write_physical_u32(desc2_gpa + 44, 0);
+    m.write_physical_u64(desc2_gpa + 48, 0);
+    m.write_physical_u64(desc2_gpa + 56, 0);
 
     // Program BAR0 registers.
     m.write_physical_u32(
@@ -149,18 +167,25 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     // Newly-decoded submissions should be exposed via the machine drain API for browser/WASM
     // integrations (out-of-process GPU workers).
     let subs = m.aerogpu_drain_submissions();
-    assert_eq!(subs.len(), 1);
-    let sub = &subs[0];
-    assert_eq!(sub.signal_fence, signal_fence);
-    assert_eq!(sub.context_id, 0);
-    assert_eq!(sub.engine_id, ring::AEROGPU_ENGINE_0);
-    assert_eq!(sub.flags, 0);
-    assert_eq!(sub.cmd_stream, vec![0xDE, 0xAD, 0xBE, 0xEF]);
-    assert_eq!(sub.alloc_table, None);
+    assert_eq!(subs.len(), 2);
+    let sub0 = &subs[0];
+    assert_eq!(sub0.signal_fence, signal_fence);
+    assert_eq!(sub0.context_id, 0);
+    assert_eq!(sub0.engine_id, ring::AEROGPU_ENGINE_0);
+    assert_eq!(sub0.flags, 0);
+    assert_eq!(sub0.cmd_stream, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(sub0.alloc_table, None);
+    let sub1 = &subs[1];
+    assert_eq!(sub1.signal_fence, 0);
+    assert_eq!(sub1.context_id, 0);
+    assert_eq!(sub1.engine_id, ring::AEROGPU_ENGINE_0);
+    assert_eq!(sub1.flags, 0);
+    assert_eq!(sub1.cmd_stream, vec![0xAA, 0xBB, 0xCC]);
+    assert_eq!(sub1.alloc_table, None);
     assert_eq!(m.aerogpu_drain_submissions().len(), 0);
 
     // Ring head advanced.
-    assert_eq!(m.read_physical_u32(ring_gpa + 24), 1);
+    assert_eq!(m.read_physical_u32(ring_gpa + 24), 2);
 
     // Completed fence updated.
     let completed_fence = (u64::from(
@@ -212,8 +237,8 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     // RING_CONTROL.RESET semantics: head := tail, completed fence cleared, IRQ cleared.
     // ---------------------------------------------------------------------
 
-    // Program a second submission in slot 1 and ring the doorbell (do not ACK the IRQ yet).
-    let desc1_gpa = desc_gpa + u64::from(entry_stride_bytes);
+    // Program a second submission in slot 2 and ring the doorbell (do not ACK the IRQ yet).
+    let desc1_gpa = desc_gpa + 2 * u64::from(entry_stride_bytes);
     let signal_fence2 = signal_fence.wrapping_add(1);
 
     m.write_physical_u32(desc1_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
@@ -230,7 +255,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     m.write_physical_u64(desc1_gpa + 56, 0);
 
     // Advance the ring tail to include the new submission.
-    m.write_physical_u32(ring_gpa + 28, 2); // tail
+    m.write_physical_u32(ring_gpa + 28, 3); // tail
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
     m.process_aerogpu();
     m.poll_pci_intx_lines();
