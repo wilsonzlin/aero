@@ -1023,7 +1023,9 @@ Example declaration:
 
 ```wgsl
 struct Vec4F32Buffer { data: array<vec4<f32>>; }
-@group(G) @binding(B) var<storage, read> gs_inputs: Vec4F32Buffer;
+// Note: `read_write` is used for compatibility with wgpu's per-buffer storage usage rules when
+// sharing scratch buffers; this buffer is conceptually read-only.
+@group(G) @binding(B) var<storage, read_write> gs_inputs: Vec4F32Buffer;
 ```
 
 Flattened indexing (normative, matches `gs_translate`):
@@ -1463,7 +1465,7 @@ If you change the required scratch layouts/bindings, update the allocator usage 
 10. **GS input payload (`gs_inputs`, optional)**
     - Purpose: packed per-primitive GS inputs when using a GS translator that expects a dense
       register-file buffer (see “GS input register payload layout”).
-    - Usage: `STORAGE` (read-only).
+    - Usage: `STORAGE` (declared as read_write for scratch-buffer compatibility; conceptually read-only).
     - Layout: `array<vec4<f32>>` registers packed by `((prim_id * verts_per_prim + vertex) * reg_count + reg)`.
     - Capacity sizing:
       - `input_prim_count * instance_count * GS_INPUT_VERTS_PER_PRIM * GS_INPUT_REG_COUNT` registers.
@@ -2005,7 +2007,7 @@ GS/HS/DS **D3D resources** in `@group(3)`:
 - Tessellation DS evaluation (`runtime/tessellation/domain_eval.rs`): patch meta + HS outputs at
   `@group(0)`, DS resources in `@group(3)`.
 - GS scaffolding (`runtime/gs_translate.rs`): expansion outputs + counters + params + `gs_inputs` at
-  `@group(0)`, and (when referenced) GS `cb#[]` constant buffers in `@group(3)`.
+  `@group(0)`, and (when referenced) GS D3D resources in `@group(3)` (`cb#[]`, `t#`, `s#`).
 
 This works because WebGPU bind groups are **per pipeline**: internal compute pipelines can choose
 different group layouts than application render pipelines. When using this layout style, the
@@ -2041,7 +2043,8 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(273)`: `counters` (read_write storage; atomics)
 - `@binding(274)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
 - `@binding(275)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
-- `@binding(276)`: `gs_inputs` (read-only storage; optional packed GS input register payload)
+- `@binding(276)`: `gs_inputs` (read_write storage; conceptually read-only; optional packed GS input
+  register payload)
 - `@binding(277)`: `hs_out_cp_regs` (read_write storage; optional HS output control-point registers)
 - `@binding(278)`: `hs_out_pc_regs` (read_write storage; optional HS patch-constant output registers)
 
