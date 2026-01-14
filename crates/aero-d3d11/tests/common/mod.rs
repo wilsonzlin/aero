@@ -54,6 +54,8 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         || msg.contains("Too many StorageBuffers")
         || msg.contains("Too many bindings of type StorageBuffers")
         || msg.contains("too many storage buffers")
+        || msg.contains("storage buffers per shader stage")
+        || msg.contains("Storage buffers per shader stage")
     {
         skip_or_panic(
             test_name,
