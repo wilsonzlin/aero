@@ -41,24 +41,47 @@ typedef struct _TEST_CALLBACKS {
 static VOID TestEvtConfigChange(_In_ WDFDEVICE Device, _In_opt_ PVOID Context)
 {
     TEST_CALLBACKS* cb = (TEST_CALLBACKS*)Context;
+    ULONG q;
+
     assert(cb != NULL);
     assert(Device == cb->ExpectedDevice);
     assert(cb->Interrupts != NULL);
     assert(cb->Interrupts->ConfigLock != NULL);
     assert(cb->Interrupts->ConfigLock->Held == TRUE);
+    if (cb->Interrupts->CommonCfgLock != NULL) {
+        assert(cb->Interrupts->CommonCfgLock->Held == FALSE);
+    }
+    if (cb->Interrupts->QueueLocks != NULL) {
+        for (q = 0; q < cb->Interrupts->QueueCount; q++) {
+            assert(cb->Interrupts->QueueLocks[q] != NULL);
+            assert(cb->Interrupts->QueueLocks[q]->Held == FALSE);
+        }
+    }
     cb->ConfigCalls++;
 }
 
 static VOID TestEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, _In_opt_ PVOID Context)
 {
     TEST_CALLBACKS* cb = (TEST_CALLBACKS*)Context;
+    ULONG q;
+
     assert(cb != NULL);
     assert(Device == cb->ExpectedDevice);
     assert(QueueIndex < 64);
     assert(cb->Interrupts != NULL);
+    assert(QueueIndex < cb->Interrupts->QueueCount);
+    if (cb->Interrupts->CommonCfgLock != NULL) {
+        assert(cb->Interrupts->CommonCfgLock->Held == FALSE);
+    }
+    assert(cb->Interrupts->ConfigLock != NULL);
+    assert(cb->Interrupts->ConfigLock->Held == FALSE);
     assert(cb->Interrupts->QueueLocks != NULL);
     assert(cb->Interrupts->QueueLocks[QueueIndex] != NULL);
     assert(cb->Interrupts->QueueLocks[QueueIndex]->Held == TRUE);
+    for (q = 0; q < cb->Interrupts->QueueCount; q++) {
+        assert(cb->Interrupts->QueueLocks[q] != NULL);
+        assert(cb->Interrupts->QueueLocks[q]->Held == ((q == QueueIndex) ? TRUE : FALSE));
+    }
     cb->QueueCallsTotal++;
     cb->QueueCallsPerIndex[QueueIndex]++;
 }
