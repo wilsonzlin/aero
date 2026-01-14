@@ -2883,7 +2883,10 @@ mod tests {
         w.field_u64(TAG_SCANOUT0_VBLANK_TIME_NS, 1234);
         w.field_u32(TAG_SCANOUT0_VBLANK_PERIOD_NS, 1);
 
-        w.field_u64(TAG_VBLANK_INTERVAL_NS, 16_666_667);
+        w.field_u64(
+            TAG_VBLANK_INTERVAL_NS,
+            period_ns_from_hz(Some(60)).expect("60Hz must yield a vblank period"),
+        );
         w.field_u64(TAG_NEXT_VBLANK_NS, 999);
         w.field_bool(TAG_WDDM_SCANOUT_ACTIVE, true);
 
