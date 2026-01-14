@@ -463,6 +463,8 @@ Implementation notes (bring-up):
 - For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function fallback uses small internal vertex shader
   variants that apply `WORLD0*VIEW*PROJECTION` from a reserved VS constant range (`c240..c243`) uploaded by
   `ensure_fixedfunc_wvp_constants_locked()`.
+  - When fixed-function WVP rendering is active, `SetTransform`/`MultiplyTransform` may also upload the constants eagerly
+    (not just at draw time) so the next draw does not redundantly re-upload unchanged constants.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
