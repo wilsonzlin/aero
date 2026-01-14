@@ -415,9 +415,12 @@ fn uhci_synthetic_usb_hid_held_state_is_not_lost_before_configuration() {
     // the latest state so the first interrupt-IN report after `SET_CONFIGURATION` reflects held
     // inputs ("held during enumeration" semantics).
     m.inject_usb_hid_keyboard_usage(0x04, true); // 'A'
+    m.inject_usb_hid_mouse_buttons(0x01); // left button down
 
     let gamepad_report = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
     inject_gamepad_report_bytes(&mut m, &gamepad_report);
+
+    m.inject_usb_hid_consumer_usage(0x00e9, true); // AudioVolumeUp
 
     // Configure and verify the keyboard emits a report for the held key.
     let mut kbd = m
@@ -431,6 +434,18 @@ fn uhci_synthetic_usb_hid_held_state_is_not_lost_before_configuration() {
         "after keyboard configuration",
     );
 
+    // Configure and verify the mouse emits a report for the held button.
+    let mut mouse = m
+        .usb_hid_mouse_handle()
+        .expect("synthetic mouse handle should be present");
+    assert!(!mouse.configured(), "mouse should start unconfigured");
+    configure_mouse_for_reports(&mut mouse);
+    expect_mouse_report(
+        poll_mouse_interrupt_in(&mut m),
+        &[0x01, 0, 0, 0, 0],
+        "after mouse configuration",
+    );
+
     // Configure and verify the gamepad emits a report for the held state.
     let mut gamepad = m
         .usb_hid_gamepad_handle()
@@ -441,6 +456,21 @@ fn uhci_synthetic_usb_hid_held_state_is_not_lost_before_configuration() {
         poll_gamepad_interrupt_in(&mut m),
         &gamepad_report,
         "after gamepad configuration",
+    );
+
+    // Configure and verify the consumer-control device emits a report for the held usage.
+    let mut consumer = m
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should be present");
+    assert!(
+        !consumer.configured(),
+        "consumer-control device should start unconfigured"
+    );
+    configure_consumer_for_reports(&mut consumer);
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut m),
+        0x00e9,
+        "after consumer-control configuration",
     );
 }
 
