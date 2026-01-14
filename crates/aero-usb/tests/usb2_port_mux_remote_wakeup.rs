@@ -419,7 +419,7 @@ fn usb2_port_mux_ehci_remote_wakeup_propagates_through_external_hub_without_hub_
     assert_ne!(
         portsc & PORTSC_FPR,
         0,
-        "expected resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
+        "expected muxed EHCI port to enter resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
     );
     assert_ne!(
         portsc & PORTSC_SUSP,
