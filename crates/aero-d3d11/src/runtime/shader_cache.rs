@@ -26,7 +26,11 @@ use super::bindings::ShaderStage;
 // Bump note (v2): enforce the SM5 GS stream-0 policy even when older persisted shader-cache
 // entries would otherwise treat an unsupported multi-stream geometry shader as "ignored" without
 // re-parsing DXBC.
-pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 2;
+//
+// Bump note (v3): typed UAV store (`store_uav_typed`) support was expanded (more storage formats,
+// stricter integer-coordinate handling, and per-format write-mask rules). Old cached WGSL could
+// still compile but behave differently.
+pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 3;
 
 fn default_d3d11_translator_cache_version() -> u32 {
     D3D11_TRANSLATOR_CACHE_VERSION
