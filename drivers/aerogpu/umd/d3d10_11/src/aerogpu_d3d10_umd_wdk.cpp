@@ -325,12 +325,7 @@ static uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uin
 }
 
 uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
-  // BC formats are block-compressed and do not have a bytes-per-texel representation.
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_width != 1 || layout.block_height != 1) {
-    return 0;
-  }
-  return layout.bytes_per_block;
+  return aerogpu::d3d10_11::bytes_per_pixel_aerogpu(aerogpu_format);
 }
 
 uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
