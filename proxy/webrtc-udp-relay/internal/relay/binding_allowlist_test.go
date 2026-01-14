@@ -136,3 +136,50 @@ func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 		t.Fatalf("expected remote allowlist entry to be removed after TTL expiry")
 	}
 }
+
+func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.InboundFilterMode = InboundFilterAny
+	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
+	cfg.MaxAllowedRemotesPerBinding = 1
+
+	m := metrics.New()
+	b := &udpPortBinding{
+		cfg:     cfg,
+		metrics: m,
+		allowed: make(map[remoteKey]time.Time),
+	}
+
+	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	now := time.Unix(0, 0)
+
+	// In InboundFilterAny mode, outbound traffic should not mutate the allowlist.
+	b.AllowRemote(remote, now)
+
+	b.allowedMu.Lock()
+	n := len(b.allowed)
+	b.allowedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("allowlist size=%d, want 0 (InboundFilterAny should not track remotes)", n)
+	}
+
+	// In InboundFilterAny mode, any inbound remote should be accepted regardless
+	// of allowlist contents.
+	if ok := b.remoteAllowed(remote, now.Add(2*time.Second)); !ok {
+		t.Fatalf("expected remote to be allowed in InboundFilterAny mode")
+	}
+
+	b.allowedMu.Lock()
+	n = len(b.allowed)
+	b.allowedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("allowlist size=%d after remoteAllowed, want 0 (InboundFilterAny should not track remotes)", n)
+	}
+
+	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+		t.Fatalf("eviction metric=%d, want 0 (InboundFilterAny should not evict)", got)
+	}
+	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 0 {
+		t.Fatalf("drop metric=%d, want 0 (InboundFilterAny should not drop)", got)
+	}
+}
