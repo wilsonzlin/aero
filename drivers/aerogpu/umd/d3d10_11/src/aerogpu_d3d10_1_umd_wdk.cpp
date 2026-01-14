@@ -2756,14 +2756,22 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       } else {
         if (!have_priv_out) {
           static std::once_flag log_once;
-          std::call_once(log_once, [] {
-            AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: shared allocation missing/invalid private driver data");
-          });
+          // Best-effort: avoid letting `std::call_once` failures break resource creation.
+          try {
+            std::call_once(log_once, [] {
+              AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: shared allocation missing/invalid private driver data");
+            });
+          } catch (...) {
+          }
         } else {
           static std::once_flag log_once;
-          std::call_once(log_once, [] {
-            AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: shared allocation missing share_token in returned private data");
-          });
+          // Best-effort: avoid letting `std::call_once` failures break resource creation.
+          try {
+            std::call_once(log_once, [] {
+              AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: shared allocation missing share_token in returned private data");
+            });
+          } catch (...) {
+          }
         }
       }
     }

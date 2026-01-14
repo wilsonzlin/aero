@@ -2865,14 +2865,22 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       } else {
         if (!have_priv_out) {
           static std::once_flag log_once;
-          std::call_once(log_once, [] {
-            AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing/invalid private driver data");
-          });
+          // Best-effort: avoid letting `std::call_once` failures break resource creation.
+          try {
+            std::call_once(log_once, [] {
+              AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing/invalid private driver data");
+            });
+          } catch (...) {
+          }
         } else {
           static std::once_flag log_once;
-          std::call_once(log_once, [] {
-            AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing share_token in returned private data");
-          });
+          // Best-effort: avoid letting `std::call_once` failures break resource creation.
+          try {
+            std::call_once(log_once, [] {
+              AEROGPU_D3D10_11_LOG("CreateResource11: shared allocation missing share_token in returned private data");
+            });
+          } catch (...) {
+          }
         }
       }
     }
@@ -7269,10 +7277,14 @@ static bool EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   if (fill_mode != static_cast<uint32_t>(D3D11_FILL_SOLID) &&
       fill_mode != static_cast<uint32_t>(D3D11_FILL_WIREFRAME)) {
     static std::once_flag once;
-    std::call_once(once, [=] {
-      AEROGPU_D3D10_11_LOG("EmitRasterizerStateLocked: unsupported fill_mode=%u (falling back to SOLID)",
-                           (unsigned)fill_mode);
-    });
+    // Best-effort: avoid letting `std::call_once` failures break state emission.
+    try {
+      std::call_once(once, [=] {
+        AEROGPU_D3D10_11_LOG("EmitRasterizerStateLocked: unsupported fill_mode=%u (falling back to SOLID)",
+                             (unsigned)fill_mode);
+      });
+    } catch (...) {
+    }
   }
   state.cull_mode = D3DCullModeToAerogpu(cull_mode);
   state.front_ccw = front_ccw ? 1u : 0u;

@@ -1590,11 +1590,15 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     const bool used_ctx_dma_priv_fallback = used_ctx_dma_priv_ptr_fallback || used_ctx_dma_priv_size_fallback;
     if (used_ctx_dma_priv_fallback) {
       static std::once_flag logged_fallback_once;
-      std::call_once(logged_fallback_once, [&] {
-        AEROGPU_D3D10_11_LOG("wddm_submit: filling missing dma private data ptr/size from CreateContext (ptr=%p bytes=%u)",
-                             buf.dma_private_data,
-                             static_cast<unsigned>(buf.dma_private_data_bytes));
-      });
+      // Best-effort: avoid letting `std::call_once` failures break submission.
+      try {
+        std::call_once(logged_fallback_once, [&] {
+          AEROGPU_D3D10_11_LOG("wddm_submit: filling missing dma private data ptr/size from CreateContext (ptr=%p bytes=%u)",
+                               buf.dma_private_data,
+                               static_cast<unsigned>(buf.dma_private_data_bytes));
+        });
+      } catch (...) {
+      }
     }
     const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
     if (buf.dma_private_data_bytes != 0 && !buf.dma_private_data) {
@@ -1615,11 +1619,15 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     }
     if (buf.dma_private_data_bytes != expected_dma_priv_bytes) {
       static std::once_flag logged_size_mismatch_once;
-      std::call_once(logged_size_mismatch_once, [&] {
-        AEROGPU_D3D10_11_LOG("wddm_submit: dma private data size mismatch bytes=%u expected=%u",
-                             static_cast<unsigned>(buf.dma_private_data_bytes),
-                             static_cast<unsigned>(expected_dma_priv_bytes));
-      });
+      // Best-effort: avoid letting `std::call_once` failures break submission.
+      try {
+        std::call_once(logged_size_mismatch_once, [&] {
+          AEROGPU_D3D10_11_LOG("wddm_submit: dma private data size mismatch bytes=%u expected=%u",
+                               static_cast<unsigned>(buf.dma_private_data_bytes),
+                               static_cast<unsigned>(expected_dma_priv_bytes));
+        });
+      } catch (...) {
+      }
     }
     // Safety: if the runtime reports a larger private-data size than the KMD/UMD
     // contract, clamp to the expected size so dxgkrnl does not copy extra bytes

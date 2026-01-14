@@ -270,11 +270,22 @@ struct StateBlock {
 
 namespace {
 
+// Best-effort wrapper for `std::call_once`: failures (e.g. std::system_error
+// under memory pressure) should not break DDI entrypoints just for logging and
+// one-time initialization.
+template <typename Fn>
+inline void call_once_best_effort(std::once_flag& once, Fn&& fn) noexcept {
+  try {
+    std::call_once(once, std::forward<Fn>(fn));
+  } catch (...) {
+  }
+}
+
 #define AEROGPU_D3D9_STUB_LOG_ONCE()                 \
   do {                                               \
     static std::once_flag aerogpu_once;              \
     const char* fn = __func__;                       \
-    std::call_once(aerogpu_once, [fn] {              \
+    call_once_best_effort(aerogpu_once, [fn] {       \
       aerogpu::logf("aerogpu-d3d9: stub %s\n", fn);  \
     });                                              \
   } while (0)
@@ -358,7 +369,7 @@ constexpr HRESULT kSPresentOccluded = 0x08760868L;
 bool hwnd_occlude_invisible_enabled() {
   static std::once_flag once;
   static bool enabled = false;
-  std::call_once(once, [] {
+  call_once_best_effort(once, [] {
 #if defined(_WIN32)
     char buf[32] = {};
     const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_OCCLUDE_INVISIBLE", buf, static_cast<DWORD>(sizeof(buf)));
@@ -598,7 +609,7 @@ std::once_flag g_dma_priv_size_mismatch_once;
 #endif
 
 bool submit_log_enabled() {
-  std::call_once(g_submit_log_once, [] {
+  call_once_best_effort(g_submit_log_once, [] {
 #if defined(_WIN32)
     char buf[32] = {};
     const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_LOG_SUBMITS", buf, static_cast<DWORD>(sizeof(buf)));
@@ -2549,7 +2560,7 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
           adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(sync_object), fence_value, timeout_ms));
       {
         static std::once_flag once;
-        std::call_once(once, [st, timeout_ms] {
+        call_once_best_effort(once, [st, timeout_ms] {
           aerogpu::logf("aerogpu-d3d9: wait_for_fence using syncobj wait (timeout_ms=%u) NTSTATUS=0x%08lx\n",
                         static_cast<unsigned>(timeout_ms),
                         static_cast<unsigned long>(st));
@@ -2589,7 +2600,7 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
             adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(sync_object), fence_value, /*timeout_ms=*/0));
         {
           static std::once_flag once;
-          std::call_once(once, [st] {
+          call_once_best_effort(once, [st] {
             aerogpu::logf("aerogpu-d3d9: wait_for_fence using syncobj poll NTSTATUS=0x%08lx\n",
                           static_cast<unsigned long>(st));
           });
@@ -2613,7 +2624,7 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
 #if defined(_WIN32)
   {
     static std::once_flag once;
-    std::call_once(once, [timeout_ms] {
+    call_once_best_effort(once, [timeout_ms] {
       aerogpu::logf("aerogpu-d3d9: wait_for_fence falling back to polling (timeout_ms=%u)\n",
                     static_cast<unsigned>(timeout_ms));
     });
@@ -8050,7 +8061,7 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   // collisions across processes *deterministic* (every process would generate
   // alloc_id=1,2,3,...).
   static std::once_flag warn_once;
-  std::call_once(warn_once, [] {
+  call_once_best_effort(warn_once, [] {
     logf("aerogpu-d3d9: alloc_id allocator: shared mapping unavailable; using RNG fallback\n");
   });
 
@@ -8555,7 +8566,7 @@ HRESULT invoke_submit_callback(Device* dev,
   }
 
   if (!InitWin7DmaBufferPrivateData(dma_priv_ptr, dma_priv_bytes, is_present)) {
-    std::call_once(g_dma_priv_invalid_once, [dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
+    call_once_best_effort(g_dma_priv_invalid_once, [dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
       aerogpu::logf("aerogpu-d3d9: submit missing/invalid dma private data ptr=%p bytes=%u (need >=%u)\n",
                     dma_priv_ptr,
                     static_cast<unsigned>(dma_priv_bytes),
@@ -8570,7 +8581,7 @@ HRESULT invoke_submit_callback(Device* dev,
   if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
     const uint32_t runtime_bytes = dev ? static_cast<uint32_t>(dev->wddm_context.DmaBufferPrivateDataSize) : 0;
     if (runtime_bytes > expected_dma_priv_bytes) {
-      std::call_once(g_dma_priv_size_mismatch_once, [runtime_bytes, expected_dma_priv_bytes] {
+      call_once_best_effort(g_dma_priv_size_mismatch_once, [runtime_bytes, expected_dma_priv_bytes] {
         aerogpu::logf("aerogpu-d3d9: runtime DmaBufferPrivateDataSize=%u (expected=%u); clamping\n",
                       static_cast<unsigned>(runtime_bytes),
                       static_cast<unsigned>(expected_dma_priv_bytes));
@@ -9256,8 +9267,8 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
         const uint32_t alloc_entries = dev->wddm_context.AllocationListSize;
         const void* dma_priv_ptr = dev->wddm_context.pDmaBufferPrivateData;
         const uint32_t dma_priv_bytes = dev->wddm_context.DmaBufferPrivateDataSize;
-        std::call_once(log_once,
-                       [cmd_ptr, cmd_bytes, min_buffer_bytes, alloc_ptr, alloc_entries, dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
+        call_once_best_effort(log_once,
+                              [cmd_ptr, cmd_bytes, min_buffer_bytes, alloc_ptr, alloc_entries, dma_priv_ptr, dma_priv_bytes, expected_dma_priv_bytes] {
           aerogpu::logf("aerogpu-d3d9: GetCommandBufferCb returned incomplete/undersized buffers; "
                         "falling back to AllocateCb (cmd=%p bytes=%u need=%u alloc=%p entries=%u dma_priv=%p bytes=%u need>=%u)\n",
                         cmd_ptr,
@@ -9277,7 +9288,7 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
     if (tried_get_command_buffer && FAILED(get_command_buffer_hr)) {
       static std::once_flag log_once;
       const unsigned hr_code = static_cast<unsigned>(get_command_buffer_hr);
-      std::call_once(log_once, [hr_code] {
+      call_once_best_effort(log_once, [hr_code] {
         aerogpu::logf("aerogpu-d3d9: GetCommandBufferCb failed hr=0x%08x; falling back to AllocateCb\n", hr_code);
       });
     }
@@ -9292,7 +9303,7 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
       static std::once_flag log_once;
       const unsigned get_hr_code = static_cast<unsigned>(get_command_buffer_hr);
       const unsigned alloc_hr_code = static_cast<unsigned>(allocate_hr);
-      std::call_once(log_once, [get_hr_code, alloc_hr_code] {
+      call_once_best_effort(log_once, [get_hr_code, alloc_hr_code] {
         aerogpu::logf("aerogpu-d3d9: failed to acquire WDDM submit buffers (GetCommandBufferCb hr=0x%08x AllocateCb hr=0x%08x)\n",
                       get_hr_code,
                       alloc_hr_code);
@@ -13616,7 +13627,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     // enabled, render target bytes are not guaranteed to be CPU-visible without
     // an explicit writeback, so do not silently fall back to a CPU copy.
     static std::once_flag log_once;
-    std::call_once(log_once, [] {
+    call_once_best_effort(log_once, [] {
       logf("aerogpu-d3d9: GetRenderTargetData requires allocation-backed systemmem surface when transfer is enabled\n");
     });
     return trace.ret(kD3DErrInvalidCall);
@@ -14516,7 +14527,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
         constexpr size_t kMaxCachedFvfDecls = 256;
         if (dev->fvf_vertex_decl_cache.size() >= kMaxCachedFvfDecls) {
           static std::once_flag warn_once;
-          std::call_once(warn_once, [] {
+          call_once_best_effort(warn_once, [] {
             logf("aerogpu-d3d9: FVF input-layout cache overflow; refusing to create more internal declarations\n");
           });
           return trace.ret(E_OUTOFMEMORY);
@@ -14589,7 +14600,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       constexpr size_t kMaxCachedFvfDecls = 256;
       if (dev->fvf_vertex_decl_cache.size() >= kMaxCachedFvfDecls) {
         static std::once_flag warn_once;
-        std::call_once(warn_once, [] {
+        call_once_best_effort(warn_once, [] {
           logf("aerogpu-d3d9: FVF input-layout cache overflow; refusing to create more internal declarations\n");
         });
         return trace.ret(E_OUTOFMEMORY);
@@ -19976,7 +19987,7 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
       default: {
         static std::once_flag unsupported_fmt_once;
         const uint32_t fmt_u32 = static_cast<uint32_t>(res->format);
-        std::call_once(unsupported_fmt_once, [fmt_u32] {
+        call_once_best_effort(unsupported_fmt_once, [fmt_u32] {
           aerogpu::logf("aerogpu-d3d9: GenerateMipSubLevels unsupported format=%u\n", static_cast<unsigned>(fmt_u32));
         });
         return trace.ret(kD3DErrInvalidCall);
@@ -26145,7 +26156,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   {
     static std::once_flag wddm_cb_once;
     Device* dev_ptr = dev.get();
-    std::call_once(wddm_cb_once, [dev_ptr] {
+    call_once_best_effort(wddm_cb_once, [dev_ptr] {
       const void* submit_cb = nullptr;
       const void* render_cb = nullptr;
       const void* present_cb = nullptr;
@@ -26355,8 +26366,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       poll_wait_mode = "sync_object";
     }
 
-    std::call_once(wddm_diag_once,
-                   [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
+    call_once_best_effort(wddm_diag_once,
+                          [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
       aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
                     patch_list_present ? "present" : "absent");
       aerogpu::logf("aerogpu-d3d9: fence_wait bounded=%s poll=%s (hSyncObject=%s kmd_query=%s)\n",
@@ -27016,8 +27027,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
               poll_wait_mode = "sync_object";
             }
 
-            std::call_once(wddm_diag_once,
-                           [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
+            call_once_best_effort(wddm_diag_once,
+                                  [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
               aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
                             patch_list_present ? "present" : "absent");
               aerogpu::logf("aerogpu-d3d9: fence_wait bounded=%s poll=%s (hSyncObject=%s kmd_query=%s)\n",
@@ -27063,7 +27074,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     }
   } else {
     static std::once_flag wddm_callbacks_missing_once;
-    std::call_once(wddm_callbacks_missing_once, [] {
+    call_once_best_effort(wddm_callbacks_missing_once, [] {
       aerogpu::logf("aerogpu-d3d9: CreateDevice missing WDDM callbacks; submissions will be stubbed\n");
     });
   }
@@ -27352,7 +27363,7 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
   // high-bit handle range so collisions with the shared counter (which starts
   // at 1) are vanishingly unlikely.
   static std::once_flag warn_once;
-  std::call_once(warn_once, [] {
+  call_once_best_effort(warn_once, [] {
     logf("aerogpu-d3d9: global handle allocator: shared mapping unavailable; using RNG fallback\n");
   });
 
