@@ -12,7 +12,7 @@ filename alias INF (checked in disabled-by-default):
 
 Policy:
   - The alias INF is allowed to differ in the models sections (`Aero.NTx86` /
-    `Aero.NTamd64`) so it can provide an opt-in generic fallback HWID.
+    `Aero.NTamd64`), but should otherwise remain identical to the canonical INF.
   - Outside the models sections, the alias must stay in sync with the canonical
     INF (from the first section header onward).
 
@@ -162,8 +162,9 @@ def main() -> int:
     canonical_body = inf_functional_lines(canonical)
     alias_body = inf_functional_lines(alias)
     if canonical_body == alias_body:
-        # Even if the functional regions match, ensure the alias still provides the
-        # opt-in fallback model line and the canonical INF remains SUBSYS-only.
+        # Even if the functional regions match, ensure both INFs include the strict,
+        # revision-gated generic fallback HWID so driver binding works even when
+        # subsystem IDs are not exposed/recognized.
         for sect in ("Aero.NTx86", "Aero.NTamd64"):
             canonical_seen, canonical_matches = find_hwid_model_lines(
                 path=canonical, section=sect, hwid=FALLBACK_HWID
@@ -177,19 +178,17 @@ def main() -> int:
                 sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
                 return 1
 
-            if canonical_matches:
+            if not canonical_matches:
                 sys.stderr.write(
-                    "virtio-input INF policy violation: the canonical INF must be SUBSYS-gated "
-                    f"(no generic fallback {FALLBACK_HWID}).\n"
+                    "virtio-input INF policy violation: the canonical INF must include the strict "
+                    f"generic fallback model line {FALLBACK_HWID}.\n"
                 )
-                sys.stderr.write(f"Found fallback model line(s) in {canonical} [{sect}]:\n")
-                for line in canonical_matches:
-                    sys.stderr.write(f"  {line}\n")
+                sys.stderr.write(f"Missing fallback model line in {canonical} [{sect}].\n")
                 return 1
 
             if not alias_matches:
                 sys.stderr.write(
-                    "virtio-input INF policy violation: the legacy alias INF must include the opt-in "
+                    "virtio-input INF policy violation: the legacy alias INF must include the strict "
                     f"fallback model line {FALLBACK_HWID}.\n"
                 )
                 sys.stderr.write(f"Missing fallback model line in {alias} [{sect}].\n")
