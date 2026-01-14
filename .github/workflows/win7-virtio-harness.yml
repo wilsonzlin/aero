@@ -1173,7 +1173,7 @@ jobs:
               echo "- Host virtio-input MSI-X marker: \`${input_msix_host_marker}\`"
             fi
             if [[ -n "${failure_token}" ]]; then
-              echo "- Harness failure token: ${failure_token}"
+              echo "- Harness failure token: \`${failure_token}\`"
             fi
             if [[ -z "${failure_token}" && -n "${failure_line}" ]]; then
               echo "- Harness failure: ${failure_line}"
