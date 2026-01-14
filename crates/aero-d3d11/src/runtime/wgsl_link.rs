@@ -682,4 +682,48 @@ mod tests {
             "expected trimmed shader to contain `return;` to preserve early returns:\n{trimmed}"
         );
     }
+
+    #[test]
+    fn trims_ps_outputs_direct_return_rewrites_entrypoint_to_void() {
+        // Direct-return pixel shaders (`fn fs_main() -> @location(N) ...`) don't have a `PsOut`
+        // struct. If the location isn't kept, we must rewrite the entrypoint to return `()`.
+        let wgsl = r#"
+            @fragment
+            fn fs_main() -> @location(1) vec4<f32> {
+                return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+            }
+        "#;
+        let keep = BTreeSet::new();
+        let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
+
+        assert!(
+            !trimmed.contains("@location(1)"),
+            "expected return location attribute to be removed:\n{trimmed}"
+        );
+        assert!(
+            trimmed.contains("fn fs_main() {"),
+            "expected fs_main to be rewritten to return void:\n{trimmed}"
+        );
+        assert!(
+            trimmed.contains("let _aero_trim_tmp"),
+            "expected return expression to be preserved via a temp binding:\n{trimmed}"
+        );
+        assert!(
+            trimmed.contains("return;"),
+            "expected rewritten function to contain `return;`:\n{trimmed}"
+        );
+    }
+
+    #[test]
+    fn trim_ps_outputs_direct_return_is_noop_when_location_kept() {
+        let wgsl = r#"
+            @fragment
+            fn fs_main() -> @location(1) vec4<f32> {
+                return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+            }
+        "#;
+        let keep = BTreeSet::from([1u32]);
+        let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
+        assert_eq!(trimmed.trim(), wgsl.trim());
+    }
 }
