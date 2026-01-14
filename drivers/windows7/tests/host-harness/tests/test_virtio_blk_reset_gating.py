@@ -49,6 +49,8 @@ class VirtioBlkResetGatingTests(unittest.TestCase):
         msg = h._virtio_blk_reset_required_failure_message(tail)
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: VIRTIO_BLK_RESET_FAILED:"))
+        self.assertIn("reason=query_after_reset_failed", str(msg))
+        self.assertIn("err=5", str(msg))
 
     def test_required_marker_skip(self) -> None:
         h = self.harness
