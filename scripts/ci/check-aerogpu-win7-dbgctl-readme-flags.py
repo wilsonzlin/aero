@@ -50,6 +50,11 @@ MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 SCAN_MD_DIRS = [
     ROOT / "docs",
     ROOT / "drivers" / "aerogpu",
+    # Guest Tools docs embed dbgctl invocations (e.g. `--status --timeout-ms 2000`) and
+    # should also be kept in sync with the actual dbgctl flag surface.
+    ROOT / "guest-tools",
+    # CI docs sometimes include dbgctl usage snippets / paths.
+    ROOT / "ci",
 ]
 
 
