@@ -15,7 +15,7 @@ type AeroGlobal = NonNullable<Window["aero"]> & {
   };
   debug?: {
     /**
-     * Read I/O worker input telemetry counters from a runtime status view.
+     * Read input telemetry counters from a runtime status view.
      *
      * This is intentionally thin so E2E tests and developers can inspect input
      * drops/backend switching without wiring a full VM harness.

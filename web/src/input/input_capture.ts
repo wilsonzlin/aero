@@ -31,7 +31,7 @@ export interface InputCaptureOptions {
    */
   touchSensitivity?: number;
   /**
-   * How often to flush input to the I/O worker.
+   * How often to flush input to the target worker.
    *
    * 125Hz matches the classic PS/2 mouse sample rate and keeps latency <8ms
    * typical.
@@ -52,8 +52,8 @@ export interface InputCaptureOptions {
    */
   logCaptureLatency?: boolean;
   /**
-   * If enabled, request that the I/O worker transfers input batch buffers back
-   * for reuse. This avoids allocating a new ArrayBuffer per flush.
+   * If enabled, request that the target worker transfers input batch buffers back for reuse. This
+   * avoids allocating a new ArrayBuffer per flush.
    *
    * The worker must support `{ type: "in:input-batch", recycle: true }` and
    * respond with `{ type: "in:input-batch-recycle", buffer }`.
@@ -77,7 +77,7 @@ export interface InputCaptureOptions {
   enableKeyboardLock?: boolean;
   /**
    * Optional hook invoked immediately before each input batch is posted to the
-   * I/O worker.
+   * worker.
    *
    * This is intended for debug tooling (e.g. deterministic record/replay) and
    * must not allocate on the hot path when disabled.

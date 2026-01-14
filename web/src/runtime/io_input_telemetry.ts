@@ -2,28 +2,38 @@ import { StatusIndex } from "./shared_layout";
 
 export type IoInputTelemetrySnapshot = {
   /**
-   * Total input batches received by the I/O worker (includes batches that were queued
+   * Total input batches received by the input injector worker (includes batches that were queued
    * while snapshot-paused, and batches that were dropped).
+   *
+   * Ownership:
+   * - `vmRuntime=legacy`: I/O worker
+   * - `vmRuntime=machine`: machine CPU worker
    */
   batchesReceived: number;
   /**
-   * Total input batches processed by the I/O worker input pipeline.
+   * Total input batches processed by the input injector worker.
    *
    * Note: this is currently backed by `StatusIndex.IoInputBatchCounter` for
    * backwards compatibility.
    */
   batchesProcessed: number;
   /**
-   * Total input batches dropped by the I/O worker (e.g. while snapshot-paused when
-   * the bounded queue is full).
+   * Total input batches dropped by the input injector worker (e.g. while snapshot-paused when the
+   * bounded queue is full).
    */
   batchesDropped: number;
   /**
    * Total backend switches for keyboard input (ps2↔usb↔virtio).
+   *
+   * Note: this is currently only meaningful in `vmRuntime=legacy` where the I/O worker implements
+   * input backend selection. In `vmRuntime=machine` this counter is expected to remain zero.
    */
   keyboardBackendSwitches: number;
   /**
    * Total backend switches for mouse input (ps2↔usb↔virtio).
+   *
+   * Note: this is currently only meaningful in `vmRuntime=legacy` where the I/O worker implements
+   * input backend selection. In `vmRuntime=machine` this counter is expected to remain zero.
    */
   mouseBackendSwitches: number;
 };
@@ -37,4 +47,3 @@ export function readIoInputTelemetry(status: Int32Array): IoInputTelemetrySnapsh
     mouseBackendSwitches: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
   };
 }
-

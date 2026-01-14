@@ -101,7 +101,7 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
 
   const setSnapshot = (snapshot: InputDiagnosticsSnapshot | null): void => {
     if (!snapshot) {
-      pre.textContent = "No data (I/O worker not running).";
+      pre.textContent = "No data (VM not running).";
       return;
     }
 
