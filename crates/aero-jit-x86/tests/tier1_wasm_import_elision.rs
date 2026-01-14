@@ -585,6 +585,115 @@ fn tier1_inline_tlb_mmio_exit_imports_slow_helpers_for_cross_page_constant_acces
 
 #[cfg(feature = "tier1-inline-tlb")]
 #[test]
+fn tier1_inline_tlb_mmio_exit_elides_slow_helpers_without_cross_page_fastpath_when_const_same_page()
+{
+    let mut b = IrBuilder::new(0x1000);
+    // Ensure the access is statically known to be same-page even when the cross-page fast-path is
+    // disabled.
+    let addr = b.const_int(Width::W64, 0x1000);
+    let _value = b.load(Width::W32, addr);
+    let src = b.const_int(Width::W32, 0x1122_3344);
+    b.store(Width::W32, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            // Cross-page fast-path disabled: this should still elide the slow helpers since the
+            // constant address cannot cross a 4KiB boundary.
+            inline_tlb_cross_page_fastpath: false,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    assert_eq!(
+        imports.len(),
+        3,
+        "expected inline-TLB MMIO-exit block to only import env.memory + env.mmu_translate + env.jit_exit_mmio, got {imports:?}"
+    );
+
+    let mut found_translate = false;
+    let mut found_jit_exit_mmio = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE {
+            found_translate = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT_MMIO {
+            found_jit_exit_mmio = true;
+        }
+
+        // This configuration should never need the slow helper imports.
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+        assert_ne!(name, IMPORT_MEM_READ_U16);
+        assert_ne!(name, IMPORT_MEM_READ_U32);
+        assert_ne!(name, IMPORT_MEM_READ_U64);
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U16);
+        assert_ne!(name, IMPORT_MEM_WRITE_U32);
+        assert_ne!(name, IMPORT_MEM_WRITE_U64);
+        assert_ne!(name, IMPORT_JIT_EXIT);
+    }
+
+    assert!(
+        found_translate,
+        "expected env.mmu_translate import when inline_tlb=true"
+    );
+    assert!(
+        found_jit_exit_mmio,
+        "expected env.jit_exit_mmio import when inline_tlb_mmio_exit=true"
+    );
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_inline_tlb_mmio_exit_without_cross_page_fastpath_imports_slow_helpers_for_cross_page() {
+    let mut b = IrBuilder::new(0x1000);
+    // Force a boundary-crossing 64-bit access (offset 0xff9 > 0xff8).
+    let addr = b.const_int(Width::W64, aero_jit_x86::PAGE_SIZE - 7);
+    let _value = b.load(Width::W64, addr);
+    let src = b.const_int(Width::W64, 0xdead_beef_dead_beef);
+    b.store(Width::W64, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            inline_tlb_cross_page_fastpath: false,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    let mut found_mem_read_u64 = false;
+    let mut found_mem_write_u64 = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U64 {
+            found_mem_read_u64 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U64 {
+            found_mem_write_u64 = true;
+        }
+    }
+
+    assert!(
+        found_mem_read_u64,
+        "expected env.mem_read_u64 import when cross-page fast-path is disabled and a cross-page load is possible"
+    );
+    assert!(
+        found_mem_write_u64,
+        "expected env.mem_write_u64 import when cross-page fast-path is disabled and a cross-page store is possible"
+    );
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
 fn tier1_inline_tlb_mmio_fallback_imports_slow_helpers_for_load_and_store() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0);
