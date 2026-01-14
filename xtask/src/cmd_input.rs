@@ -52,7 +52,7 @@ Steps:
      --test hid_keyboard_snapshot_sanitization --test hid_mouse_snapshot_clamping
      --test usb_hub_snapshot_configuration_clamping --test attached_device_snapshot_address_clamping
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
-     --test xhci_controller_webusb_ep0
+     --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test uhci_snapshot
      --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
@@ -147,6 +147,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "xhci_enum_smoke",
             "--test",
             "xhci_controller_webusb_ep0",
+            "--test",
+            "xhci_doorbell0",
+            "--test",
+            "xhci_usbcmd_run_gates_transfers",
         ]);
         runner.run_step("Rust: cargo test -p aero-usb --locked (focused)", &mut cmd)?;
     }
