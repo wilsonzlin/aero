@@ -268,7 +268,12 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
     - Negotiate fixed params (`PCM_SET_PARAMS`)
     - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).
   - Works with PCI **INTx** (contract v1 baseline requires INTx; ISR status is read-to-ack to deassert the line).
-  - May also use **MSI/MSI-X** (message-signaled interrupts) when Windows allocates message interrupts (Windows 7 requires INF opt-in). When MSI/MSI-X is active, the driver programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and falls back to INTx if message interrupts cannot be connected or vector programming fails.
+  - Supports **MSI/MSI-X** (message-signaled interrupts). The in-tree Windows 7 driver package opts in via INF
+    (`MSISupported=1`), prefers message interrupts when Windows grants them, programs virtio MSI-X routing
+    (`msix_config`, `queue_msix_vector`), and falls back to INTx if message interrupts cannot be connected or vector
+    programming fails.
+  - Optional bring-up: if neither MSI/MSI-X nor INTx can be connected, the driver can run in polling-only mode when
+    `AllowPollingOnly=1` is set under the device instance registry key (intended for early device-model bring-up).
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
