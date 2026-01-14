@@ -260,6 +260,32 @@
     "expected_final_frac": 144000
   },
   {
+    "name": "48kHz_large_absolute_timestamps_near_js_max_safe_integer",
+    "sample_rate_hz": 48000,
+    "start_time_ns": 9000000000000000,
+    "steps": [
+      9000000000000000,
+      9000000016666667,
+      9000000033333333,
+      8999999900000000,
+      9000000050000000,
+      9000000550000000,
+      9000000550000000,
+      9000001550000000
+    ],
+    "expected_frames_per_step": [
+      0,
+      800,
+      799,
+      0,
+      801,
+      24000,
+      0,
+      48000
+    ],
+    "expected_final_frac": 0
+  },
+  {
     "name": "44_1kHz_mixed_small_and_large",
     "sample_rate_hz": 44100,
     "start_time_ns": 1000,

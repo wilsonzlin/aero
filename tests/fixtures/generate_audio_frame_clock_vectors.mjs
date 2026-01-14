@@ -123,6 +123,24 @@ const vectors = [
     steps: [500_000_001, 500_000_001, 1_000_000_002, 1_500_000_002, 2_000_000_003],
   },
   {
+    name: "48kHz_large_absolute_timestamps_near_js_max_safe_integer",
+    sample_rate_hz: 48000,
+    // Exercise very large absolute timestamps while still staying within JS safe integer range
+    // (the fixture uses JSON numbers).
+    start_time_ns: 9_000_000_000_000_000,
+    steps: [
+      9_000_000_000_000_000,
+      9_000_000_016_666_667,
+      9_000_000_033_333_333,
+      // Backwards step: must be ignored (0 frames, state unchanged).
+      8_999_999_900_000_000,
+      9_000_000_050_000_000,
+      9_000_000_550_000_000,
+      9_000_000_550_000_000,
+      9_000_001_550_000_000,
+    ],
+  },
+  {
     name: "44_1kHz_mixed_small_and_large",
     sample_rate_hz: 44100,
     start_time_ns: 1_000,
