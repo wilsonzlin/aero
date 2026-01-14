@@ -271,6 +271,55 @@ describe("RemoteChunkedDisk", () => {
     closeServer = null;
   });
 
+  it("rejects manifests that only provide required fields via prototype pollution", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    // Intentionally omit `schema`. A polluted prototype should not be able to smuggle it in.
+    const manifest = {
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "schema");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "schema", { value: "aero.chunked-disk-image.v1", configurable: true });
+
+      const { baseUrl, close } = await withServer((_req, res) => {
+        const url = new URL(_req.url ?? "/", "http://localhost");
+        if (url.pathname === "/manifest.json") {
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify(manifest));
+          return;
+        }
+        res.statusCode = 404;
+        res.end("not found");
+      });
+      closeServer = close;
+
+      await expect(
+        RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+          store: new TestMemoryStore(),
+        }),
+      ).rejects.toThrow(/schema/i);
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "schema", existing);
+      else delete (Object.prototype as any).schema;
+    }
+  });
+
   it("rejects manifests with too many chunks", async () => {
     const chunkSize = 512;
     const chunkCount = MAX_REMOTE_CHUNK_COUNT + 1;

@@ -562,6 +562,10 @@ function asSafeInt(value: unknown, label: string): number {
   return value;
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function toSafeNumber(value: bigint, label: string): number {
   const n = Number(value);
   if (!Number.isSafeInteger(n)) {
@@ -592,23 +596,30 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   if (!raw || typeof raw !== "object") {
     throw new Error("manifest.json must be a JSON object");
   }
-  const obj = raw as Partial<ChunkedDiskManifestV1>;
+  if (Array.isArray(raw)) {
+    throw new Error("manifest.json must be a JSON object");
+  }
+  const obj = raw as Record<string, unknown>;
 
-  if (obj.schema !== "aero.chunked-disk-image.v1") {
-    throw new Error(`unsupported manifest schema: ${String(obj.schema)}`);
+  // Treat manifest JSON as untrusted; ignore inherited values (prototype pollution).
+  const schema = hasOwn(obj, "schema") ? obj.schema : undefined;
+  if (schema !== "aero.chunked-disk-image.v1") {
+    throw new Error(`unsupported manifest schema: ${String(schema)}`);
   }
 
-  if (typeof obj.version !== "string" || !obj.version.trim()) {
+  const version = hasOwn(obj, "version") ? obj.version : undefined;
+  if (typeof version !== "string" || !version.trim()) {
     throw new Error("manifest version must be a non-empty string");
   }
-  if (typeof obj.mimeType !== "string" || !obj.mimeType.trim()) {
+  const mimeType = hasOwn(obj, "mimeType") ? obj.mimeType : undefined;
+  if (typeof mimeType !== "string" || !mimeType.trim()) {
     throw new Error("manifest mimeType must be a non-empty string");
   }
 
-  const totalSize = asSafeInt(obj.totalSize, "totalSize");
-  const chunkSize = asSafeInt(obj.chunkSize, "chunkSize");
-  const chunkCount = asSafeInt(obj.chunkCount, "chunkCount");
-  const chunkIndexWidth = asSafeInt(obj.chunkIndexWidth, "chunkIndexWidth");
+  const totalSize = asSafeInt(hasOwn(obj, "totalSize") ? obj.totalSize : undefined, "totalSize");
+  const chunkSize = asSafeInt(hasOwn(obj, "chunkSize") ? obj.chunkSize : undefined, "chunkSize");
+  const chunkCount = asSafeInt(hasOwn(obj, "chunkCount") ? obj.chunkCount : undefined, "chunkCount");
+  const chunkIndexWidth = asSafeInt(hasOwn(obj, "chunkIndexWidth") ? obj.chunkIndexWidth : undefined, "chunkIndexWidth");
 
   if (totalSize <= 0) throw new Error("totalSize must be > 0");
   if (totalSize % SECTOR_SIZE !== 0) {
@@ -651,20 +662,25 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   const chunkSizes: number[] = new Array(chunkCount);
   const chunkSha256: Array<string | null> = new Array(chunkCount).fill(null);
 
-  if (obj.chunks !== undefined) {
-    if (!Array.isArray(obj.chunks)) throw new Error("chunks must be an array when present");
-    if (obj.chunks.length !== chunkCount) {
-      throw new Error(`chunks.length mismatch: expected=${chunkCount} actual=${obj.chunks.length}`);
+  const chunksRaw = hasOwn(obj, "chunks") ? (obj as Partial<ChunkedDiskManifestV1>).chunks : undefined;
+  if (chunksRaw !== undefined) {
+    if (!Array.isArray(chunksRaw)) throw new Error("chunks must be an array when present");
+    if (chunksRaw.length !== chunkCount) {
+      throw new Error(`chunks.length mismatch: expected=${chunkCount} actual=${chunksRaw.length}`);
     }
-    for (let i = 0; i < obj.chunks.length; i += 1) {
-      const item = obj.chunks[i];
+    for (let i = 0; i < chunksRaw.length; i += 1) {
+      const item = chunksRaw[i];
       if (!item || typeof item !== "object") throw new Error(`chunks[${i}] must be an object`);
+      const itemRec = item as Record<string, unknown>;
+      const sizeRaw = hasOwn(itemRec, "size") ? itemRec.size : undefined;
+      const shaRaw = hasOwn(itemRec, "sha256") ? itemRec.sha256 : undefined;
+
       const size =
-        item.size === undefined || item.size === null
+        sizeRaw === undefined || sizeRaw === null
           ? i === chunkCount - 1
-            ? lastChunkSize
-            : chunkSize
-          : asSafeInt(item.size, `chunks[${i}].size`);
+             ? lastChunkSize
+             : chunkSize
+          : asSafeInt(sizeRaw, `chunks[${i}].size`);
       if (size <= 0) throw new Error(`chunks[${i}].size must be > 0`);
       if (i < chunkCount - 1 && size !== chunkSize) {
         throw new Error(`chunks[${i}].size mismatch: expected=${chunkSize} actual=${size}`);
@@ -674,9 +690,9 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
       }
       chunkSizes[i] = size;
 
-      if (item.sha256 !== undefined && item.sha256 !== null) {
-        if (typeof item.sha256 !== "string") throw new Error(`chunks[${i}].sha256 must be a string`);
-        const normalized = item.sha256.trim().toLowerCase();
+      if (shaRaw !== undefined && shaRaw !== null) {
+        if (typeof shaRaw !== "string") throw new Error(`chunks[${i}].sha256 must be a string`);
+        const normalized = shaRaw.trim().toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(normalized)) {
           throw new Error(`chunks[${i}].sha256 must be a 64-char hex string`);
         }

@@ -22,13 +22,24 @@ export function resolveVmRuntime(config?: Pick<AeroConfig, "vmRuntime"> | null):
   return config?.vmRuntime === "machine" ? "machine" : "legacy";
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 export function hasBootDisks(bootDisks?: BootDisksLike): boolean {
   if (!bootDisks) return false;
   const mounts = (bootDisks as { mounts?: MountConfig | null }).mounts ?? null;
   const hdd = (bootDisks as { hdd?: DiskImageMetadata | null }).hdd ?? null;
   const cd = (bootDisks as { cd?: DiskImageMetadata | null }).cd ?? null;
   if (hdd || cd) return true;
-  return !!(mounts && (mounts.hddId || mounts.cdId));
+  if (!mounts || typeof mounts !== "object") return false;
+  // Treat mount IDs as untrusted; ignore inherited values (prototype pollution).
+  const rec = mounts as Record<string, unknown>;
+  const hddId = hasOwn(rec, "hddId") ? rec.hddId : undefined;
+  const cdId = hasOwn(rec, "cdId") ? rec.cdId : undefined;
+  return (
+    (typeof hddId === "string" && hddId.trim().length > 0) || (typeof cdId === "string" && cdId.trim().length > 0)
+  );
 }
 
 /**
@@ -54,4 +65,3 @@ export function shouldRunLegacyDemoMode(args: { config?: Pick<AeroConfig, "vmRun
   const vmRuntime = resolveVmRuntime(args.config);
   return vmRuntime === "legacy" && !hasBootDisks(args.bootDisks);
 }
-
