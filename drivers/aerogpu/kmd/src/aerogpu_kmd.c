@@ -1233,11 +1233,30 @@ static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
     ExFreePoolWithTag(Meta, AEROGPU_POOL_TAG);
 }
 
-static __forceinline SIZE_T AeroGpuAlignUpSizeT(_In_ SIZE_T Value, _In_ SIZE_T Alignment)
+static NTSTATUS AeroGpuAlignUpSizeTChecked(_In_ SIZE_T Value, _In_ SIZE_T Alignment, _Out_ SIZE_T* Out)
 {
-    ASSERT(Alignment != 0);
-    ASSERT((Alignment & (Alignment - 1)) == 0);
-    return (Value + (Alignment - 1)) & ~(Alignment - 1);
+    if (!Out) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *Out = 0;
+
+    if (Alignment == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const SIZE_T mask = Alignment - 1;
+    if ((Alignment & mask) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    SIZE_T sum = 0;
+    NTSTATUS st = RtlSizeTAdd(Value, mask, &sum);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+
+    *Out = sum & ~mask;
+    return STATUS_SUCCESS;
 }
 
 static __forceinline UINT AeroGpuAllocTableComputeHashCap(_In_ UINT Count)
@@ -1250,18 +1269,18 @@ static __forceinline UINT AeroGpuAllocTableComputeHashCap(_In_ UINT Count)
     return cap;
 }
 
-static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
-                                                  _In_ UINT HashCap,
-                                                  _Outptr_result_bytebuffer_(*BlockBytesOut) PVOID* BlockOut,
-                                                  _Out_ SIZE_T* BlockBytesOut,
-                                                  _Out_ struct aerogpu_alloc_entry** TmpEntriesOut,
-                                                  _Out_ uint32_t** SeenOut,
-                                                  _Out_ UINT** SeenIndexOut,
-                                                  _Out_ uint64_t** SeenGpaOut,
-                                                  _Out_ uint64_t** SeenSizeOut)
+static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
+                                                   _In_ UINT HashCap,
+                                                   _Outptr_result_bytebuffer_(*BlockBytesOut) PVOID* BlockOut,
+                                                   _Out_ SIZE_T* BlockBytesOut,
+                                                   _Out_ struct aerogpu_alloc_entry** TmpEntriesOut,
+                                                   _Out_ uint32_t** SeenOut,
+                                                   _Out_ UINT** SeenIndexOut,
+                                                   _Out_ uint64_t** SeenGpaOut,
+                                                   _Out_ uint64_t** SeenSizeOut)
 {
     if (!BlockOut || !BlockBytesOut || !TmpEntriesOut || !SeenOut || !SeenIndexOut || !SeenGpaOut || !SeenSizeOut) {
-        return FALSE;
+        return STATUS_INVALID_PARAMETER;
     }
 
     *BlockOut = NULL;
@@ -1273,7 +1292,7 @@ static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
     *SeenSizeOut = NULL;
 
     if (TmpEntriesCap == 0 || HashCap == 0) {
-        return FALSE;
+        return STATUS_INVALID_PARAMETER;
     }
 
     /*
@@ -1281,7 +1300,7 @@ static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
      * AeroGpuAllocTableComputeHashCap() guarantees this, but validate anyway.
      */
     if ((HashCap & (HashCap - 1)) != 0) {
-        return FALSE;
+        return STATUS_INVALID_PARAMETER;
     }
 
     /*
@@ -1290,33 +1309,95 @@ static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
      * fragmentation down, and makes it easy to cache.
      */
     SIZE_T off = 0;
-    off = AeroGpuAlignUpSizeT(off, 8);
-    const SIZE_T tmpOff = off;
-    off += (SIZE_T)TmpEntriesCap * sizeof(struct aerogpu_alloc_entry);
+    SIZE_T tmpOff = 0;
+    SIZE_T seenOff = 0;
+    SIZE_T seenIndexOff = 0;
+    SIZE_T seenGpaOff = 0;
+    SIZE_T seenSizeOff = 0;
 
-    off = AeroGpuAlignUpSizeT(off, 4);
-    const SIZE_T seenOff = off;
-    off += (SIZE_T)HashCap * sizeof(uint32_t);
+    SIZE_T tmpBytes = 0;
+    SIZE_T seenBytes = 0;
+    SIZE_T seenIndexBytes = 0;
+    SIZE_T seenGpaBytes = 0;
+    SIZE_T seenSizeBytes = 0;
 
-    off = AeroGpuAlignUpSizeT(off, 4);
-    const SIZE_T seenIndexOff = off;
-    off += (SIZE_T)HashCap * sizeof(UINT);
+    NTSTATUS st = AeroGpuAlignUpSizeTChecked(off, 8, &off);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+    tmpOff = off;
+    st = RtlSizeTMult((SIZE_T)TmpEntriesCap, sizeof(struct aerogpu_alloc_entry), &tmpBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    st = RtlSizeTAdd(off, tmpBytes, &off);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
 
-    off = AeroGpuAlignUpSizeT(off, 8);
-    const SIZE_T seenGpaOff = off;
-    off += (SIZE_T)HashCap * sizeof(uint64_t);
+    st = AeroGpuAlignUpSizeTChecked(off, 4, &off);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+    seenOff = off;
+    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint32_t), &seenBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    st = RtlSizeTAdd(off, seenBytes, &off);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
 
-    off = AeroGpuAlignUpSizeT(off, 8);
-    const SIZE_T seenSizeOff = off;
-    off += (SIZE_T)HashCap * sizeof(uint64_t);
+    st = AeroGpuAlignUpSizeTChecked(off, 4, &off);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+    seenIndexOff = off;
+    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(UINT), &seenIndexBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    st = RtlSizeTAdd(off, seenIndexBytes, &off);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+
+    st = AeroGpuAlignUpSizeTChecked(off, 8, &off);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+    seenGpaOff = off;
+    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint64_t), &seenGpaBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    st = RtlSizeTAdd(off, seenGpaBytes, &off);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+
+    st = AeroGpuAlignUpSizeTChecked(off, 8, &off);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+    seenSizeOff = off;
+    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint64_t), &seenSizeBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    st = RtlSizeTAdd(off, seenSizeBytes, &off);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
 
     if (off == 0) {
-        return FALSE;
+        return STATUS_INTEGER_OVERFLOW;
     }
 
     PVOID block = ExAllocatePoolWithTag(NonPagedPool, off, AEROGPU_POOL_TAG);
     if (!block) {
-        return FALSE;
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     *BlockOut = block;
@@ -1327,22 +1408,22 @@ static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
     *SeenIndexOut = (UINT*)((PUCHAR)block + seenIndexOff);
     *SeenGpaOut = (uint64_t*)((PUCHAR)block + seenGpaOff);
     *SeenSizeOut = (uint64_t*)((PUCHAR)block + seenSizeOff);
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
-static BOOLEAN AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALLOC_TABLE_SCRATCH* Scratch,
-                                                           _In_ UINT RequiredTmpEntriesCap,
-                                                           _In_ UINT RequiredHashCap)
+static NTSTATUS AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALLOC_TABLE_SCRATCH* Scratch,
+                                                            _In_ UINT RequiredTmpEntriesCap,
+                                                            _In_ UINT RequiredHashCap)
 {
     if (!Scratch || RequiredTmpEntriesCap == 0 || RequiredHashCap == 0) {
-        return FALSE;
+        return STATUS_INVALID_PARAMETER;
     }
 
     if (Scratch->Block && Scratch->TmpEntriesCapacity >= RequiredTmpEntriesCap && Scratch->HashCapacity >= RequiredHashCap) {
 #if DBG
         InterlockedIncrement(&Scratch->HitCount);
 #endif
-        return TRUE;
+        return STATUS_SUCCESS;
     }
 
     UINT newTmpCap = Scratch->TmpEntriesCapacity;
@@ -1361,16 +1442,17 @@ static BOOLEAN AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALLO
     UINT* newSeenIndex = NULL;
     uint64_t* newSeenGpa = NULL;
     uint64_t* newSeenSize = NULL;
-    if (!AeroGpuAllocTableScratchAllocBlock(newTmpCap,
-                                            newHashCap,
-                                            &newBlock,
-                                            &newBlockBytes,
-                                            &newTmpEntries,
-                                            &newSeen,
-                                            &newSeenIndex,
-                                            &newSeenGpa,
-                                            &newSeenSize)) {
-        return FALSE;
+    NTSTATUS st = AeroGpuAllocTableScratchAllocBlock(newTmpCap,
+                                                     newHashCap,
+                                                     &newBlock,
+                                                     &newBlockBytes,
+                                                     &newTmpEntries,
+                                                     &newSeen,
+                                                     &newSeenIndex,
+                                                     &newSeenGpa,
+                                                     &newSeenSize);
+    if (!NT_SUCCESS(st)) {
+        return st;
     }
 
     PVOID oldBlock = Scratch->Block;
@@ -1399,7 +1481,7 @@ static BOOLEAN AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALLO
     if (oldBlock) {
         ExFreePoolWithTag(oldBlock, AEROGPU_POOL_TAG);
     }
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
@@ -1426,7 +1508,12 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
         return STATUS_INVALID_PARAMETER;
     }
 
-    RtlZeroMemory(Seen, (SIZE_T)HashCap * sizeof(*Seen));
+    SIZE_T seenBytes = 0;
+    NTSTATUS st = RtlSizeTMult((SIZE_T)HashCap, sizeof(*Seen), &seenBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    RtlZeroMemory(Seen, seenBytes);
 
     UINT entryCount = 0;
     const UINT mask = HashCap - 1;
@@ -1617,7 +1704,8 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * usage by holding the scratch mutex for the duration of the table build.
      */
     ExAcquireFastMutex(&Adapter->AllocTableScratch.Mutex);
-    if (AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, Count, cap)) {
+    const NTSTATUS scratchSt = AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, Count, cap);
+    if (NT_SUCCESS(scratchSt)) {
         tmpEntries = Adapter->AllocTableScratch.TmpEntries;
         seen = Adapter->AllocTableScratch.Seen;
         seenIndex = Adapter->AllocTableScratch.SeenIndex;
@@ -1637,17 +1725,22 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
         scratchLockHeld = FALSE;
 
+        if (scratchSt != STATUS_INSUFFICIENT_RESOURCES) {
+            return scratchSt;
+        }
+
         /* Allocation failure growing the cache. Fall back to one-off scratch allocations. */
-        if (!AeroGpuAllocTableScratchAllocBlock(Count,
-                                                cap,
-                                                &slowBlock,
-                                                &slowBlockBytes,
-                                                &tmpEntries,
-                                                &seen,
-                                                &seenIndex,
-                                                &seenGpa,
-                                                &seenSize)) {
-            return STATUS_INSUFFICIENT_RESOURCES;
+        const NTSTATUS allocSt = AeroGpuAllocTableScratchAllocBlock(Count,
+                                                                    cap,
+                                                                    &slowBlock,
+                                                                    &slowBlockBytes,
+                                                                    &tmpEntries,
+                                                                    &seen,
+                                                                    &seenIndex,
+                                                                    &seenGpa,
+                                                                    &seenSize);
+        if (!NT_SUCCESS(allocSt)) {
+            return allocSt;
         }
     }
 
