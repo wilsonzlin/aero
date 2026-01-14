@@ -20,6 +20,8 @@ pub enum TraceReadError {
     /// - older versions are accepted (best-effort backwards compatibility)
     /// - newer/unknown versions are rejected deterministically, before attempting to interpret
     ///   any version-specific fields
+    /// - a header/footer version mismatch is rejected deterministically as
+    ///   `UnsupportedContainerVersion(<footer_version>)`
     UnsupportedContainerVersion(u32),
     UnsupportedTocVersion(u32),
     TocOutOfBounds,
@@ -104,6 +106,9 @@ impl<R: Read + Seek> TraceReader<R> {
         let footer = read_footer(&mut reader)?;
 
         if footer.container_version != header.container_version {
+            // The footer is parsed at the known offset from the end of the file; if it disagrees
+            // with the header's `container_version`, treat this as an unsupported trace format to
+            // avoid attempting to interpret mismatched structures.
             return Err(TraceReadError::UnsupportedContainerVersion(
                 footer.container_version,
             ));
