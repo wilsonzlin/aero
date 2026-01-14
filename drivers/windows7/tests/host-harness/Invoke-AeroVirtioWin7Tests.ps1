@@ -7295,7 +7295,7 @@ try {
     }
     "VIRTIO_INPUT_LED_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-led\\|SKIP\\|([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-led\|SKIP\|([^|\r\n]+)") {
         $reason = $Matches[1]
       }
 
@@ -7540,7 +7540,7 @@ try {
     }
     "VIRTIO_NET_LINK_FLAP_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|SKIP\\|([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|SKIP\|([^|\r\n]+)") {
         $reason = $Matches[1]
       }
       if ($reason -eq "flag_not_set") {

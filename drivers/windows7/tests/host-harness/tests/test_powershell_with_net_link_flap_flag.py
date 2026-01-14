@@ -33,13 +33,19 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
         ):
             self.assertIn(token, self.text)
 
+        # Ensure we parse the guest SKIP reason from the marker so CI logs can report why it was skipped.
+        self.assertIn(r"virtio-net-link-flap\|SKIP\|", self.text)
+
     def test_qmp_flap_targets_stable_net_device_id(self) -> None:
         # The host harness targets the virtio-net QOM id via QMP set_link (with backcompat name fallbacks).
         self.assertIn('$script:VirtioNetQmpId = "aero_virtio_net0"', self.text)
         # Allow arbitrary whitespace for aligned hashtable formatting.
         self.assertRegex(self.text, r'execute\s*=\s*"set_link"')
         # Ensure the stable QOM id is actually attempted for set_link targeting.
-        self.assertIn('$names = @($script:VirtioNetQmpId, "net0")', self.text)
+        self.assertRegex(
+            self.text,
+            r'\$names\s*=\s*@\(\$script:VirtioNetQmpId,\s*"net0"\)',
+        )
         # Ensure the set_link command forwards the per-attempt name variable.
         self.assertRegex(self.text, r"name\s*=\s*\$name")
 
