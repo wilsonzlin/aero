@@ -3807,7 +3807,17 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
                                   D3D10DDI_HSHADER hShader,
                                   uint32_t stage) {
   AEROGPU_D3D10_TRACEF("CreateShader stage=%u codeSize=%u", stage, pDesc ? pDesc->CodeSize : 0);
-  if (!hDevice.pDrvPrivate || !pDesc || !hShader.pDrvPrivate || !pDesc->pCode || !pDesc->CodeSize) {
+  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+
+  // Always construct the private object so DestroyShader is safe even if we
+  // reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
+  sh->handle = kInvalidHandle;
+  sh->stage = stage;
+
+  if (!pDesc || !pDesc->pCode || !pDesc->CodeSize) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
@@ -3818,14 +3828,11 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
   sh->handle = allocate_global_handle(dev->adapter);
-  sh->stage = stage;
   try {
     sh->dxbc.resize(pDesc->CodeSize);
   } catch (...) {
     sh->handle = kInvalidHandle;
-    sh->~AeroGpuShader();
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
   std::memcpy(sh->dxbc.data(), pDesc->pCode, pDesc->CodeSize);
@@ -3834,7 +3841,8 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
       AEROGPU_CMD_CREATE_SHADER_DXBC, sh->dxbc.data(), sh->dxbc.size());
   if (!cmd) {
     sh->handle = kInvalidHandle;
-    sh->~AeroGpuShader();
+    // Avoid leaking the DXBC blob if the runtime does not destroy on failure.
+    std::vector<uint8_t>().swap(sh->dxbc);
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
   cmd->shader_handle = sh->handle;
@@ -3900,7 +3908,16 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
                                            D3D10DDI_HELEMENTLAYOUT hLayout) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CreateInputLayout elements=%u", pDesc ? pDesc->NumElements : 0);
-  if (!hDevice.pDrvPrivate || !pDesc || !hLayout.pDrvPrivate || (!pDesc->NumElements && pDesc->pElements)) {
+  if (!hDevice.pDrvPrivate || !hLayout.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+
+  // Always construct the private object so DestroyInputLayout is safe even if
+  // we reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
+  layout->handle = kInvalidHandle;
+
+  if (!pDesc || (!pDesc->NumElements && pDesc->pElements)) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
@@ -3911,8 +3928,12 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
   layout->handle = allocate_global_handle(dev->adapter);
+
+  if (pDesc->NumElements > (SIZE_MAX - sizeof(aerogpu_input_layout_blob_header)) / sizeof(aerogpu_input_layout_element_dxgi)) {
+    layout->handle = kInvalidHandle;
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);
@@ -3920,7 +3941,6 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
     layout->blob.resize(blob_size);
   } catch (...) {
     layout->handle = kInvalidHandle;
-    layout->~AeroGpuInputLayout();
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
 
@@ -3946,7 +3966,8 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
   if (!cmd) {
     layout->handle = kInvalidHandle;
-    layout->~AeroGpuInputLayout();
+    // Avoid leaking the blob if the runtime does not destroy on failure.
+    std::vector<uint8_t>().swap(layout->blob);
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
   cmd->input_layout_handle = layout->handle;

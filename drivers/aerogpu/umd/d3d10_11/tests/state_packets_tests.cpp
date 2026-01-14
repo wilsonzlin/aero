@@ -697,6 +697,66 @@ bool TestSetNullRasterizerStateEmitsDefaultPacket() {
   return true;
 }
 
+bool TestDestroyAfterFailedCreateVertexShaderIsSafe() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(failed VS create)")) {
+    return false;
+  }
+
+  D3D10DDI_HSHADER hShader{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateShaderSize(dev.hDevice, /*pDesc=*/nullptr);
+  if (!Check(size >= sizeof(void*), "CalcPrivateShaderSize returned non-trivial size")) {
+    return false;
+  }
+
+  // Fill the private memory with a sentinel so DestroyShader would crash if the
+  // object wasn't constructed.
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hShader.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateVertexShader(dev.hDevice, /*pDesc=*/nullptr, hShader);
+  if (!Check(hr == E_INVALIDARG, "CreateVertexShader should return E_INVALIDARG for null pDesc")) {
+    return false;
+  }
+
+  // Some runtimes may still call Destroy on failure; this must not crash.
+  dev.device_funcs.pfnDestroyShader(dev.hDevice, hShader);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestDestroyAfterFailedCreateInputLayoutIsSafe() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(failed input layout create)")) {
+    return false;
+  }
+
+  D3D10DDI_HELEMENTLAYOUT hLayout{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateInputLayoutSize(dev.hDevice, /*pDesc=*/nullptr);
+  if (!Check(size >= sizeof(void*), "CalcPrivateInputLayoutSize returned non-trivial size")) {
+    return false;
+  }
+
+  // Fill the private memory with a sentinel so DestroyInputLayout would crash if
+  // the object wasn't constructed.
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hLayout.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateInputLayout(dev.hDevice, /*pDesc=*/nullptr, hLayout);
+  if (!Check(hr == E_INVALIDARG, "CreateInputLayout should return E_INVALIDARG for null pDesc")) {
+    return false;
+  }
+
+  // Some runtimes may still call Destroy on failure; this must not crash.
+  dev.device_funcs.pfnDestroyInputLayout(dev.hDevice, hLayout);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateDepthStencilStateRejectsInvalidDepthFunc() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(dss invalid depth_func)")) {
@@ -933,6 +993,8 @@ int main() {
   ok &= TestCreateRasterizerStateRejectsUnsupportedCullMode();
   ok &= TestSetRasterizerStateEmitsPacket();
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
+  ok &= TestDestroyAfterFailedCreateVertexShaderIsSafe();
+  ok &= TestDestroyAfterFailedCreateInputLayoutIsSafe();
   ok &= TestCreateDepthStencilStateRejectsInvalidDepthFunc();
   ok &= TestDepthDisableDisablesDepthWrites();
   ok &= TestSetDepthStencilStateEmitsPacket();
