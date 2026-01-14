@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -105,12 +104,10 @@ fn boot_int10_vbe_bank_switch_maps_a0000_window_beyond_64k() {
 
     run_until_halt(&mut m);
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1024, 768));
-
     // For 1024x768x32, the VRAM byte offset 0x1_0000 corresponds to:
     //   pixel_index = 0x1_0000 / 4 = 0x4000 = 16384
     //   (x, y) = (0, 16) since stride is 1024 pixels.
-    vga.borrow_mut().present();
-    assert_eq!(vga.borrow().get_framebuffer()[16 * 1024], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1024, 768));
+    assert_eq!(m.display_framebuffer()[16 * 1024], 0xFF00_00FF);
 }

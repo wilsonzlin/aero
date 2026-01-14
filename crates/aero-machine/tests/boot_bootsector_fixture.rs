@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -49,21 +48,16 @@ fn boots_bootsector_fixture_and_validates_vga_mode13_and_serial_output() {
         "serial output did not contain expected substring: {serial_str:?}"
     );
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    let (top_left, top_right, bottom_left, bottom_right) = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (320, 200));
-
-        let fb = vga.get_framebuffer();
-        let w = 320usize;
-        (
-            fb[0],
-            fb[w - 1],
-            fb[(200 - 1) * w],
-            fb[(200 - 1) * w + (w - 1)],
-        )
-    };
+    m.display_present();
+    assert_eq!(m.display_resolution(), (320, 200));
+    let fb = m.display_framebuffer();
+    let w = 320usize;
+    let (top_left, top_right, bottom_left, bottom_right) = (
+        fb[0],
+        fb[w - 1],
+        fb[(200 - 1) * w],
+        fb[(200 - 1) * w + (w - 1)],
+    );
 
     // The bootsector fills VRAM with:
     // - palette index 0x11 in the top half, and

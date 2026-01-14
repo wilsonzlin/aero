@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -60,13 +59,12 @@ fn boot_int10_vbe_160_sets_mode_and_lfb_is_visible() {
 
     run_until_halt(&mut m);
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1280, 720));
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1280, 720));
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    let base = u64::from(vga.borrow().lfb_base());
+    let base = m.vbe_lfb_base();
     m.write_physical_u32(base, 0x00FF_0000);
-
-    vga.borrow_mut().present();
-    assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }

@@ -1,5 +1,4 @@
-use aero_devices::pci::PciBdf;
-use aero_gpu_vga::DisplayOutput;
+use aero_devices::pci::profile;
 use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
@@ -88,7 +87,7 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     let lfb_base = m
-        .pci_bar_base(PciBdf::new(0, 0x0c, 0), 0)
+        .pci_bar_base(profile::VGA_TRANSITIONAL_STUB.bdf, 0)
         .and_then(|base| u32::try_from(base).ok())
         .expect("VGA PCI BAR should be assigned by BIOS POST");
     assert_ne!(lfb_base, 0);
@@ -104,12 +103,8 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
         "INT 10h AX=4F01 mode info PhysBasePtr must match the VGA PCI BAR assignment"
     );
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (1024, 768));
-    }
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1024, 768));
 
     let base = u64::from(lfb_base);
     m.write_physical_u8(base, 0x00); // B
@@ -117,7 +112,6 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
     m.write_physical_u8(base + 2, 0xFF); // R
     m.write_physical_u8(base + 3, 0x00); // X
 
-    let mut vga = vga.borrow_mut();
-    vga.present();
-    assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }

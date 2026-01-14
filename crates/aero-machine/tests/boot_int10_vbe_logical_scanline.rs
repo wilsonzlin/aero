@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -203,9 +202,7 @@ fn boot_int10_vbe_logical_scanline_updates_stride_and_renderer_uses_it() {
 
     run_until_halt(&mut m);
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1024, 768));
-
-    vga.borrow_mut().present();
-    assert_eq!(vga.borrow().get_framebuffer()[1024], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1024, 768));
+    assert_eq!(m.display_framebuffer()[1024], 0xFF00_00FF);
 }

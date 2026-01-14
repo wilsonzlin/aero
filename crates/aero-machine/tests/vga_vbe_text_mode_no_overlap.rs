@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -139,12 +138,7 @@ fn vbe_framebuffer_does_not_clobber_legacy_text_memory() {
 
     // And ensure the rendered output matches the expected glyph (pixel (2,0) is a foreground pixel
     // for 'A' in the built-in font).
-    let vga = m.vga().expect("VGA enabled");
-    let fg_px = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (720, 400));
-        vga.get_framebuffer()[2]
-    };
-    assert_eq!(fg_px, 0xFFFF_FFFF);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (720, 400));
+    assert_eq!(m.display_framebuffer()[2], 0xFFFF_FFFF);
 }
