@@ -43,6 +43,14 @@ function initControlRings(control: SharedArrayBuffer): void {
  * reserve a large wasm32 runtime region. It exists for pages that only need:
  * - a SharedArrayBuffer-backed guest RAM region (via shared WebAssembly.Memory), and
  * - shared `ScanoutState` / `CursorState` descriptors for WDDM scanout + hardware cursor presentation.
+ *
+ * ⚠️ Important: this helper sets `guest_base = 0` (and `runtime_reserved = 0`). The IO worker
+ * treats `guest_base === 0` as a signal that the runtime-reserved wasm32 region is absent, and
+ * therefore skips initializing DMA-capable device models (virtio-input, UHCI/EHCI/xHCI, etc).
+ *
+ * Use `allocateSharedMemorySegments` for tests that need PCI/DMA devices. Use
+ * `allocateHarnessSharedMemorySegments` for lightweight harnesses that only need rings/telemetry
+ * and can avoid touching guest RAM from within WASM device models.
  */
 export function allocateHarnessSharedMemorySegments(opts: {
   guestRamBytes: number;
