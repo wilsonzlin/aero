@@ -5035,7 +5035,8 @@ function Test-AeroQmpCommandNotFound {
   #   "The command input-send-event has not been found"
   # and variants with quotes around the command name.
   $cmdEsc = [regex]::Escape($cmd)
-  if ($m -match "\bcommand\s+['\"]?$cmdEsc['\"]?\s+has\s+not\s+been\s+found\b") { return $true }
+  # PowerShell string escaping: `"` inside a double-quoted string must be escaped with backtick (not backslash).
+  if ($m -match "\bcommand\s+['`"]?$cmdEsc['`"]?\s+has\s+not\s+been\s+found\b") { return $true }
   return $false
 }
 

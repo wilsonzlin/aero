@@ -18,7 +18,7 @@ class _ScanState(enum.Enum):
     HERE_DOUBLE = "here_double"
 
 
-def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
+def _powershell_brace_balance(text: str) -> tuple[int, int, int, _ScanState, int]:
     """
     Best-effort brace balance check for PowerShell scripts.
 
@@ -46,7 +46,9 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
                 at_line_start = False
         i += chars
 
-    depth = 0
+    brace_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
     state = _ScanState.NORMAL
     at_line_start = True  # absolute (no leading whitespace) start of line
 
@@ -134,6 +136,7 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
                 embedded_paren_depth.append(1)
                 embedded_return_state.append(state)
                 state = _ScanState.NORMAL
+                paren_depth += 1
                 advance(2)
                 continue
             # Variable expansion with braces: "${var}".
@@ -150,7 +153,7 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
                         break
                     j += 1
                 if j > n:
-                    return depth, state, len(embedded_paren_depth)
+                    return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
                 advance(j - i)
                 continue
             if ch == '"':
@@ -188,11 +191,18 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
 
         # If we're currently scanning an embedded "$(...)" expression from within an expandable
         # string, track paren nesting until the expression closes.
+        handled_embedded_paren = False
         if embedded_paren_depth:
             if ch == "(":
                 embedded_paren_depth[-1] += 1
+                paren_depth += 1
+                handled_embedded_paren = True
             elif ch == ")":
                 embedded_paren_depth[-1] -= 1
+                paren_depth -= 1
+                if paren_depth < 0:
+                    return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
+                handled_embedded_paren = True
                 if embedded_paren_depth[-1] == 0:
                     embedded_paren_depth.pop()
                     state = embedded_return_state.pop()
@@ -200,15 +210,30 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
                     continue
 
         if ch == "{":
-            depth += 1
+            brace_depth += 1
         elif ch == "}":
-            depth -= 1
-            if depth < 0:
-                return depth, state, len(embedded_paren_depth)
+            brace_depth -= 1
+            if brace_depth < 0:
+                return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
+
+        if not handled_embedded_paren:
+            if ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth -= 1
+                if paren_depth < 0:
+                    return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
+
+        if ch == "[":
+            bracket_depth += 1
+        elif ch == "]":
+            bracket_depth -= 1
+            if bracket_depth < 0:
+                return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
 
         advance(1)
 
-    return depth, state, len(embedded_paren_depth)
+    return brace_depth, paren_depth, bracket_depth, state, len(embedded_paren_depth)
 
 
 class PowerShellBraceBalanceTests(unittest.TestCase):
@@ -230,9 +255,25 @@ class PowerShellBraceBalanceTests(unittest.TestCase):
         for name in scripts:
             with self.subTest(script=name):
                 text = (harness_dir / name).read_text(encoding="utf-8", errors="replace")
-                depth, state, embedded = _powershell_brace_balance(text)
+                brace_depth, paren_depth, bracket_depth, state, embedded = _powershell_brace_balance(
+                    text
+                )
                 self.assertEqual(state, _ScanState.NORMAL, f"{name}: ended in state={state}")
-                self.assertEqual(depth, 0, f"{name}: brace depth should be 0 at EOF (got {depth})")
+                self.assertEqual(
+                    brace_depth,
+                    0,
+                    f"{name}: brace depth should be 0 at EOF (got {brace_depth})",
+                )
+                self.assertEqual(
+                    paren_depth,
+                    0,
+                    f"{name}: paren depth should be 0 at EOF (got {paren_depth})",
+                )
+                self.assertEqual(
+                    bracket_depth,
+                    0,
+                    f"{name}: bracket depth should be 0 at EOF (got {bracket_depth})",
+                )
                 self.assertEqual(embedded, 0, f"{name}: unclosed embedded $(...) expression(s): {embedded}")
 
 
