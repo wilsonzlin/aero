@@ -160,6 +160,7 @@ export class InputCapture {
     const bucket = this.recycledBuffersBySize.get(size);
     if (bucket) {
       if (bucket.length >= MAX_RECYCLED_BUFFERS_PER_BUCKET) {
+        // Bucket is full; drop the newly returned buffer (instead of evicting an existing one).
         return;
       }
       bucket.push(data.buffer);
