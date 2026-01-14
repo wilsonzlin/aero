@@ -1585,9 +1585,12 @@ impl AerogpuD3d11Executor {
 
         // Storage buffers are only valid on compute-capable backends.
         let dummy_storage_usage = if caps.supports_compute {
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
+            // Include VERTEX so the executor can bind this buffer as a fallback vertex buffer when
+            // the guest draws without binding a vertex buffer/input layout (D3D treats unbound
+            // vertex inputs as zero).
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX
         } else {
-            wgpu::BufferUsages::COPY_DST
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX
         };
         let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd dummy storage buffer"),
@@ -4070,9 +4073,9 @@ impl AerogpuD3d11Executor {
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
         // Tessellation (HS/DS) and geometry-shader emulation share this compute-prepass entrypoint.
-
-        // Even on backends that do support compute, we allow unit tests to force these capability
-        // flags off. Validate them here so the emulation path fails with a clear error rather than
+        //
+        // Even on backends that do support compute, unit tests may force these capability flags
+        // off. Validate them here so the emulation path fails with a clear error rather than
         // silently proceeding.
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
@@ -6740,6 +6743,7 @@ impl AerogpuD3d11Executor {
         pass.set_pipeline(strip_pipeline);
         let mut current_pipeline_ptr: *const wgpu::RenderPipeline = strip_pipeline_ptr;
 
+        let dummy_vertex_buffer_ptr: *const wgpu::Buffer = &self.dummy_storage;
         for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
             if d3d_slot == DUMMY_VERTEX_BUFFER_SLOT {
                 let buf_ptr: *const wgpu::Buffer = &self.dummy_vertex;
@@ -6749,7 +6753,11 @@ impl AerogpuD3d11Executor {
             }
             let slot = d3d_slot as usize;
             let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) else {
-                bail!("input layout requires vertex buffer slot {d3d_slot}");
+                // D3D11 treats missing vertex buffer bindings as zero-filled vertex inputs. Bind a
+                // small dummy buffer so wgpu validation succeeds.
+                let dummy = unsafe { &*dummy_vertex_buffer_ptr };
+                pass.set_vertex_buffer(wgpu_slot as u32, dummy.slice(..));
+                continue;
             };
             // Safety: buffers are not created/destroyed while a render pass is active (the render
             // pass loop breaks on any resource-management opcode), so pointers into the buffer
@@ -8931,10 +8939,15 @@ impl AerogpuD3d11Executor {
                         else {
                             continue;
                         };
-                        let d3d_slot = u32::try_from(slot)
+                        let _d3d_slot = u32::try_from(slot)
                             .map_err(|_| anyhow!("SET_VERTEX_BUFFERS: slot out of range"))?;
                         let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) else {
-                            bail!("input layout requires vertex buffer slot {d3d_slot}");
+                            // Mirror the initial render-pass setup behavior: bind a dummy buffer
+                            // when the guest unbinds a vertex buffer slot that is referenced by the
+                            // current pipeline.
+                            let dummy = unsafe { &*dummy_vertex_buffer_ptr };
+                            pass.set_vertex_buffer(wgpu_slot, dummy.slice(..));
+                            continue;
                         };
                         if vb.stride_bytes != u32::from_le(bindings[slot - start_slot].stride_bytes)
                         {
@@ -14210,6 +14223,113 @@ impl AerogpuD3d11Executor {
             guest_mem,
         )?;
 
+        // wgpu validation treats `STORAGE_READ_WRITE` buffer usage as exclusive within a compute
+        // dispatch. Since `ExpansionScratchAllocator` sub-allocates from a single backing buffer,
+        // internal expansion buffers may alias at the buffer level even if their ranges do not
+        // overlap. When an HS kernel binds the same underlying buffer as both `var<storage, read>`
+        // and `var<storage, read_write>`, wgpu reports a `ResourceUsageConflict`.
+        //
+        // Avoid this by copying any *read-only* internal buffer range into a dedicated scratch
+        // buffer whenever it aliases with a read-write binding.
+        #[derive(Clone, Copy, Debug)]
+        struct ReadOnlyInternalScratch {
+            binding: u32,
+            id: BufferId,
+            scratch_index: usize,
+            size: u64,
+        }
+        let mut internal_buffers_vec: Vec<InternalBufferBinding<'_>> = internal_buffers.to_vec();
+        let mut read_only_scratch: Vec<ReadOnlyInternalScratch> = Vec::new();
+        let mut scratch_buffers: Vec<wgpu::Buffer> = Vec::new();
+
+        let mut write_buffers: HashSet<*const wgpu::Buffer> = HashSet::new();
+        for binding in control_point
+            .bindings
+            .iter()
+            .chain(patch_constant.bindings.iter())
+        {
+            if let crate::BindingKind::ExpansionStorageBuffer { read_only: false } = binding.kind {
+                if let Some(internal) = internal_buffers.iter().find(|b| b.binding == binding.binding)
+                {
+                    write_buffers.insert(internal.buffer as *const wgpu::Buffer);
+                }
+            }
+        }
+
+        let mut bindings_to_copy: HashSet<u32> = HashSet::new();
+        for binding in control_point
+            .bindings
+            .iter()
+            .chain(patch_constant.bindings.iter())
+        {
+            if let crate::BindingKind::ExpansionStorageBuffer { read_only: true } = binding.kind {
+                if let Some(internal) = internal_buffers.iter().find(|b| b.binding == binding.binding)
+                {
+                    if write_buffers.contains(&(internal.buffer as *const wgpu::Buffer)) {
+                        bindings_to_copy.insert(binding.binding);
+                    }
+                }
+            }
+        }
+
+        for binding in bindings_to_copy {
+            let Some(src) = internal_buffers.iter().find(|b| b.binding == binding) else {
+                continue;
+            };
+            if src.size == 0 {
+                continue;
+            }
+
+            let align = wgpu::COPY_BUFFER_ALIGNMENT;
+            if !src.offset.is_multiple_of(align) || !src.size.is_multiple_of(align) {
+                bail!(
+                    "HS internal buffer scratch copy requires COPY_BUFFER_ALIGNMENT={} (binding={binding} offset={} size={})",
+                    align,
+                    src.offset,
+                    src.size
+                );
+            }
+
+            let scratch_size = src.size.max(align);
+            let scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd HS internal read-only scratch"),
+                size: scratch_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(src.buffer, src.offset, &scratch, 0, src.size);
+
+            let id = BufferId(self.next_scratch_buffer_id);
+            self.next_scratch_buffer_id = self.next_scratch_buffer_id.wrapping_add(1);
+            scratch_buffers.push(scratch);
+            let scratch_index = scratch_buffers.len() - 1;
+            read_only_scratch.push(ReadOnlyInternalScratch {
+                binding,
+                id,
+                scratch_index,
+                size: src.size,
+            });
+        }
+
+        for scratch in &read_only_scratch {
+            let buf = &scratch_buffers[scratch.scratch_index];
+            let replacement = InternalBufferBinding {
+                binding: scratch.binding,
+                id: scratch.id,
+                buffer: buf,
+                offset: 0,
+                size: scratch.size,
+            };
+            if let Some(entry) = internal_buffers_vec
+                .iter_mut()
+                .find(|b| b.binding == scratch.binding)
+            {
+                *entry = replacement;
+            } else {
+                internal_buffers_vec.push(replacement);
+            }
+        }
+
         let provider = CmdExecutorBindGroupProvider {
             resources: &self.resources,
             legacy_constants: &self.legacy_constants,
@@ -14223,7 +14343,7 @@ impl AerogpuD3d11Executor {
             default_sampler: &self.default_sampler,
             stage: ShaderStage::Hull,
             stage_state: self.bindings.stage(ShaderStage::Hull),
-            internal_buffers,
+            internal_buffers: internal_buffers_vec.as_slice(),
         };
 
         super::tessellation::hull::dispatch_hull_phases(
@@ -16227,24 +16347,43 @@ fn build_vertex_buffers_for_pipeline(
     }
 
     let Some(layout_handle) = state.input_layout else {
+        // D3D11 draw calls can still reach the driver with an unset input layout (e.g. application
+        // bugs, or tests that only validate render-pass semantics). Rejecting these draws early
+        // prevents the executor from exercising render-pass-internal state updates, so instead we
+        // synthesize a simple packed vertex buffer layout and bind a dummy vertex buffer.
+        //
+        // When the vertex shader signature contains only system values (SV_VertexID/SV_InstanceID),
+        // no vertex buffers are needed; build an empty vertex state in that case.
         if vs_signature.is_empty() {
-            // No signature information and no input layout: treat as a zero-input draw (best-effort
-            // to keep the render-pass path running).
             return Ok(BuiltVertexState {
                 vertex_buffers: Vec::new(),
                 vertex_buffer_keys: Vec::new(),
                 wgpu_slot_to_d3d_slot: Vec::new(),
             });
         }
-        // D3D11 draw calls can still reach the driver with an unset input layout (e.g. application
-        // bugs, or tests that only validate render pass semantics). Rejecting these draws early
-        // prevents the executor from exercising render-pass-internal state updates, so instead we
-        // synthesize a simple packed vertex buffer layout and bind a dummy vertex buffer.
-        //
+
+        let vertex_id_hash = fnv1a_32(b"SV_VERTEXID");
+        let instance_id_hash = fnv1a_32(b"SV_INSTANCEID");
+
+        let mut sig_sorted: Vec<VsInputSignatureElement> = vs_signature
+            .iter()
+            .copied()
+            .filter(|sig| {
+                sig.semantic_name_hash != vertex_id_hash && sig.semantic_name_hash != instance_id_hash
+            })
+            .collect();
+        if sig_sorted.is_empty() {
+            return Ok(BuiltVertexState {
+                vertex_buffers: Vec::new(),
+                vertex_buffer_keys: Vec::new(),
+                wgpu_slot_to_d3d_slot: Vec::new(),
+            });
+        }
+
         // The translated WGSL represents vertex inputs as `vec4<f32>` locations, so use
         // `Float32x4` for each declared input and pack them tightly into a single vertex buffer.
-        let mut sig_sorted: Vec<VsInputSignatureElement> = vs_signature.to_vec();
         sig_sorted.sort_by_key(|e| e.shader_location);
+        sig_sorted.dedup_by_key(|e| e.shader_location);
 
         let mut attributes: Vec<wgpu::VertexAttribute> = Vec::with_capacity(sig_sorted.len());
         for (i, elem) in sig_sorted.iter().enumerate() {
@@ -16271,6 +16410,8 @@ fn build_vertex_buffers_for_pipeline(
         return Ok(BuiltVertexState {
             vertex_buffers: vec![vb],
             vertex_buffer_keys: vec![key],
+            // Force the render-pass path to bind a dummy vertex buffer for these synthesized
+            // attributes.
             wgpu_slot_to_d3d_slot: vec![DUMMY_VERTEX_BUFFER_SLOT],
         });
     };
