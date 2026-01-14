@@ -8,7 +8,13 @@
 
 namespace aerogpu {
 
-// Forward declaration for the draw entrypoint under test.
+// Forward declarations for the draw entrypoints under test.
+HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t start_vertex,
+    uint32_t primitive_count);
+
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
@@ -58,10 +64,7 @@ struct InstanceData {
   Vec4 color;
 };
 
-const aerogpu_cmd_upload_resource* FindLastUploadForHandle(
-    const uint8_t* buf,
-    size_t len,
-    aerogpu_handle_t handle) {
+const aerogpu_cmd_upload_resource* FindLastUploadForHandle(const uint8_t* buf, size_t len, aerogpu_handle_t handle) {
   if (!buf || len < sizeof(aerogpu_cmd_stream_header)) {
     return nullptr;
   }
@@ -84,27 +87,35 @@ const aerogpu_cmd_upload_resource* FindLastUploadForHandle(
   return found;
 }
 
-} // namespace
+template <typename CmdT>
+std::vector<const CmdT*> FindAllCmds(const uint8_t* buf, size_t len, uint32_t opcode) {
+  std::vector<const CmdT*> out;
+  if (!buf || len < sizeof(aerogpu_cmd_stream_header)) {
+    return out;
+  }
 
-int main() {
-  aerogpu::Adapter adapter{};
-  aerogpu::Device dev(&adapter);
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == opcode) {
+      out.push_back(reinterpret_cast<const CmdT*>(hdr));
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return out;
+}
 
-  // Minimal shader bindings so ensure_draw_pipeline_locked accepts the draw (no fixed-function fallback).
-  aerogpu::Shader vs{};
-  aerogpu::Shader ps{};
+void BindTestShaders(aerogpu::Device& dev, aerogpu::Shader& vs, aerogpu::Shader& ps) {
   dev.user_vs = &vs;
   dev.user_ps = &ps;
   dev.vs = &vs;
   dev.ps = &ps;
+}
 
-  // Vertex declaration:
-  //   stream0: POSITION float4 @0
-  //   stream1: TEXCOORD0 float4 @0  (instance offset)
-  //   stream1: COLOR0    float4 @16 (instance color)
-  aerogpu::VertexDecl decl{};
+void BindTestDecl(aerogpu::Device& dev, aerogpu::VertexDecl& decl) {
   const D3DVERTEXELEMENT9_COMPAT elems[] = {
       {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {1, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
@@ -114,6 +125,20 @@ int main() {
   decl.blob.assign(reinterpret_cast<const uint8_t*>(elems),
                    reinterpret_cast<const uint8_t*>(elems) + sizeof(elems));
   dev.vertex_decl = &decl;
+}
+
+void TestIndexedTriangleListBasic() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
 
   // Stream 0: per-vertex positions.
   const Vec4 vertices[3] = {
@@ -182,8 +207,7 @@ int main() {
       FindLastUploadForHandle(buf, len, dev.instancing_vertex_buffers[0]->handle);
   const aerogpu_cmd_upload_resource* upload1 =
       FindLastUploadForHandle(buf, len, dev.instancing_vertex_buffers[1]->handle);
-  const aerogpu_cmd_upload_resource* upload_ib =
-      FindLastUploadForHandle(buf, len, dev.up_index_buffer->handle);
+  const aerogpu_cmd_upload_resource* upload_ib = FindLastUploadForHandle(buf, len, dev.up_index_buffer->handle);
 
   assert(upload0 != nullptr);
   assert(upload1 != nullptr);
@@ -219,6 +243,234 @@ int main() {
   assert(upload_ib->size_bytes == sizeof(expected_indices_u32));
   const uint8_t* payload_ib = reinterpret_cast<const uint8_t*>(upload_ib) + sizeof(*upload_ib);
   assert(std::memcmp(payload_ib, expected_indices_u32, sizeof(expected_indices_u32)) == 0);
+}
 
+void TestIndexedTriangleListInstancedDivisor() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  const Vec4 vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x200;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  // 3 instances, divisor 2 => 2 elements. Element0 used for inst0+inst1, element1 for inst2.
+  const InstanceData inst_elems[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x201;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(inst_elems);
+  vb1.storage.resize(sizeof(inst_elems));
+  std::memcpy(vb1.storage.data(), inst_elems, sizeof(inst_elems));
+
+  const uint16_t indices_u16[3] = {0, 1, 2};
+  aerogpu::Resource ib{};
+  ib.handle = 0x202;
+  ib.kind = aerogpu::ResourceKind::Buffer;
+  ib.size_bytes = sizeof(indices_u16);
+  ib.storage.resize(sizeof(indices_u16));
+  std::memcpy(ib.storage.data(), indices_u16, sizeof(indices_u16));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+  dev.index_buffer = &ib;
+  dev.index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+  dev.index_offset_bytes = 0;
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 3u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 2u;
+
+  const HRESULT hr = aerogpu::device_draw_indexed_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*base_vertex=*/0,
+      /*min_index=*/0,
+      /*num_vertices=*/3,
+      /*start_index=*/0,
+      /*primitive_count=*/1);
+  assert(hr == S_OK);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const aerogpu_cmd_upload_resource* upload1 =
+      FindLastUploadForHandle(buf, len, dev.instancing_vertex_buffers[1]->handle);
+  assert(upload1 != nullptr);
+
+  // Expanded stream1: inst0 x3, inst0 x3, inst1 x3 (because divisor=2).
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 9;
+  assert(upload1->offset_bytes == 0);
+  assert(upload1->size_bytes == expected_vb1_bytes);
+  std::vector<uint8_t> expected_vb1(expected_vb1_bytes, 0);
+  for (int v = 0; v < 3; ++v) {
+    std::memcpy(expected_vb1.data() + (size_t)v * sizeof(InstanceData), &inst_elems[0], sizeof(InstanceData));
+  }
+  for (int v = 0; v < 3; ++v) {
+    std::memcpy(expected_vb1.data() + (size_t)(3 + v) * sizeof(InstanceData), &inst_elems[0], sizeof(InstanceData));
+  }
+  for (int v = 0; v < 3; ++v) {
+    std::memcpy(expected_vb1.data() + (size_t)(6 + v) * sizeof(InstanceData), &inst_elems[1], sizeof(InstanceData));
+  }
+  const uint8_t* payload1 = reinterpret_cast<const uint8_t*>(upload1) + sizeof(*upload1);
+  assert(std::memcmp(payload1, expected_vb1.data(), expected_vb1.size()) == 0);
+}
+
+void TestNonIndexedTriangleListBasic() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  const Vec4 vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x300;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x301;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*start_vertex=*/0,
+      /*primitive_count=*/1);
+  assert(hr == S_OK);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw>(buf, len, AEROGPU_CMD_DRAW);
+  assert(draws.size() == 1);
+  assert(draws[0]->first_vertex == 0);
+  assert(draws[0]->vertex_count == 6);
+
+  const aerogpu_cmd_upload_resource* upload1 =
+      FindLastUploadForHandle(buf, len, dev.instancing_vertex_buffers[1]->handle);
+  assert(upload1 != nullptr);
+
+  // Validate expanded stream 1 upload size: 2 instances * 3 vertices.
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 6;
+  assert(upload1->size_bytes == expected_vb1_bytes);
+}
+
+void TestNonIndexedTriangleStripDrawsPerInstance() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Triangle strip with primitive_count=2 uses 4 vertices.
+  const Vec4 vertices[4] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+      {1.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x400;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x401;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLESTRIP,
+      /*start_vertex=*/0,
+      /*primitive_count=*/2);
+  assert(hr == S_OK);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw>(buf, len, AEROGPU_CMD_DRAW);
+  assert(draws.size() == 2);
+  assert(draws[0]->first_vertex == 0);
+  assert(draws[0]->vertex_count == 4);
+  assert(draws[1]->first_vertex == 4);
+  assert(draws[1]->vertex_count == 4);
+}
+
+} // namespace
+
+int main() {
+  TestIndexedTriangleListBasic();
+  TestIndexedTriangleListInstancedDivisor();
+  TestNonIndexedTriangleListBasic();
+  TestNonIndexedTriangleStripDrawsPerInstance();
   return 0;
 }
