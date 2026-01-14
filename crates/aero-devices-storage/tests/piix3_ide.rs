@@ -1980,6 +1980,41 @@ fn bus_master_registers_mask_command_bits_and_require_dword_prd_writes() {
 }
 
 #[test]
+fn bus_master_status_advertises_dma_capability_for_attached_ata_drive() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+
+    // Bus Master IDE registers decode when PCI I/O space is enabled; bus mastering is not required
+    // to observe the DMA capability bits.
+    ide.borrow_mut().config_mut().set_command(0x0001);
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let bm_base = ide.borrow().bus_master_base();
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0, "BMIDE status bits should be clear at reset");
+    assert_ne!(
+        st & 0x20,
+        0,
+        "BMIDE DMA capability bit for master should be set"
+    );
+    assert_eq!(st & 0x40, 0, "BMIDE DMA capability bit for slave should be clear");
+
+    // Controller reset should clear runtime status bits but preserve capability bits derived from
+    // attached devices.
+    ide.borrow_mut().controller.reset();
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0);
+    assert_ne!(st & 0x20, 0);
+}
+
+#[test]
 fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
