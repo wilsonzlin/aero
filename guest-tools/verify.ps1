@@ -1192,7 +1192,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.3"
+         version = "2.5.4"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1329,7 +1329,8 @@ try {
         $mDetails += "Tip: If you obtained the media as a .zip/.iso, ensure the full directory contents were copied intact."
     } else {
         $mediaIntegrity.manifest_present = $true
-        $raw = Get-Content -Path $manifestPath -ErrorAction Stop | Out-String
+        # Use the encoding-aware reader for robustness (manifest.json is typically UTF-8).
+        $raw = Read-TextFileWithEncodingDetection $manifestPath
         $parsed = Parse-JsonCompat $raw
         if (-not $parsed) {
             $mStatus = "FAIL"
