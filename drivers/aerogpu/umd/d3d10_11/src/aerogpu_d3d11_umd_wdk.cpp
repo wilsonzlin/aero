@@ -3027,7 +3027,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     cmd->buffer_handle = res->handle;
@@ -3409,7 +3409,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     cmd->texture_handle = res->handle;
