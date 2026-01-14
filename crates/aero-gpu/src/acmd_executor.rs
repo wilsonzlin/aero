@@ -480,12 +480,14 @@ fn is_bc_format(format: u32) -> bool {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor() -> Option<&'static Mutex<AeroGpuAcmdExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuAcmdExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -502,11 +504,20 @@ mod tests {
         .copied()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn with_executor<R>(f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
         let exec = shared_executor()?;
         let mut exec = exec.lock().unwrap();
         exec.reset();
         Some(f(&mut exec))
+    }
+
+    // The ACMD executor unit tests mostly validate behavior by issuing wgpu submissions to a
+    // headless device. For `wasm32-unknown-unknown` CI builds we only need these tests to compile
+    // (they are not run), so avoid constructing global statics containing non-Send WebGPU types.
+    #[cfg(target_arch = "wasm32")]
+    fn with_executor<R>(_f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
+        None
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

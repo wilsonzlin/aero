@@ -4305,6 +4305,7 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
@@ -4381,6 +4382,7 @@ mod tests {
             .ok()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor_bc_off() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -4392,6 +4394,7 @@ mod tests {
         .copied()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor_bc_on() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -4405,6 +4408,7 @@ mod tests {
         .copied()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn with_executor<R>(bc_enabled: bool, f: impl FnOnce(&mut AeroGpuExecutor) -> R) -> Option<R> {
         let exec = if bc_enabled {
             shared_executor_bc_on()?
@@ -4414,6 +4418,20 @@ mod tests {
         let mut exec = exec.lock().unwrap();
         exec.reset();
         Some(f(&mut exec))
+    }
+
+    // The majority of these executor unit tests validate behavior by allocating a headless wgpu
+    // device and executing command streams. For `wasm32-unknown-unknown` CI builds we only compile
+    // these tests (they are not executed), and wgpu WebGPU types are not `Send`/`Sync` on wasm.
+    //
+    // Provide a stub helper so tests can early-return via `let Some(...) = with_executor(...) else { return; };`
+    // without needing to build a global executor cache on wasm.
+    #[cfg(target_arch = "wasm32")]
+    fn with_executor<R>(
+        _bc_enabled: bool,
+        _f: impl FnOnce(&mut AeroGpuExecutor) -> R,
+    ) -> Option<R> {
+        None
     }
 
     #[test]

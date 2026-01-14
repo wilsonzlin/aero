@@ -10567,8 +10567,11 @@ mod tests {
         build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,
         AerogpuD3d9Executor, AerogpuFormat, D3d9SamplerState,
     };
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::sync::{Mutex, OnceLock};
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor() -> Option<&'static Mutex<AerogpuD3d9Executor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AerogpuD3d9Executor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -10583,11 +10586,20 @@ mod tests {
         .copied()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn with_executor<R>(f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
         let exec = shared_executor()?;
         let mut exec = exec.lock().unwrap();
         exec.reset();
         Some(f(&mut exec))
+    }
+
+    // Most of the D3D9 executor unit tests rely on a headless wgpu device. Those tests are not
+    // executed for `wasm32-unknown-unknown` in CI; they are only compiled. Avoid pulling non-Send
+    // WebGPU types (wgpu Device/Queue/etc) into global statics on wasm, which is rejected by Rust.
+    #[cfg(target_arch = "wasm32")]
+    fn with_executor<R>(_f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
+        None
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
