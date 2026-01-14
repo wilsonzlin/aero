@@ -311,20 +311,39 @@ function queueInputBatch(buffer: ArrayBuffer, recycle: boolean): void {
   if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
     queuedInputBatches.push({ buffer, recycle });
     queuedInputBatchBytes += buffer.byteLength;
-  } else if (recycle) {
+  } else {
     // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
-    postInputBatchRecycle(buffer);
+    const st = status;
+    if (st) Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
+    if (recycle) {
+      postInputBatchRecycle(buffer);
+    }
   }
 }
 
 function handleInputBatch(buffer: ArrayBuffer): void {
+  const st = status;
   const m = machine;
   if (!m) return;
 
   const decoded = validateInputBatchBuffer(buffer);
-  if (!decoded.ok) return;
+  if (!decoded.ok) {
+    if (st) Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
+    return;
+  }
 
-  const { words, count } = decoded;
+  const { words, count, claimedCount } = decoded;
+  if (st) {
+    // Maintain the same shared status telemetry indices as the legacy I/O worker so existing
+    // UIs/tests that track `ioBatches`/`ioEvents` remain meaningful when input is injected by the
+    // machine CPU worker.
+    Atomics.add(st, StatusIndex.IoInputBatchCounter, 1);
+    Atomics.add(st, StatusIndex.IoInputEventCounter, count);
+    if (count !== claimedCount) {
+      // Count clamping as a "drop" for telemetry parity with io.worker.ts.
+      Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
+    }
+  }
   const base = INPUT_BATCH_HEADER_WORDS;
   for (let i = 0; i < count; i += 1) {
     const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
@@ -868,6 +887,8 @@ ctx.onmessage = (ev) => {
     const buffer = input.buffer;
     if (!(buffer instanceof ArrayBuffer)) return;
     const recycle = input.recycle === true;
+    const st = status;
+    if (st) Atomics.add(st, StatusIndex.IoInputBatchReceivedCounter, 1);
 
     // Don't call into WASM while snapshot-paused or while an async machine op is in flight
     // (wasm-bindgen `&mut self` reentrancy).
