@@ -486,7 +486,10 @@ fn xhci_snapshot_clears_pending_dma_on_run_when_controller_halted() {
     const TAG_USBCMD: u16 = 1;
     const TAG_PENDING_DMA_ON_RUN: u16 = 29;
 
-    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 9));
+    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(
+        *b"XHCI",
+        XhciController::DEVICE_VERSION,
+    );
     w.field_u32(TAG_USBCMD, 0);
     w.field_bool(TAG_PENDING_DMA_ON_RUN, true);
     let bytes = w.finish();
