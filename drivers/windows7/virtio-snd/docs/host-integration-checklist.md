@@ -80,6 +80,16 @@ The driver needs **at least one usable interrupt mechanism** (unless you explici
   - [ ] **MSI/MSI-X** message interrupts (`CM_RESOURCE_INTERRUPT_MESSAGE`)
   - [ ] **INTx** line-based interrupts
 
+To quickly confirm what Windows (and the driver) selected at runtime:
+
+- The driver prints an always-on `START_DEVICE` diagnostic line indicating its chosen interrupt mode:
+  - `virtiosnd: interrupt mode: MSI/MSI-X ...`
+  - `virtiosnd: interrupt mode: INTx`
+  - `virtiosnd: interrupt mode: polling-only`
+- `aero-virtio-selftest.exe` emits a `virtio-snd-irq|INFO|...` line indicating what Windows assigned:
+  - `virtio-snd-irq|INFO|mode=intx`
+  - `virtio-snd-irq|INFO|mode=msi|messages=<n>`
+
 ### MSI/MSI-X (message-signaled interrupts)
 
 - [ ] Device exposes PCI MSI/MSI-X so Windows can allocate message interrupts (the canonical INF sets `Interrupt Management\\MessageSignaledInterruptProperties\\MSISupported=1`).
