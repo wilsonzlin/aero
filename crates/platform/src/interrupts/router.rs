@@ -506,6 +506,15 @@ impl PlatformInterrupts {
         self.lapics.len()
     }
 
+    /// Iterate over all local APICs (LAPICs) in APIC ID order.
+    ///
+    /// The platform stores LAPICs as `Arc<LocalApic>` to allow machine integrations to hold stable
+    /// references across reset/snapshot restore. Most LAPIC APIs use interior mutability, so a
+    /// shared reference is sufficient for reset/poll/injection.
+    pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
         self.lapics
             .get(cpu_index)
