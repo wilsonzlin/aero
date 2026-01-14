@@ -169,7 +169,8 @@ impl VhdDynamicHeader {
 /// Unsupported:
 /// - Any features that require interpreting backing chains automatically (e.g. resolving parent
 ///   locators to filesystem paths). Differencing disks (`disk_type=4`) are supported only via
-///   [`VhdDisk::open_differencing`] with an explicitly supplied parent disk.
+///   [`VhdDisk::open_differencing`] (or [`VhdDisk::open_with_parent`]) with an explicitly supplied
+///   parent disk.
 pub struct VhdDisk<B> {
     backend: B,
     footer: VhdFooter,
@@ -707,6 +708,16 @@ impl<B: StorageBackend> VhdDisk<B> {
 
     pub fn into_backend(self) -> B {
         self.backend
+    }
+
+    /// Open a differencing VHD (`disk_type=4`) using an explicitly provided parent disk.
+    ///
+    /// This does **not** implement on-disk parent locator/path resolution; callers must open the
+    /// backing disk themselves (which may itself be another disk image format) and supply it here.
+    ///
+    /// Alias for [`VhdDisk::open_differencing`].
+    pub fn open_with_parent(backend: B, parent: Box<dyn VirtualDisk + Send>) -> Result<Self> {
+        Self::open_differencing(backend, parent)
     }
 
     fn backend_read_at(&mut self, offset: u64, buf: &mut [u8], ctx: &'static str) -> Result<()> {
