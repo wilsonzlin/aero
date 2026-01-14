@@ -381,6 +381,8 @@ assign any other device to `00:02.0`.
 00:0a.1  - virtio-input mouse
 00:0b.0  - virtio-snd
 00:0c.0  - Transitional VGA/VBE PCI stub (Bochs/QEMU "Standard VGA"-like identity; `aero_gpu_vga` LFB routing). Must not collide with AeroGPU at `00:07.0`.
+00:0d.0  - xHCI (USB 3.x) controller (optional/experimental; Win7 has no in-box xHCI driver; see `docs/usb-xhci.md`)
+00:12.0  - EHCI (USB 2.0) controller (optional; Win7 in-box `usbehci.sys`; see `docs/usb-ehci.md`)
 ```
 
 ### Note on VGA / display today
