@@ -1625,7 +1625,12 @@ fn bus_master_bar4_relocation_affects_registered_ports() {
 #[test]
 fn atapi_read_10_dma_via_bus_master() {
     let mut iso = MemIso::new(1);
-    iso.data[0..8].copy_from_slice(b"DMATEST!");
+    // Fill the first (and only) 2048-byte sector with a deterministic pattern so we can validate
+    // the full DMA payload, not just a prefix.
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
     ide.borrow_mut().controller.attach_secondary_master_atapi(
@@ -1673,20 +1678,55 @@ fn atapi_read_10_dma_via_bus_master() {
     read10[7..9].copy_from_slice(&1u16.to_be_bytes());
     send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
 
+    // ACK the packet-phase interrupt (DRQ for PACKET data) so we can observe that the DMA
+    // completion itself raises a new interrupt.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(
+        !ide.borrow().controller.secondary_irq_pending(),
+        "IRQ should be clear before starting the DMA engine"
+    );
+
     // Start the secondary bus master engine, direction=read (device -> memory).
     ioports.write(bm_base + 8, 1, 0x09);
     ide.borrow_mut().tick(&mut mem);
 
-    let mut out = [0u8; 8];
+    let mut out = vec![0u8; 2048];
     mem.read_physical(dma_buf, &mut out);
-    assert_eq!(&out, b"DMATEST!");
+    assert_eq!(out, expected);
 
     // Bus master status should indicate interrupt and no error.
     let st = ioports.read(bm_base + 8 + 2, 1) as u8;
-    assert_ne!(st & 0x04, 0);
-    assert_eq!(st & 0x02, 0);
+    assert_eq!(st & 0x01, 0, "BMIDE active bit should be clear after completion");
+    assert_ne!(st & 0x04, 0, "BMIDE IRQ bit should be set on completion");
+    assert_eq!(st & 0x02, 0, "BMIDE ERR bit should be clear");
 
-    assert!(ide.borrow().controller.secondary_irq_pending());
+    // ATAPI interrupt reason: status phase.
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8, 0x03);
+
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "IDE IRQ line should be asserted on DMA completion"
+    );
+
+    // Acknowledge the IDE interrupt by reading STATUS (standard IDE behavior).
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(
+        !ide.borrow().controller.secondary_irq_pending(),
+        "reading STATUS should clear the IDE IRQ latch"
+    );
+
+    // BMIDE status IRQ bit is separate from the IDE IRQ line latch and must be cleared via RW1C.
+    assert_ne!(
+        ioports.read(bm_base + 8 + 2, 1) as u8 & 0x04,
+        0,
+        "BMIDE IRQ bit should remain set until explicitly cleared"
+    );
+    ioports.write(bm_base + 8 + 2, 1, 0x04);
+    assert_eq!(
+        ioports.read(bm_base + 8 + 2, 1) as u8 & 0x04,
+        0,
+        "BMIDE IRQ bit should clear via RW1C"
+    );
 }
 
 #[test]
