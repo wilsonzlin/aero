@@ -1985,8 +1985,8 @@ GS/HS/DS **D3D resources** in `@group(3)`:
   `@group(0) @binding(0..2)`, HS resources in `@group(3)`.
 - Tessellation DS evaluation (`runtime/tessellation/domain_eval.rs`): patch meta + HS outputs at
   `@group(0)`, DS resources in `@group(3)`.
-- GS scaffolding (`runtime/gs_translate.rs`): expansion outputs + params + `gs_inputs` at
-  `@group(0)`, (future) GS resources in `@group(3)`.
+- GS scaffolding (`runtime/gs_translate.rs`): expansion outputs + counters + params + `gs_inputs` at
+  `@group(0)`, and (when referenced) GS `cb#[]` constant buffers in `@group(3)`.
 
 This works because WebGPU bind groups are **per pipeline**: internal compute pipelines can choose
 different group layouts than application render pipelines. When using this layout style, the
