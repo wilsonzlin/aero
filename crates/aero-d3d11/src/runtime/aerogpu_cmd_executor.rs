@@ -8804,6 +8804,97 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
+    fn exec_draw_indexed<'a>(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'a>,
+        cmd_bytes: &[u8],
+    ) -> Result<()> {
+        // struct aerogpu_cmd_draw_indexed (28 bytes)
+        if cmd_bytes.len() < 28 {
+            bail!(
+                "DRAW_INDEXED: expected at least 28 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+        let index_count = read_u32_le(cmd_bytes, 8)?;
+        let instance_count = read_u32_le(cmd_bytes, 12)?;
+        let first_index = read_u32_le(cmd_bytes, 16)?;
+        let base_vertex = read_i32_le(cmd_bytes, 20)?;
+        let first_instance = read_u32_le(cmd_bytes, 24)?;
+
+        let index_range = first_index..first_index.saturating_add(index_count);
+        let instances = first_instance..first_instance.saturating_add(instance_count);
+
+        // wgpu's native primitive restart appears unreliable on some GL backends. When drawing
+        // indexed strip topologies, emulate restart by scanning index data on the CPU and splitting
+        // the draw into multiple segments that omit restart indices entirely.
+        let emulate_restart = self.backend == wgpu::Backend::Gl
+            && matches!(
+                self.state.primitive_topology,
+                CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::TriangleStrip
+            );
+
+        if !emulate_restart || index_count == 0 || instance_count == 0 {
+            pass.draw_indexed(index_range, base_vertex, instances);
+            return Ok(());
+        }
+
+        let Some(ib) = self.state.index_buffer else {
+            bail!("DRAW_INDEXED without index buffer");
+        };
+        let buf = self
+            .resources
+            .buffers
+            .get(&ib.buffer)
+            .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+
+        let Some(shadow) = buf.shadow.as_deref() else {
+            // Should be rare (shadow is allocated for index buffers on GL), but fall back to wgpu's
+            // built-in behavior if we can't inspect the index data.
+            pass.draw_indexed(index_range, base_vertex, instances);
+            return Ok(());
+        };
+
+        let (stride_bytes, restart_value) = match ib.format {
+            wgpu::IndexFormat::Uint16 => (2usize, u16::MAX as u32),
+            wgpu::IndexFormat::Uint32 => (4usize, u32::MAX),
+        };
+
+        // Compute the byte offset for the first index in the draw call.
+        let start_byte = ib
+            .offset_bytes
+            .checked_add(first_index as u64 * stride_bytes as u64)
+            .ok_or_else(|| anyhow!("DRAW_INDEXED: index buffer offset overflows u64"))?;
+        let start_byte = usize::try_from(start_byte)
+            .context("DRAW_INDEXED: index buffer offset overflows usize")?;
+
+        let mut seg_start = 0u32;
+        let mut byte_off = start_byte;
+        for i in 0..index_count {
+            let idx = read_index_from_shadow(shadow, byte_off, ib.format);
+            if idx == restart_value {
+                if i > seg_start {
+                    pass.draw_indexed(
+                        first_index + seg_start..first_index + i,
+                        base_vertex,
+                        instances.clone(),
+                    );
+                }
+                seg_start = i + 1;
+            }
+            byte_off = byte_off.saturating_add(stride_bytes);
+        }
+        if seg_start < index_count {
+            pass.draw_indexed(
+                first_index + seg_start..first_index + index_count,
+                base_vertex,
+                instances,
+            );
+        }
+
+        Ok(())
+    }
+
     fn exec_create_buffer(&mut self, cmd_bytes: &[u8], allocs: &AllocTable) -> Result<()> {
         // struct aerogpu_cmd_create_buffer (40 bytes)
         if cmd_bytes.len() < 40 {
@@ -9963,6 +10054,80 @@ impl AerogpuD3d11Executor {
                 dst_gpa,
                 size_bytes,
             });
+        }
+
+        // If the destination has a CPU shadow copy, keep it in sync with the GPU copy.
+        //
+        // This is best-effort: if we cannot source the copied bytes (e.g. host-owned src without a
+        // shadow), invalidate the destination shadow to avoid future CPU-side consumers observing
+        // stale data.
+        let dst_has_shadow = self
+            .resources
+            .buffers
+            .get(&dst_buffer)
+            .is_some_and(|dst| dst.shadow.is_some());
+        if dst_has_shadow {
+            let size_usize: usize = size_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
+            let src_offset_usize: usize = src_offset_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: src_offset_bytes out of range"))?;
+            let dst_offset_usize: usize = dst_offset_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: dst_offset_bytes out of range"))?;
+
+            let src_bytes: Option<Vec<u8>> = if let Some(src_shadow) = self
+                .resources
+                .buffers
+                .get(&src_buffer)
+                .and_then(|src| src.shadow.as_deref())
+            {
+                let end = src_offset_usize
+                    .checked_add(size_usize)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: src shadow range overflows usize"))?;
+                src_shadow.get(src_offset_usize..end).map(|s| s.to_vec())
+            } else if let Some(src_backing) = self
+                .resources
+                .buffers
+                .get(&src_buffer)
+                .and_then(|src| src.backing)
+            {
+                allocs.validate_range(
+                    src_backing.alloc_id,
+                    src_backing.offset_bytes + src_offset_bytes,
+                    size_bytes,
+                )?;
+                let gpa =
+                    allocs.gpa(src_backing.alloc_id)? + src_backing.offset_bytes + src_offset_bytes;
+                let mut tmp = vec![0u8; size_usize];
+                guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
+                Some(tmp)
+            } else {
+                None
+            };
+
+            match src_bytes {
+                Some(bytes) => {
+                    if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
+                        if let Some(dst_shadow) = dst.shadow.as_mut() {
+                            let end =
+                                dst_offset_usize.checked_add(size_usize).ok_or_else(|| {
+                                    anyhow!("COPY_BUFFER: dst shadow range overflows usize")
+                                })?;
+                            if end > dst_shadow.len() {
+                                bail!("COPY_BUFFER: dst shadow update out of bounds");
+                            }
+                            dst_shadow[dst_offset_usize..end].copy_from_slice(&bytes);
+                        }
+                    }
+                }
+                None => {
+                    if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
+                        dst.shadow = None;
+                    }
+                }
+            }
         }
 
         // The destination GPU buffer content has changed; discard any pending "dirty" ranges that
@@ -14899,25 +15064,28 @@ fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()
     Ok(())
 }
 
-fn exec_draw_indexed<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
-    // struct aerogpu_cmd_draw_indexed (28 bytes)
-    if cmd_bytes.len() < 28 {
-        bail!(
-            "DRAW_INDEXED: expected at least 28 bytes, got {}",
-            cmd_bytes.len()
-        );
+fn read_index_from_shadow(shadow: &[u8], byte_offset: usize, format: wgpu::IndexFormat) -> u32 {
+    match format {
+        wgpu::IndexFormat::Uint16 => {
+            if byte_offset + 2 <= shadow.len() {
+                u16::from_le_bytes([shadow[byte_offset], shadow[byte_offset + 1]]) as u32
+            } else {
+                0
+            }
+        }
+        wgpu::IndexFormat::Uint32 => {
+            if byte_offset + 4 <= shadow.len() {
+                u32::from_le_bytes([
+                    shadow[byte_offset],
+                    shadow[byte_offset + 1],
+                    shadow[byte_offset + 2],
+                    shadow[byte_offset + 3],
+                ])
+            } else {
+                0
+            }
+        }
     }
-    let index_count = read_u32_le(cmd_bytes, 8)?;
-    let instance_count = read_u32_le(cmd_bytes, 12)?;
-    let first_index = read_u32_le(cmd_bytes, 16)?;
-    let base_vertex = read_i32_le(cmd_bytes, 20)?;
-    let first_instance = read_u32_le(cmd_bytes, 24)?;
-    pass.draw_indexed(
-        first_index..first_index.saturating_add(index_count),
-        base_vertex,
-        first_instance..first_instance.saturating_add(instance_count),
-    );
-    Ok(())
 }
 
 struct CmdExecutorBindGroupProvider<'a> {

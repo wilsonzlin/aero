@@ -258,6 +258,7 @@ fn build_stream_two_ib_two_draws(
     ib_u16_bytes: &[u8],
     ib_u32_bytes: &[u8],
     topology: AerogpuPrimitiveTopology,
+    first_is_u16: bool,
     index_count_u16: u32,
     index_count_u32: u32,
 ) -> Vec<u8> {
@@ -467,34 +468,41 @@ fn build_stream_two_ib_two_draws(
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
     end_cmd(&mut stream, start);
 
-    // SET_INDEX_BUFFER (IB16)
+    let (first_handle, first_format, first_count, second_handle, second_format, second_count) =
+        if first_is_u16 {
+            (IB16, 0u32, index_count_u16, IB32, 1u32, index_count_u32)
+        } else {
+            (IB32, 1u32, index_count_u32, IB16, 0u32, index_count_u16)
+        };
+
+    // SET_INDEX_BUFFER (first)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetIndexBuffer as u32);
-    stream.extend_from_slice(&IB16.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // format = u16
+    stream.extend_from_slice(&first_handle.to_le_bytes());
+    stream.extend_from_slice(&first_format.to_le_bytes());
     stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
     end_cmd(&mut stream, start);
 
-    // DRAW_INDEXED (IB16)
+    // DRAW_INDEXED (first)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DrawIndexed as u32);
-    stream.extend_from_slice(&index_count_u16.to_le_bytes()); // index_count
+    stream.extend_from_slice(&first_count.to_le_bytes()); // index_count
     stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_index
     stream.extend_from_slice(&0i32.to_le_bytes()); // base_vertex
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
     end_cmd(&mut stream, start);
 
-    // SET_INDEX_BUFFER (IB32)
+    // SET_INDEX_BUFFER (second)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetIndexBuffer as u32);
-    stream.extend_from_slice(&IB32.to_le_bytes());
-    stream.extend_from_slice(&1u32.to_le_bytes()); // format = u32
+    stream.extend_from_slice(&second_handle.to_le_bytes());
+    stream.extend_from_slice(&second_format.to_le_bytes());
     stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
     end_cmd(&mut stream, start);
 
-    // DRAW_INDEXED (IB32)
+    // DRAW_INDEXED (second)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DrawIndexed as u32);
-    stream.extend_from_slice(&index_count_u32.to_le_bytes()); // index_count
+    stream.extend_from_slice(&second_count.to_le_bytes()); // index_count
     stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_index
     stream.extend_from_slice(&0i32.to_le_bytes()); // base_vertex
@@ -854,6 +862,7 @@ fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes() {
             bytemuck::bytes_of(&indices_u16),
             bytemuck::bytes_of(&indices_u32),
             AerogpuPrimitiveTopology::TriangleStrip,
+            true,
             indices_u16.len() as u32,
             indices_u32.len() as u32,
         );
@@ -887,5 +896,128 @@ fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes() {
             "expected the u32 draw to treat 0xFFFF as a vertex (not restart) and fill the gap"
         );
         assert_eq!(px(32, 32), &[0, 0, 0, 255], "expected a gap between draws");
+    });
+}
+
+#[test]
+fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes_u32_to_u16() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const WIDTH: u32 = 64;
+        const HEIGHT: u32 = 64;
+        const RT: u32 = 3;
+
+        // First draw: u32 index buffer.
+        //
+        // Second draw: u16 index buffer that includes 0xFFFF. This must be treated as a strip-restart
+        // marker when the format is u16. If the executor fails to rebuild the strip pipeline after
+        // switching formats, the stale `strip_index_format=Uint32` would treat 0xFFFF as a *real*
+        // vertex index (65535) and incorrectly bridge the strip across the gap.
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let mut vertices = vec![
+            Vertex {
+                pos: [0.0, 0.0, 0.0],
+                color: [0.0, 0.0, 0.0, 0.0],
+            };
+            65536
+        ];
+        // Top quad (indices 0..4).
+        vertices[0] = Vertex {
+            pos: [-0.9, 0.2, 0.0],
+            color: white,
+        };
+        vertices[1] = Vertex {
+            pos: [-0.9, 0.9, 0.0],
+            color: white,
+        };
+        vertices[2] = Vertex {
+            pos: [0.9, 0.2, 0.0],
+            color: white,
+        };
+        vertices[3] = Vertex {
+            pos: [0.9, 0.9, 0.0],
+            color: white,
+        };
+
+        // Bottom geometry: two triangles with a gap around x=0.
+        vertices[4] = Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            color: white,
+        };
+        vertices[5] = Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            color: white,
+        };
+        vertices[6] = Vertex {
+            pos: [-0.25, 0.0, 0.0],
+            color: white,
+        };
+        vertices[7] = Vertex {
+            pos: [0.2, -1.0, 0.0],
+            color: white,
+        };
+        vertices[8] = Vertex {
+            pos: [1.0, 1.0, 0.0],
+            color: white,
+        };
+        vertices[9] = Vertex {
+            pos: [1.0, -1.0, 0.0],
+            color: white,
+        };
+        // Bridge vertex for the u16 draw (index 65535 / 0xFFFF).
+        vertices[65535] = Vertex {
+            pos: [0.0, 0.0, 0.0],
+            color: white,
+        };
+        let vb_bytes = bytemuck::cast_slice(vertices.as_slice());
+
+        let indices_u32: [u32; 4] = [0, 1, 2, 3];
+        let indices_u16: [u16; 7] = [4, 5, 6, 0xFFFF, 7, 8, 9];
+        let stream = build_stream_two_ib_two_draws(
+            vb_bytes,
+            bytemuck::bytes_of(&indices_u16),
+            bytemuck::bytes_of(&indices_u32),
+            AerogpuPrimitiveTopology::TriangleStrip,
+            false,
+            indices_u16.len() as u32,
+            indices_u32.len() as u32,
+        );
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        assert_eq!(pixels.len(), WIDTH as usize * HEIGHT as usize * 4);
+        let w = WIDTH as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        assert_eq!(px(32, 16), &[255, 255, 255, 255], "top quad missing");
+        assert_eq!(
+            px(8, 48),
+            &[255, 255, 255, 255],
+            "expected bottom-left triangle coverage"
+        );
+        assert_eq!(
+            px(60, 48),
+            &[255, 255, 255, 255],
+            "expected bottom-right triangle coverage"
+        );
+        assert_eq!(
+            px(32, 48),
+            &[0, 0, 0, 255],
+            "expected u16 restart (0xFFFF) to split the strip and preserve the gap"
+        );
     });
 }
