@@ -215,7 +215,7 @@ Behavior summary:
 - Only handles CORS preflight requests (requests with `Origin` and `Access-Control-Request-Method`).
 - Validates `Origin` against `cors_allowed_origins` (exact origin match like `https://app.example.com`, or `*`).
 - Returns `204` and includes:
-  - `Access-Control-Allow-Origin: <origin>`
+  - `Access-Control-Allow-Origin: <origin>` (or `*` when configured with a wildcard allowlist and no credentials)
   - `Access-Control-Allow-Methods: GET,HEAD,OPTIONS`
   - `Access-Control-Allow-Headers: ...` (from `cors_allowed_headers`, must include `Range`)
   - `Access-Control-Allow-Credentials: true` (only when `cors_allow_credentials = true`)

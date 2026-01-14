@@ -47,6 +47,17 @@ function isOriginAllowed(origin) {
   return false;
 }
 
+function hasWildcardOrigin() {
+  for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
+    var pattern = ALLOWED_ORIGINS[i];
+    if (!pattern) continue;
+    if (String(pattern).toLowerCase() === "*") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function handler(event) {
   var request = event.request;
 
@@ -75,6 +86,13 @@ function handler(event) {
     };
   }
 
+  // If configured with a wildcard allowlist and not using credentials, prefer returning
+  // `Access-Control-Allow-Origin: *` to avoid unnecessary origin-dependent caching.
+  var allowOriginValue = origin;
+  if (!ALLOW_CREDENTIALS && hasWildcardOrigin()) {
+    allowOriginValue = "*";
+  }
+
   var reqMethod = String(acrm).toUpperCase();
   if (reqMethod !== "GET" && reqMethod !== "HEAD") {
     return {
@@ -88,7 +106,7 @@ function handler(event) {
     statusDescription: "No Content",
     headers: (function() {
       var headers = {
-        "access-control-allow-origin": { "value": origin },
+        "access-control-allow-origin": { "value": allowOriginValue },
         "access-control-allow-methods": { "value": "GET,HEAD,OPTIONS" },
         "access-control-allow-headers": { "value": ALLOWED_HEADERS.join(",") },
         "access-control-max-age": { "value": String(MAX_AGE_SECONDS) },
