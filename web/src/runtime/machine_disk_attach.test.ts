@@ -160,7 +160,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_primary_hdd_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
     expect(set_disk_opfs_existing_and_set_overlay_ref).not.toHaveBeenCalled();
     expect(set_disk_opfs_existing).not.toHaveBeenCalled();
-    expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
   it("falls back to set_disk_opfs_existing(path, \"aerospar\") when attaching an aerosparse HDD and dedicated aerospar exports are unavailable", async () => {

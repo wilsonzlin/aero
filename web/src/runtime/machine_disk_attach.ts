@@ -254,6 +254,9 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     (machine as unknown as { setPrimaryHddOpfsExisting?: unknown }).setPrimaryHddOpfsExisting;
   if (typeof setPrimaryExisting === "function") {
     await callMaybeAsync(setPrimaryExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
+    // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0 even if
+    // older WASM builds did not set it inside `set_primary_hdd_opfs_existing`.
+    setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
     return;
   }
 
