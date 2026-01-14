@@ -112,6 +112,46 @@ fn control_no_data(dev: &mut crate::device::AttachedUsbDevice, setup: crate::Set
 }
 
 #[test]
+fn xhci_context_helpers_ignore_slot0_scratchpad_entry() {
+    let mut mem = TestMem::new(0x10_000);
+    let dcbaa = 0x1000u64;
+    let scratchpad = 0x2000u64;
+
+    let mut ctrl = XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    // DCBAA entry 0 is reserved for the scratchpad buffer array pointer (not a Device Context).
+    // Guard against any accidental use of slot 0 in context helpers by ensuring they do not read
+    // or write through this pointer.
+    mem.write_u64(dcbaa, scratchpad);
+
+    // Fill the scratchpad region with a sentinel pattern so accidental writes are observable.
+    mem.data[scratchpad as usize..scratchpad as usize + 0x100].fill(0xAA);
+
+    assert!(
+        ctrl.read_endpoint_state_from_context(&mut mem, 0, 1).is_none(),
+        "slot 0 should never resolve to a valid Endpoint Context state"
+    );
+    assert!(
+        ctrl.read_endpoint_dequeue_from_context(&mut mem, 0, 1).is_none(),
+        "slot 0 should never resolve to a valid TR Dequeue Pointer"
+    );
+
+    ctrl.write_endpoint_dequeue_to_context(&mut mem, 0, 1, 0x1234_5678, true);
+    assert!(
+        !ctrl.write_endpoint_state_to_context(&mut mem, 0, 1, super::context::EndpointState::Halted),
+        "writing endpoint state for slot 0 should be rejected"
+    );
+
+    assert!(
+        mem.data[scratchpad as usize..scratchpad as usize + 0x100]
+            .iter()
+            .all(|&b| b == 0xAA),
+        "context helpers must not modify the scratchpad region when slot_id == 0"
+    );
+}
+
+#[test]
 fn controller_endpoint_commands_update_device_context_and_ring_state() {
     let mut mem = TestMem::new(0x20_000);
     let dcbaa = 0x1000u64;
