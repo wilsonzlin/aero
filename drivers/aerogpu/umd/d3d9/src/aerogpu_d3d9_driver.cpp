@@ -11009,6 +11009,9 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
     dev->cursor_bitmap = nullptr;
     dev->cursor_visible = FALSE;
     dev->cursor_hw_active = false;
+    // Invalidate any in-flight SetCursorProperties call that may still be
+    // programming hardware cursor state after releasing the device mutex.
+    dev->cursor_bitmap_serial++;
     if (was_hw_active && dev->adapter) {
       aerogpu_escape_set_cursor_visibility_in vis{};
       vis.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -17364,7 +17367,21 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
   // If we successfully programmed the hardware cursor shape, also synchronize the
   // current cached position/visibility so we don't rely on the runtime to
   // redundantly call SetCursorPosition/ShowCursor after SetCursorProperties.
-  if (hw_ok && adapter) {
+  //
+  // Guard all follow-up cursor escapes on `cursor_bitmap_serial` to avoid a
+  // stale SetCursorProperties call overriding a more recent cursor update (e.g.
+  // hiding the hardware cursor after a newer shape was successfully programmed).
+  bool still_current = false;
+  if (adapter) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    still_current = (dev->cursor_bitmap_serial == serial);
+    if (still_current) {
+      cur_x = dev->cursor_x;
+      cur_y = dev->cursor_y;
+      cur_visible = dev->cursor_visible;
+    }
+  }
+  if (still_current && hw_ok && adapter) {
     aerogpu_escape_set_cursor_visibility_in vis{};
     init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
     vis.visible = cur_visible ? 1u : 0u;
@@ -17381,7 +17398,7 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
   // If we previously had an active hardware cursor and failed to update the
   // shape, attempt to hide the hardware cursor so we can fall back to the
   // software cursor overlay without double-rendering.
-  if (!hw_ok && prev_hw_active && adapter) {
+  if (still_current && !hw_ok && prev_hw_active && adapter) {
     aerogpu_escape_set_cursor_visibility_in vis{};
     init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
     vis.visible = 0;
