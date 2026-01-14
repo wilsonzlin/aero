@@ -442,6 +442,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test hid_gamepad_snapshot_clamping \
   --test hid_keyboard_snapshot_sanitization \
   --test hid_keyboard_leds \
+  --test hid_mouse_report_generation \
   --test hid_mouse_snapshot_clamping \
   --test usb_hub_snapshot_configuration_clamping \
   --test attached_device_snapshot_address_clamping \
