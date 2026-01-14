@@ -2212,7 +2212,9 @@ impl XhciController {
             v |= regs::USBSTS_HCE;
         }
 
-        v
+        // xHCI reserved bits read as 0; ensure any host/test-provided values do not leak into the
+        // guest-visible register surface.
+        v & regs::USBSTS_SNAPSHOT_MASK
     }
 
     fn mmio_read_u8(&self, offset: u64) -> u8 {
