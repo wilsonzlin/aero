@@ -13,9 +13,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Detect a virtio disk device (SetupAPI hardware IDs).
   - Query the `aero_virtio_blk` miniport (via `IOCTL_SCSI_MINIPORT`) and validate basic configuration/feature bits.
     - The selftest emits a dedicated machine-readable marker for StorPort recovery counters when the
-      miniport IOCTL payload includes the recovery counter region (the optional `capacity_change_events` field may be
-      reported as `not_supported` on older miniport builds):
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
+      miniport IOCTL payload includes the full counter region (including `capacity_change_events`):
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=...`
     - The selftest also logs additional miniport diagnostics when present in the IOCTL payload:
       - `virtio-blk-miniport-flags|INFO|raw=...|removed=...|surprise_removed=...|reset_in_progress=...|reset_pending=...`
