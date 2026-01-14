@@ -236,6 +236,12 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
+
+  # If set, require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is
+  # present and bound to the expected Aero driver service).
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioInputBinding,
+
   # If set, require at least one checksum-offloaded TX packet in the virtio-net driver.
   # This checks the guest marker:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...
@@ -877,6 +883,9 @@ function Wait-AeroSelftestResult {
     # If true, require the virtio-input-msix marker to report mode=msix.
     [Parameter(Mandatory = $false)]
     [bool]$RequireVirtioInputMsixPass = $false,
+    # If true, require the virtio-input-binding marker to report PASS (PCI binding/service validation).
+    [Parameter(Mandatory = $false)]
+    [bool]$RequireVirtioInputBindingPass = $false,
     # If true, require the guest selftest to be configured to fail virtio-blk on INTx (expect MSI/MSI-X),
     # i.e. `AERO_VIRTIO_SELFTEST|CONFIG|...|expect_blk_msi=1`.
     [Parameter(Mandatory = $false)]
@@ -920,6 +929,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioInputFail = $false
   $sawVirtioInputBindPass = $false
   $sawVirtioInputBindFail = $false
+  $sawVirtioInputBindingPass = $false
+  $sawVirtioInputBindingFail = $false
+  $sawVirtioInputBindingSkip = $false
   $virtioInputMarkerTime = $null
   $sawVirtioInputEventsReady = $false
   $sawVirtioInputEventsPass = $false
@@ -1138,6 +1150,15 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioInputBindFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-bind\|FAIL") {
         $sawVirtioInputBindFail = $true
       }
+      if (-not $sawVirtioInputBindingPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-binding\|PASS") {
+        $sawVirtioInputBindingPass = $true
+      }
+      if (-not $sawVirtioInputBindingFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-binding\|FAIL") {
+        $sawVirtioInputBindingFail = $true
+      }
+      if (-not $sawVirtioInputBindingSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-binding\|SKIP") {
+        $sawVirtioInputBindingSkip = $true
+      }
       if (-not $sawVirtioInputEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|READY") {
         $sawVirtioInputEventsReady = $true
       }
@@ -1345,6 +1366,15 @@ function Wait-AeroSelftestResult {
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
         if ($RequireExpectBlkMsi -and ((-not $sawConfigExpectBlkMsi) -or $configExpectBlkMsi -ne "1")) {
           return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
+        }
+        if ($RequireVirtioInputBindingPass) {
+          if ($sawVirtioInputBindingFail) {
+            return @{ Result = "VIRTIO_INPUT_BINDING_FAILED"; Tail = $tail }
+          }
+          if (-not $sawVirtioInputBindingPass) {
+            if ($sawVirtioInputBindingSkip) { return @{ Result = "VIRTIO_INPUT_BINDING_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_INPUT_BINDING"; Tail = $tail }
+          }
         }
         if ($RequirePerTestMarkers) {
           # Require per-test markers so older selftest binaries cannot accidentally pass the host harness.
@@ -3165,6 +3195,69 @@ function Try-EmitAeroVirtioInputBindMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioInputBindingMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+ 
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+ 
+  $toks = $line.Split("|")
+ 
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+ 
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+ 
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|$status"
+ 
+  # Keep ordering stable for log scraping.
+  $ordered = @(
+    "reason",
+    "expected",
+    "actual",
+    "service",
+    "pnp_id",
+    "hwid0",
+    "cm_problem",
+    "cm_status"
+  )
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+ 
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+ 
+  foreach ($k in ($fields.Keys | Where-Object { (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+ 
+  Write-Host $out
+}
+ 
 function Try-EmitAeroVirtioBlkMsixMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -6339,6 +6432,7 @@ try {
         -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
         -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
         -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
+        -RequireVirtioInputBindingPass ([bool]$RequireVirtioInputBinding) `
         -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
         -RequireExpectBlkMsi ([bool]$RequireExpectBlkMsi) `
         -RequireVirtioNetLinkFlapPass ([bool]$needNetLinkFlap) `
@@ -6439,6 +6533,7 @@ try {
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioInputBindMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioInputBindingMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioInputMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
@@ -6739,6 +6834,45 @@ try {
     }
     "MISSING_VIRTIO_INPUT_MSIX" {
       Write-Host "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while -RequireVirtioInputMsix was enabled (guest selftest too old?)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_BINDING" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_BINDING: did not observe virtio-input-binding PASS marker while -RequireVirtioInputBinding was enabled (guest selftest too old?)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_BINDING_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while -RequireVirtioInputBinding was enabled (guest selftest too old?)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_BINDING_FAILED" {
+      $reason = "unknown"
+      $expected = ""
+      $actual = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^\\|\\r\\n]+)") { $reason = $Matches[1] }
+        if ($line -match "expected=([^\\|\\r\\n]+)") { $expected = $Matches[1] }
+        if ($line -match "actual=([^\\|\\r\\n]+)") { $actual = $Matches[1] }
+      }
+      $details = "reason=$reason"
+      if (-not [string]::IsNullOrEmpty($expected)) { $details += " expected=$expected" }
+      if (-not [string]::IsNullOrEmpty($actual)) { $details += " actual=$actual" }
+      Write-Host "FAIL: VIRTIO_INPUT_BINDING_FAILED: virtio-input-binding marker reported FAIL while -RequireVirtioInputBinding was enabled ($details)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

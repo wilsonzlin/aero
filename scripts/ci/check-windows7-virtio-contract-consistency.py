@@ -411,8 +411,9 @@ def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -
         # Accept either `kExpectedService = L"..."` or `kExpectedService[] = L"..."`.
         "virtio-net": re.compile(r'\bkExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-input expected service name (PCI binding validation).
-        # Accept either `kVirtioInputExpectedService = L"..."` or
-        # `kVirtioInputExpectedService[] = L"..."` (older style).
+        # Accept both pointer + array style declarations:
+        #   static constexpr const wchar_t* kVirtioInputExpectedService = L"...";
+        #   static constexpr const wchar_t kVirtioInputExpectedService[] = L"...";
         "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-snd modern / transitional service name expectations.
         "virtio-snd": re.compile(
