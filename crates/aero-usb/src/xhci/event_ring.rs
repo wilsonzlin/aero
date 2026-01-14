@@ -11,6 +11,9 @@
 
 use crate::MemoryBus;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::SnapshotResult;
+
 use super::interrupter::InterrupterRegs;
 use super::trb::{Trb, TRB_LEN};
 
@@ -76,6 +79,61 @@ pub(crate) struct EventRingProducer {
 }
 
 impl EventRingProducer {
+    pub(crate) fn save_snapshot(&self) -> Vec<u8> {
+        Encoder::new()
+            .u16(self.erstsz)
+            .u64(self.erstba)
+            .u64(self.last_erst_gen)
+            .u16(self.prod_pos.seg)
+            .u32(self.prod_pos.off)
+            .bool(self.prod_cycle)
+            .u16(self.cons_pos.seg)
+            .u32(self.cons_pos.off)
+            .bool(self.cons_cycle)
+            .u64(self.last_erdp_gen)
+            .bool(self.ready)
+            .finish()
+    }
+
+    pub(crate) fn load_snapshot(&mut self, buf: &[u8]) -> SnapshotResult<()> {
+        let mut d = Decoder::new(buf);
+        self.erstsz = d.u16()?;
+        self.erstba = d.u64()? & !0x3f;
+        self.last_erst_gen = d.u64()?;
+
+        self.prod_pos.seg = d.u16()?;
+        self.prod_pos.off = d.u32()?;
+        self.prod_cycle = d.bool()?;
+
+        self.cons_pos.seg = d.u16()?;
+        self.cons_pos.off = d.u32()?;
+        self.cons_cycle = d.bool()?;
+        self.last_erdp_gen = d.u64()?;
+
+        self.ready = d.bool()?;
+        d.finish()?;
+
+        // Defensive validation: if the restored positions don't make sense for the configured ERST
+        // size, mark the ring as not ready so it will be re-initialised from ERDP on first use.
+        if self.erstsz == 0 || self.erstba == 0 {
+            self.ready = false;
+            self.prod_pos = RingPos { seg: 0, off: 0 };
+            self.cons_pos = RingPos { seg: 0, off: 0 };
+            self.prod_cycle = true;
+            self.cons_cycle = true;
+        } else {
+            if self.prod_pos.seg >= self.erstsz || self.cons_pos.seg >= self.erstsz {
+                self.ready = false;
+                self.prod_pos = RingPos { seg: 0, off: 0 };
+                self.cons_pos = RingPos { seg: 0, off: 0 };
+                self.prod_cycle = true;
+                self.cons_cycle = true;
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn refresh(&mut self, mem: &mut dyn MemoryBus, intr: &InterrupterRegs) {
         // Detect ERST configuration changes (including resets) and reinitialise the ring state.
         let new_erstsz = intr.erstsz();

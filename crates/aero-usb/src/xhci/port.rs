@@ -383,4 +383,14 @@ impl XhciPort {
         self.port_reset_change = true;
         true
     }
+
+    pub(crate) fn save_snapshot(&self) -> Vec<u8> {
+        // Reuse the legacy `save_snapshot_record` encoding so older xHCI snapshots that stored
+        // per-port state under TAG_PORTS can still be decoded by newer builds.
+        self.save_snapshot_record()
+    }
+
+    pub(crate) fn load_snapshot(&mut self, buf: &[u8]) -> SnapshotResult<()> {
+        self.load_snapshot_record(buf)
+    }
 }

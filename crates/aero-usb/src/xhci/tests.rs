@@ -865,3 +865,154 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
         super::ControlTdState::default()
     );
 }
+
+#[test]
+fn controller_snapshot_roundtrip_is_deterministic() {
+    use aero_io_snapshot::io::state::IoSnapshot;
+
+    use super::context::SlotContext;
+    use super::interrupter::IMAN_IE;
+    use super::ring::RingCursor;
+    use super::trb::{Trb, TrbType};
+    use super::{regs, CommandCompletionCode, XhciController, PORTSC_PR};
+
+    use crate::hid::UsbHidKeyboardHandle;
+
+    let mut mem = TestMem::new(0x40_000);
+
+    // Program a tiny event ring: a single TRB deep so we can force the ring-full condition and keep
+    // some controller-side pending events around for snapshot coverage.
+    let erstba = 0x1000u64;
+    let ring_base = 0x2000u64;
+    mem.write_u64(erstba, ring_base);
+    mem.write_u32(erstba + 8, 1);
+    mem.write_u32(erstba + 12, 0);
+
+    // Use a non-default port count so the snapshot exercises port vector resizing.
+    let mut xhci = XhciController::with_port_count(3);
+
+    // Mutate architectural registers.
+    xhci.usbcmd = 0x1122_3344;
+    // `usbsts` stores only non-derived bits; mask out EINT/HCH/HCE so roundtrips are stable.
+    xhci.usbsts = 0x5566_7788 & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+    // CRCR contains the command ring dequeue pointer (64-byte aligned) + low flag bits (cycle).
+    let cmd_ring_ptr = 0x5000u64;
+    xhci.crcr = cmd_ring_ptr | 1;
+    xhci.sync_command_ring_from_crcr();
+    xhci.set_dcbaap(0x8000);
+    xhci.config = 0x210;
+    xhci.mfindex = 0x1234;
+
+    // Configure interrupter 0 (this bumps generation counters which are part of the snapshot).
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    // Attach a device so port snapshots include a nested `AttachedUsbDevice` record.
+    let keyboard = UsbHidKeyboardHandle::new();
+    xhci.attach_device(0, Box::new(keyboard.clone()));
+
+    // Mutate port state (start a reset so the timer is non-zero).
+    xhci.write_portsc(0, PORTSC_PR);
+    for _ in 0..10 {
+        xhci.tick_1ms();
+    }
+
+    // Also mutate device state so the nested device snapshot isn't trivially default.
+    keyboard.key_event(0x04, true); // HID usage for "A".
+
+    // Enable a slot and bind it to the attached device (exercises slot + endpoint snapshot fields).
+    let enable = xhci.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    assert_eq!(enable.slot_id, 1);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = xhci.address_device(1, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    // Seed additional controller-local execution state so snapshot covers endpoint + control TD
+    // bookkeeping.
+    xhci.host_controller_error = true;
+    xhci.cmd_kick = true;
+    xhci.active_endpoints.push(super::ActiveEndpoint {
+        slot_id: 1,
+        endpoint_id: 1,
+    });
+    xhci.ep0_control_td[1].data_expected = 8;
+    xhci.ep0_control_td[1].data_transferred = 4;
+
+    // Add some endpoint + transfer ring cursor state.
+    {
+        let slot = &mut xhci.slots[1];
+        slot.device_context_ptr = 0xdead_beef_0000;
+        slot.endpoint_contexts[0].set_dword(0, 0x0102_0304);
+        slot.transfer_rings[0] = Some(RingCursor::new(0x9000, true));
+    }
+
+    // Queue a host-side event (in addition to the port status change event) and service the guest
+    // event ring once to mutate the producer cursor + IMAN.IP.
+    let mut evt = Trb::default();
+    evt.parameter = 0x1111_2222_3333_4444;
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+    xhci.service_event_ring(&mut mem);
+
+    // Non-zero drop counter coverage.
+    xhci.dropped_event_trbs = 7;
+
+    let snapshot1 = xhci.save_state();
+    let snapshot2 = xhci.save_state();
+    assert_eq!(snapshot1, snapshot2, "snapshot bytes must be deterministic");
+
+    let mut restored = XhciController::new();
+    restored
+        .load_state(&snapshot1)
+        .expect("snapshot should load");
+
+    // State should round-trip (spot-check a few representative fields).
+    assert_eq!(restored.port_count, xhci.port_count);
+    assert_eq!(restored.usbcmd, xhci.usbcmd);
+    assert_eq!(restored.usbsts, xhci.usbsts);
+    assert_eq!(restored.host_controller_error, xhci.host_controller_error);
+    assert_eq!(restored.crcr, xhci.crcr);
+    assert_eq!(restored.dcbaap, xhci.dcbaap);
+    assert_eq!(restored.config, xhci.config);
+    assert_eq!(restored.mfindex, xhci.mfindex);
+    assert_eq!(restored.command_ring, xhci.command_ring);
+    assert_eq!(restored.cmd_kick, xhci.cmd_kick);
+    assert_eq!(restored.active_endpoints, xhci.active_endpoints);
+    assert_eq!(restored.ep0_control_td, xhci.ep0_control_td);
+    assert_eq!(restored.interrupter0.iman_raw(), xhci.interrupter0.iman_raw());
+    assert_eq!(restored.interrupter0.erst_gen, xhci.interrupter0.erst_gen);
+    assert_eq!(restored.interrupter0.erdp_gen, xhci.interrupter0.erdp_gen);
+    assert_eq!(
+        restored.event_ring.save_snapshot(),
+        xhci.event_ring.save_snapshot()
+    );
+    assert_eq!(restored.ports[0].save_snapshot(), xhci.ports[0].save_snapshot());
+    assert_eq!(restored.slots[1].enabled, xhci.slots[1].enabled);
+    assert_eq!(restored.slots[1].port_id, xhci.slots[1].port_id);
+    assert_eq!(
+        restored.slots[1].device_context_ptr,
+        xhci.slots[1].device_context_ptr
+    );
+    assert_eq!(
+        restored.slots[1].endpoint_contexts[0].dword(0),
+        xhci.slots[1].endpoint_contexts[0].dword(0)
+    );
+    assert_eq!(
+        restored.slots[1].transfer_rings[0].unwrap().dequeue_ptr(),
+        xhci.slots[1].transfer_rings[0].unwrap().dequeue_ptr()
+    );
+    assert_eq!(restored.pending_events, xhci.pending_events);
+    assert_eq!(restored.dropped_event_trbs, xhci.dropped_event_trbs);
+    assert!(restored.slot_device_mut(1).is_some());
+
+    // A save after restore should reproduce byte-identical snapshots.
+    let snapshot3 = restored.save_state();
+    assert_eq!(snapshot1, snapshot3);
+}
