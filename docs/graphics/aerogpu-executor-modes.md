@@ -28,6 +28,10 @@ By default, `aero-machine` **does not execute** the AeroGPU `AEROGPU_CMD` stream
 in early bring-up, submissions are treated as **no-op** and fences are completed so the guest can
 continue.
 
+If scanout/vblank timing is enabled and a submission contains a `PRESENT` with the `VSYNC` flag, the
+device model may **pace fence completion until the next vblank tick** (even though it is otherwise
+not executing the command stream). This is important for Win7/DWM stability expectations.
+
 This mode is useful when you only need:
 
 - correct PCI identity / BAR wiring,
@@ -79,5 +83,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_
 # Fence completion gating / backend switching behavior
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_complete_fence_gating --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_deferred_fence_completion --locked
-```
 
+# Default-mode vblank pacing for VSYNC presents
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vsync_fence_pacing --locked
+```
