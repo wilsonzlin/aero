@@ -386,6 +386,9 @@ fn detect_aerospar_header_is_detected_as_sparse() {
     let storage = MemStorage::default();
     let disk = emulator::io::storage::formats::SparseDisk::create(storage, 512, 32, 1024).unwrap();
     let mut storage = disk.into_storage();
+    let mut magic = [0u8; 8];
+    storage.read_at(0, &mut magic).unwrap();
+    assert_eq!(&magic, b"AEROSPAR");
     assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
 }
 
