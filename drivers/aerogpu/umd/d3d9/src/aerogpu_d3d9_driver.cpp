@@ -10859,8 +10859,59 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
   }
 
   const bool same_resource = (src_res == dst_res);
-  const bool bounding_overlap =
-      same_resource && (src_start_offset < dst_end_offset) && (dst_start_offset < src_end_offset);
+
+  // When ProcessVertices reads and writes the same buffer, the touched byte ranges
+  // are strided, not contiguous. A "copy direction" heuristic based only on the
+  // starting offsets is insufficient when `src_stride != dst_stride`: destination
+  // writes from earlier/later vertices may clobber source bytes that have not yet
+  // been read.
+  //
+  // Match "read all source first, then write all destinations" semantics by
+  // staging source bytes into a temporary buffer when the strided regions overlap.
+  const auto strided_ranges_overlap = [&](uint64_t a_start,
+                                          uint32_t a_stride,
+                                          uint64_t b_start,
+                                          uint32_t b_stride,
+                                          uint32_t chunk_size,
+                                          uint32_t count) -> bool {
+    if (count == 0 || chunk_size == 0) {
+      return false;
+    }
+
+    const uint64_t a_stride_u64 = static_cast<uint64_t>(a_stride);
+    const uint64_t b_stride_u64 = static_cast<uint64_t>(b_stride);
+    const uint64_t chunk_u64 = static_cast<uint64_t>(chunk_size);
+
+    uint32_t i = 0;
+    uint32_t j = 0;
+    while (i < count && j < count) {
+      const uint64_t a0 = a_start + static_cast<uint64_t>(i) * a_stride_u64;
+      const uint64_t a1 = a0 + chunk_u64;
+      const uint64_t b0 = b_start + static_cast<uint64_t>(j) * b_stride_u64;
+      const uint64_t b1 = b0 + chunk_u64;
+
+      if (a0 < b1 && b0 < a1) {
+        return true;
+      }
+
+      // Advance whichever interval ends first (intervals are sorted by start).
+      if (a1 <= b0) {
+        ++i;
+      } else {
+        ++j;
+      }
+    }
+    return false;
+  };
+
+  bool needs_staging = false;
+  if (same_resource && src_stride != dst_stride) {
+    // Fast reject: bounding ranges don't overlap.
+    const bool bounding_overlap = (src_start_offset < dst_end_offset) && (dst_start_offset < src_end_offset);
+    if (bounding_overlap) {
+      needs_staging = strided_ranges_overlap(src_start_offset, src_stride, dst_start_offset, dst_stride, copy_stride, vertex_count);
+    }
+  }
 
   const uint8_t* src_base = nullptr;
   uint8_t* dst_base = nullptr;
@@ -10917,6 +10968,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
   WddmScopedLock dst_lock{};
 #endif
 
+  // Map source and destination bytes.
   if (same_resource) {
     if (src_res->storage.size() >= src_res->size_bytes) {
       src_base = src_res->storage.data() + static_cast<size_t>(src_start_offset);
@@ -10977,7 +11029,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     }
   }
 
-  if (bounding_overlap && src_stride != dst_stride) {
+  if (needs_staging) {
     // Stride conversions can overlap even when the first dst byte is higher than
     // the first src byte (or vice versa). Rather than trying to infer a safe
     // iteration direction, stage the source bytes before writing any destination
@@ -10994,16 +11046,12 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     }
 
     for (uint32_t i = 0; i < vertex_count; ++i) {
-      const uint64_t src_off = static_cast<uint64_t>(i) * static_cast<uint64_t>(src_stride);
-      std::memcpy(staged.data() + static_cast<size_t>(i) * copy_stride,
-                  src_base + static_cast<size_t>(src_off),
-                  copy_stride);
+      const uint8_t* src = src_base + static_cast<size_t>(i) * src_stride;
+      std::memcpy(staged.data() + static_cast<size_t>(i) * copy_stride, src, copy_stride);
     }
     for (uint32_t i = 0; i < vertex_count; ++i) {
-      const uint64_t dst_off = static_cast<uint64_t>(i) * static_cast<uint64_t>(dst_stride);
-      std::memcpy(dst_base + static_cast<size_t>(dst_off),
-                  staged.data() + static_cast<size_t>(i) * copy_stride,
-                  copy_stride);
+      uint8_t* dst = dst_base + static_cast<size_t>(i) * dst_stride;
+      std::memcpy(dst, staged.data() + static_cast<size_t>(i) * copy_stride, copy_stride);
     }
   } else {
     const auto copy_vertex = [&](uint32_t i) {

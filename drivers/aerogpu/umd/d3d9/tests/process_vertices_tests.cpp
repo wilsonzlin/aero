@@ -61,6 +61,11 @@ void write_u32(std::vector<uint8_t>& bytes, size_t offset, uint32_t v) {
   std::memcpy(bytes.data() + offset, &v, 4);
 }
 
+void write_pattern(std::vector<uint8_t>& bytes, size_t offset, size_t len, uint8_t v) {
+  assert(offset + len <= bytes.size());
+  std::memset(bytes.data() + offset, v, len);
+}
+
 void test_xyz_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
@@ -903,6 +908,120 @@ void test_copy_xyzrhw_diffuse_offsets() {
   assert(std::memcmp(dst.storage.data() + dst_off, src.storage.data() + src_off, 3 * 20) == 0);
 }
 
+void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Force the ProcessVertices memcpy-style fallback path.
+  dev.user_vs = reinterpret_cast<Shader*>(0x1);
+
+  constexpr uint32_t kVertexCount = 4;
+  constexpr uint32_t kSrcStride = 16;
+  constexpr uint32_t kDstStride = 8;
+  constexpr uint32_t kCopyStride = 8;
+
+  Resource buf;
+  buf.kind = ResourceKind::Buffer;
+  buf.size_bytes = 64;
+  buf.storage.resize(buf.size_bytes);
+  std::memset(buf.storage.data(), 0xCD, buf.storage.size());
+
+  // Source starts at 0, destination starts inside the source region (offset 8).
+  constexpr uint32_t kSrcStartIndex = 0;
+  constexpr uint32_t kDestIndex = 1;
+  const size_t src_start_offset = static_cast<size_t>(kSrcStartIndex) * kSrcStride;
+  const size_t dst_start_offset = static_cast<size_t>(kDestIndex) * kDstStride;
+
+  for (uint32_t i = 0; i < kVertexCount; ++i) {
+    write_pattern(buf.storage, src_start_offset + static_cast<size_t>(i) * kSrcStride, kCopyStride, static_cast<uint8_t>(0x10u + i));
+  }
+
+  const std::vector<uint8_t> initial = buf.storage;
+  std::vector<uint8_t> expected = initial;
+  for (uint32_t i = 0; i < kVertexCount; ++i) {
+    std::memcpy(expected.data() + dst_start_offset + static_cast<size_t>(i) * kDstStride,
+                initial.data() + src_start_offset + static_cast<size_t>(i) * kSrcStride,
+                kCopyStride);
+  }
+
+  dev.streams[0].vb = &buf;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = kSrcStride;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = kSrcStartIndex;
+  pv.DestIndex = kDestIndex;
+  pv.VertexCount = kVertexCount;
+  pv.hDestBuffer.pDrvPrivate = &buf;
+  pv.hVertexDecl.pDrvPrivate = nullptr;
+  pv.Flags = 0;
+  pv.DestStride = kDstStride;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+  assert(buf.storage == expected);
+}
+
+void test_process_vertices_fallback_inplace_overlap_src_inside_dst() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Force the ProcessVertices memcpy-style fallback path.
+  dev.user_ps = reinterpret_cast<Shader*>(0x1);
+
+  constexpr uint32_t kVertexCount = 4;
+  constexpr uint32_t kSrcStride = 8;
+  constexpr uint32_t kDstStride = 16;
+  constexpr uint32_t kCopyStride = 8;
+
+  Resource buf;
+  buf.kind = ResourceKind::Buffer;
+  buf.size_bytes = 64;
+  buf.storage.resize(buf.size_bytes);
+  std::memset(buf.storage.data(), 0xEF, buf.storage.size());
+
+  // Destination starts at 0, source starts inside the destination region (offset 8).
+  constexpr uint32_t kSrcStartIndex = 1;
+  constexpr uint32_t kDestIndex = 0;
+  const size_t src_start_offset = static_cast<size_t>(kSrcStartIndex) * kSrcStride;
+  const size_t dst_start_offset = static_cast<size_t>(kDestIndex) * kDstStride;
+
+  for (uint32_t i = 0; i < kVertexCount; ++i) {
+    write_pattern(buf.storage, src_start_offset + static_cast<size_t>(i) * kSrcStride, kCopyStride, static_cast<uint8_t>(0x80u + i));
+  }
+
+  const std::vector<uint8_t> initial = buf.storage;
+  std::vector<uint8_t> expected = initial;
+  for (uint32_t i = 0; i < kVertexCount; ++i) {
+    std::memcpy(expected.data() + dst_start_offset + static_cast<size_t>(i) * kDstStride,
+                initial.data() + src_start_offset + static_cast<size_t>(i) * kSrcStride,
+                kCopyStride);
+  }
+
+  dev.streams[0].vb = &buf;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = kSrcStride;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = kSrcStartIndex;
+  pv.DestIndex = kDestIndex;
+  pv.VertexCount = kVertexCount;
+  pv.hDestBuffer.pDrvPrivate = &buf;
+  pv.hVertexDecl.pDrvPrivate = nullptr;
+  pv.Flags = 0;
+  pv.DestStride = kDstStride;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+  assert(buf.storage == expected);
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -918,5 +1037,7 @@ int main() {
   aerogpu::test_xyz_diffuse_offsets();
   aerogpu::test_xyz_diffuse_tex1_offsets();
   aerogpu::test_copy_xyzrhw_diffuse_offsets();
+  aerogpu::test_process_vertices_fallback_inplace_overlap_dst_inside_src();
+  aerogpu::test_process_vertices_fallback_inplace_overlap_src_inside_dst();
   return 0;
 }
