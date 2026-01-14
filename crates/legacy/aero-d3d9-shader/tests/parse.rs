@@ -902,6 +902,29 @@ fn malformed_invalid_register_encoding_errors() {
 }
 
 #[test]
+fn malformed_invalid_register_encoding_without_param_bit_errors() {
+    // Same as `malformed_invalid_register_encoding_errors`, but with bit31 cleared on the invalid
+    // destination token. Some toolchains omit bit31 on parameter tokens; ensure invalid register
+    // type encodings are still rejected (and don't panic or get mis-decoded as immediates).
+    let invalid_reg_token = 0x700F_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0300_0001, // mov (len=3)
+        invalid_reg_token,
+        0x90E4_0000, // v0
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_reg_token,
+            at_token: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_absurdly_large_instruction_length_errors() {
     // Comment instruction with an absurd length (15-bit length field set to max).
     // Ensure we fail with a structured error rather than panicking on bounds/allocations.
@@ -1002,6 +1025,50 @@ fn malformed_unknown_opcode_with_operands_errors() {
             opcode: 0x7777,
             specific: 0,
             at_token: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_unknown_opcode_specific_bits_errors() {
+    // Unknown opcode with a non-zero `specific` field. Ensure the parser preserves the decoded
+    // `specific` bits in the error (stable error variant) and does not attempt to interpret the
+    // instruction as a known opcode.
+    let opcode_token = 0x01AB_7777; // len=1, specific=0xAB, opcode=0x7777
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        opcode_token,
+        0x0000_FFFF, // end (should not be reached)
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::UnknownOpcode {
+            opcode: 0x7777,
+            specific: 0xAB,
+            at_token: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_unknown_opcode_truncated_operand_stream_errors() {
+    // Unknown opcode whose length nibble demands more operand tokens than are present. This should
+    // be treated as a structured truncation error (not a panic) before we even reach the opcode
+    // decode step.
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0400_1234, // unknown opcode 0x1234, len=4 => operand_len=3
+        0x800F_0000, // r0 (only 1 operand token present; 2 missing)
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x1234,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 1,
         }
     );
 }
