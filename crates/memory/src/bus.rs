@@ -1114,7 +1114,10 @@ impl Bus {
 
         let mut out = 0u64;
         for i in 0..size {
-            let byte = self.read_u8(addr.wrapping_add(i as u64));
+            let byte = match addr.checked_add(i as u64) {
+                Some(a) => self.read_u8(a),
+                None => 0xff,
+            };
             out |= (byte as u64) << (i * 8);
         }
         out
@@ -1152,7 +1155,11 @@ impl Bus {
 
         for i in 0..size {
             let byte = ((value >> (i * 8)) & 0xff) as u8;
-            self.write_u8(addr.wrapping_add(i as u64), byte);
+            let Some(a) = addr.checked_add(i as u64) else {
+                // Overflow would wrap the physical address space; treat as out-of-range.
+                return;
+            };
+            self.write_u8(a, byte);
         }
     }
 
@@ -1195,13 +1202,21 @@ impl Bus {
 impl MemoryBus for Bus {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         for (i, slot) in buf.iter_mut().enumerate() {
-            *slot = self.read_u8(paddr.wrapping_add(i as u64));
+            let byte = match paddr.checked_add(i as u64) {
+                Some(a) => self.read_u8(a),
+                None => 0xff,
+            };
+            *slot = byte;
         }
     }
 
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         for (i, byte) in buf.iter().enumerate() {
-            self.write_u8(paddr.wrapping_add(i as u64), *byte);
+            let Some(a) = paddr.checked_add(i as u64) else {
+                // Overflow would wrap the physical address space; treat as out-of-range.
+                return;
+            };
+            self.write_u8(a, *byte);
         }
     }
 }

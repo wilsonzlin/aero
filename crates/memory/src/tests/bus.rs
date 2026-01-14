@@ -80,3 +80,22 @@ fn boundary_crossing_reads_and_writes_are_le_correct() {
     assert_eq!(bus.read_u8(1), 0xAA);
     assert_eq!(bus.read_u8(2), 0xFF);
 }
+
+#[test]
+fn physical_reads_and_writes_do_not_wrap_past_u64_max() {
+    let mut bus = Bus::new(16);
+    // Prime low memory with a sentinel to detect unintended wraparound writes.
+    bus.write_u8(0, 0x11);
+    bus.write_u8(1, 0x22);
+
+    // Reads beyond the u64 address space should behave like unmapped reads (all ones), not wrap to
+    // low RAM.
+    let mut buf = [0u8; 4];
+    bus.read_physical(u64::MAX - 1, &mut buf);
+    assert_eq!(buf, [0xFF; 4]);
+
+    // Writes beyond the u64 address space should be ignored (and must not wrap to low RAM).
+    bus.write_physical(u64::MAX - 1, &[0xAA, 0xBB, 0xCC, 0xDD]);
+    assert_eq!(bus.read_u8(0), 0x11);
+    assert_eq!(bus.read_u8(1), 0x22);
+}
