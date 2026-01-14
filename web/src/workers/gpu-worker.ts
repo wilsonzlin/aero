@@ -168,20 +168,6 @@ const postRuntimeError = (message: string) => {
   ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
 };
 
-function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  // `Uint8Array.buffer` is `ArrayBufferLike` (can be SharedArrayBuffer), but screenshot/cursor
-  // protocols transfer the buffer across worker boundaries. Ensure we always return a plain
-  // `ArrayBuffer` with tight-packed bytes.
-  const buf = bytes.buffer;
-  if (buf instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === buf.byteLength) {
-    return buf;
-  }
-
-  const out = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(out).set(bytes);
-  return out;
-}
-
 let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 let guestU8: Uint8Array | null = null;
