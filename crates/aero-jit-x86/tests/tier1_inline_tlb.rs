@@ -1901,7 +1901,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w32() {
     // address space.
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let mut ram = vec![0u8; 0x2000];
     // High page bytes (phys page 1): offsets 0xFFD..0xFFF.
@@ -1968,7 +1968,7 @@ fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w32() {
     let hi_vpn = u64::MAX >> PAGE_SHIFT;
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let value: u32 = 0x0403_0201;
     let bytes = value.to_le_bytes();
@@ -2028,7 +2028,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w16() {
     let addr = u64::MAX;
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let mut ram = vec![0u8; 0x2000];
     ram[0x1FFF] = 0x34; // byte0 at vaddr=u64::MAX
@@ -2081,7 +2081,7 @@ fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w16() {
     let addr = u64::MAX;
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let mut b = IrBuilder::new(0x1000);
     let a0 = b.const_int(Width::W64, addr);
