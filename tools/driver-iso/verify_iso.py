@@ -9,9 +9,6 @@ import sys
 from pathlib import Path
 
 
-REQUIRED_PACKAGE_IDS = ("virtio-blk", "virtio-net")
-
-
 def _load_manifest(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -41,10 +38,51 @@ def _normalize_iso_path(path: str) -> str:
     return p.lower()
 
 
+def _list_iso_files_with_pycdlib(iso_path: Path) -> set[str]:
+    """
+    List ISO file paths using pycdlib (pure-Python).
+
+    Prefer Joliet paths; fall back to Rock Ridge; finally ISO9660 paths.
+    """
+
+    try:
+        import pycdlib  # type: ignore
+    except ModuleNotFoundError as e:
+        raise SystemExit(
+            "pycdlib is not installed; install it to verify ISO contents without external tools:\n"
+            "  python3 -m pip install pycdlib"
+        ) from e
+
+    iso = pycdlib.PyCdlib()
+    iso.open(str(iso_path))
+    try:
+        last_err = None
+        for mode in ("joliet", "rr", "iso"):
+            try:
+                files: set[str] = set()
+                walk_kwargs: dict[str, str] = {f"{mode}_path": "/"}
+                for root, _dirs, filelist in iso.walk(**walk_kwargs):
+                    for f in filelist:
+                        p = f"{root.rstrip('/')}/{f}"
+                        files.add(_normalize_iso_path(p))
+                return files
+            except BaseException as e:
+                last_err = e
+                continue
+
+        raise SystemExit(f"pycdlib failed to walk the ISO filesystem: {last_err}")
+    finally:
+        iso.close()
+
+
 def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
     xorriso = shutil.which("xorriso")
     if not xorriso:
-        raise SystemExit("xorriso not found; install xorriso to verify ISO contents")
+        raise SystemExit(
+            "xorriso not found; install one of:\n"
+            "- pycdlib: python3 -m pip install pycdlib\n"
+            "- xorriso (via your OS package manager)"
+        )
 
     proc = subprocess.run(
         [xorriso, "-indev", str(iso_path), "-find", "/", "-type", "f", "-print"],
@@ -63,7 +101,12 @@ def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
 def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
     powershell = shutil.which("powershell")
     if not powershell:
-        raise SystemExit("powershell.exe not found; cannot verify ISO contents without xorriso")
+        raise SystemExit(
+            "powershell.exe not found; cannot verify ISO contents.\n"
+            "Install one of:\n"
+            "- pycdlib: python3 -m pip install pycdlib\n"
+            "- xorriso (if available for your platform)"
+        )
 
     script = r"""& {
   param([string]$IsoPath)
@@ -115,18 +158,57 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
 
 
 def _list_iso_files(iso_path: Path) -> set[str]:
+    # Prefer a pure-Python implementation when available so this script works on
+    # Linux/macOS without requiring external ISO tooling.
+    try:
+        import pycdlib  # type: ignore  # noqa: F401
+
+        return _list_iso_files_with_pycdlib(iso_path)
+    except ModuleNotFoundError:
+        pass
+
     xorriso = shutil.which("xorriso")
     if xorriso:
         return _list_iso_files_with_xorriso(iso_path)
     if os.name == "nt":
         return _list_iso_files_with_powershell_mount(iso_path)
-    raise SystemExit("xorriso not found; install xorriso to verify ISO contents")
+    raise SystemExit(
+        "no supported ISO listing backend found.\n"
+        "Install one of:\n"
+        "- pycdlib: python3 -m pip install pycdlib\n"
+        "- xorriso (via your OS package manager)"
+    )
 
 
 def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     if require_arch == "both":
         return ("x86", "amd64")
     return (require_arch,)
+
+
+def _require_unique_manifest_packages(packages: list[dict]) -> None:
+    """
+    Ensure each (id, arch) pair appears only once in the manifest.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    dupes: set[tuple[str, str]] = set()
+    for i, pkg in enumerate(packages):
+        pkg_id = pkg.get("id")
+        arch = pkg.get("arch")
+        if not isinstance(pkg_id, str) or not pkg_id:
+            raise SystemExit(f"manifest package entry #{i} is missing a valid 'id'")
+        if not isinstance(arch, str) or not arch:
+            raise SystemExit(f"manifest package entry #{i} ({pkg_id}) is missing a valid 'arch'")
+        key = (pkg_id, arch)
+        if key in seen:
+            dupes.add(key)
+        else:
+            seen.add(key)
+
+    if dupes:
+        formatted = "\n".join(f"- {pkg_id} ({arch})" for (pkg_id, arch) in sorted(dupes))
+        raise SystemExit(f"manifest has duplicate package entries for the same (id, arch):\n{formatted}")
 
 
 def main() -> int:
@@ -149,6 +231,10 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = _load_manifest(args.manifest)
+    packages = manifest.get("packages", [])
+    if not isinstance(packages, list):
+        raise SystemExit(f"manifest field 'packages' must be a list: {args.manifest}")
+    _require_unique_manifest_packages(packages)
     files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
@@ -158,24 +244,26 @@ def main() -> int:
         missing.append(readme_path)
     if _normalize_iso_path("/THIRD_PARTY_NOTICES.md") not in files:
         missing.append("/THIRD_PARTY_NOTICES.md")
-    packages = manifest.get("packages", [])
-    for pkg_id in REQUIRED_PACKAGE_IDS:
-        for arch in _arches_for_require_arch(args.require_arch):
-            matches = [pkg for pkg in packages if pkg.get("id") == pkg_id and pkg.get("arch") == arch]
-            if not matches:
-                missing.append(f"<manifest entry missing> {pkg_id} ({arch})")
-                continue
-            if len(matches) > 1:
-                missing.append(f"<manifest has multiple entries> {pkg_id} ({arch})")
-                continue
-
-            inf = matches[0].get("inf")
-            if not inf:
-                missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
-                continue
-            want = f"/{inf}"
-            if _normalize_iso_path(want) not in files:
-                missing.append(want)
+    required_arches = set(_arches_for_require_arch(args.require_arch))
+    required_packages = [
+        pkg for pkg in packages if pkg.get("required") is True and pkg.get("arch") in required_arches
+    ]
+    for pkg in required_packages:
+        pkg_id = pkg.get("id")
+        arch = pkg.get("arch")
+        inf = pkg.get("inf")
+        if not isinstance(pkg_id, str) or not pkg_id:
+            missing.append("<manifest missing id> <unknown>")
+            continue
+        if not isinstance(arch, str) or not arch:
+            missing.append(f"<manifest missing arch> {pkg_id}")
+            continue
+        if not isinstance(inf, str) or not inf:
+            missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
+            continue
+        want = "/" + inf.lstrip("/\\")
+        if _normalize_iso_path(want) not in files:
+            missing.append(want)
 
     if missing:
         formatted = "\n".join(f"- {m}" for m in missing)
