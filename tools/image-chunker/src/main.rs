@@ -6026,6 +6026,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_local_manifest_rejects_oversized_manifest_json() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        let manifest_path = dir.path().join("manifest.json");
+        std::fs::File::create(&manifest_path)
+            .with_context(|| format!("create {}", manifest_path.display()))?
+            .set_len((MAX_MANIFEST_JSON_BYTES as u64) + 1)
+            .with_context(|| format!("set_len for {}", manifest_path.display()))?;
+
+        let err = verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .expect_err("expected verify failure");
+        assert!(
+            err.to_string().contains("manifest file") && err.to_string().contains("too large"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_local_manifest_rejects_oversized_meta_json() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        let manifest_path = dir.path().join("manifest.json");
+        let meta_path = dir.path().join("meta.json");
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        std::fs::File::create(&meta_path)
+            .with_context(|| format!("create {}", meta_path.display()))?
+            .set_len((MAX_MANIFEST_JSON_BYTES as u64) + 1)
+            .with_context(|| format!("set_len for {}", meta_path.display()))?;
+
+        let err = verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .expect_err("expected verify failure");
+        assert!(
+            error_chain_summary(&err).contains("meta.json")
+                && error_chain_summary(&err).contains("too large"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_local_manifest_and_chunks_succeeds() -> Result<()> {
         let dir = tempfile::tempdir().context("create tempdir")?;
         tokio::fs::create_dir_all(dir.path().join("chunks"))
