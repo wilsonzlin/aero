@@ -589,9 +589,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), gs);
 
         let ext_base = base + size_of::<AerogpuCmdBindShaders>();
-        self.write_u32_at(ext_base + 0 * size_of::<AerogpuHandle>(), gs);
-        self.write_u32_at(ext_base + 1 * size_of::<AerogpuHandle>(), hs);
-        self.write_u32_at(ext_base + 2 * size_of::<AerogpuHandle>(), ds);
+        let handle_size = size_of::<AerogpuHandle>();
+        self.write_u32_at(ext_base, gs);
+        self.write_u32_at(ext_base + handle_size, hs);
+        self.write_u32_at(ext_base + 2 * handle_size, ds);
     }
 
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {
