@@ -45,4 +45,3 @@ fn tier1_decode_one_mode_does_not_allocate_per_instruction() {
         "tier1 decoder allocated during hot-path decode"
     );
 }
-
