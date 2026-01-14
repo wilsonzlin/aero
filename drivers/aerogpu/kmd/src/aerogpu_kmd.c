@@ -11908,9 +11908,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
     if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_PERF) {
         /*
-         * Backward-compatible: older dbgctl builds may send the original 144-byte
-         * `aerogpu_escape_query_perf_out`. This struct is extended by appending fields;
-         * only write fields that fit in the caller-provided buffer.
+         * Backward-compatible: older dbgctl builds may send a smaller
+         * `aerogpu_escape_query_perf_out` buffer. This struct is extended by appending
+         * fields; only write fields that fit in the caller-provided buffer.
          */
         if (pEscape->PrivateDriverDataSize <
             (offsetof(aerogpu_escape_query_perf_out, reserved0) + sizeof(aerogpu_escape_u32))) {

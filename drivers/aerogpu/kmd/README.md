@@ -574,7 +574,7 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` (see `aerogpu_dbgctl_escape.h`)
   - Returns a best-effort snapshot of perf/health counters, intended for a quick “is the GPU making forward progress” check.
   - Includes ring head/tail, submit counters, IRQ counters, reset counters, and (on newer builds) additional diagnostic fields
-    like contig-pool hit/miss/bytes-saved.
+    like contig-pool hit/miss/bytes-saved and alloc-table counters (count/entries/readonly_entries).
   - The output struct is extended by **appending** new fields; tooling must check `hdr.size` before reading optional fields.
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
   - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
