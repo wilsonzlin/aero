@@ -1974,7 +1974,6 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
         }
 
         const uint32_t entryFlags = AeroGpuAllocTableEntryFlagsFromAllocationListEntry(&List[i]);
-        const BOOLEAN writeOp = ((entryFlags & (uint32_t)AEROGPU_ALLOC_FLAG_READONLY) == 0);
 
         UINT slot = (allocId * 2654435761u) & mask;
         for (;;) {
