@@ -419,6 +419,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`WORLD0*VIEW*PROJECTION` into reserved `c240..c243`)
+- Fixed-function lighting VS constant upload (NORMAL variants): `ensure_fixedfunc_lighting_constants_locked()` (reserved `c244..c253` constant block when `D3DRS_LIGHTING` is enabled)
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
     (see supported combinations above), so the draw path can bind a known input layout.
@@ -468,6 +469,9 @@ Implementation notes (bring-up):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
+  - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
+    variant. When `D3DRS_LIGHTING` is enabled, it uses the lit variant and uploads a reserved lighting constant block
+    (`c244..c253`) via `ensure_fixedfunc_lighting_constants_locked()`.
   - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
     fixed-function and programmable paths.
     - Even so, when switching back to fixed-function WVP vertex shaders the UMD forces a re-upload (`fixedfunc_matrix_dirty`)
