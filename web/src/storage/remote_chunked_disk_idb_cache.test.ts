@@ -40,6 +40,7 @@ async function withServer(handler: (req: IncomingMessage, res: ServerResponse) =
 
 function installQuotaExceededOnRemoteChunksPut(
   disk: RemoteChunkedDisk,
+  opts: { errorName?: string } = {},
 ): { putCalls: { count: number }; restore: () => void } {
   const chunkCache = (disk as unknown as { chunkCache?: unknown }).chunkCache as
     | { cache?: { db?: { transaction: (...args: any[]) => any } } }
@@ -63,7 +64,7 @@ function installQuotaExceededOnRemoteChunksPut(
           const req: { error: unknown; onerror: null | (() => void) } = { error: null, onerror: null };
           (tx as any).requestStarted?.();
           queueMicrotask(() => {
-            const err = new DOMException("quota exceeded", "QuotaExceededError");
+            const err = new DOMException("quota exceeded", opts.errorName ?? "QuotaExceededError");
             req.error = err;
             (tx as any).error = err;
             try {
@@ -247,6 +248,74 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     });
 
     const quota = installQuotaExceededOnRemoteChunksPut(disk);
+
+    const buf1 = new Uint8Array(512);
+    await disk.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(quota.putCalls.count).toBe(2);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    const buf2 = new Uint8Array(512);
+    await disk.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    // With caching disabled, this must re-fetch the chunk.
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    expect(quota.putCalls.count).toBe(2);
+
+    quota.restore();
+    await disk.close();
+  });
+
+  it("tolerates Firefox IndexedDB quota errors when persisting fetched chunks", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      cacheBackend: "idb",
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    const quota = installQuotaExceededOnRemoteChunksPut(disk, { errorName: "NS_ERROR_DOM_QUOTA_REACHED" });
 
     const buf1 = new Uint8Array(512);
     await disk.readSectors(0, buf1);
