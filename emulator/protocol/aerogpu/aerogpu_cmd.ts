@@ -367,7 +367,7 @@ export function resolveStageEx(shaderStage: number, reserved0: number): AerogpuR
       return "hull";
     case AerogpuShaderStageEx.Domain:
       return "domain";
-    case AerogpuShaderStageEx.Vertex:
+    case 1:
       // DXBC program type 1 is Vertex, but Vertex must be encoded via AerogpuShaderStage for clarity.
       throw new Error(`invalid stage_ex value ${reserved0} (Pixel/Vertex must be encoded via shader_stage)`);
     default:
