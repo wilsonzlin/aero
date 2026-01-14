@@ -201,6 +201,14 @@ End-to-end input report delivery is validated by the Win7 harness when enabled:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
+Tablet (absolute pointer) report delivery can also be validated end-to-end:
+
+- Install the tablet INF (`inf/aero_virtio_tablet.inf`) so `virtio-tablet-pci` binds to the driver.
+- Provision the guest selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`).
+- Run the host harness with `-WithTabletEvents` / `--with-tablet-events`.
+- Expected guest marker:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...`
+
 ## Build
 
 ### Supported: WDK10 / MSBuild (CI path)

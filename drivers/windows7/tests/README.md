@@ -46,6 +46,9 @@ drivers/windows7/tests/
   - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
     `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1` to enable it.
+  - Note: This requires a virtio-input **tablet** driver to be installed and bound in the guest. For the in-tree Aero
+    driver stack this is `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (it installs the shared
+    `aero_virtio_input.sys` binary but matches the tablet PCI HWID).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
