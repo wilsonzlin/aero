@@ -430,9 +430,10 @@ Known gaps / limitations (enforced by code/tests):
     - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)
 - Tessellation (Hull/Domain) emulation is bring-up only:
-  - Patchlist draws with both HS+DS bound are routed through a multi-pass compute prepass
-    (VS-as-compute vertex pulling + HS passthrough + layout pass + DS passthrough) that expands into
-    an indexed triangle list for rendering.
+  - Patchlist draws with both HS+DS bound (currently PatchList3 only) are routed through a multi-pass
+    compute prepass (VS-as-compute vertex pulling + HS passthrough + layout pass + DS passthrough)
+    that expands into an indexed triangle list for rendering. This path requires an input layout for
+    vertex pulling.
   - Guest HS/DS DXBC is not executed yet; HS/DS handles are accepted for state/binding only.
   - Patchlist topology without HS/DS still routes through the synthetic expansion prepass.
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)

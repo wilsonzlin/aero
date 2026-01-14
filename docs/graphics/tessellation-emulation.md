@@ -24,8 +24,9 @@ This document describes the chosen HS/DS emulation approach so future contributo
 > - Patchlist topology **without HS/DS bound** currently runs the built-in **synthetic expansion**
 >   compute prepass that expands a deterministic triangle (to validate render-pass splitting +
 >   indirect draw plumbing), not real tessellation semantics.
-> - Patchlist topology **with HS+DS bound** routes through an initial tessellation prepass pipeline
->   (VS-as-compute vertex pulling + HS passthrough + tessellator layout + DS passthrough). Guest
+> - Patchlist topology **with HS+DS bound** (currently PatchList3 only) routes through an initial tessellation prepass pipeline
+>   (VS-as-compute vertex pulling + HS passthrough + tessellator layout + DS passthrough). This path
+>   currently requires an input layout for vertex pulling. Guest
 >   HS/DS DXBC is not executed yet (tess factors are currently fixed in the passthrough HS).
 > - The in-progress tessellation runtime lives under
 >   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
