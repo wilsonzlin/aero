@@ -3,14 +3,15 @@ import type { NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 export type GuestUsbRootPort = 0 | 1;
 
 /**
- * @deprecated Prefer {@link GuestUsbPath}. This only represents a UHCI root port.
+ * @deprecated Prefer {@link GuestUsbPath}. This only represents a root port index and cannot
+ * express hub-backed attachment paths.
  */
 export type GuestUsbPort = GuestUsbRootPort;
 
 /**
  * Guest-side USB attachment path.
  *
- * - `guestPath[0]` is the UHCI root port index (0-based).
+ * - `guestPath[0]` is the root port index (0-based).
  * - `guestPath[1..]` are downstream hub port numbers (1-based, per USB spec).
  */
 export type GuestUsbPath = number[];
@@ -22,7 +23,7 @@ export type GuestUsbPath = number[];
 export type HidAttachHubMessage = {
   type: "hid:attachHub";
   /**
-   * Path to attach the hub at. For UHCI root ports this is `[0]` or `[1]`.
+   * Path to attach the hub at. For the current guest USB topology this is `[0]` or `[1]`.
    */
   guestPath: GuestUsbPath;
   /**

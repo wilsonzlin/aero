@@ -515,16 +515,16 @@ Recommended guardrails:
 
 ## Current limitations (MVP constraints)
 
-- **UHCI root hub: 2 ports**
+- **Guest USB root hub: 2 ports (today)**
   - Only two devices can be attached *directly* to the root hub.
   - The browser/WASM USB stack includes an external USB hub device model (`UsbHubDevice`, USB class
     `0x09`) that can be attached behind a root port to expose additional downstream ports.
     - Implementation: `crates/aero-usb/src/hub/device.rs`
     - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
-  - Current host-side WebHID UI assumes an external hub is attached on UHCI root port 0. The first few
-    downstream hub ports (1..4) are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad/consumer-control),
-    so WebHID passthrough allocations start at guest paths like `0.5`.
-    - UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device, so WebHID attachments
+  - Current host-side WebHID UI assumes an external hub is attached on guest root port 0. The first few
+    downstream hub ports (1..4) are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad/
+    consumer-control), so WebHID passthrough allocations start at guest paths like `0.5`.
+    - Guest root port 1 is reserved for the guest-visible WebUSB passthrough device, so WebHID attachments
       do not use path `1`. Increase the external hub port count instead if you need more guest attachment
       paths.
     - Implementation: `web/src/platform/webhid_passthrough.ts` (guest path allocator + UI hint)
