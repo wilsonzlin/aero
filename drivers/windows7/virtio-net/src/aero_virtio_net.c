@@ -4212,10 +4212,26 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
             AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen,
                                        (const VIRTIO_NET_HDR*)RxHead->BufferVa);
           } else {
+            VIRTIO_NET_HDR_OFFLOAD_RX_INFO RxInfo;
+            BOOLEAN NeedCsumWork;
             PVOID FramePtr;
 
+            // Avoid an expensive full-frame copy when checksum offload isn't
+            // applicable (e.g. DATA_VALID not set, and no partial checksum
+            // completion requested).
+            NeedCsumWork = FALSE;
+            (void)VirtioNetHdrOffloadParseRxHdr((const VIRTIO_NET_HDR*)RxHead->BufferVa, &RxInfo);
+            if (RxInfo.NeedsCsum) {
+              NeedCsumWork = TRUE;
+            } else if (RxInfo.CsumValid) {
+              if (Adapter->RxChecksumV4Enabled || Adapter->RxChecksumV6Enabled || Adapter->RxUdpChecksumV4Enabled ||
+                  Adapter->RxUdpChecksumV6Enabled) {
+                NeedCsumWork = TRUE;
+              }
+            }
+
             FramePtr = NULL;
-            if (RxHead->Nb && Adapter->RxChecksumScratch && TotalPayloadLen <= Adapter->RxChecksumScratchBytes) {
+            if (NeedCsumWork && RxHead->Nb && Adapter->RxChecksumScratch && TotalPayloadLen <= Adapter->RxChecksumScratchBytes) {
               FramePtr = NdisGetDataBuffer(RxHead->Nb, TotalPayloadLen, Adapter->RxChecksumScratch, 1, 0);
             }
             if (FramePtr) {
