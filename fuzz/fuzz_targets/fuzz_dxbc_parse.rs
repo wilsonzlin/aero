@@ -37,6 +37,8 @@ const COMMON_FOURCCS: &[FourCC] = &[
     FourCC(*b"OSG1"),
     FourCC(*b"PSGN"),
     FourCC(*b"PSG1"),
+    FourCC(*b"PCSG"),
+    FourCC(*b"PCG1"),
     FourCC(*b"SHDR"),
     FourCC(*b"SHEX"),
     FourCC(*b"RDEF"),
@@ -57,6 +59,8 @@ fn is_signature_fourcc(fourcc: FourCC) -> bool {
             | [b'O', b'S', b'G', b'1']
             | [b'P', b'S', b'G', b'N']
             | [b'P', b'S', b'G', b'1']
+            | [b'P', b'C', b'S', b'G']
+            | [b'P', b'C', b'G', b'1']
     )
 }
 
@@ -262,13 +266,20 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     } else {
         FourCC(*b"SHEX")
     };
+    let pcsg_fourcc = if selector & 16 == 0 {
+        FourCC(*b"PCSG")
+    } else {
+        FourCC(*b"PCG1")
+    };
 
     let isgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let osgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let psgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let pcsg_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let isgn_payload = build_patched_signature_chunk(isgn_fourcc, isgn_seed);
     let osgn_payload = build_patched_signature_chunk(osgn_fourcc, osgn_seed);
     let psgn_payload = build_patched_signature_chunk(psgn_fourcc, psgn_seed);
+    let pcsg_payload = build_patched_signature_chunk(pcsg_fourcc, pcsg_seed);
     let shader_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SHADER_BYTES);
     let rdef_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
     let stat_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
@@ -277,6 +288,7 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
         (isgn_fourcc, &isgn_payload),
         (osgn_fourcc, &osgn_payload),
         (psgn_fourcc, &psgn_payload),
+        (pcsg_fourcc, &pcsg_payload),
         (shader_fourcc, shader_bytes),
         (FourCC(*b"RDEF"), rdef_bytes),
         (FourCC(*b"STAT"), stat_bytes),
