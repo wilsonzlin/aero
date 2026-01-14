@@ -106,8 +106,7 @@ fn xhci_ignores_misaligned_device_context_pointers_in_dcbaa() {
     let mut buf = [0u8; 8];
     mem.read_physical(buf_ptr, &mut buf);
     assert_eq!(
-        buf,
-        [0u8; 8],
+        buf, [0u8; 8],
         "controller must not execute transfers when DCBAA entry is misaligned"
     );
     assert_eq!(
@@ -116,4 +115,3 @@ fn xhci_ignores_misaligned_device_context_pointers_in_dcbaa() {
         "controller must not emit transfer events when DCBAA entry is misaligned"
     );
 }
-

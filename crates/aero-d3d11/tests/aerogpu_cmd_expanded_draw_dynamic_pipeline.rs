@@ -67,7 +67,8 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
-        exec.device().push_error_scope(wgpu::ErrorFilter::Validation);
+        exec.device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();

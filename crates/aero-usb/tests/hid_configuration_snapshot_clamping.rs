@@ -116,11 +116,8 @@ fn hid_passthrough_snapshot_load_clamps_configuration_field() {
     assert_eq!(resp, ControlResponse::Data(vec![1]));
 
     let saved = dev.save_state();
-    let r = SnapshotReader::parse(
-        &saved,
-        <UsbHidPassthroughHandle as IoSnapshot>::DEVICE_ID,
-    )
-    .expect("parse saved snapshot");
+    let r = SnapshotReader::parse(&saved, <UsbHidPassthroughHandle as IoSnapshot>::DEVICE_ID)
+        .expect("parse saved snapshot");
     assert_eq!(
         r.u8(TAG_ADDRESS).expect("read address tag"),
         Some(0),

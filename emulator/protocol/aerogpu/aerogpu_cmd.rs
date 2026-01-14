@@ -1929,7 +1929,9 @@ pub fn decode_cmd_set_vertex_buffers_bindings_le(
 }
 
 /// Decode SET_TEXTURE.
-pub fn decode_cmd_set_texture_le(buf: &[u8]) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
+pub fn decode_cmd_set_texture_le(
+    buf: &[u8],
+) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
     let packet = AerogpuCmdPacket {
@@ -2476,7 +2478,9 @@ impl<'a> AerogpuCmdPacket<'a> {
         ))
     }
 
-    pub fn decode_set_texture_payload_le(&self) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
+    pub fn decode_set_texture_payload_le(
+        &self,
+    ) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
         if self.opcode != Some(AerogpuCmdOpcode::SetTexture) {
             return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
                 found: self.hdr.opcode,

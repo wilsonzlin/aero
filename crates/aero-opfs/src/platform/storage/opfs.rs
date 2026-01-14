@@ -246,16 +246,18 @@ mod wasm {
             let called_with_opts_c = called_with_opts.clone();
             let called_no_args_c = called_no_args.clone();
 
-            let closure = Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
-                if opts.is_undefined() {
-                    called_no_args_c.set(true);
-                    let promise = create_writable_clone.call0(real_clone.as_ref())?;
-                    promise.dyn_into::<Promise>()
-                } else {
-                    called_with_opts_c.set(true);
-                    Err(js_sys::TypeError::new("options bag unsupported").into())
-                }
-            }) as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+            let closure =
+                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                    if opts.is_undefined() {
+                        called_no_args_c.set(true);
+                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                        promise.dyn_into::<Promise>()
+                    } else {
+                        called_with_opts_c.set(true);
+                        Err(js_sys::TypeError::new("options bag unsupported").into())
+                    }
+                })
+                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
 
             Reflect::set(
                 &wrapper,
@@ -312,18 +314,20 @@ mod wasm {
             let create_writable_clone = create_writable.clone();
             let called_no_args_c = called_no_args.clone();
 
-            let closure = Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
-                if opts.is_undefined() {
-                    called_no_args_c.set(true);
-                    let promise = create_writable_clone.call0(real_clone.as_ref())?;
-                    promise.dyn_into::<Promise>()
-                } else {
-                    Ok(Promise::reject(&dom_exception(
-                        "InvalidStateError",
-                        "file is in use",
-                    )))
-                }
-            }) as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+            let closure =
+                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                    if opts.is_undefined() {
+                        called_no_args_c.set(true);
+                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                        promise.dyn_into::<Promise>()
+                    } else {
+                        Ok(Promise::reject(&dom_exception(
+                            "InvalidStateError",
+                            "file is in use",
+                        )))
+                    }
+                })
+                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
 
             Reflect::set(
                 &wrapper,

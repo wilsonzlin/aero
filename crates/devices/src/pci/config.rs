@@ -943,7 +943,10 @@ mod tests {
 
         let is_64bit = (ctrl & (1 << 7)) != 0;
         let per_vector_masking = (ctrl & (1 << 8)) != 0;
-        assert!(per_vector_masking, "test requires per-vector masking support");
+        assert!(
+            per_vector_masking,
+            "test requires per-vector masking support"
+        );
         let mask_off = if is_64bit {
             cap_offset + 0x10
         } else {
@@ -967,7 +970,10 @@ mod tests {
 
         // Unmask via a config-space write. This write must not clear the pending bit.
         config.write(mask_off, 4, 0);
-        assert_eq!(config.capability::<MsiCapability>().unwrap().pending_bits() & 1, 1);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
     }
 
     #[test]

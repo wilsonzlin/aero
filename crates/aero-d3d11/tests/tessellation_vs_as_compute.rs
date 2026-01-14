@@ -1370,7 +1370,7 @@ fn vs_as_compute_instance_step_rate_is_based_on_absolute_instance_id() {
         push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
         push_u32(&mut ilay, 1); // element_count
         push_u32(&mut ilay, 0); // reserved0
-                                 // Element: semantic hash + index are arbitrary as long as signature matches.
+                                // Element: semantic hash + index are arbitrary as long as signature matches.
         push_u32(&mut ilay, 0xDEAD_BEEFu32);
         push_u32(&mut ilay, 0);
         push_u32(&mut ilay, 41); // DXGI_FORMAT_R32_FLOAT

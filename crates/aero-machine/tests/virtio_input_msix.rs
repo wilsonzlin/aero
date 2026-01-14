@@ -553,7 +553,11 @@ fn snapshot_restore_preserves_virtio_input_msix_pending_bit_and_delivers_after_u
     interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(interrupts.borrow().get_pending(), None);
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after delivery");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after delivery"
+    );
 
     m.restore_snapshot_bytes(&snapshot).unwrap();
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
@@ -562,7 +566,11 @@ fn snapshot_restore_preserves_virtio_input_msix_pending_bit_and_delivers_after_u
 
     // Ensure MSI-X enable + function mask bits were restored in the canonical PCI config space.
     let ctrl_restored = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    assert_ne!(ctrl_restored & (1 << 15), 0, "expected MSI-X enable bit restored");
+    assert_ne!(
+        ctrl_restored & (1 << 15),
+        0,
+        "expected MSI-X enable bit restored"
+    );
     assert_ne!(
         ctrl_restored & (1 << 14),
         0,
@@ -592,5 +600,9 @@ fn snapshot_restore_preserves_virtio_input_msix_pending_bit_and_delivers_after_u
     m.process_virtio_input();
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after unmask");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after unmask"
+    );
 }

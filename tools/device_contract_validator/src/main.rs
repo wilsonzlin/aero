@@ -1931,7 +1931,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         expected_rev,
                         /* require_fallback */ false,
                     )
-                    .with_context(|| format!("{name}: validate virtio-input canonical DeviceDesc split"))?;
+                    .with_context(|| {
+                        format!("{name}: validate virtio-input canonical DeviceDesc split")
+                    })?;
 
                     // Optional: validate the legacy alias INF (if present), which is a compatibility shim for
                     // tooling that still expects `virtio-input.inf`. It is allowed to diverge in the models
@@ -1945,8 +1947,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         if !alias.exists() {
                             continue;
                         }
-                        let alias_text = read_inf_text(&alias)
-                            .with_context(|| format!("{name}: read virtio-input legacy alias INF"))?;
+                        let alias_text = read_inf_text(&alias).with_context(|| {
+                            format!("{name}: read virtio-input legacy alias INF")
+                        })?;
                         validate_virtio_input_device_desc_split(
                             &alias,
                             &alias_text,
@@ -1970,14 +1973,16 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         .with_context(|| {
                             format!("{name}: normalize virtio-input canonical INF for alias drift check")
                         })?;
-                        let alias_lines =
-                            normalized_inf_lines_for_alias_diff(&alias_text, /* ignore_models */ true)
-                                .with_context(|| {
-                                    format!(
-                                        "{name}: normalize virtio-input alias INF for drift check: {}",
-                                        alias.display()
-                                    )
-                                })?;
+                        let alias_lines = normalized_inf_lines_for_alias_diff(
+                            &alias_text,
+                            /* ignore_models */ true,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "{name}: normalize virtio-input alias INF for drift check: {}",
+                                alias.display()
+                            )
+                        })?;
                         if canonical_lines != alias_lines {
                             // Find the first mismatch to make the error actionable without needing a full diff dependency.
                             let first_diff = canonical_lines
@@ -1987,7 +1992,8 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                                 .unwrap_or_else(|| canonical_lines.len().min(alias_lines.len()));
                             let canonical_line =
                                 canonical_lines.get(first_diff).cloned().unwrap_or_default();
-                            let alias_line = alias_lines.get(first_diff).cloned().unwrap_or_default();
+                            let alias_line =
+                                alias_lines.get(first_diff).cloned().unwrap_or_default();
                             bail!(
                                 "{name}: virtio-input INF alias drift detected outside models sections.\n\
                                  canonical: {}\n\

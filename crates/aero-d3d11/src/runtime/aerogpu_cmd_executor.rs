@@ -4415,7 +4415,10 @@ impl AerogpuD3d11Executor {
                 label: &'static str,
                 bytes: &[u8],
             ) -> (wgpu::Buffer, u64) {
-                assert!(!bytes.is_empty(), "uniform buffer payload must be non-empty");
+                assert!(
+                    !bytes.is_empty(),
+                    "uniform buffer payload must be non-empty"
+                );
                 let size = bytes.len() as u64;
                 // Ensure the backing buffer is large enough for the declared binding size and keeps a
                 // 16-byte granularity (uniform struct alignment).
@@ -18608,7 +18611,9 @@ mod tests {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    bindings.as_slice(),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info should succeed");
@@ -20280,12 +20285,14 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.bind_shaders(VS, PS, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);

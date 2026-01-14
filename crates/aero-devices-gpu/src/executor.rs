@@ -559,7 +559,8 @@ impl AeroGpuExecutor {
                 .and_then(|base| {
                     let slot = u64::from(ring.slot_index(head));
                     let stride = u64::from(ring.entry_stride_bytes);
-                    slot.checked_mul(stride).and_then(|off| base.checked_add(off))
+                    slot.checked_mul(stride)
+                        .and_then(|off| base.checked_add(off))
                 }) {
                 Some(v) => v,
                 None => {

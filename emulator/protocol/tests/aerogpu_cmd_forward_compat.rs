@@ -1,7 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdBindShaders, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    BindShadersEx,
-    AEROGPU_CMD_STREAM_MAGIC,
+    BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -98,7 +97,10 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
     let (ext_cmd, ext_ex) = decode(&extended);
     let ext_size_bytes = ext_cmd.hdr.size_bytes;
     let (ext_vs, ext_ps, ext_cs) = (ext_cmd.vs, ext_cmd.ps, ext_cmd.cs);
-    assert_eq!(ext_size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
+    assert_eq!(
+        ext_size_bytes as usize,
+        AerogpuCmdBindShaders::EX_SIZE_BYTES
+    );
     assert_eq!((ext_vs, ext_ps, ext_cs), (1, 2, 3));
     assert_eq!(
         ext_ex,

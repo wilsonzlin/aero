@@ -51,7 +51,10 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
     if msg.contains("max_storage_buffers_per_shader_stage")
         || msg.contains("Too many bindings of type StorageBuffers")
     {
-        skip_or_panic(test_name, "storage buffer bindings unsupported/too limited for compute prepass");
+        skip_or_panic(
+            test_name,
+            "storage buffer bindings unsupported/too limited for compute prepass",
+        );
         return true;
     }
 

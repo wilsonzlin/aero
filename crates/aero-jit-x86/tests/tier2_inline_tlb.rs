@@ -536,12 +536,7 @@ fn run_trace_with_prefilled_tlbs(
         raw.push((vaddr, tag, tlb_data));
     }
     run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
-        trace,
-        ram,
-        cpu_ptr,
-        ram_size,
-        tlb_salt,
-        &raw,
+        trace, ram, cpu_ptr, ram_size, tlb_salt, &raw,
     )
 }
 
@@ -838,8 +833,7 @@ fn tier2_inline_tlb_load_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
     let mut ram = vec![0u8; 0x20_000];
     ram[0x1234..0x1234 + 4].copy_from_slice(&0xDDCC_BBAAu32.to_le_bytes());
     let cpu_ptr = ram.len() as u64;
-    let tlb_data =
-        (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
 
     let (_ret, _got_ram, gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1234, tlb_data)]);
@@ -866,8 +860,7 @@ fn tier2_inline_tlb_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
 
     let ram = vec![0u8; 0x20_000];
     let cpu_ptr = ram.len() as u64;
-    let tlb_data =
-        (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
 
     let (_ret, got_ram, _gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1234, tlb_data)]);
@@ -903,8 +896,8 @@ fn tier2_inline_tlb_load_permission_miss_on_prefilled_entry_calls_translate() {
     let cpu_ptr = ram.len() as u64;
 
     // Prefill a matching entry, but omit READ permission.
-    let tlb_data = (0x1000u64 & PAGE_BASE_MASK)
-        | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    let tlb_data =
+        (0x1000u64 & PAGE_BASE_MASK) | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
 
     let (_ret, _got_ram, gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1000, tlb_data)]);
@@ -973,7 +966,8 @@ fn tier2_inline_tlb_tlb_salt_mismatch_forces_retranslate() {
     let old_salt = 0x1234_5678_9abc_def0u64;
     let new_salt = old_salt ^ 0x1111_1111_1111_1111;
     let stale_tag = (vpn ^ old_salt) | 1;
-    let data = (vaddr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    let data = (vaddr & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
 
     let (_ret, _got_ram, gpr, host) = run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
         &trace,
@@ -1020,7 +1014,8 @@ fn tier2_inline_tlb_tlb_tag_uses_or1_to_reserve_zero_for_invalidation() {
     let tag = (vpn ^ salt) | 1;
     assert_eq!(tag, 1, "sanity: vpn^salt should be 0, so tag must be 1");
 
-    let data = (vaddr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    let data = (vaddr & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
 
     let (_ret, _got_ram, gpr, host) = run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
         &trace,

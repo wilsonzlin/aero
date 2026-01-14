@@ -79,4 +79,3 @@ fn aerogpu_mode13h_respects_crtc_start_address_and_byte_mode() {
     // VGA palette entry 1 is EGA blue (0x00,0x00,0xAA).
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_0000);
 }
-

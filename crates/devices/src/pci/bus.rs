@@ -242,7 +242,10 @@ impl PciBus {
                     if merged == 0xFFFF_FFFF
                         && bar > 0
                         && cfg.bar_definition(bar).is_none()
-                        && matches!(cfg.bar_definition(bar - 1), Some(PciBarDefinition::Mmio64 { .. }))
+                        && matches!(
+                            cfg.bar_definition(bar - 1),
+                            Some(PciBarDefinition::Mmio64 { .. })
+                        )
                     {
                         let Some(old) = cfg.bar_range(bar - 1) else {
                             return;

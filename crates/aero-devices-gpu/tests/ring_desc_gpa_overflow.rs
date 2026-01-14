@@ -48,11 +48,7 @@ impl MemoryBus for SparseU64MemoryBus {
             };
             let page = Self::page_index(addr);
             let off = Self::page_offset(addr);
-            *slot = self
-                .pages
-                .get(&page)
-                .map(|p| p[off])
-                .unwrap_or(0u8);
+            *slot = self.pages.get(&page).map(|p| p[off]).unwrap_or(0u8);
         }
     }
 
@@ -129,4 +125,3 @@ fn ring_descriptor_gpa_overflow_latches_oob_and_does_not_wrap_to_low_memory() {
     assert_eq!(regs.error_count, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
 }
-

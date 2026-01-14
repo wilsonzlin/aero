@@ -22,7 +22,8 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         .expect("xtask/CARGO_MANIFEST_DIR should have a parent")
         .to_path_buf();
 
-    let _node_modules_lock = acquire_node_modules_lock(&repo_root).expect("acquire node_modules lock");
+    let _node_modules_lock =
+        acquire_node_modules_lock(&repo_root).expect("acquire node_modules lock");
 
     // `cargo xtask input` refuses to run if node_modules is missing; create a temporary empty one
     // so we can execute the command path without needing actual Node deps.

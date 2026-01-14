@@ -4,7 +4,8 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -25,7 +26,10 @@ struct Vertex {
 #[test]
 fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds");
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -129,7 +133,10 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
             }
             let msg = err.to_string();
             if msg.contains("tessellation (HS/DS) compute expansion is not wired up yet") {
-                common::skip_or_panic(test_name, "tessellation HS/DS emulation not implemented yet");
+                common::skip_or_panic(
+                    test_name,
+                    "tessellation HS/DS emulation not implemented yet",
+                );
                 return;
             }
             panic!("execute_cmd_stream should succeed: {err:#}");

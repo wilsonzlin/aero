@@ -6,7 +6,8 @@ use crate::{MemoryBus, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 use super::context::{
     EndpointContext, EndpointType, InputContext32, SlotContext, SLOT_STATE_ADDRESSED,
-    SLOT_STATE_CONFIGURED, SLOT_STATE_DEFAULT, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT,
+    SLOT_STATE_CONFIGURED, SLOT_STATE_DEFAULT, XHCI_ROUTE_STRING_MAX_DEPTH,
+    XHCI_ROUTE_STRING_MAX_PORT,
 };
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 

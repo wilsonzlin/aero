@@ -209,17 +209,16 @@ fn compute_store_raw_with_integer_alu_addressing_writes_expected_words() {
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
         assert_wgsl_validates(&translated.wgsl);
 
-        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
-            "compute_store_raw_uav_int_ops test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                return;
-            }
-        };
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("compute_store_raw_uav_int_ops test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return;

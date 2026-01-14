@@ -1584,7 +1584,10 @@ fn wgsl_defb_if_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.contains("b0 = vec4<bool>(true, true, true, true);"), "{wgsl}");
+    assert!(
+        wgsl.contains("b0 = vec4<bool>(true, true, true, true);"),
+        "{wgsl}"
+    );
     assert!(wgsl.contains("if ("));
 }
 

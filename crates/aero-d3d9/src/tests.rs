@@ -3596,19 +3596,13 @@ fn translate_entrypoint_rejects_relative_label_addressing() {
 
     let mut words = vec![0xFFFF_0300];
     // mov r0, c0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // call l0[a0.x] (nonsense; label operands are not addressable)
     let label = enc_src(18, 0, 0xE4) | RELATIVE;
     let rel = enc_src(3, 0, 0x00); // a0.x
     words.extend(enc_inst(0x0019, &[label, rel]));
     // mov oC0, r0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(
@@ -3628,10 +3622,7 @@ fn translate_entrypoint_rejects_const_register_as_dst_operand() {
     // WGSL (no mutable storage for `c#`), so treat it as malformed bytecode.
     let mut words = vec![0xFFFF_0300];
     // mov c0, r0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(2, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(2, 0, 0xF), enc_src(0, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(

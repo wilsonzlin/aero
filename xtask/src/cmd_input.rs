@@ -225,19 +225,18 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     let mut cmd = tools::npm();
-    cmd.current_dir(&repo_root)
-        .args([
-            "-w",
-            "web",
-            "run",
-            "test:unit",
-            "--",
-            "src/input",
-            "src/usb/usb_guest_controller.test.ts",
-            "src/usb/xhci_webusb_bridge.test.ts",
-            "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
-            "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
-        ]);
+    cmd.current_dir(&repo_root).args([
+        "-w",
+        "web",
+        "run",
+        "test:unit",
+        "--",
+        "src/input",
+        "src/usb/usb_guest_controller.test.ts",
+        "src/usb/xhci_webusb_bridge.test.ts",
+        "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
+        "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
+    ]);
     runner.run_step(
         "Web: npm -w web run test:unit -- src/input (plus WebUSB topology guards)",
         &mut cmd,

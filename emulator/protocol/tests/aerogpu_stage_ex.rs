@@ -6,8 +6,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
     AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
     AerogpuConstantBufferBinding, AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding,
-    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved,
-    AerogpuStageResolveError, AerogpuUnorderedAccessBufferBinding,
+    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved, AerogpuStageResolveError,
+    AerogpuUnorderedAccessBufferBinding,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 

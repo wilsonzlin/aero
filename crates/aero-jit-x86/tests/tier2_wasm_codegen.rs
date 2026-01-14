@@ -1674,8 +1674,14 @@ fn tier2_trace_wasm_forces_reserved1_rflags_bit_on_flag_updates() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 1 },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(0),
+                value: 1,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,

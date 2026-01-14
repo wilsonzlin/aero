@@ -118,7 +118,10 @@ fn bind_shaders_extended_packet_allows_trailing_bytes() {
 
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
     let size_bytes = cmd.hdr.size_bytes;
-    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES + 4);
+    assert_eq!(
+        size_bytes as usize,
+        AerogpuCmdBindShaders::EX_SIZE_BYTES + 4
+    );
     assert_eq!(
         ex,
         Some(BindShadersEx {

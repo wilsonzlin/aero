@@ -3801,11 +3801,7 @@ impl XhciController {
         }
     }
 
-    fn read_device_context_ptr_raw(
-        &self,
-        mem: &mut dyn MemoryBus,
-        slot_id: u8,
-    ) -> Option<u64> {
+    fn read_device_context_ptr_raw(&self, mem: &mut dyn MemoryBus, slot_id: u8) -> Option<u64> {
         if slot_id == 0 {
             return None;
         }

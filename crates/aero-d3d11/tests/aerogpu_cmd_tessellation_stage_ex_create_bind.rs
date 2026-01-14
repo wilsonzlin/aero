@@ -5,12 +5,13 @@ use aero_d3d11::runtime::bindings::{BoundConstantBuffer, BoundTexture, ShaderSta
 use aero_d3d11::FourCC;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuShaderStage,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
-const CMD_STREAM_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 // `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
@@ -193,20 +194,8 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         push_bind_shaders_ex(&mut stream, 0, 0, CS_SHADER, 0, HS_SHADER, DS_SHADER);
 
         // Set baseline CS bindings.
-        push_set_constant_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            1,
-            101,
-            0,
-        );
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            0,
-            201,
-            0,
-        );
+        push_set_constant_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 1, 101, 0);
+        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 201, 0);
 
         // HS/DS binding updates must not overwrite CS stage state.
         push_set_constant_buffer(
@@ -240,20 +229,8 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         );
 
         // Second CS update ensures CS remains distinct even after HS/DS stage_ex updates.
-        push_set_constant_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            1,
-            104,
-            0,
-        );
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            0,
-            204,
-            0,
-        );
+        push_set_constant_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 1, 104, 0);
+        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 204, 0);
 
         let stream = finish_stream(stream);
 

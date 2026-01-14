@@ -42,7 +42,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("webusb_uhci_bridge"))
         .stdout(predicate::str::contains("xhci_webusb_bridge"))
         .stdout(predicate::str::contains("usb_guest_controller"))
-        .stdout(predicate::str::contains("src/usb/xhci_webusb_bridge.test.ts"))
+        .stdout(predicate::str::contains(
+            "src/usb/xhci_webusb_bridge.test.ts",
+        ))
         .stdout(predicate::str::contains("ehci_webusb_root_port_rust_drift"))
         .stdout(predicate::str::contains("xhci_webusb_root_port_rust_drift"))
         .stdout(predicate::str::contains("ehci_snapshot_roundtrip"))

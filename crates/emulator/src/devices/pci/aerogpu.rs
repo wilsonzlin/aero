@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use aero_gpu_vga::{PortIO as _, VgaDevice};
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
+use aero_gpu_vga::{PortIO as _, VgaDevice};
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::scanout_state::ScanoutStateUpdate;
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};

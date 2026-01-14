@@ -24,4 +24,3 @@ fn primitive_topology_from_u32_decodes_known_values() {
     assert_eq!(AerogpuPrimitiveTopology::from_u32(32), None);
     assert_eq!(AerogpuPrimitiveTopology::from_u32(65), None);
 }
-

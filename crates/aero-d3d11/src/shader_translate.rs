@@ -586,7 +586,9 @@ fn translate_cs(
     resources.emit_decls(&mut w, ShaderStage::Compute)?;
 
     if used_default_thread_group_size {
-        w.line("// NOTE: DXBC is missing dcl_thread_group; defaulting to @workgroup_size(1, 1, 1).");
+        w.line(
+            "// NOTE: DXBC is missing dcl_thread_group; defaulting to @workgroup_size(1, 1, 1).",
+        );
         w.line("");
     }
 

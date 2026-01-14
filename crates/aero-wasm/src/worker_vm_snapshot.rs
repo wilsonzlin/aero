@@ -436,7 +436,9 @@ mod tests {
         let base = before_pages
             .checked_mul(crate::guest_layout::WASM_PAGE_BYTES)
             .expect("linear memory byte offset overflow");
-        let base_u32: u32 = base.try_into().expect("linear memory offset must fit in u32");
+        let base_u32: u32 = base
+            .try_into()
+            .expect("linear memory offset must fit in u32");
         assert!(
             u64::from(base_u32) >= crate::guest_layout::RUNTIME_RESERVED_BYTES,
             "test buffer must be allocated above the runtime heap"
@@ -465,8 +467,7 @@ mod tests {
         // `RUNTIME_RESERVED_BYTES` (128MiB). Allocating both the input and internal copy would be
         // near the heap limit and can OOM in wasm-bindgen tests.
         let base = alloc_outside_heap_bytes(max + 1);
-        let region =
-            unsafe { core::slice::from_raw_parts(base as *const u8, max + 1) };
+        let region = unsafe { core::slice::from_raw_parts(base as *const u8, max + 1) };
 
         // Use the canonical shared guest RAM layout base. The guest region is unused by this test
         // but `WorkerVmSnapshot::new` validates the mapping.
