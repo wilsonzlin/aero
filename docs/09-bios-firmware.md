@@ -34,9 +34,11 @@ contracts.
 ### Canonical BIOS drive numbers (HDD0 + CD0)
 
 In the canonical `aero_machine::Machine` Win7 storage topology, both an AHCI HDD and an IDE/ATAPI
-CD-ROM may be attached. However, Aero’s BIOS currently exposes only the **selected boot drive**
-(`BiosConfig::boot_drive` / `DL`) as “present” to INT 13h; other drive numbers are treated as not
-present.
+CD-ROM may be attached simultaneously. Aero’s BIOS INT 13h can service **both** devices when the
+corresponding backends are present (HDD0 via `DL=0x80`, CD0 via `DL=0xE0`).
+Boot selection is still primarily driven by the boot drive number (`BiosConfig::boot_drive` / `DL`)
+used when transferring control to the boot sector / El Torito boot image, with an optional “CD-first
+when present” policy flag for convenience.
 
 Drive-number conventions still follow common PC/BIOS ranges:
 
