@@ -684,9 +684,36 @@ pub fn decode_instruction(
     //
     // Peel off a trailing predicate operand up front so the main opcode decoder sees a normal
     // operand list.
+    //
+    // Note: if the instruction already begins with a predicate operand (the common `(+p0.x)`
+    // encoding), do *not* attempt to strip a trailing predicate operand. This avoids false
+    // positives where some unrelated tail tokens happen to look like a predicate operand and would
+    // otherwise be dropped from the instruction stream.
+    let strip_trailing_predication = if opcode == OPCODE_SETP {
+        // `setp` always starts with a predicate operand (destination), so we can't use the leading
+        // operand type to infer predication encoding. Always allow the trailing predicate probe so
+        // `setp ... (+p0.x)` can be recognized.
+        true
+    } else {
+        // Skip over any extended opcode tokens to find the first operand token.
+        let mut pos = 1usize;
+        let mut extended = inst_toks
+            .first()
+            .is_some_and(|t| (t & OPCODE_EXTENDED_BIT) != 0);
+        while extended && pos < inst_toks.len() {
+            let ext = inst_toks[pos];
+            pos += 1;
+            extended = (ext & OPCODE_EXTENDED_BIT) != 0;
+        }
+        let leading_operand_is_predicate = inst_toks
+            .get(pos)
+            .is_some_and(|t| ((t >> OPERAND_TYPE_SHIFT) & OPERAND_TYPE_MASK) == OPERAND_TYPE_PREDICATE);
+        !leading_operand_is_predicate
+    };
+
     let mut inst_toks = inst_toks;
     let mut trailing_predication: Option<PredicateOperand> = None;
-    if inst_toks.len() >= 3 {
+    if strip_trailing_predication && inst_toks.len() >= 3 {
         let len = inst_toks.len();
         // The predicate operand is always small: `operand_token + reg_index`, plus at most one
         // extended operand token for the `-p0.x` invert modifier. Probe the last few DWORDs to see
