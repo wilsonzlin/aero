@@ -183,11 +183,10 @@ func (s *Server) registerRoutes() {
 		}
 		if s.cfg.TURNREST.Enabled() {
 			gen, err := turnrest.NewGenerator(turnrest.GeneratorConfig{
-				SharedSecret:    s.cfg.TURNREST.SharedSecret,
-				TTLSeconds:      s.cfg.TURNREST.TTLSeconds,
-				UsernamePrefix:  s.cfg.TURNREST.UsernamePrefix,
-				Now:             time.Now,
-				SessionIDSource: turnrest.CryptoRandomSessionID,
+				SharedSecret:   s.cfg.TURNREST.SharedSecret,
+				TTLSeconds:     s.cfg.TURNREST.TTLSeconds,
+				UsernamePrefix: s.cfg.TURNREST.UsernamePrefix,
+				Now:            time.Now,
 			})
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
