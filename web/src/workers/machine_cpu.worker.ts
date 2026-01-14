@@ -1967,7 +1967,21 @@ function drainAerogpuSubmissions(): void {
     try {
       ctx.postMessage(msg, transfer);
     } catch {
-      // ignore (best-effort)
+      // Some runtimes reject transfer lists (or individual buffers may be non-transferable). Fall
+      // back to structured clone before giving up. If we still cannot post, force-complete the
+      // fence so the guest cannot deadlock (rendering is best-effort in this scenario).
+      try {
+        ctx.postMessage(msg);
+      } catch {
+        try {
+          const completeFence = (m as unknown as { aerogpu_complete_fence?: unknown }).aerogpu_complete_fence;
+          if (typeof completeFence === "function") {
+            (completeFence as (fence: bigint) => void).call(m, sub.signalFence);
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 }
