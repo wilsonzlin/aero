@@ -96,6 +96,24 @@ You can also use `aero-virtio-selftest.exe`:
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
+### Runtime resize (dynamic capacity change)
+
+The in-tree Win7 guest selftest tool (`aero-virtio-selftest.exe`) includes an opt-in end-to-end **runtime resize** check
+(`virtio-blk-resize`) that validates Windows observes a larger disk size after the host grows the backing device at
+runtime (via QMP `blockdev-resize` with a fallback to legacy `block_resize`).
+
+- Guest requirement:
+  - Run the selftest with `--test-blk-resize` (or set `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`).
+- Host harness:
+  - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -WithBlkResize [-BlkResizeDeltaMiB N]`
+  - Python: `invoke_aero_virtio_win7_tests.py --with-blk-resize [--blk-resize-delta-mib N]`
+- Guest markers:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>`
+  - (Default when not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set`
+
+Note: The test is **grow-only** (it does not attempt to shrink the disk or filesystem).
+
 ## Files
 
 - `src/aero_virtio_blk.c` – StorPort miniport driver implementation.
