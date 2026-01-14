@@ -1450,6 +1450,48 @@ describe("runtime/coordinator", () => {
     expect(cpuWorker.posted.length).toBe(0);
   });
 
+  it("forwards AeroGPU allocTable buffers (and includes them in the transfer list)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
+    const gpuWorker = gpuInfo.worker;
+    gpuWorker.posted.length = 0;
+
+    const cmdStream = new Uint8Array([1, 2, 3, 4]).buffer;
+    const allocTable = new Uint8Array([9, 8, 7]).buffer;
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 1,
+      signalFence: 5n,
+      cmdStream,
+      allocTable,
+    });
+
+    // Not READY yet; buffered.
+    expect(lastMessageOfType(gpuWorker, "submit_aerogpu")).toBeUndefined();
+
+    // READY flushes the buffered submit.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+    const lastPosted = gpuWorker.posted.at(-1) as { message: unknown; transfer?: unknown[] } | undefined;
+    expect((lastPosted?.message as { type?: unknown }).type).toBe("submit_aerogpu");
+
+    const submitMsg = lastPosted?.message as { cmdStream?: unknown; allocTable?: unknown } | undefined;
+    expect(submitMsg?.cmdStream).toBeInstanceOf(ArrayBuffer);
+    expect(submitMsg?.allocTable).toBeInstanceOf(ArrayBuffer);
+
+    // Coordinator should include both buffers in the transfer list.
+    expect(Array.isArray(lastPosted?.transfer)).toBe(true);
+    expect(lastPosted?.transfer?.length).toBe(2);
+    expect(lastPosted?.transfer?.[0]).toBe(cmdStream);
+    expect(lastPosted?.transfer?.[1]).toBe(allocTable);
+  });
+
   it("ignores aerogpu.submit messages from non-CPU workers", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
