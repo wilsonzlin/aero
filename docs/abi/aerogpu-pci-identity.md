@@ -56,19 +56,14 @@ The canonical machine supports **two mutually-exclusive** display configurations
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`
   (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
-  standalone `aero_gpu_vga` VGA/VBE implementation. The VBE linear framebuffer is exposed at the
-  configured `MachineConfig::vga_lfb_base` (historically defaulting to `0xE000_0000` via
-  `aero_gpu_vga::SVGA_LFB_BASE`).
+  standalone `aero_gpu_vga` VGA/VBE implementation.
   - When `MachineConfig::enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly
-    at that base.
+    at `MachineConfig::vga_lfb_base` (defaulting to `0xE000_0000` / `aero_gpu_vga::SVGA_LFB_BASE`).
   - When `MachineConfig::enable_pc_platform=true`, the canonical machine maps the LFB MMIO aperture
-    directly at the configured base inside the PCI MMIO window (no dedicated PCI VGA stub). The PCI
-    BAR allocator reserves the fixed LFB range so BIOS POST does not place other devices on top of
-    it.
-    - Note: Aero historically exposed a Bochs/QEMU VGA PCI stub identity (`1234:1111` at `00:0c.0`;
-      see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The canonical `aero_machine::Machine`
-      no longer installs this PCI function, but the identity remains reserved for compatibility
-      tests and alternate integrations.
+    through a transitional Bochs/QEMU-compatible “Standard VGA” PCI function (`1234:1111` at
+    `00:0c.0`). The VBE LFB is exposed via BAR0 inside the PCI MMIO window; the BAR base is assigned
+    by BIOS POST / the PCI resource allocator (and may vary when other PCI devices are present)
+    unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`.
 
 See also:
 
