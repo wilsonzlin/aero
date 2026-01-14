@@ -1172,6 +1172,20 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
         wprintf(L"null");
     }
     wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": ");
+    if (dev) {
+        wprintf(L"%lu", (unsigned long)dev->desired_access);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"writeAccess\": ");
+    if (dev) {
+        wprintf(((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
 
     wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
     if (have_size && st->Size != 0) {
@@ -1471,6 +1485,20 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     wprintf(L"  \"hidReportDescLen\": ");
     if (dev && dev->hid_report_desc_valid) {
         wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": ");
+    if (dev) {
+        wprintf(L"%lu", (unsigned long)dev->desired_access);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"writeAccess\": ");
+    if (dev) {
+        wprintf(((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
     } else {
         wprintf(L"null");
     }
@@ -2149,6 +2177,8 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
         wprintf(L"null");
     }
     wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": %lu,\n", (unsigned long)dev->desired_access);
+    wprintf(L"  \"writeAccess\": %ls,\n", ((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
     wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
     if (have_size && size != 0) {
         wprintf(L"  \"Size\": %lu,\n", size);
@@ -2859,6 +2889,7 @@ static int list_hid_devices_json(void)
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
         HANDLE handle = INVALID_HANDLE_VALUE;
+        DWORD desired_access = 0;
         HIDD_ATTRIBUTES attr;
         HIDP_CAPS caps;
         int attr_valid = 0;
@@ -2867,6 +2898,7 @@ static int list_hid_devices_json(void)
         int report_desc_valid = 0;
         DWORD hid_report_desc_len = 0;
         int hid_report_desc_valid = 0;
+        int handle_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2903,8 +2935,9 @@ static int list_hid_devices_json(void)
             continue;
         }
 
-        handle = open_hid_path(detail->DevicePath, NULL);
+        handle = open_hid_path(detail->DevicePath, &desired_access);
         if (handle != INVALID_HANDLE_VALUE) {
+            handle_valid = 1;
             ZeroMemory(&attr, sizeof(attr));
             attr.Size = sizeof(attr);
             if (HidD_GetAttributes(handle, &attr)) {
@@ -2919,6 +2952,7 @@ static int list_hid_devices_json(void)
 
             CloseHandle(handle);
         } else {
+            handle_valid = 0;
             // Still emit the device entry but without VID/PID/caps info.
             fprint_last_error_w(stderr, L"CreateFile");
         }
@@ -2983,6 +3017,18 @@ static int list_hid_devices_json(void)
         wprintf(L",\"hidReportDescLen\":");
         if (hid_report_desc_valid) {
             wprintf(L"%lu", hid_report_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"desiredAccess\":");
+        if (handle_valid) {
+            wprintf(L"%lu", desired_access);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"writeAccess\":");
+        if (handle_valid) {
+            wprintf(((desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
         } else {
             wprintf(L"null");
         }
