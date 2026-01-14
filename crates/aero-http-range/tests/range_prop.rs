@@ -4,7 +4,7 @@ use proptest::prelude::*;
 
 use aero_http_range::{
     parse_range_header, resolve_ranges, ByteRangeSpec, RangeParseError, RangeResolveError,
-    MAX_RANGE_SPECS,
+    ResolvedByteRange, MAX_RANGE_SPECS,
 };
 
 fn ows() -> impl Strategy<Value = &'static str> {
@@ -108,6 +108,26 @@ fn spec_to_model_range(spec: ByteRangeSpec, len: u64) -> Option<(u64, u64)> {
     }
 }
 
+fn coalesce_model(mut ranges: Vec<ResolvedByteRange>) -> Vec<ResolvedByteRange> {
+    ranges.sort_by_key(|r| r.start);
+    if ranges.is_empty() {
+        return ranges;
+    }
+
+    let mut out = Vec::with_capacity(ranges.len());
+    let mut cur = ranges[0];
+    for r in ranges.into_iter().skip(1) {
+        if r.start <= cur.end.saturating_add(1) {
+            cur.end = cur.end.max(r.end);
+        } else {
+            out.push(cur);
+            cur = r;
+        }
+    }
+    out.push(cur);
+    out
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         // These are integration tests (in `tests/`), so proptest's default
@@ -203,6 +223,44 @@ proptest! {
                         prop_assert!(a.end.saturating_add(1) < b.start);
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_matches_range_level_model(
+        specs in prop::collection::vec(arbitrary_spec(), 0..50),
+        len in 0u64..2_000u64,
+    ) {
+        let mut expected = Vec::new();
+        if len > 0 {
+            for &spec in &specs {
+                if let Some((start, end)) = spec_to_model_range(spec, len) {
+                    expected.push(ResolvedByteRange { start, end });
+                }
+            }
+        }
+
+        let actual = resolve_ranges(&specs, len, false);
+        match actual {
+            Err(RangeResolveError::Unsatisfiable) => {
+                prop_assert!(expected.is_empty());
+            }
+            Ok(ranges) => {
+                prop_assert!(!expected.is_empty());
+                prop_assert_eq!(&ranges, &expected);
+            }
+        }
+
+        let actual = resolve_ranges(&specs, len, true);
+        match actual {
+            Err(RangeResolveError::Unsatisfiable) => {
+                prop_assert!(expected.is_empty());
+            }
+            Ok(ranges) => {
+                prop_assert!(!expected.is_empty());
+                let expected_coalesced = coalesce_model(expected.clone());
+                prop_assert_eq!(&ranges, &expected_coalesced);
             }
         }
     }
