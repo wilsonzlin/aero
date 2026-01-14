@@ -36,12 +36,14 @@ bool TestGeometryShaderCreateAndBindPackets() {
     return false;
   }
   create->shader_handle = kGsHandle;
-  // Use stage_ex encoding to represent GS in a forward-compatible way:
-  // - stage = COMPUTE (legacy sentinel)
-  // - reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY
-  create->stage = AEROGPU_SHADER_STAGE_COMPUTE;
+  // Prefer the direct GEOMETRY stage encoding for GS shaders:
+  // - stage = GEOMETRY
+  // - reserved0 = 0
+  //
+  // (The `stage_ex` encoding exists for compatibility and for non-legacy stages like HS/DS.)
+  create->stage = AEROGPU_SHADER_STAGE_GEOMETRY;
   create->dxbc_size_bytes = static_cast<uint32_t>(sizeof(kDxbc));
-  create->reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY;
+  create->reserved0 = 0;
   
   auto* bind = w.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind != nullptr, "append BIND_SHADERS")) {
@@ -95,12 +97,11 @@ bool TestGeometryShaderCreateAndBindPackets() {
     return false;
   }
   const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(create_hdr);
-  if (!Check(create_cmd->stage == AEROGPU_SHADER_STAGE_COMPUTE,
-             "CREATE_SHADER_DXBC stage==COMPUTE (stage_ex encoding)")) {
+  if (!Check(create_cmd->stage == AEROGPU_SHADER_STAGE_GEOMETRY,
+             "CREATE_SHADER_DXBC stage==GEOMETRY")) {
     return false;
   }
-  if (!Check(create_cmd->reserved0 == AEROGPU_SHADER_STAGE_EX_GEOMETRY,
-             "CREATE_SHADER_DXBC reserved0==GEOMETRY stage_ex")) {
+  if (!Check(create_cmd->reserved0 == 0, "CREATE_SHADER_DXBC reserved0==0")) {
     return false;
   }
   if (!Check(create_cmd->shader_handle == kGsHandle, "CREATE_SHADER_DXBC shader_handle")) {

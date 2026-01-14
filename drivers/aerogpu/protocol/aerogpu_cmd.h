@@ -172,6 +172,10 @@ enum aerogpu_shader_stage {
  * some packets reuse their `reserved0` field as an "extended stage" selector when
  * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
  *
+ * Note: GS is representable either via the legacy stage enum (`shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY`,
+ * `reserved0 = 0`) or via `stage_ex` (`shader_stage = COMPUTE`, `reserved0 = GEOMETRY`). The `stage_ex`
+ * mechanism is primarily required for non-legacy stages like HS/DS.
+ *
  * Note: values intentionally do **not** match `enum aerogpu_shader_stage` (legacy stage enum).
  *
  * Encoding invariant (must be enforced by writers and hosts):
