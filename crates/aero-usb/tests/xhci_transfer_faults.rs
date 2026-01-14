@@ -26,6 +26,17 @@ impl MemoryBus for SparseMem {
     }
 }
 
+#[derive(Default)]
+struct AllOnesMem;
+
+impl MemoryBus for AllOnesMem {
+    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+        buf.fill(0xFF);
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+}
+
 fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
     let mut dword3 = 0u32;
     if cycle {
@@ -74,6 +85,25 @@ fn xhci_transfer_executor_rejects_null_link_target() {
         exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
         RING_BASE
     );
+}
+
+#[test]
+fn xhci_transfer_executor_halts_on_all_ones_trb_fetch() {
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
+
+    let mut mem = AllOnesMem::default();
+    exec.add_endpoint(0x81, RING_BASE);
+    exec.tick_1ms(&mut mem);
+
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].completion_code, CompletionCode::TrbError);
+    assert_eq!(events[0].trb_ptr, RING_BASE);
+    assert!(exec.endpoint_state(0x81).unwrap().halted);
+
+    exec.tick_1ms(&mut mem);
+    assert!(exec.take_events().is_empty());
 }
 
 #[test]

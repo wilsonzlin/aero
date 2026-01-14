@@ -28,6 +28,17 @@ pub fn write_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64, trb: Trb) {
     trb.write_to(mem, paddr);
 }
 
+fn read_trb_checked<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Result<Trb, ()> {
+    let mut bytes = [0u8; TRB_LEN];
+    mem.read_physical(paddr, &mut bytes);
+    // Treat an all-ones fetch as an invalid DMA read (commonly produced by open-bus/unmapped reads).
+    // This avoids "successfully" processing garbage TRBs when the guest misprograms ring pointers.
+    if bytes.iter().all(|&b| b == 0xFF) {
+        return Err(());
+    }
+    Ok(Trb::from_bytes(bytes))
+}
+
 /// A completion notification emitted by the transfer executor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferEvent {
@@ -220,7 +231,20 @@ impl XhciTransferExecutor {
             return;
         }
 
-        let trb = read_trb(mem, ep.ring.dequeue_ptr);
+        let trb = match read_trb_checked(mem, ep.ring.dequeue_ptr) {
+            Ok(trb) => trb,
+            Err(()) => {
+                ep.halted = true;
+                self.pending_events.push(TransferEvent {
+                    ep_addr: ep.ep_addr,
+                    trb_ptr: ep.ring.dequeue_ptr,
+                    event_data: None,
+                    residual: 0,
+                    completion_code: CompletionCode::TrbError,
+                });
+                return;
+            }
+        };
         if trb.cycle() != ep.ring.cycle {
             return;
         }
@@ -312,7 +336,20 @@ impl XhciTransferExecutor {
         ep: &mut EndpointState,
     ) -> bool {
         for _ in 0..MAX_LINK_SKIP {
-            let trb = read_trb(mem, ep.ring.dequeue_ptr);
+            let trb = match read_trb_checked(mem, ep.ring.dequeue_ptr) {
+                Ok(trb) => trb,
+                Err(()) => {
+                    ep.halted = true;
+                    self.pending_events.push(TransferEvent {
+                        ep_addr: ep.ep_addr,
+                        trb_ptr: ep.ring.dequeue_ptr,
+                        event_data: None,
+                        residual: 0,
+                        completion_code: CompletionCode::TrbError,
+                    });
+                    return false;
+                }
+            };
             if trb.cycle() != ep.ring.cycle {
                 return true;
             }
@@ -370,7 +407,10 @@ impl XhciTransferExecutor {
         td.next_cycle = cycle;
 
         for _ in 0..MAX_TD_TRBS {
-            let trb = read_trb(mem, ptr);
+            let trb = match read_trb_checked(mem, ptr) {
+                Ok(trb) => trb,
+                Err(()) => return GatherTdResult::Fault { trb_ptr: ptr },
+            };
             if trb.cycle() != cycle {
                 // TD is not fully written yet (or ring empty).
                 return GatherTdResult::Incomplete;
