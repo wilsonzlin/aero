@@ -88,6 +88,10 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
             off = (size_t)((uintptr_t)reg_u8 - (uintptr_t)base);
             mmio_sim_check_queue_select_lock(off);
 
+            if (g_sim->common_cfg_read_count < VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_READS) {
+                g_sim->common_cfg_read_offsets[g_sim->common_cfg_read_count++] = (uint16_t)off;
+            }
+
             switch (off) {
                 case 0x00: /* device_feature_select */
                     if (Width == 4) {

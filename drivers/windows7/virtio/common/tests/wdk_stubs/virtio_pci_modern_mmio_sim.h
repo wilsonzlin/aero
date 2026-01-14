@@ -24,6 +24,7 @@ extern "C" {
 #define VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES 16u
 #define VIRTIO_PCI_MODERN_MMIO_SIM_MAX_STATUS_WRITES 64u
 #define VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_WRITES 128u
+#define VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_READS 256u
 
 typedef struct VIRTIO_PCI_MODERN_MMIO_SIM_QUEUE {
     uint16_t queue_size;
@@ -82,6 +83,9 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
 
     uint8_t status_writes[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_STATUS_WRITES];
     size_t status_write_count;
+
+    uint16_t common_cfg_read_offsets[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_READS];
+    size_t common_cfg_read_count;
 
     uint16_t common_cfg_write_offsets[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_WRITES];
     size_t common_cfg_write_count;

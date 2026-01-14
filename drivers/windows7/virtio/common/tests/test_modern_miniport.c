@@ -673,8 +673,30 @@ static void test_read_device_features(void)
 
     VirtioPciModernMmioSimInstall(&sim);
 
+    sim.common_cfg_read_count = 0;
+    sim.common_cfg_write_count = 0;
     got = VirtioPciReadDeviceFeatures(&dev);
     assert(got == host_features);
+
+    /*
+     * Selector writeback flushes (see VirtioPciReadDeviceFeatures):
+     *
+     * - Write device_feature_select=0, read it back, then read device_feature.
+     * - Write device_feature_select=1, read it back, then read device_feature.
+     *
+     * The explicit readback of the selector is required to avoid posted-MMIO
+     * hazards where the subsequent device_feature read could observe the old
+     * selector value on some chipsets.
+     */
+    assert(sim.common_cfg_write_count == 2);
+    assert(sim.common_cfg_write_offsets[0] == 0x00); /* device_feature_select */
+    assert(sim.common_cfg_write_offsets[1] == 0x00);
+
+    assert(sim.common_cfg_read_count == 4);
+    assert(sim.common_cfg_read_offsets[0] == 0x00); /* device_feature_select (flush) */
+    assert(sim.common_cfg_read_offsets[1] == 0x04); /* device_feature */
+    assert(sim.common_cfg_read_offsets[2] == 0x00); /* device_feature_select (flush) */
+    assert(sim.common_cfg_read_offsets[3] == 0x04);
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -733,8 +755,21 @@ static void test_write_driver_features_direct(void)
     VirtioPciModernMmioSimInstall(&sim);
 
     features = 0x01234567ull | (0x89abcdefull << 32);
+    sim.common_cfg_read_count = 0;
+    sim.common_cfg_write_count = 0;
     VirtioPciWriteDriverFeatures(&dev, features);
     assert(sim.driver_features == features);
+
+    /* Ensure driver_feature_select writes are flushed via readback. */
+    assert(sim.common_cfg_write_count == 4);
+    assert(sim.common_cfg_write_offsets[0] == 0x08); /* driver_feature_select */
+    assert(sim.common_cfg_write_offsets[1] == 0x0C); /* driver_feature */
+    assert(sim.common_cfg_write_offsets[2] == 0x08);
+    assert(sim.common_cfg_write_offsets[3] == 0x0C);
+
+    assert(sim.common_cfg_read_count == 2);
+    assert(sim.common_cfg_read_offsets[0] == 0x08); /* driver_feature_select (flush) */
+    assert(sim.common_cfg_read_offsets[1] == 0x08);
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -1471,8 +1506,28 @@ static void test_get_num_queues_and_queue_size(void)
     VirtioPciModernMmioSimInstall(&sim);
 
     assert(VirtioPciGetNumQueues(&dev) == 2);
+
+    /*
+     * VirtioPciGetQueueSize uses queue_select and should flush the selector via
+     * an immediate readback (VirtioPciSelectQueueLocked).
+     */
+    sim.common_cfg_read_count = 0;
+    sim.common_cfg_write_count = 0;
     assert(VirtioPciGetQueueSize(&dev, 0) == 8);
+    assert(sim.common_cfg_write_count == 1);
+    assert(sim.common_cfg_write_offsets[0] == 0x16); /* queue_select */
+    assert(sim.common_cfg_read_count == 2);
+    assert(sim.common_cfg_read_offsets[0] == 0x16); /* queue_select (flush) */
+    assert(sim.common_cfg_read_offsets[1] == 0x18); /* queue_size */
+
+    sim.common_cfg_read_count = 0;
+    sim.common_cfg_write_count = 0;
     assert(VirtioPciGetQueueSize(&dev, 1) == 16);
+    assert(sim.common_cfg_write_count == 1);
+    assert(sim.common_cfg_write_offsets[0] == 0x16);
+    assert(sim.common_cfg_read_count == 2);
+    assert(sim.common_cfg_read_offsets[0] == 0x16);
+    assert(sim.common_cfg_read_offsets[1] == 0x18);
 
     VirtioPciModernMmioSimUninstall();
 }
