@@ -43,6 +43,15 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
 }
 
+fn ensure_not_webusb_root_port(root_port: u8) -> Result<(), JsValue> {
+    if root_port == WEBUSB_ROOT_PORT {
+        return Err(js_error(format!(
+            "EHCI root port {WEBUSB_ROOT_PORT} is reserved for WebUSB passthrough"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_mmio_size(size: u8) -> usize {
     match size {
         1 | 2 | 4 => size as usize,
@@ -72,6 +81,14 @@ fn parse_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {
         out.push(part as u8);
     }
     Ok(out)
+}
+
+fn parse_ehci_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {
+    let parsed = parse_usb_path(path)?;
+    if let Some(&root) = parsed.first() {
+        ensure_not_webusb_root_port(root)?;
+    }
+    Ok(parsed)
 }
 
 fn map_attach_error(err: UsbHubAttachError) -> JsValue {
@@ -410,6 +427,7 @@ impl EhciControllerBridge {
     ///
     /// `port_count` is the number of downstream ports on the hub (1..=255).
     pub fn attach_hub(&mut self, root_port: u8, port_count: u8) -> Result<(), JsValue> {
+        ensure_not_webusb_root_port(root_port)?;
         if port_count == 0 {
             return Err(js_error("port_count must be 1..=255"));
         }
@@ -423,7 +441,7 @@ impl EhciControllerBridge {
     /// - `path[0]` is the root port index (0-based).
     /// - `path[1..]` are hub ports (1-based).
     pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
-        let path = parse_usb_path(path)?;
+        let path = parse_ehci_usb_path(path)?;
         detach_device_at_path(&mut self.ctrl, &path)
     }
 
@@ -433,7 +451,7 @@ impl EhciControllerBridge {
         path: JsValue,
         device: &crate::WebHidPassthroughBridge,
     ) -> Result<(), JsValue> {
-        let path = parse_usb_path(path)?;
+        let path = parse_ehci_usb_path(path)?;
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 
@@ -443,7 +461,7 @@ impl EhciControllerBridge {
         path: JsValue,
         device: &crate::UsbHidPassthroughBridge,
     ) -> Result<(), JsValue> {
-        let path = parse_usb_path(path)?;
+        let path = parse_ehci_usb_path(path)?;
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 
