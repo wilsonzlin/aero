@@ -101,8 +101,8 @@ fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
 
     // Correct mapping per VBE contract:
     //   base = lfb_base + y_off * bytes_per_scan_line + x_off * bytes_per_pixel
-    let correct_off = u64::from(y_off) * effective_bytes_per_scan_line
-        + u64::from(x_off) * bytes_per_pixel;
+    let correct_off =
+        u64::from(y_off) * effective_bytes_per_scan_line + u64::from(x_off) * bytes_per_pixel;
 
     // Incorrect mapping if the scanout path ignores the logical scanline override and assumes the
     // mode's default pitch (1024*4).

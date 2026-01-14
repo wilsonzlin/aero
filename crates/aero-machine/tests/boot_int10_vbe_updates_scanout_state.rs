@@ -419,9 +419,7 @@ fn boot_sector_int10_vbe_scanline_bytes_and_display_start_update_scanout_state()
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(
         snap.base_paddr(),
-        m.vbe_lfb_base()
-            + u64::from(y_off) * expected_pitch
-            + u64::from(x_off) * bytes_per_pixel
+        m.vbe_lfb_base() + u64::from(y_off) * expected_pitch + u64::from(x_off) * bytes_per_pixel
     );
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
