@@ -2403,10 +2403,25 @@ def _virtio_blk_reset_missing_failure_message() -> str:
     )
 
 
-def _virtio_net_link_flap_skip_failure_message(tail: bytes) -> str:
+def _virtio_net_link_flap_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-net link flap marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set
     prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"
+    if marker_line is not None:
+        if prefix_str + "flag_not_set" in marker_line:
+            return (
+                "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
+                "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+            )
+        if marker_line.startswith(prefix_str):
+            reason = marker_line[len(prefix_str) :].strip()
+            if reason:
+                return (
+                    f"FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped ({reason}) "
+                    "but --with-net-link-flap was enabled"
+                )
+
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set" in tail:
         return (
             "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
@@ -2429,10 +2444,20 @@ def _virtio_net_link_flap_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap was enabled"
 
 
-def _virtio_net_link_flap_fail_failure_message(tail: bytes) -> str:
+def _virtio_net_link_flap_fail_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> str:
     # virtio-net link flap marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=...|...
-    marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|")
+    marker = None
+    if marker_line is not None and marker_line.startswith(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|"
+    ):
+        marker = marker_line
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|"
+        )
     details = ""
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
@@ -2464,6 +2489,7 @@ def _virtio_net_link_flap_required_failure_message(
     saw_pass: bool = False,
     saw_fail: bool = False,
     saw_skip: bool = False,
+    marker_line: Optional[str] = None,
 ) -> Optional[str]:
     """
     Enforce that virtio-net-link-flap ran and PASSed.
@@ -2471,14 +2497,26 @@ def _virtio_net_link_flap_required_failure_message(
     Returns:
         A deterministic "FAIL: ..." message on failure, or None when the marker requirement is satisfied.
     """
-    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
-    # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
+    # Prefer the incrementally captured last marker line when available so we don't depend on the rolling
+    # tail buffer still containing the marker.
+    if marker_line is not None:
+        toks = marker_line.split("|")
+        status_tok = toks[3] if len(toks) >= 4 else ""
+        if status_tok == "PASS":
+            return None
+        if status_tok == "FAIL":
+            return _virtio_net_link_flap_fail_failure_message(tail, marker_line=marker_line)
+        if status_tok == "SKIP":
+            return _virtio_net_link_flap_skip_failure_message(tail, marker_line=marker_line)
+
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation), but
+    # keep a tail scan fallback to support direct unit tests (and any legacy call sites).
     if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS" in tail:
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail:
-        return _virtio_net_link_flap_fail_failure_message(tail)
+        return _virtio_net_link_flap_fail_failure_message(tail, marker_line=marker_line)
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail:
-        return _virtio_net_link_flap_skip_failure_message(tail)
+        return _virtio_net_link_flap_skip_failure_message(tail, marker_line=marker_line)
     return (
         "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
         "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
@@ -5416,6 +5454,7 @@ def main() -> int:
                             saw_pass=saw_virtio_net_link_flap_pass,
                             saw_fail=saw_virtio_net_link_flap_fail,
                             saw_skip=saw_virtio_net_link_flap_skip,
+                            marker_line=virtio_net_link_flap_marker_line,
                         )
                         if msg is not None:
                             print(msg, file=sys.stderr)
@@ -5901,6 +5940,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_net_link_flap_pass,
                                     saw_fail=saw_virtio_net_link_flap_fail,
                                     saw_skip=saw_virtio_net_link_flap_skip,
+                                    marker_line=virtio_net_link_flap_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -6097,6 +6137,7 @@ def main() -> int:
                                 saw_pass=saw_virtio_net_link_flap_pass,
                                 saw_fail=saw_virtio_net_link_flap_fail,
                                 saw_skip=saw_virtio_net_link_flap_skip,
+                                marker_line=virtio_net_link_flap_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -6230,6 +6271,7 @@ def main() -> int:
                                 saw_pass=saw_virtio_net_link_flap_pass,
                                 saw_fail=saw_virtio_net_link_flap_fail,
                                 saw_skip=saw_virtio_net_link_flap_skip,
+                                marker_line=virtio_net_link_flap_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -7583,6 +7625,7 @@ def main() -> int:
                                         saw_pass=saw_virtio_net_link_flap_pass,
                                         saw_fail=saw_virtio_net_link_flap_fail,
                                         saw_skip=saw_virtio_net_link_flap_skip,
+                                        marker_line=virtio_net_link_flap_marker_line,
                                     )
                                     if msg is not None:
                                         print(msg, file=sys.stderr)
@@ -7776,6 +7819,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_net_link_flap_pass,
                                     saw_fail=saw_virtio_net_link_flap_fail,
                                     saw_skip=saw_virtio_net_link_flap_skip,
+                                    marker_line=virtio_net_link_flap_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
