@@ -375,11 +375,11 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots:
-    - operational/runtime state (`USBCMD`, `USBSTS`, `CRCR`, `DCBAAP`, port count, Interrupter 0 regs:
-      `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`), and
+    - operational/runtime state (`USBCMD`, `USBSTS`, `CONFIG`, `MFINDEX`, `CRCR`, `DCBAAP`, port count,
+      Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`), and
     - per-port snapshot records (connection/change bits/reset timers/link state/speed + attached
       `AttachedUsbDevice` snapshot, when present),
-    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.3`.
+    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.4`.
   - Current limitations: the `XHCI` snapshot does **not** yet capture pending event TRBs or xHCI
     driver state (slots/contexts beyond what is mirrored into guest memory); restores should be
     treated as “best-effort bring-up” rather than a bit-perfect resume of an in-flight xHCI driver.
