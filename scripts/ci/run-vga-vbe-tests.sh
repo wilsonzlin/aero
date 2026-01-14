@@ -17,6 +17,7 @@
 #   test binaries matching:
 #     - `crates/aero-machine/tests/boot_int10_*.rs`
 #     - `crates/aero-machine/tests/vga_*.rs`
+#     - `crates/aero-machine/tests/aerogpu_legacy_*.rs`
 #     - `crates/aero-machine/tests/bios_vga_sync.rs` (BIOS↔VGA/VBE sync regression tests)
 
 set -euo pipefail
@@ -61,6 +62,18 @@ for f in "${vga_files[@]}"; do
   vga_args+=(--test "$(basename "$f" .rs)")
 done
 run cargo test -p aero-machine --locked "${vga_args[@]}"
+
+legacy_files=(crates/aero-machine/tests/aerogpu_legacy_*.rs)
+if [[ ${#legacy_files[@]} -eq 0 ]]; then
+  echo "error: no aero-machine aerogpu_legacy_* integration tests found" >&2
+  exit 1
+fi
+
+legacy_args=()
+for f in "${legacy_files[@]}"; do
+  legacy_args+=(--test "$(basename "$f" .rs)")
+done
+run cargo test -p aero-machine --locked "${legacy_args[@]}"
 
 # Additional BIOS↔VGA/VBE sync regression coverage (palette mirroring, failed mode-set semantics,
 # etc).
