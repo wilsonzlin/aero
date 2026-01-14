@@ -510,3 +510,75 @@ fn sgl_rejects_root_segment_length_zero() {
     assert_eq!(cqe.cid, 0x36);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
+
+#[test]
+fn sgl_rejects_root_last_segment_length_not_multiple_of_16() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x37);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    // Segment length must be a multiple of 16 bytes.
+    set_prp2(&mut cmd, 20u64 | ((0x03u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x37);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_root_last_segment_length_zero() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x38);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    // Segment length 0 is invalid.
+    set_prp2(&mut cmd, (0x03u64) << 56);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x38);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_root_last_segment_descriptor_requires_alignment() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    // Misaligned segment list pointer.
+    let list = 0x70008u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x39);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x03u64) << 56)); // Last Segment
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x39);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
