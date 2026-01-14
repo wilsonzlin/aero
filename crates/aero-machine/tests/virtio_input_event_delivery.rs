@@ -162,8 +162,8 @@ fn inject_input_batch_mouse_buttons_after_snapshot_restore_still_delivers_press_
     assert!(used_idx > 0, "expected at least one virtio input event");
 
     let mut saw_left_down = false;
-    for i in 0..used_idx.min(bufs.len()) {
-        let got = restored.read_physical_bytes(bufs[i], 8);
+    for &buf in bufs.iter().take(used_idx.min(bufs.len())) {
+        let got = restored.read_physical_bytes(buf, 8);
         let type_ = u16::from_le_bytes([got[0], got[1]]);
         let code_ = u16::from_le_bytes([got[2], got[3]]);
         let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
