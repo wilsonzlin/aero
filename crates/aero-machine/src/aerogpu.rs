@@ -354,13 +354,14 @@ impl AeroGpuMmioDevice {
     ///
     /// This includes:
     /// - submission-bridge mode (external completion),
-    /// - pending fence completion queue + backend completion set, and
+    /// - pending fence completion queue + backend completion set,
+    /// - deferred backend completions queued while PCI COMMAND.BME is disabled, and
     /// - pending submission drain queue (WASM integration hook).
     ///
     /// Note: This is *not* part of the guest-visible BAR0 register file and is therefore stored as a
     /// machine-level snapshot extension tag.
     pub(crate) fn save_exec_snapshot_state_v1(&self) -> Vec<u8> {
-        const VERSION: u32 = 2;
+        const VERSION: u32 = 3;
 
         let mut enc = Encoder::new()
             .u32(VERSION)
@@ -385,6 +386,19 @@ impl AeroGpuMmioDevice {
         completed.sort_unstable();
         enc = enc.u32(completed.len() as u32);
         for fence in completed {
+            enc = enc.u64(fence);
+        }
+
+        // Backend completions that arrived while DMA was disabled (unordered); sort for deterministic
+        // encoding.
+        let mut deferred: Vec<u64> = self
+            .pending_backend_fence_completions
+            .iter()
+            .copied()
+            .collect();
+        deferred.sort_unstable();
+        enc = enc.u32(deferred.len() as u32);
+        for fence in deferred {
             enc = enc.u64(fence);
         }
 
@@ -418,6 +432,7 @@ impl AeroGpuMmioDevice {
         // Snapshots may come from untrusted sources, so cap sizes to keep decode bounded.
         const MAX_PENDING_FENCES: usize = 65_536;
         const MAX_BACKEND_COMPLETED_FENCES: usize = 65_536;
+        const MAX_DEFERRED_BACKEND_COMPLETIONS: usize = 65_536;
         const MAX_PENDING_SUBMISSIONS: usize = MAX_PENDING_AEROGPU_SUBMISSIONS;
         const MAX_CMD_STREAM_BYTES: usize = MAX_CMD_STREAM_SIZE_BYTES as usize;
         const MAX_ALLOC_TABLE_BYTES: usize = MAX_AEROGPU_ALLOC_TABLE_BYTES as usize;
@@ -425,7 +440,7 @@ impl AeroGpuMmioDevice {
         let mut d = Decoder::new(bytes);
 
         let version = d.u32()?;
-        if version != 1 && version != 2 {
+        if version != 1 && version != 2 && version != 3 {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "aerogpu.exec_state.version",
             ));
@@ -480,6 +495,22 @@ impl AeroGpuMmioDevice {
             backend_completed_fences.insert(d.u64()?);
         }
 
+        let mut pending_backend_fence_completions = VecDeque::new();
+        if version >= 3 {
+            let deferred_count = d.u32()? as usize;
+            if deferred_count > MAX_DEFERRED_BACKEND_COMPLETIONS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "aerogpu.exec_state.deferred_backend_completions",
+                ));
+            }
+            pending_backend_fence_completions
+                .try_reserve_exact(deferred_count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            for _ in 0..deferred_count {
+                pending_backend_fence_completions.push_back(d.u64()?);
+            }
+        }
+
         let submission_count = d.u32()? as usize;
         if submission_count > MAX_PENDING_SUBMISSIONS {
             return Err(SnapshotError::InvalidFieldEncoding(
@@ -487,6 +518,7 @@ impl AeroGpuMmioDevice {
             ));
         }
         let mut pending_submissions = VecDeque::new();
+        let mut pending_submissions_bytes = 0usize;
         pending_submissions
             .try_reserve_exact(submission_count)
             .map_err(|_| SnapshotError::OutOfMemory)?;
@@ -517,6 +549,11 @@ impl AeroGpuMmioDevice {
                 None
             };
 
+            let alloc_bytes = alloc_table.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+            pending_submissions_bytes = pending_submissions_bytes
+                .saturating_add(cmd_stream.len())
+                .saturating_add(alloc_bytes);
+
             pending_submissions.push_back(AerogpuSubmission {
                 flags,
                 context_id,
@@ -542,7 +579,9 @@ impl AeroGpuMmioDevice {
         self.fence_page_dirty = fence_page_dirty;
         self.pending_fence_completions = pending_fence_completions;
         self.backend_completed_fences = backend_completed_fences;
+        self.pending_backend_fence_completions = pending_backend_fence_completions;
         self.pending_submissions = pending_submissions;
+        self.pending_submissions_bytes = pending_submissions_bytes;
 
         Ok(())
     }

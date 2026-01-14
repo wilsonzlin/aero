@@ -223,3 +223,111 @@ fn aerogpu_snapshot_preserves_pending_submission_and_fence_queue_for_bridge_mode
     assert_eq!(completed_after, signal_fence);
     assert_eq!(m2.read_physical_u64(fence_gpa + 8), signal_fence);
 }
+
+#[test]
+fn aerogpu_snapshot_preserves_deferred_backend_completion_queued_while_bme_disabled() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 16 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        // Keep the machine minimal and deterministic for this unit test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg.clone()).unwrap();
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device present");
+    enable_pci_command_bits(&mut m, bdf, (1 << 1) | (1 << 2)); // COMMAND.MEM + COMMAND.BME
+    let bar0 = m
+        .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)
+        .expect("AeroGPU BAR0 base");
+
+    // Enable external-executor fence semantics.
+    m.aerogpu_enable_submission_bridge();
+
+    let ring_gpa = 0x10000u64;
+    let fence_gpa = 0x20000u64;
+    let cmd_gpa = 0x30000u64;
+    let signal_fence = 0x1357_2468_ACE0_0001u64;
+    let ring_size_bytes = setup_ring(&mut m, ring_gpa, cmd_gpa, signal_fence);
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        ring_size_bytes,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
+        (fence_gpa >> 32) as u32,
+    );
+
+    // Consume the submission; in bridge mode the fence should *not* complete until the host reports
+    // completion.
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+
+    // Disable bus mastering.
+    {
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let command = bus.read_config(bdf, 0x04, 2) as u16;
+        bus.write_config(bdf, 0x04, 2, u32::from(command & !(1 << 2)));
+    }
+
+    // Report completion while BME is disabled. The device should defer applying it.
+    m.aerogpu_complete_fence(signal_fence);
+    let completed_before = (u64::from(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
+    ) << 32)
+        | u64::from(
+            m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
+    assert_eq!(completed_before, 0);
+    assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
+
+    // Snapshot while the completion is queued but not yet applied.
+    let snap = m.take_snapshot_full().unwrap();
+
+    let mut m2 = Machine::new(cfg).unwrap();
+    m2.restore_snapshot_bytes(&snap).unwrap();
+    m2.aerogpu_enable_submission_bridge();
+
+    // Re-enable BME and process; the queued completion should be applied without re-sending it.
+    enable_pci_command_bits(&mut m2, bdf, 1 << 2);
+    m2.process_aerogpu();
+
+    let bar0 = m2
+        .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)
+        .expect("AeroGPU BAR0 base after restore");
+    let completed_after = (u64::from(
+        m2.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
+    ) << 32)
+        | u64::from(
+            m2.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
+    assert_eq!(completed_after, signal_fence);
+    assert_eq!(m2.read_physical_u64(fence_gpa + 8), signal_fence);
+}
