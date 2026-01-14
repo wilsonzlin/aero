@@ -14938,7 +14938,46 @@ impl snapshot::SnapshotTarget for Machine {
                     })
                     .unwrap_or(0);
 
-                let mut level = aerogpu_mmio.borrow().irq_level();
+                // Keep the AeroGPU model's internal PCI config image coherent with the canonical
+                // PCI config space owned by the machine (COMMAND + BAR bases). Snapshot restore can
+                // target a machine instance that has already executed or polled devices, so the
+                // internal config image may contain stale command bits. Synchronize it here so
+                // `irq_level()` applies COMMAND.INTX_DISABLE gating consistently.
+                let (bar0_base, bar1_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let bar0_base = cfg
+                            .and_then(|cfg| {
+                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX)
+                            })
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        let bar1_base = cfg
+                            .and_then(|cfg| {
+                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+                            })
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (bar0_base, bar1_base)
+                    })
+                    .unwrap_or((0, 0));
+
+                let mut level = {
+                    let mut dev = aerogpu_mmio.borrow_mut();
+                    dev.config_mut().set_command(command);
+                    dev.config_mut().set_bar_base(
+                        aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
+                        bar0_base,
+                    );
+                    dev.config_mut().set_bar_base(
+                        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+                        bar1_base,
+                    );
+                    dev.irq_level()
+                };
                 if (command & (1 << 10)) != 0 {
                     level = false;
                 }
