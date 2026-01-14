@@ -98,6 +98,16 @@ fn merge_and_cap_rects_clamps_to_framebuffer_bounds() {
 }
 
 #[test]
+fn rect_clamp_to_bounds_saturates_on_overflow() {
+    // Ensure `right()`/`bottom()` use saturating arithmetic so huge extents clamp correctly instead
+    // of wrapping and causing the rect to be dropped.
+    let r = Rect::new(5, 5, u32::MAX, u32::MAX);
+    assert_eq!(r.right(), u32::MAX);
+    assert_eq!(r.bottom(), u32::MAX);
+    assert_eq!(r.clamp_to_bounds(10, 10), Some(Rect::new(5, 5, 5, 5)));
+}
+
+#[test]
 fn merge_and_cap_rects_merges_transitively() {
     // r1 adjacent to r2, r2 adjacent to r3 => all should merge into one bbox.
     let r1 = Rect::new(0, 0, 10, 10);
