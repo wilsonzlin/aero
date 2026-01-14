@@ -5064,12 +5064,15 @@ impl Machine {
     /// - `overlay_image = ""` (empty string indicates "no writable overlay")
     #[cfg(target_arch = "wasm32")]
     pub async fn attach_install_media_opfs_iso(&mut self, path: String) -> Result<(), JsValue> {
+        let path_for_err = path.clone();
         let backend = aero_opfs::OpfsBackend::open_existing(&path)
             .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_disk_error_to_js("Machine.attach_install_media_opfs_iso", &path, e))?;
         self.inner
             .attach_install_media_iso_and_set_overlay_ref(Box::new(backend), path)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.attach_install_media_opfs_iso", &path_for_err, e)
+            })
     }
 
     /// Eject the canonical install media (IDE secondary master ATAPI) and clear its snapshot
