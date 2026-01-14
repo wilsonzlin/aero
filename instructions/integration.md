@@ -458,7 +458,7 @@ under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (
 
 ```bash
 # Regenerate/verify deterministic in-repo fixtures (BIOS ROM, ACPI DSDT, tiny boot images).
-# CI runs `--check` and fails if it produces a diff.
+# CI runs `--check` and fails if any fixture is missing or out-of-date.
 bash ./scripts/safe-run.sh cargo xtask fixtures
 bash ./scripts/safe-run.sh cargo xtask fixtures --check
 
