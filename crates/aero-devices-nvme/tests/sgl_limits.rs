@@ -662,3 +662,33 @@ fn sgl_rejects_root_last_segment_descriptor_with_nonzero_reserved_bits() {
     assert_eq!(cqe.cid, 0x3C);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
+
+#[test]
+fn sgl_rejects_segment_list_address_overflow() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+
+    // Root points to a list with a single Segment descriptor that would overflow `u64` when the
+    // controller attempts to read the second 16-byte descriptor.
+    //
+    // Use a 16-byte aligned address near `u64::MAX` so the alignment check passes.
+    let near_max_aligned = u64::MAX - 0x0F;
+    write_sgl_desc(&mut mem, list, near_max_aligned, 32, 0x02); // Segment, 2 descriptors
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3D);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3D);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
