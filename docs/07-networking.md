@@ -190,7 +190,7 @@ talks to a single HTTPS origin:
 
 - `/session`, `/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`, `/udp-relay/token` → **aero-gateway**
 - `/webrtc/*`, `/offer`, `/udp` → **webrtc-udp-relay**
-  - `GET /webrtc/ice` responses may include TURN credentials and are explicitly **non-cacheable** (`Cache-Control: no-store`) to avoid proxy/browser caching leaks and stale credentials.
+  - `GET /webrtc/ice` responses may include TURN credentials and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) to avoid proxy/browser caching leaks and stale credentials.
 - `/l2` (legacy alias: `/eth`) → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
 Auth note (Option C): `/l2` should be treated like `/tcp` — for any internet-exposed deployment you

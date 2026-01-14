@@ -183,7 +183,7 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
   - when `AUTH_MODE != none`, also requires the same credentials as signaling endpoints (to avoid leaking TURN REST credentials to unauthenticated callers)
-  - responses are explicitly **non-cacheable** (`Cache-Control: no-store`) to avoid leaking/staling TURN credentials via browser/proxy caches
+  - responses are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) to avoid leaking/staling TURN credentials via browser/proxy caches
 - `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md` (requires auth when `AUTH_MODE != none`)
 - `POST /session` → allocate a **short-lived** server-side session reservation (expires after `SESSION_PREALLOC_TTL`) (primarily for quota enforcement; not required by the v1 offer/answer flow) (requires auth when `AUTH_MODE != none`)
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE) (requires auth when `AUTH_MODE != none`)
