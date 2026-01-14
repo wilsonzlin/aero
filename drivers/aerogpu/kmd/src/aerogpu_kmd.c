@@ -2664,7 +2664,9 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             adapter->CurrentPitch = mmio.PitchBytes;
             adapter->CurrentFormat = mmio.Format;
             adapter->CurrentScanoutFbPa = mmio.FbPa;
-            adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+            if (!adapter->PostDisplayOwnershipReleased) {
+                adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+            }
 
             /* Never leave scanout enabled with an invalid framebuffer address. */
             if (mmio.Enable != 0 && mmio.FbPa.QuadPart == 0) {
@@ -3311,7 +3313,9 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
              * Treat the hardware enable bit as authoritative during acquisition:
              * dxgkrnl has not yet called SetVidPnSourceVisibility in some paths.
              */
-            adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+            if (!adapter->PostDisplayOwnershipReleased) {
+                adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
+            }
 
             /* Ensure we never enable scanout with FbPa == 0. */
             if (mmio.Enable != 0 && mmio.FbPa.QuadPart == 0) {
