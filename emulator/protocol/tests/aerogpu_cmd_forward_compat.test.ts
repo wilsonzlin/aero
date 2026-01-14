@@ -5,19 +5,27 @@ import {
   AEROGPU_CMD_BIND_SHADERS_SIZE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
+  AEROGPU_CMD_DISPATCH_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN,
+  AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
+  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
+  AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_STREAM_MAGIC,
+  AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE,
   AerogpuBlendFactor,
   AerogpuBlendOp,
   AerogpuCmdOpcode,
   decodeCmdBindShadersPayload,
   decodeCmdBindShadersPayloadFromPacket,
   decodeCmdCreateShaderDxbcPayload,
+  decodeCmdDispatchPayload,
   decodeCmdStreamView,
   decodeCmdSetBlendState,
+  decodeCmdSetShaderResourceBuffersPayload,
+  decodeCmdSetUnorderedAccessBuffersPayload,
 } from "../aerogpu/aerogpu_cmd.ts";
 import { AEROGPU_ABI_VERSION_U32 } from "../aerogpu/aerogpu_pci.ts";
 
@@ -144,6 +152,81 @@ test("variable-payload decoders accept trailing bytes in cmd.size_bytes", () => 
   assert.equal(decoded.stage, 0);
   assert.equal(decoded.dxbcSizeBytes, 8);
   assert.deepEqual(Array.from(decoded.dxbcBytes), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test("DISPATCH decoder accepts trailing bytes in cmd.size_bytes", () => {
+  const bytes: number[] = [];
+  pushU32(bytes, AerogpuCmdOpcode.Dispatch);
+  pushU32(bytes, AEROGPU_CMD_DISPATCH_SIZE + 4);
+  pushU32(bytes, 1);
+  pushU32(bytes, 2);
+  pushU32(bytes, 3);
+  pushU32(bytes, 0);
+  pushU32(bytes, 0xdead_beef);
+
+  const out = new Uint8Array(bytes);
+  const decoded = decodeCmdDispatchPayload(out, 0);
+  assert.equal(decoded.groupCountX, 1);
+  assert.equal(decoded.groupCountY, 2);
+  assert.equal(decoded.groupCountZ, 3);
+  assert.equal(decoded.reserved0, 0);
+});
+
+test("SRV/UAV binding table decoders accept trailing bytes in cmd.size_bytes", () => {
+  {
+    const bytes: number[] = [];
+    pushU32(bytes, AerogpuCmdOpcode.SetShaderResourceBuffers);
+    pushU32(bytes, AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE + 4);
+    pushU32(bytes, 1); // shader_stage (pixel)
+    pushU32(bytes, 0); // start_slot
+    pushU32(bytes, 1); // buffer_count
+    pushU32(bytes, 0); // reserved0
+    // binding[0]
+    pushU32(bytes, 10); // buffer
+    pushU32(bytes, 0); // offset_bytes
+    pushU32(bytes, 64); // size_bytes
+    pushU32(bytes, 0); // reserved0
+    pushU32(bytes, 0xdead_beef); // trailing extension
+
+    const out = new Uint8Array(bytes);
+    const decoded = decodeCmdSetShaderResourceBuffersPayload(out, 0);
+    assert.equal(decoded.shaderStage, 1);
+    assert.equal(decoded.startSlot, 0);
+    assert.equal(decoded.bufferCount, 1);
+    assert.equal(decoded.reserved0, 0);
+    assert.equal(decoded.bindings.byteLength, AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE);
+    assert.equal(decoded.bindings.getUint32(0, true), 10);
+    assert.equal(decoded.bindings.getUint32(4, true), 0);
+    assert.equal(decoded.bindings.getUint32(8, true), 64);
+  }
+
+  {
+    const bytes: number[] = [];
+    pushU32(bytes, AerogpuCmdOpcode.SetUnorderedAccessBuffers);
+    pushU32(bytes, AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE + 4);
+    pushU32(bytes, 2); // shader_stage (compute)
+    pushU32(bytes, 0); // start_slot
+    pushU32(bytes, 1); // uav_count
+    pushU32(bytes, 0); // reserved0
+    // binding[0]
+    pushU32(bytes, 20); // buffer
+    pushU32(bytes, 4); // offset_bytes
+    pushU32(bytes, 128); // size_bytes
+    pushU32(bytes, 0); // initial_count
+    pushU32(bytes, 0xdead_beef); // trailing extension
+
+    const out = new Uint8Array(bytes);
+    const decoded = decodeCmdSetUnorderedAccessBuffersPayload(out, 0);
+    assert.equal(decoded.shaderStage, 2);
+    assert.equal(decoded.startSlot, 0);
+    assert.equal(decoded.uavCount, 1);
+    assert.equal(decoded.reserved0, 0);
+    assert.equal(decoded.bindings.byteLength, AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE);
+    assert.equal(decoded.bindings.getUint32(0, true), 20);
+    assert.equal(decoded.bindings.getUint32(4, true), 4);
+    assert.equal(decoded.bindings.getUint32(8, true), 128);
+    assert.equal(decoded.bindings.getUint32(12, true), 0);
+  }
 });
 
 test("SET_BLEND_STATE decoder accepts legacy 28-byte packets", () => {
