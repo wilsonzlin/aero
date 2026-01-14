@@ -224,7 +224,8 @@ Code pointers:
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
-  - `Machine::process_aerogpu()` publishes updates derived from AeroGPU scanout0 registers (when enabled).
+  - `Machine::handle_bios_interrupt()` publishes legacy scanout transitions (`LEGACY_TEXT` ↔ `LEGACY_VBE_LFB`) on BIOS INT 10h mode changes, while preserving sticky handoff semantics once WDDM has claimed scanout.
+  - `Machine::process_aerogpu()` publishes updates derived from AeroGPU scanout0 registers (when enabled), and can also revert the shared scanout descriptor back to the legacy BIOS source if WDDM disables scanout.
 
 Note: `ScanoutState` is also the intended mechanism for a device model to describe a guest-memory scanout buffer (base paddr + pitch etc). The full AeroGPU/WDDM scanout plumbing is owned elsewhere; see “AeroGPU status” below.
 
