@@ -141,6 +141,8 @@ drivers/windows7/tests/
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...
   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+  # Checksum offload counters (via \\.\AeroVirtioNetDiag IOCTL):
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...
   AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
@@ -161,6 +163,8 @@ When the harness is run with:
   or missing marker is treated as a hard failure).
 - `-WithBlkResize` / `--with-blk-resize`, `virtio-blk-resize` must `PASS` (and a guest `SKIP|flag_not_set` or missing marker
   is treated as a hard failure). This path also triggers a runtime QMP resize.
+- `-RequireNetCsumOffload` / `--require-net-csum-offload`, the harness additionally requires `virtio-net-offload-csum` to report
+  `PASS` and `tx_csum > 0` (at least one checksum-offloaded TX packet was observed).
 
 Note:
 - The guest selftest also emits standalone IRQ diagnostic lines for `virtio-net` / `virtio-snd` / `virtio-input`:

@@ -78,6 +78,11 @@ How to validate (in-tree harness):
   `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...` (and the mirrored host marker `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`).
 - The marker includes deterministic large transfer diagnostics (`large_*`, `upload_*`) which can be used to compare
   throughput and integrity across configurations.
+- The guest selftest also emits a checksum offload counter marker derived from the driver diagnostics IOCTL:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>`
+  - The host harness can optionally require `tx_csum > 0`:
+    - PowerShell: `-RequireNetCsumOffload`
+    - Python: `--require-net-csum-offload`
 
 ### Mergeable receive buffers (MRG_RXBUF)
 
@@ -189,6 +194,20 @@ Notes:
 
 - The interface is **diagnostic-only** (no writable IOCTLs).
 - Callers must validate the returned byte count: the driver may return a truncated struct for compatibility.
+
+#### Checksum offload stats IOCTL (`AEROVNET_IOCTL_QUERY_OFFLOAD_STATS`)
+
+To enable black-box validation of checksum offload behavior, the driver exposes a dedicated stats IOCTL on the same
+diagnostics device:
+
+- IOCTL: `AEROVNET_IOCTL_QUERY_OFFLOAD_STATS` (see `include/aero_virtio_net.h`)
+- Output struct: `AEROVNET_OFFLOAD_STATS` (packed, versioned)
+
+The payload includes per-adapter counters:
+
+- TX packets that used checksum offload (TCP/UDP, IPv4/IPv6)
+- RX packets whose checksum was validated by the device (TCP/UDP, IPv4/IPv6)
+- `TxCsumFallback`: packets where offload was requested but the driver computed the checksum in software
 
 ### TX cancellation diagnostics (DBG builds)
 

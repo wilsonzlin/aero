@@ -1408,21 +1408,24 @@ The host harness mirrors the last observed line into a stable host-side marker f
 
 This is informational only and does not affect overall PASS/FAIL.
 
-### virtio-net checksum offload counters (`virtio-net-offload-csum`)
+### virtio-net checksum offload counters (`virtio-net-offload-csum`) (optional gating)
 
-The guest selftest emits a marker summarizing virtio-net checksum offload counters queried from the in-guest driver:
+The guest selftest emits a dedicated machine-readable marker surfacing virtio-net checksum offload behavior:
 
-- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=<u64>|rx_csum=<u64>|fallback=<u64>`
 
-This marker may be present even when checksum offload is not actually exercised (for example `tx_csum=0`).
-To make checksum offload a **hard requirement**, enable:
+These counters are queried from the driver via the `\\.\AeroVirtioNetDiag` diagnostics device using the IOCTL
+`AEROVNET_IOCTL_QUERY_OFFLOAD_STATS` (see `drivers/windows7/virtio-net/include/aero_virtio_net.h`).
+
+By default this marker is informational and does not affect PASS/FAIL. This marker may be present even when checksum
+offload is not actually exercised (for example `tx_csum=0`).
 
 - PowerShell: `-RequireNetCsumOffload`
 - Python: `--require-net-csum-offload`
 
-When enabled, the harness fails if the marker is missing/FAIL or reports `tx_csum=0` (deterministic tokens:
-`MISSING_VIRTIO_NET_CSUM_OFFLOAD`, `VIRTIO_NET_CSUM_OFFLOAD_FAILED`, `VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS`,
-`VIRTIO_NET_CSUM_OFFLOAD_ZERO`).
+When enabled, the harness fails if the marker is missing/FAIL, missing the `tx_csum` field, or reports `tx_csum=0`
+(deterministic tokens: `MISSING_VIRTIO_NET_CSUM_OFFLOAD`, `VIRTIO_NET_CSUM_OFFLOAD_FAILED`,
+`VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS`, `VIRTIO_NET_CSUM_OFFLOAD_ZERO`).
 
 ### virtio-snd negotiated mix format (`virtio-snd-format`)
 
