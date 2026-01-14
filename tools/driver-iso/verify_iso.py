@@ -240,9 +240,9 @@ def _list_iso_files(iso_path: Path) -> set[str]:
 
     install_hint = (
         "Install one of:\n"
-        "- Rust/cargo (to use the in-tree aero_iso_ls backend)\n"
         "- pycdlib: python3 -m pip install pycdlib\n"
-        "- xorriso (via your OS package manager)"
+        "- xorriso (via your OS package manager)\n"
+        "- (optional) Rust/cargo (to use the in-tree aero_iso_ls backend)"
     )
     if errors:
         formatted = "\n\n".join(errors)
