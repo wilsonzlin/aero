@@ -12451,6 +12451,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         aerogpu_escape_query_scanout_out* out = (aerogpu_escape_query_scanout_out*)pEscape->pPrivateDriverData;
+        const BOOLEAN haveV2 = ((SIZE_T)pEscape->PrivateDriverDataSize >= sizeof(aerogpu_escape_query_scanout_out_v2)) ? TRUE : FALSE;
+        aerogpu_escape_query_scanout_out_v2* out2 = haveV2 ? (aerogpu_escape_query_scanout_out_v2*)out : NULL;
 
         /* Only scanout/source 0 is currently implemented. */
         if (out->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
@@ -12459,10 +12461,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-        out->hdr.size = sizeof(*out);
+        out->hdr.size = haveV2 ? (aerogpu_escape_u32)sizeof(*out2) : (aerogpu_escape_u32)sizeof(*out);
         out->hdr.reserved0 = 0;
 
         out->reserved0 = 0;
+        if (haveV2) {
+            uint32_t flags = AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID;
+            const uint64_t cachedFbGpa = (uint64_t)adapter->CurrentScanoutFbPa.QuadPart;
+            out2->cached_fb_gpa = cachedFbGpa;
+            if (cachedFbGpa != 0) {
+                flags |= AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID;
+            }
+            out->reserved0 = flags;
+        }
 
         out->cached_enable = adapter->SourceVisible ? 1u : 0u;
         out->cached_width = adapter->CurrentWidth;
@@ -12485,28 +12496,27 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->mmio_format = out->cached_format;
             out->mmio_pitch_bytes = out->cached_pitch_bytes;
             out->mmio_fb_gpa = (uint64_t)adapter->CurrentScanoutFbPa.QuadPart;
-            return STATUS_SUCCESS;
-        }
-
-        if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
-            adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
-            out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE);
-            out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
-            out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
-            out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT);
-            out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
-            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO);
-            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
-            out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
-        } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
-            out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE);
-            out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_WIDTH);
-            out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
-            out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT);
-            out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
-            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO);
-            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
-            out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+        } else {
+            if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+                adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+                out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE);
+                out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
+                out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
+                out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT);
+                out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
+                out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+            } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
+                out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE);
+                out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_WIDTH);
+                out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
+                out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT);
+                out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
+                out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+            }
         }
 
         return STATUS_SUCCESS;

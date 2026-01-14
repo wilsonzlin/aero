@@ -444,6 +444,13 @@ typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
 typedef struct aerogpu_escape_query_scanout_out {
   aerogpu_escape_header hdr;
   aerogpu_escape_u32 vidpn_source_id;
+  /*
+   * Flags (newer KMDs):
+   * - Bit 31: flags are valid.
+   * - Bit 0: cached_fb_gpa is valid (requires QUERY_SCANOUT v2 output).
+   *
+   * This field was previously reserved; keep its name and offset for ABI stability.
+   */
   aerogpu_escape_u32 reserved0;
 
   /* Cached values tracked by the KMD. */
@@ -477,6 +484,24 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_hei
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_format) == 56);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_pitch_bytes) == 60);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_fb_gpa) == 64);
+
+#define AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID (1u << 31)
+#define AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID (1u << 0)
+
+/*
+ * Query scanout response (v2).
+ *
+ * This extends `aerogpu_escape_query_scanout_out` by appending cached scanout
+ * framebuffer GPA. Tooling must check `hdr.size` before reading appended fields.
+ */
+typedef struct aerogpu_escape_query_scanout_out_v2 {
+  aerogpu_escape_query_scanout_out base;
+  aerogpu_escape_u64 cached_fb_gpa;
+} aerogpu_escape_query_scanout_out_v2;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_scanout_out_v2) == 80);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out_v2, cached_fb_gpa) == 72);
 
 typedef struct aerogpu_escape_query_cursor_out {
   aerogpu_escape_header hdr;
