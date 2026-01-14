@@ -4325,17 +4325,21 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
+              // `Uint8Array.buffer` is typed as `ArrayBufferLike` (it may be a `SharedArrayBuffer`),
+              // but screenshot payloads must be transferable. `out` is always a freshly allocated
+              // copy (`.slice()` / `new Uint8Array(...)`), so the backing store is an `ArrayBuffer`.
+              const rgba8 = out.buffer as ArrayBuffer;
               postToMain(
                 {
                   type: "screenshot",
                   requestId: req.requestId,
                   width,
                   height,
-                  rgba8: out.buffer as ArrayBuffer,
+                  rgba8,
                   origin: "top-left",
                   ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                 },
-                [out.buffer as ArrayBuffer],
+                [rgba8],
               );
               return true;
             } catch {
