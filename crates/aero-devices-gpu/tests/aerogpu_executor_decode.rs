@@ -675,6 +675,20 @@ fn malformed_alloc_table_sets_error_irq_and_advances_head() {
     assert_eq!(regs.completed_fence, 1);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::BadMagic,
+            )),
+        "expected BadMagic error, got: {:?}",
+        record.decode_errors
+    );
 }
 
 #[test]
@@ -855,6 +869,20 @@ fn malformed_cmd_stream_size_sets_error_irq() {
     assert_eq!(regs.completed_fence, 5);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+            )),
+        "expected StreamSizeTooLarge error, got: {:?}",
+        record.decode_errors
+    );
 }
 
 #[test]
