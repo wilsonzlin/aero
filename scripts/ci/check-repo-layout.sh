@@ -599,15 +599,24 @@ if len(manifest_set) != len(manifest_tests):
         if t in seen and t not in duplicates:
             duplicates.append(t)
         seen.add(t)
-    raise SystemExit(f"{manifest_path}: duplicate test entries: {', '.join(duplicates)}")
+    raise SystemExit(
+        f"{manifest_path}: duplicate test entries: {', '.join(duplicates)}\n"
+        "Tip: tests_manifest.txt should list each test exactly once"
+    )
 
 for test in manifest_tests:
     test_dir = suite_dir / test
     if not test_dir.is_dir():
-        raise SystemExit(f"{manifest_path}: listed test directory does not exist: {test_dir}")
+        raise SystemExit(
+            f"{manifest_path}: listed test directory does not exist: {test_dir}\n"
+            "Tip: add the missing test directory under drivers/aerogpu/tests/win7/ (or remove it from the manifest)"
+        )
     build_script = test_dir / "build_vs2010.cmd"
     if not build_script.is_file():
-        raise SystemExit(f"{manifest_path}: missing build_vs2010.cmd for test {test!r}: {build_script}")
+        raise SystemExit(
+            f"{manifest_path}: missing build_vs2010.cmd for test {test!r}: {build_script}\n"
+            "Tip: legacy build_all_vs2010.cmd expects each test directory to include build_vs2010.cmd"
+        )
 
     # All manifest tests should support `--json[=PATH]` via `aerogpu_test::TestReporter`
     # so the suite runner can collect machine-readable results.
@@ -616,7 +625,10 @@ for test in manifest_tests:
         sources = [test_dir / "producer_main.cpp"]
     for source_path in sources:
         if not source_path.is_file():
-            raise SystemExit(f"{manifest_path}: missing source file for test {test!r}: {source_path}")
+            raise SystemExit(
+                f"{manifest_path}: missing source file for test {test!r}: {source_path}\n"
+                "Tip: each manifest test should have a main.cpp (or producer_main.cpp for d3d9ex_shared_surface_wow64)"
+            )
         source_text = source_path.read_text(encoding="utf-8", errors="replace")
         # Require that the test actually instantiates a reporter (not just references the type in
         # a helper signature). Don't mandate the variable name; any `TestReporter <ident>(...)`
@@ -625,9 +637,15 @@ for test in manifest_tests:
             r"(?m)^\s*(?!//)(?:aerogpu_test::)?TestReporter\s+[A-Za-z_][A-Za-z0-9_]*\s*[\(\{]",
             source_text,
         ):
-            raise SystemExit(f"{source_path}: expected a TestReporter instance (for --json support)")
+            raise SystemExit(
+                f"{source_path}: expected a TestReporter instance (for --json support)\n"
+                "Tip: instantiate aerogpu_test::TestReporter in the test's main path so --json output is emitted"
+            )
         if "--json" not in source_text:
-            raise SystemExit(f"{source_path}: expected `--json` usage text (for discoverability)")
+            raise SystemExit(
+                f"{source_path}: expected `--json` usage text (for discoverability)\n"
+                "Tip: include --json in --help/usage output so automation users can discover the feature"
+            )
 
 mentioned_list = []
 for raw in readme_path.read_text(encoding="utf-8").splitlines():
