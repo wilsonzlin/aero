@@ -251,6 +251,27 @@ fn enable_virtio_input_requires_enable_pc_platform() {
 }
 
 #[test]
+fn vga_lfb_base_that_overflows_pci_mmio_window_is_rejected_when_pc_platform_is_enabled() {
+    // Pick a base that is inside the PCI MMIO window but whose LFB aperture would cross the end of
+    // the window (IOAPIC MMIO begins at 0xFEC0_0000).
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_lfb_base: Some(0xFE00_0000),
+        // Ensure the test remains stable even if `aero_gpu_vga::DEFAULT_VRAM_SIZE` changes.
+        vga_vram_size_bytes: Some(16 * 1024 * 1024),
+        ..Default::default()
+    };
+
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("expected overflowing vga_lfb_base to be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MachineError::VgaLfbOutsidePciMmioWindow { .. }));
+}
+
+#[test]
 fn enable_e1000_and_enable_virtio_net_are_mutually_exclusive() {
     let cfg = MachineConfig {
         enable_pc_platform: true,

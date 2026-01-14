@@ -600,6 +600,11 @@ pub struct MachineConfig {
     ///
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
     /// (`enable_vga=true` and `enable_aerogpu=false`).
+    ///
+    /// When [`MachineConfig::enable_pc_platform`] is `true`, this base must lie within the
+    /// ACPI-reported PCI MMIO window (`aero_pc_constants::PCI_MMIO_BASE..PCI_MMIO_END_EXCLUSIVE`),
+    /// otherwise [`Machine::new`] will reject the configuration (the PC platform routes the legacy
+    /// LFB mapping through its PCI MMIO window dispatcher).
     pub vga_lfb_base: Option<u32>,
     /// Optional override for the legacy VGA/VBE VRAM layout: the offset within VRAM where the VBE
     /// linear framebuffer (LFB) begins.
