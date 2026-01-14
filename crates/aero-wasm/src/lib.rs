@@ -3870,12 +3870,11 @@ impl Machine {
     /// The backing storage is the linear-memory byte range `[guest_base, guest_base + guest_size)`.
     #[cfg(target_arch = "wasm32")]
     pub fn new_shared(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        if guest_size == 0 {
-            return Err(js_error("Machine.new_shared: guest_size must be non-zero"));
-        }
-
         let guest_size_u64 =
             crate::validate_shared_guest_ram_layout("Machine.new_shared", guest_base, guest_size)?;
+        if guest_size_u64 == 0 {
+            return Err(js_error("Machine.new_shared: guest_size must be non-zero"));
+        }
         let mut cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
         cfg.enable_synthetic_usb_hid = true;
 
