@@ -215,8 +215,7 @@ fn aerogpu_bar_probe_returns_expected_size_masks() {
     );
 }
 
-#[test]
-fn aerogpu_bar1_vram_is_large_enough_for_vbe_lfb() {
+const _: () = {
     // VBE uses a linear framebuffer inside BAR1, with a fixed offset to keep the first 256KiB
     // reserved for legacy VGA planar memory (4 × 64KiB planes).
     //
@@ -230,15 +229,8 @@ fn aerogpu_bar1_vram_is_large_enough_for_vbe_lfb() {
     const BYTES_PER_PIXEL: u64 = 4;
     const LFB_BYTES: u64 = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 
-    assert!(
-        AEROGPU_VRAM_SIZE >= VBE_LFB_OFFSET + LFB_BYTES,
-        "AEROGPU_VRAM_SIZE (0x{:x}) too small: need at least 0x{:x} (VBE_LFB_OFFSET 0x{:x} + LFB 0x{:x})",
-        AEROGPU_VRAM_SIZE,
-        VBE_LFB_OFFSET + LFB_BYTES,
-        VBE_LFB_OFFSET,
-        LFB_BYTES,
-    );
-}
+    assert!(AEROGPU_VRAM_SIZE >= VBE_LFB_OFFSET + LFB_BYTES);
+};
 
 #[test]
 fn virtio_ids_include_transitional_and_modern_variants() {

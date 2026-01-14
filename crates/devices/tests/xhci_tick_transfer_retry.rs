@@ -164,7 +164,7 @@ fn xhci_tick_1ms_retries_active_interrupt_in_without_extra_doorbells() {
         (slot_id, erstba, event_ring, ring_base, buf)
     };
 
-    // Transfers only execute while the controller is running.
+    // Transfers only execute while the controller is running (`USBCMD.RUN`).
     dev.controller_mut()
         .mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 

@@ -223,6 +223,14 @@ impl PortIoDevice for Serial16550Port {
     }
 }
 
+pub fn register_serial16550(bus: &mut IoPortBus, uart: SharedSerial16550) {
+    let base = uart.borrow().base;
+    for offset in 0..8u16 {
+        let port = base + offset;
+        bus.register(port, Box::new(Serial16550Port::new(uart.clone(), port)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,13 +253,5 @@ mod tests {
         // Sanity: size-1 writes should still work.
         port.write(0x3F8, 1, 0xEF);
         assert_eq!(uart.borrow_mut().take_tx(), vec![0xEF]);
-    }
-}
-
-pub fn register_serial16550(bus: &mut IoPortBus, uart: SharedSerial16550) {
-    let base = uart.borrow().base;
-    for offset in 0..8u16 {
-        let port = base + offset;
-        bus.register(port, Box::new(Serial16550Port::new(uart.clone(), port)));
     }
 }

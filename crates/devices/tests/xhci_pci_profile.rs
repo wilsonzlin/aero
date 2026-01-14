@@ -11,8 +11,7 @@ fn xhci_pci_mmio_bar_definition_is_exposed_on_bar0() {
     assert_eq!(
         cfg.bar_definition(XhciPciDevice::MMIO_BAR_INDEX),
         Some(PciBarDefinition::Mmio32 {
-            size: u32::try_from(XhciPciDevice::MMIO_BAR_SIZE)
-                .expect("xHCI BAR size should fit in u32"),
+            size: XhciPciDevice::MMIO_BAR_SIZE,
             prefetchable: false
         })
     );
@@ -28,8 +27,7 @@ fn xhci_pci_mmio_bar_size_probe_returns_expected_mask() {
     // Standard PCI BAR size probing: write all 1s, then read back the size mask.
     cfg.write(bar_offset, 4, 0xFFFF_FFFF);
 
-    let size =
-        u32::try_from(XhciPciDevice::MMIO_BAR_SIZE).expect("xHCI BAR size should fit in u32");
+    let size = XhciPciDevice::MMIO_BAR_SIZE;
     let expected_mask = !(size.saturating_sub(1)) & 0xFFFF_FFF0;
     assert_eq!(cfg.read(bar_offset, 4), expected_mask);
 }

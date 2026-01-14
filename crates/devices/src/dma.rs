@@ -99,6 +99,23 @@ impl PortIoDevice for Dma8237Port {
     }
 }
 
+pub fn register_dma8237(bus: &mut IoPortBus, dma: SharedDma8237) {
+    // Primary DMA controller ports.
+    for port in 0x00u16..=0x0F {
+        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
+    }
+
+    // DMA page registers and miscellaneous ports.
+    for port in 0x80u16..=0x8F {
+        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
+    }
+
+    // Secondary DMA controller ports.
+    for port in 0xC0u16..=0xDF {
+        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,22 +132,5 @@ mod tests {
         // Sanity: size-1 writes should still work.
         port.write(0x00, 1, 0x34);
         assert_eq!(port.read(0x00, 1), 0x34);
-    }
-}
-
-pub fn register_dma8237(bus: &mut IoPortBus, dma: SharedDma8237) {
-    // Primary DMA controller ports.
-    for port in 0x00u16..=0x0F {
-        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
-    }
-
-    // DMA page registers and miscellaneous ports.
-    for port in 0x80u16..=0x8F {
-        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
-    }
-
-    // Secondary DMA controller ports.
-    for port in 0xC0u16..=0xDF {
-        bus.register(port, Box::new(Dma8237Port::new(dma.clone(), port)));
     }
 }

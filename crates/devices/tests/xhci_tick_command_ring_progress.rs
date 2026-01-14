@@ -47,30 +47,28 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
 
     const COMMAND_COUNT: usize = 64;
 
-    {
-        write_erst_entry(&mut mem, ERST_BASE, EVENT_RING_BASE, EVENT_RING_TRBS);
+    write_erst_entry(&mut mem, ERST_BASE, EVENT_RING_BASE, EVENT_RING_TRBS);
 
-        for i in 0..COMMAND_COUNT {
-            let mut trb = Trb::new(0, 0, 0);
-            trb.set_trb_type(TrbType::NoOpCommand);
-            trb.set_cycle(true);
-            write_trb(
-                &mut mem,
-                CMD_RING_BASE + (i as u64) * (TRB_LEN as u64),
-                &trb,
-            );
-        }
-
-        // Stop marker: cycle mismatch so the ring looks empty after the command sequence.
-        let mut stop = Trb::new(0, 0, 0);
-        stop.set_trb_type(TrbType::NoOpCommand);
-        stop.set_cycle(false);
+    for i in 0..COMMAND_COUNT {
+        let mut trb = Trb::new(0, 0, 0);
+        trb.set_trb_type(TrbType::NoOpCommand);
+        trb.set_cycle(true);
         write_trb(
             &mut mem,
-            CMD_RING_BASE + (COMMAND_COUNT as u64) * (TRB_LEN as u64),
-            &stop,
+            CMD_RING_BASE + (i as u64) * (TRB_LEN as u64),
+            &trb,
         );
     }
+
+    // Stop marker: cycle mismatch so the ring looks empty after the command sequence.
+    let mut stop = Trb::new(0, 0, 0);
+    stop.set_trb_type(TrbType::NoOpCommand);
+    stop.set_cycle(false);
+    write_trb(
+        &mut mem,
+        CMD_RING_BASE + (COMMAND_COUNT as u64) * (TRB_LEN as u64),
+        &stop,
+    );
 
     // Configure interrupter 0 event ring so command completion events are written to guest RAM.
     MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTSZ, 4, 1);
@@ -94,24 +92,22 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     }
 
     // Assert all command completion events were written to the guest event ring.
-    {
-        for i in 0..COMMAND_COUNT {
-            let evt = read_trb(&mut mem, EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64));
-            assert_eq!(
-                evt.trb_type(),
-                TrbType::CommandCompletionEvent,
-                "event {i} should be a Command Completion Event TRB"
-            );
-            assert_eq!(
-                evt.completion_code_raw(),
-                CompletionCode::Success.as_u8(),
-                "event {i} completion code should be Success"
-            );
-            assert_eq!(
-                evt.parameter & !0x0f,
-                CMD_RING_BASE + (i as u64) * (TRB_LEN as u64),
-                "event {i} should point at the completed command TRB"
-            );
-        }
+    for i in 0..COMMAND_COUNT {
+        let evt = read_trb(&mut mem, EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64));
+        assert_eq!(
+            evt.trb_type(),
+            TrbType::CommandCompletionEvent,
+            "event {i} should be a Command Completion Event TRB"
+        );
+        assert_eq!(
+            evt.completion_code_raw(),
+            CompletionCode::Success.as_u8(),
+            "event {i} completion code should be Success"
+        );
+        assert_eq!(
+            evt.parameter & !0x0f,
+            CMD_RING_BASE + (i as u64) * (TRB_LEN as u64),
+            "event {i} should point at the completed command TRB"
+        );
     }
 }

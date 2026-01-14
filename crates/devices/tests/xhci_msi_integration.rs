@@ -117,7 +117,7 @@ fn xhci_msix_interrupt_reaches_guest_idt_vector() {
             .unwrap()
             .table_offset(),
     );
-    MmioHandler::write(&mut dev, table_base + 0x00, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base, 4, 0xfee0_0000);
     MmioHandler::write(&mut dev, table_base + 0x04, 4, 0);
     MmioHandler::write(&mut dev, table_base + 0x08, 4, 0x0045);
     MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0); // unmasked
@@ -193,14 +193,13 @@ fn xhci_irq_level_is_gated_by_pci_command_intx_disable() {
 
 #[test]
 fn xhci_msix_snapshot_roundtrip_preserves_table_and_pba() {
-    #[derive(Default)]
     struct NoopMsiSink;
     impl MsiTrigger for NoopMsiSink {
         fn trigger_msi(&mut self, _message: MsiMessage) {}
     }
 
     let mut dev = XhciPciDevice::default();
-    dev.set_msi_target(Some(Box::new(NoopMsiSink::default())));
+    dev.set_msi_target(Some(Box::new(NoopMsiSink)));
 
     // Make BAR0 MMIO accessible so we can program the MSI-X table via guest-style MMIO writes.
     dev.config_mut()
@@ -221,7 +220,7 @@ fn xhci_msix_snapshot_roundtrip_preserves_table_and_pba() {
     );
 
     // Program entry 0 but keep it masked so the device sets PBA[0] when an interrupt fires.
-    MmioHandler::write(&mut dev, table_base + 0x00, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base, 4, 0xfee0_0000);
     MmioHandler::write(&mut dev, table_base + 0x04, 4, 0);
     MmioHandler::write(&mut dev, table_base + 0x08, 4, 0x0045);
     MmioHandler::write(&mut dev, table_base + 0x0c, 4, 1); // masked

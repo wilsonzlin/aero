@@ -35,7 +35,7 @@ fn program_msix_table_entry0(dev: &mut XhciPciDevice, address: u64, vector: u8, 
         .expect("MSI-X capability");
     let table_base = u64::from(msix.table_offset());
 
-    MmioHandler::write(dev, table_base + 0x0, 4, u64::from(address as u32));
+    MmioHandler::write(dev, table_base, 4, u64::from(address as u32));
     MmioHandler::write(dev, table_base + 0x4, 4, u64::from((address >> 32) as u32));
     MmioHandler::write(dev, table_base + 0x8, 4, u64::from(u32::from(vector)));
     MmioHandler::write(dev, table_base + 0xc, 4, if masked { 1 } else { 0 });
@@ -387,7 +387,7 @@ fn xhci_msix_pending_bit_delivers_after_entry_is_programmed() {
     // address first could otherwise deliver an unintended vector (data defaults to 0).
     MmioHandler::write(&mut dev, table_base + 0x8, 4, 0x45);
     // Now program the address; this should deliver the pending interrupt.
-    MmioHandler::write(&mut dev, table_base + 0x0, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base, 4, 0xfee0_0000);
     MmioHandler::write(&mut dev, table_base + 0x4, 4, 0);
     MmioHandler::write(&mut dev, table_base + 0xc, 4, 0); // unmasked
 
@@ -406,7 +406,6 @@ fn xhci_msix_pending_bit_delivers_after_entry_is_programmed() {
 
 #[test]
 fn xhci_msix_pba_mmio_write_is_ignored() {
-    #[derive(Default)]
     struct NoopMsiSink;
     impl aero_platform::interrupts::msi::MsiTrigger for NoopMsiSink {
         fn trigger_msi(&mut self, _message: aero_platform::interrupts::msi::MsiMessage) {}
@@ -414,7 +413,7 @@ fn xhci_msix_pba_mmio_write_is_ignored() {
 
     let mut dev = XhciPciDevice::default();
     dev.config_mut().set_command(1 << 1);
-    dev.set_msi_target(Some(Box::new(NoopMsiSink::default())));
+    dev.set_msi_target(Some(Box::new(NoopMsiSink)));
 
     // Program a masked MSI-X entry so raising an interrupt sets PBA[0].
     program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, true);
@@ -690,7 +689,7 @@ fn xhci_snapshot_roundtrip_preserves_msix_table_and_pba() {
 
     let table_base = u64::from(msix.table_offset());
     assert_eq!(
-        MmioHandler::read(&mut restored, table_base + 0x0, 4) as u32,
+        MmioHandler::read(&mut restored, table_base, 4) as u32,
         0xfee0_0000
     );
     assert_eq!(
