@@ -20459,6 +20459,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
+    const PS_PASSTHROUGH_DXBC: &[u8] = include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+
     fn require_webgpu() -> bool {
         let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
             return false;
@@ -20941,6 +20943,118 @@ mod tests {
                     .texture(0)
                     .is_none(),
                 "legacy geometry stage must not alias the compute binding bucket"
+            );
+        });
+    }
+
+    #[test]
+    fn patchlist_hs_control_point_mismatch_errors() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "backend lacks compute/indirect execution required for GS/HS/DS emulation",
+                );
+                return;
+            }
+
+            fn opcode_token_sm5(opcode: u32, len: u32) -> u32 {
+                opcode | (len << crate::sm4::opcode::OPCODE_LEN_SHIFT)
+            }
+
+            fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
+                let mut bytes = Vec::with_capacity(tokens.len() * 4);
+                for &t in tokens {
+                    bytes.extend_from_slice(&t.to_le_bytes());
+                }
+                bytes
+            }
+
+            // Build a minimal hs_5_0 DXBC with `dcl_inputcontrolpoints 4`.
+            // (Then draw with PatchList3 to trigger the mismatch.)
+            let hs_tokens = {
+                let version = (3u32 << 16) | (5u32 << 4); // hs_5_0
+                let body = [
+                    opcode_token_sm5(crate::sm4::opcode::OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, 2),
+                    4u32,
+                    opcode_token_sm5(crate::sm4::opcode::OPCODE_RET, 1),
+                ];
+                let total_len = 2 + body.len();
+                let mut tokens = Vec::with_capacity(total_len);
+                tokens.push(version);
+                tokens.push(total_len as u32);
+                tokens.extend_from_slice(&body);
+                tokens
+            };
+            let hs_dxbc = dxbc_test_utils::build_container_owned(&[(
+                FourCC(*b"SHEX"),
+                tokens_to_bytes(&hs_tokens),
+            )]);
+
+            let ds_tokens = {
+                let version = (4u32 << 16) | (5u32 << 4); // ds_5_0
+                let body = [opcode_token_sm5(crate::sm4::opcode::OPCODE_RET, 1)];
+                let total_len = 2 + body.len();
+                let mut tokens = Vec::with_capacity(total_len);
+                tokens.push(version);
+                tokens.push(total_len as u32);
+                tokens.extend_from_slice(&body);
+                tokens
+            };
+            let ds_dxbc = dxbc_test_utils::build_container_owned(&[(
+                FourCC(*b"SHEX"),
+                tokens_to_bytes(&ds_tokens),
+            )]);
+
+            const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+            const HS: u32 = 4;
+            const DS: u32 = 5;
+            const VS_DXBC: &[u8] = include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+
+            // Bind a pixel shader so the compute-prepass draw path can build a pipeline. The VS is
+            // unused by the placeholder prepass, but still must be non-zero.
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_DXBC);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH_DXBC);
+            writer.create_shader_dxbc_ex(HS, AerogpuShaderStageEx::Hull, &hs_dxbc);
+            writer.create_shader_dxbc_ex(DS, AerogpuShaderStageEx::Domain, &ds_dxbc);
+            writer.bind_shaders_ex(VS, PS, 0, 0, HS, DS);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err("mismatched PatchList/HS patch size should error");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("expects 4") && msg.contains("PatchList3"),
+                "unexpected error: {msg}"
             );
         });
     }

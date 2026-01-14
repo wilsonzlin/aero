@@ -550,6 +550,37 @@ mod tests {
     }
 
     #[test]
+    fn dcl_inputcontrolpoints_is_decoded() {
+        // Build a minimal hs_5_0 token stream:
+        // - dcl_inputcontrolpoints 4
+        // - ret
+        let version_token = 0x0003_0050u32; // hs_5_0 (program type 3)
+        let decl_len = 2u32;
+        let ret_len = 1u32;
+        let mut tokens = vec![
+            version_token,
+            0, // declared length patched below
+            opcode_token(OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, decl_len),
+            4u32,
+            opcode_token(OPCODE_RET, ret_len),
+        ];
+        tokens[1] = tokens.len() as u32;
+
+        let program = Sm4Program {
+            stage: ShaderStage::Hull,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let module = super::decode_program(&program).expect("decode should succeed");
+        assert!(module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::InputControlPointCount { count: 4 })));
+        assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
+    }
+
+    #[test]
     fn customdata_non_comment_is_skipped_from_instructions() {
         // Build a minimal ps_5_0 token stream:
         // - a declaration
