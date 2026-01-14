@@ -578,6 +578,69 @@ fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
 }
 
 #[test]
+fn xhci_tick_platform_zero_syncs_msix_enable_state_into_device_model() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the test focused on PCI + xHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let xhci = m.xhci().expect("xHCI should be enabled");
+
+    // Sanity: runtime MSI-X starts disabled.
+    assert!(
+        xhci.borrow()
+            .config()
+            .capability::<aero_devices::pci::MsixCapability>()
+            .is_some_and(|msix| !msix.enabled()),
+        "expected runtime MSI-X to start disabled"
+    );
+
+    // Enable MSI-X + Function Mask in canonical PCI config space.
+    let msix_cap = find_capability(&mut m, bdf, PCI_CAP_ID_MSIX)
+        .expect("xHCI should expose MSI-X capability in PCI config space");
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl | (1 << 15) | (1 << 14)),
+    );
+
+    // `tick_platform(0)` must still sync the canonical PCI config space into the runtime xHCI
+    // device model (without advancing time / ticking devices).
+    m.tick_platform(0);
+
+    let (enabled, masked) = {
+        let dev = xhci.borrow();
+        let msix = dev
+            .config()
+            .capability::<aero_devices::pci::MsixCapability>()
+            .expect("xHCI should have MSI-X capability");
+        (msix.enabled(), msix.function_masked())
+    };
+
+    assert!(enabled, "expected MSI-X enable bit to sync via tick_platform(0)");
+    assert!(
+        masked,
+        "expected MSI-X Function Mask bit to sync via tick_platform(0)"
+    );
+}
+
+#[test]
 fn xhci_msix_function_mask_defers_delivery_until_unmasked() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,

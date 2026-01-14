@@ -6969,6 +6969,99 @@ impl Machine {
     /// is also exposed for tests and debugging.
     pub fn tick_platform(&mut self, delta_ns: u64) {
         if delta_ns == 0 {
+            // Allow callers to "sync" canonical PCI config space state into USB device models
+            // without advancing time.
+            //
+            // This is useful in tests and host integrations that program MSI/MSI-X enable bits in
+            // the canonical PCI config space and then need the runtime device model to observe the
+            // updated interrupt configuration.
+            //
+            // Keep this branch *side-effect free* with respect to guest RAM: do not advance BIOS
+            // BDA time, PIT/HPET/LAPIC timers, or other devices that would write to guest memory,
+            // so calling `tick_platform(0)` does not spuriously dirty pages.
+            if let Some(uhci) = self.uhci.as_ref() {
+                let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+                let (command, bar4_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar4_base = cfg
+                            .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                            .map(|range| range.base);
+                        (command, bar4_base)
+                    })
+                    .unwrap_or((0, None));
+                let mut uhci = uhci.borrow_mut();
+                uhci.config_mut().set_command(command);
+                if let Some(bar4_base) = bar4_base {
+                    uhci.config_mut()
+                        .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+                }
+            }
+
+            if let Some(ehci) = self.ehci.as_ref() {
+                let bdf = aero_devices::pci::profile::USB_EHCI_ICH9.bdf;
+                let (command, bar0_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar0_base = cfg
+                            .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
+                            .map(|range| range.base);
+                        (command, bar0_base)
+                    })
+                    .unwrap_or((0, None));
+                let mut ehci = ehci.borrow_mut();
+                ehci.config_mut().set_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    ehci.config_mut()
+                        .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
+                }
+            }
+
+            if let Some(xhci) = self.xhci.as_ref() {
+                let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+                let (command, msi_state, msix_state) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let msi_state =
+                            cfg.and_then(|cfg| cfg.capability::<MsiCapability>())
+                                .map(|msi| {
+                                    (
+                                        msi.enabled(),
+                                        msi.message_address(),
+                                        msi.message_data(),
+                                        msi.mask_bits(),
+                                    )
+                                });
+                        let msix_state = cfg
+                            .and_then(|cfg| cfg.capability::<MsixCapability>())
+                            .map(|msix| (msix.enabled(), msix.function_masked()));
+                        (command, msi_state, msix_state)
+                    })
+                    .unwrap_or((0, None, None));
+
+                let mut xhci = xhci.borrow_mut();
+                let cfg = xhci.config_mut();
+                cfg.set_command(command);
+                if let Some((enabled, addr, data, mask)) = msi_state {
+                    sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
+                }
+                if let Some((enabled, function_masked)) = msix_state {
+                    sync_msix_capability_into_config(cfg, enabled, function_masked);
+                }
+            }
+
             return;
         }
 
