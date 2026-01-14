@@ -66,7 +66,7 @@ param(
   [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents")]
   [switch]$WithInputEvents,
 
-  # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel + hwheel) and
+  # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel + hscroll) and
   # require the guest virtio-input-wheel marker to PASS.
   # This implies -WithInputEvents.
   [Parameter(Mandatory = $false)]
@@ -484,7 +484,7 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputTabletEvents")]
     [bool]$RequireVirtioInputTabletEventsPass = $false,
-    # If true, also require the optional virtio-input-wheel marker to PASS (host will inject wheel/hwheel via QMP).
+    # If true, also require the optional virtio-input-wheel marker to PASS (host will inject wheel/hscroll via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputWheel")]
     [bool]$RequireVirtioInputWheelPass = $false,
@@ -1678,16 +1678,29 @@ function Try-AeroQmpInjectVirtioInputEvents {
       if ($WithWheel) {
         $mouseRelEvents += @(
           @{ type = "rel"; data = @{ axis = "wheel"; value = 1 } },
-          @{ type = "rel"; data = @{ axis = "hwheel"; value = -2 } }
+          @{ type = "rel"; data = @{ axis = "hscroll"; value = -2 } }
         )
       }
       try {
         $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEvents
       } catch {
-        if ($WithWheel -and ($_.Exception.Message -match "hwheel")) {
-          throw "QEMU does not support QMP input-send-event rel axis 'hwheel' required by -WithInputWheel. Upgrade QEMU or omit -WithInputWheel."
+        if (-not $WithWheel) { throw }
+
+        # Some QEMU builds expose horizontal scroll as `hwheel` instead of `hscroll`.
+        $mouseRelEventsAlt = @()
+        foreach ($ev in $mouseRelEvents) {
+          if ($ev.type -eq "rel" -and $ev.data.axis -eq "hscroll") {
+            $mouseRelEventsAlt += @{ type = "rel"; data = @{ axis = "hwheel"; value = $ev.data.value } }
+          } else {
+            $mouseRelEventsAlt += $ev
+          }
         }
-        throw
+
+        try {
+          $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEventsAlt
+        } catch {
+          throw "QEMU does not support QMP input-send-event horizontal scroll axis ('hscroll'/'hwheel') required by -WithInputWheel. Upgrade QEMU or omit -WithInputWheel."
+        }
       }
 
       Start-Sleep -Milliseconds 50

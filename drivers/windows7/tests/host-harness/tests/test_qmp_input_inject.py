@@ -107,14 +107,14 @@ class QmpInputInjectionTests(unittest.TestCase):
             self.assertEqual(info.keyboard_device, h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
             self.assertEqual(info.mouse_device, h._VIRTIO_INPUT_QMP_MOUSE_ID)
 
-            # 5 commands: key down, key up, mouse rel (x/y/wheel/hwheel), left down, left up.
+            # 5 commands: key down, key up, mouse rel (x/y/wheel/hscroll), left down, left up.
             self.assertEqual(len(sent), 5)
             rel_events = sent[2]["arguments"]["events"]
             axes = {e["data"]["axis"] for e in rel_events if e["type"] == "rel"}
             self.assertIn("x", axes)
             self.assertIn("y", axes)
             self.assertIn("wheel", axes)
-            self.assertIn("hwheel", axes)
+            self.assertIn("hscroll", axes)
         finally:
             h._qmp_connect = old_connect
             h._qmp_send_command = old_send
