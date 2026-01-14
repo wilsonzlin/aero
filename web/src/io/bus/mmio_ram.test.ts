@@ -51,4 +51,15 @@ describe("io/bus/mmio_ram", () => {
     h.mmioWrite(0n, 8, 0x1122_3344);
     expect(Array.from(backing)).toEqual(new Array(16).fill(0));
   });
+
+  it("supports Uint8Array views with non-zero byteOffset", () => {
+    const backing = new Uint8Array(32);
+    const view = backing.subarray(8, 24);
+    const h = new MmioRamHandler(view);
+
+    h.mmioWrite(0n, 4, 0x0102_0304);
+    expect(Array.from(backing.subarray(0, 8))).toEqual(new Array(8).fill(0));
+    expect(Array.from(backing.subarray(8, 12))).toEqual([0x04, 0x03, 0x02, 0x01]);
+    expect(h.mmioRead(0n, 4)).toBe(0x0102_0304);
+  });
 });
