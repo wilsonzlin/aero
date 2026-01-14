@@ -1431,6 +1431,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (!cache) return;
 
     let flushErr: unknown;
+    let closeErr: unknown;
     try {
       await cache.flush();
     } catch (err) {
@@ -1439,9 +1440,13 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     try {
       await cache.close?.();
     } catch (err) {
-      if (!flushErr) flushErr = err;
+      closeErr = err;
     }
-    if (flushErr) throw flushErr;
+
+    // Persistent caching is best-effort. If quota is exhausted, the cache may not be flushable, but
+    // we still want to close/release the underlying handle.
+    if (flushErr && !isQuotaExceededError(flushErr)) throw flushErr;
+    if (closeErr && !isQuotaExceededError(closeErr)) throw closeErr;
   }
 
   private scheduleReadAhead(offset: number, length: number, endChunk: number): void {

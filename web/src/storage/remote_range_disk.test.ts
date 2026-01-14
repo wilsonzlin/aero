@@ -1480,6 +1480,59 @@ describe("RemoteRangeDisk", () => {
     expect(factory.lastCreated?.closed).toBe(true);
   });
 
+  it("treats quota errors during close() as non-fatal", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    class FlushQuotaSparseDisk extends MemorySparseDisk {
+      closed = false;
+      override async flush(): Promise<void> {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      }
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    class FlushQuotaFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: FlushQuotaSparseDisk | null = null;
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new FlushQuotaSparseDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new FlushQuotaFactory();
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "quota-close", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      readAheadChunks: 0,
+    });
+
+    // Read once so metadata persistence paths are exercised before close.
+    const buf = new Uint8Array(chunkSize);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+
+    await expect(disk.close()).resolves.toBeUndefined();
+    expect(factory.lastCreated?.closed).toBe(true);
+  });
+
   it("refreshes the DiskAccessLease on 403 and retries successfully", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);
