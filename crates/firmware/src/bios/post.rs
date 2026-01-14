@@ -179,17 +179,6 @@ impl Bios {
         let entry = parsed.image;
 
         // Cache boot metadata for INT 13h AH=4Bh ("El Torito disk emulation services").
-        self.el_torito_boot_info = Some(ElToritoBootInfo {
-            media_type: ElToritoBootMediaType::NoEmulation,
-            boot_drive: self.config.boot_drive,
-            controller_index: 0,
-            boot_catalog_lba: Some(parsed.boot_catalog_lba),
-            boot_image_lba: Some(entry.load_rba),
-            load_segment: Some(entry.load_segment),
-            sector_count: Some(entry.sector_count),
-        });
-
-        // Cache the El Torito boot metadata so the boot image can query it via INT 13h AH=4Bh.
         //
         // This is commonly used by CD boot loaders such as ISOLINUX, even when running in
         // "no emulation" mode.
