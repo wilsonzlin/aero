@@ -1951,11 +1951,13 @@ mod tests {
             }
         }
 
-        let mut mem = PanicBus::default();
-        let mut regs = AeroGpuRegs::default();
-        regs.ring_control = ring_control::ENABLE;
-        regs.ring_gpa = u64::MAX - 1;
-        regs.ring_size_bytes = 0x1000;
+        let mut mem = PanicBus;
+        let mut regs = AeroGpuRegs {
+            ring_control: ring_control::ENABLE,
+            ring_gpa: u64::MAX - 1,
+            ring_size_bytes: 0x1000,
+            ..Default::default()
+        };
 
         let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig::default());
         exec.process_doorbell(&mut regs, &mut mem);
