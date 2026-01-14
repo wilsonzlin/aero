@@ -566,8 +566,10 @@ typedef struct _AEROGPU_ADAPTER {
  */
 C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastSubmittedFence) & 7u) == 0);
 C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastCompletedFence) & 7u) == 0);
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, ErrorIrqCount) & 7u) == 0);
 C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastErrorFence) & 7u) == 0);
 C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastNotifiedErrorFence) & 7u) == 0);
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastErrorTime100ns) & 7u) == 0);
 
 static __forceinline ULONG AeroGpuReadRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset)
 {
