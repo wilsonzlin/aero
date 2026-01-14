@@ -108,17 +108,22 @@
 #define VIOINPUT_STATE_VERSION 2
 
 /*
- * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS.
+ * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS / IOCTL_VIOINPUT_QUERY_STATE.
  *
  * Tools may probe the driver with a smaller output buffer than the full
- * VIOINPUT_COUNTERS struct (e.g. after a counters version bump). The driver
- * should always try to return at least Size + Version so callers can allocate
- * the correct buffer size and retry.
+ * VIOINPUT_COUNTERS / VIOINPUT_STATE structs (e.g. after a version bump).
+ * The driver should always try to return at least Size + Version so callers
+ * can allocate the correct buffer size and retry.
  */
 typedef struct _VIOINPUT_COUNTERS_V1_MIN {
     ULONG Size;
     ULONG Version;
 } VIOINPUT_COUNTERS_V1_MIN, *PVIOINPUT_COUNTERS_V1_MIN;
+
+typedef struct _VIOINPUT_STATE_V1_MIN {
+    ULONG Size;
+    ULONG Version;
+} VIOINPUT_STATE_V1_MIN, *PVIOINPUT_STATE_V1_MIN;
 
 typedef struct _VIOINPUT_COUNTERS {
     ULONG Size;
