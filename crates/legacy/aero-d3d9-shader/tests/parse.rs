@@ -9,6 +9,48 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 }
 
 #[test]
+fn malformed_empty_blob_errors() {
+    let err = D3d9Shader::parse(&[]).unwrap_err();
+    assert_eq!(err, ShaderParseError::Empty);
+}
+
+#[test]
+fn malformed_invalid_byte_length_errors() {
+    let bytes = vec![0u8; 5];
+    let err = D3d9Shader::parse(&bytes).unwrap_err();
+    assert_eq!(err, ShaderParseError::InvalidByteLength { len: 5 });
+}
+
+#[test]
+fn malformed_invalid_version_token_errors() {
+    let words = [0x0001_0200, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidVersionToken { token: 0x0001_0200 }
+    );
+}
+
+#[test]
+fn malformed_dxbc_missing_shader_chunk_errors() {
+    // Valid DXBC container, but without a shader bytecode chunk (`SHEX`/`SHDR`).
+    let chunk_offset = 36u32;
+    let total_size = chunk_offset as usize + 8; // chunk header only
+    let mut dxbc = Vec::with_capacity(total_size);
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&(total_size as u32).to_le_bytes());
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk count
+    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
+    dxbc.extend_from_slice(b"ISGN");
+    dxbc.extend_from_slice(&0u32.to_le_bytes()); // chunk size
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert_eq!(err, ShaderParseError::DxbcMissingShaderChunk);
+}
+
+#[test]
 fn rejects_oversized_bytecode() {
     // Ensure the debug/disassembler parser does not allocate unbounded memory on hostile input.
     let bytes = vec![0u8; 256 * 1024 + 4];
