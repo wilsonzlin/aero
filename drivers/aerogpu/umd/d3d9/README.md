@@ -322,14 +322,14 @@ The current implementation targets:
 - **Render targets / swapchain backbuffers**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`,
   `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
 - **Depth/stencil**: `D3DFMT_D24S8`
-- **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
+  - **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
   common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`). BC/DXT mip chains are also supported when BC
   formats are exposed (see “BC/DXT textures” below).
   - Cube textures are supported (advertised via `D3DPTEXTURECAPS_CUBEMAP`) and are represented as 2D array textures with
     6 layers (`Depth/array_layers == 6`). Some runtime/header combinations may not populate a meaningful `Depth` field for
     cube resources (it may be `Depth == 1`); the UMD normalizes `D3DRTYPE_CUBETEXTURE` resources to 6 layers. Cube
-    textures must be square; invalid descriptors are rejected at `CreateResource`/`OpenResource` time. Volume textures (`D3DRTYPE_VOLUME`
-    / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
+    textures must be square; invalid descriptors are rejected at `CreateResource` / `OpenResource` time. Volume textures
+    (`D3DRTYPE_VOLUME` / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
   - Compatibility: some D3D9 runtimes/WDK header vintages may pass `Type == 0` for non-buffer surface resources; the UMD
     treats it as a non-array 2D surface descriptor (`Depth == 1`) rather than rejecting it as an unknown type.
   - On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
@@ -398,8 +398,9 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
-- Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsPassthroughPosColor`, etc)
+- Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
+- XYZ conversion path: `convert_xyz_to_clipspace_locked()` (CPU WVP → clip-space for `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` draws)
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
     (see supported combinations above), so the draw path can bind a known input layout.
@@ -437,12 +438,15 @@ Implementation notes (bring-up):
   that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix
-  (built from cached `SetTransform` state and uploaded by `ensure_fixedfunc_wvp_constants_locked()` into a reserved
-  VS constant range; currently `c240..c243`).
+- For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` fixed-function FVFs, the bring-up path applies the combined
+  WORLD/VIEW/PROJECTION transform on the CPU at draw time and uploads a clip-space copy of the referenced vertices into a
+  scratch UP buffer (`convert_xyz_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`), then draws using a passthrough
+  VS.
+- For `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse), the fixed-function fallback uses a small internal VS that applies WVP from a
+  reserved VS constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
   - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
     fixed-function and programmable paths.
-  - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP constants + `ProcessVertices` notes).
+  - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
@@ -459,9 +463,10 @@ Limitations (bring-up):
 - For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
   - The conversion uses the current viewport (`X/Y/Width/Height`) and treats `w = 1/rhw` (with a safe fallback when
     `rhw==0`); `z` is passed through as D3D9 NDC depth.
-- For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (built
-  from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
-  `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.
+- For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` fixed-function FVFs, the bring-up path applies WVP on the CPU at draw time
+  (`convert_xyz_to_clipspace_locked()`). Fixed-function lighting/material is still not implemented.
+- For `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse), the bring-up path uses an internal VS that reads WVP from a reserved VS
+  constant range uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
   (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - The fixed-function fallback's `TEX1` path assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`).
   Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets require user shaders (layout translation

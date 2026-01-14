@@ -2899,9 +2899,12 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
-  // Bring-up: only the non-diffuse XYZ|TEX1 fixed-function path uses a VS that
-  // reads the WVP constant registers (c0..c3). XYZ|DIFFUSE{,|TEX1} is CPU
-  // transformed at draw time.
+  // Bring-up: XYZ|DIFFUSE{,TEX1} fixed-function draws are CPU-transformed to
+  // clip-space at draw time (see convert_xyz_to_clipspace_locked()), so they use
+  // a passthrough VS.
+  //
+  // Only the non-diffuse XYZ|TEX1 path uses an internal VS that reads the WVP
+  // constants uploaded into the reserved range (c240..c243).
   return (fvf == kSupportedFvfXyzTex1);
 }
 
@@ -3014,8 +3017,9 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
 // layouts.
 //
 // Supported subset (layout only; does not imply fixed-function emulation):
-// - POSITION: D3DFVF_XYZ or D3DFVF_XYZRHW
+// - POSITION: D3DFVF_XYZ, D3DFVF_XYZW, or D3DFVF_XYZRHW
 // - NORMAL: D3DFVF_NORMAL
+// - PSIZE: D3DFVF_PSIZE
 // - DIFFUSE: D3DFVF_DIFFUSE (COLOR0)
 // - SPECULAR: D3DFVF_SPECULAR (COLOR1)
 // - TEXn: D3DFVF_TEX0..D3DFVF_TEX8 with per-set D3DFVF_TEXCOORDSIZE[1..4]
