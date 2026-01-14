@@ -185,6 +185,12 @@ export class WebGl2Backend {
     if (!gl) throw new Error('WebGL2 not available');
     // Reduce driver variance and avoid unexpected dithering when presenting 8-bit content.
     gl.disable(gl.DITHER);
+    // Defensive: ensure no stale scissor/mask state can clip output.
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     return new WebGl2Backend(canvas, gl);
   }
 
@@ -507,6 +513,12 @@ export class WebGl2Backend {
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
+    gl.disable(gl.DITHER);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -616,6 +628,12 @@ export class WebGl2Backend {
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
+    gl.disable(gl.DITHER);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     gl.clearColor(0.05, 0.05, 0.08, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
