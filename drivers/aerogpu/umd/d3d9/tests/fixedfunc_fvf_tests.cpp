@@ -2476,7 +2476,7 @@ bool TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp() {
   bool saw_identity_wvp = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 0 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(kIdentityCols);
