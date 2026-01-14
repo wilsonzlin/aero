@@ -49,7 +49,10 @@ describe("requestWebGpuDevice()", () => {
     expect(uncapturedHandler).toBeTypeOf("function");
 
     const preventDefault = vi.fn();
-    uncapturedHandler?.({ preventDefault, error: "boom" });
+    // TypeScript control-flow analysis doesn't model the callback write into `uncapturedHandler`
+    // inside the addEventListener mock, so it may narrow the variable to `null` here. Assert the
+    // expected callable shape for the test.
+    (uncapturedHandler as ((ev: any) => void) | null)?.({ preventDefault, error: "boom" });
     expect(preventDefault).toHaveBeenCalled();
     expect(onUncapturedError).toHaveBeenCalledWith("boom");
   });
@@ -97,8 +100,8 @@ describe("requestWebGpuDevice()", () => {
     await requestWebGpuDevice();
 
     expect(uncapturedHandler).toBeTypeOf("function");
-    uncapturedHandler?.({ error: "boom3" });
-    uncapturedHandler?.({ error: "boom3" });
+    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
+    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
@@ -123,8 +126,8 @@ describe("requestWebGpuDevice()", () => {
     await requestWebGpuDevice({ onUncapturedError: 123 as any });
 
     expect(uncapturedHandler).toBeTypeOf("function");
-    uncapturedHandler?.({ error: "boom4" });
-    uncapturedHandler?.({ error: "boom4" });
+    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
+    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
