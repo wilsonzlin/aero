@@ -869,8 +869,12 @@ Where `VARYING_COUNT` is the number of linked varyings in the VS/GS/DS → PS si
 The passthrough vertex shader then:
 
 - loads `pos_bits` and `bitcast<vec4<f32>>()` to write `@builtin(position)`, and
-- for each varying location `N` (with dense index `i`), loads `varyings[i]` and bitcasts to the
-  exact WGSL type declared by the translated PS input (respecting interpolation modifiers).
+- for each varying location `N` (with dense index `i`), loads `varyings[i]` and bitcasts to
+  `vec4<f32>`.
+  - Implementation detail: the current SM4/SM5 WGSL translator intentionally normalizes all user
+    varyings to `vec4<f32>` in both VS/GS/DS outputs and PS inputs to avoid cross-stage type
+    mismatches when D3D signatures have different component masks (see `emit_vs_structs` /
+    `emit_ps_structs` in `crates/aero-d3d11/src/shader_translate.rs`).
 
 Stride (bytes):
 
@@ -1008,7 +1012,8 @@ struct VsIn {
 
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
-  // For each varying location N: the exact type required by the translated PS input signature.
+  // For each varying location N: the translated PS input type.
+  // Today Aero normalizes all varyings to `vec4<f32>` for interface compatibility.
   @location(N) vN: vec4<f32>,
 };
 
