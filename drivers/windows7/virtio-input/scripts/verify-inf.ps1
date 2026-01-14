@@ -279,14 +279,17 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
-# The canonical keyboard/mouse INF is intentionally SUBSYS-gated so it binds only
-# to the Aero contract v1 keyboard/mouse functions (and does not overlap with the
-# tablet INF).
+# The canonical keyboard/mouse INF must include:
+# - The SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (to keep bindings
+#   explicit and disjoint from the tablet contract), and
+# - A strict, REV-qualified generic fallback ID for contract v1 (`REV_01`).
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
+  # Aero contract v1 generic fallback (REV-qualified)
+  'PCI\VEN_1AF4&DEV_1052&REV_01'
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -331,6 +334,16 @@ $requiredModelMappings = @(
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
   },
+  @{
+    Name = 'NTx86 generic fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x86 generic fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01).'
+  },
+  @{
+    Name = 'NTamd64 generic fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x64 generic fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01).'
+  },
 )
 
 foreach ($m in $requiredModelMappings) {
@@ -339,14 +352,15 @@ foreach ($m in $requiredModelMappings) {
   }
 }
 
-# Disallow generic fallback binding in the canonical keyboard/mouse INF.
-$forbiddenGenericHwidRegex = '(?i)' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01')
+# Require exactly one generic fallback binding per models section (avoid accidental duplicates).
+$genericFallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
+$genericFallbackHwidRegex = '(?i)' + [regex]::Escape($genericFallbackHwid)
 foreach ($sect in $modelSections) {
   if (-not $sections.ContainsKey($sect)) { continue }
-  if ((Get-MatchingLines -Lines $sections[$sect] -Regex $forbiddenGenericHwidRegex).Count -ne 0) {
-    Add-Failure -Failures $failures -Message (("Unexpected generic HWID in [{0}]: PCI\\VEN_1AF4&DEV_1052&REV_01. " +
-      "The canonical INF intentionally binds only to SUBSYS-specific contract IDs; use the legacy alias INF " +
-      "(inf/virtio-input.inf.disabled) for an opt-in generic fallback.") -f $sect)
+  $count = (Get-MatchingLines -Lines $sections[$sect] -Regex $genericFallbackHwidRegex).Count
+  if ($count -gt 1) {
+    Add-Failure -Failures $failures -Message (("Generic fallback HWID must appear exactly once in [{0}]: {1} " +
+      "(found {2} occurrences).") -f $sect, $genericFallbackHwid, $count)
   }
 }
 
