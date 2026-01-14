@@ -5207,6 +5207,65 @@ mod tests {
     }
 
     #[test]
+    fn resolve_verify_manifest_key_prefers_explicit_manifest_key() -> Result<()> {
+        let args = VerifyArgs {
+            prefix: None,
+            manifest_key: Some("images/demo/sha256-abc/manifest.json".to_string()),
+            ..dummy_s3_verify_args()
+        };
+        assert_eq!(
+            resolve_verify_manifest_key(&args)?,
+            "images/demo/sha256-abc/manifest.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_verify_manifest_key_uses_prefix_when_already_versioned() -> Result<()> {
+        let args = VerifyArgs {
+            prefix: Some("images/demo/sha256-abc/".to_string()),
+            manifest_key: None,
+            image_version: None,
+            ..dummy_s3_verify_args()
+        };
+        assert_eq!(
+            resolve_verify_manifest_key(&args)?,
+            "images/demo/sha256-abc/manifest.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_verify_manifest_key_appends_image_version_to_image_root_prefix() -> Result<()> {
+        let args = VerifyArgs {
+            prefix: Some("images/demo/".to_string()),
+            manifest_key: None,
+            image_version: Some("sha256-abc".to_string()),
+            ..dummy_s3_verify_args()
+        };
+        assert_eq!(
+            resolve_verify_manifest_key(&args)?,
+            "images/demo/sha256-abc/manifest.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_verify_manifest_key_rejects_missing_prefix() {
+        let args = VerifyArgs {
+            prefix: None,
+            manifest_key: None,
+            ..dummy_s3_verify_args()
+        };
+        let err = resolve_verify_manifest_key(&args).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("--prefix is required when --manifest-key is not provided"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn chunk_sample_seed_requires_chunk_sample_flag() {
         let err = Cli::try_parse_from([
             "aero-image-chunker",
