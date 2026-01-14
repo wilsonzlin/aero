@@ -22,6 +22,8 @@ const PORTSC_SUSP: u16 = 1 << 12;
 // Hub-class port features.
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
+const HUB_PORT_FEATURE_SUSPEND: u16 = 2;
+const HUB_PORT_FEATURE_C_PORT_SUSPEND: u16 = 18;
 
 fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
     let mut dev = ctrl
@@ -33,6 +35,34 @@ fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
         matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
         "expected ACK for status stage"
     );
+}
+
+fn control_in(ctrl: &mut UhciController, addr: u8, setup: SetupPacket, max_packet: usize) -> Vec<u8> {
+    let mut dev = ctrl
+        .hub_mut()
+        .device_mut_for_address(addr)
+        .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+
+    let mut out = Vec::new();
+    loop {
+        match dev.handle_in(0, max_packet) {
+            UsbInResult::Data(chunk) => {
+                let n = chunk.len();
+                out.extend_from_slice(&chunk);
+                if n < max_packet {
+                    break;
+                }
+            }
+            UsbInResult::Nak => break,
+            UsbInResult::Stall => panic!("expected control IN data"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control IN transfer"),
+        }
+    }
+
+    // Status stage (OUT ZLP).
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+    out
 }
 
 #[test]
@@ -532,5 +562,182 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_hu
     assert!(
         !ctrl.irq_level(),
         "unexpected IRQ even though hub remote wake is disabled"
+    );
+}
+
+#[test]
+fn hid_keyboard_remote_wakeup_resumes_selectively_suspended_external_hub_port() {
+    const HUB_PORT_STATUS_SUSPEND: u16 = 1 << 2;
+    const HUB_PORT_CHANGE_SUSPEND: u16 = 1 << 2;
+
+    let mut ctrl = UhciController::new();
+
+    // Attach an external hub to root port 0.
+    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    // Enumerate/configure the hub: address 0 -> address 1, then SET_CONFIGURATION(1).
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Attach a keyboard behind downstream hub port 1.
+    let keyboard = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard.clone()))
+        .expect("attach keyboard behind hub port 1");
+
+    // Power and reset the hub port so the keyboard becomes reachable.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23, // HostToDevice | Class | Other (port)
+            b_request: 0x03,       // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_POWER,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_RESET,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Minimal enumeration/configuration for the keyboard + enable remote wakeup.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 2,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(keyboard.configured(), "expected keyboard to be configured");
+
+    // Selectively suspend downstream hub port 1.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    let st = control_in(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0xa3, // DeviceToHost | Class | Other (port)
+            b_request: 0x00,       // GET_STATUS
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
+        },
+        64,
+    );
+    let status = u16::from_le_bytes([st[0], st[1]]);
+    assert_ne!(status & HUB_PORT_STATUS_SUSPEND, 0, "expected port to be suspended");
+
+    // Clear suspend-change so we can observe a fresh edge from remote wake.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x01, // CLEAR_FEATURE
+            w_value: HUB_PORT_FEATURE_C_PORT_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+
+    // Inject a keypress while the downstream port is suspended; the hub should observe the remote
+    // wake event and resume the port.
+    keyboard.key_event(0x04, true); // HID usage for KeyA.
+    ctrl.tick_1ms(&mut mem);
+
+    let st = control_in(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0xa3,
+            b_request: 0x00, // GET_STATUS
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
+        },
+        64,
+    );
+    let status = u16::from_le_bytes([st[0], st[1]]);
+    let change = u16::from_le_bytes([st[2], st[3]]);
+    assert_eq!(
+        status & HUB_PORT_STATUS_SUSPEND,
+        0,
+        "expected port to resume after remote wake"
+    );
+    assert_ne!(
+        change & HUB_PORT_CHANGE_SUSPEND,
+        0,
+        "expected suspend-change bit to latch after remote wake resume"
     );
 }

@@ -1672,6 +1672,32 @@ impl UsbHub for UsbHubDevice {
             if !port.enabled {
                 continue;
             }
+
+            // Remote wakeup for selectively-suspended downstream ports.
+            //
+            // When the hub itself is active (upstream not suspended) but an individual port is
+            // suspended via SET_FEATURE(PORT_SUSPEND), a downstream device may signal remote wake.
+            // Model this as the port leaving the suspended state and latching a suspend-change bit
+            // so the host can observe the resume via the hub interrupt endpoint.
+            if !self.upstream_suspended && port.powered && port.suspended {
+                let wake = match port.device.as_mut() {
+                    Some(dev) => dev.model_mut().poll_remote_wakeup(),
+                    None => false,
+                };
+                if wake {
+                    port.set_suspended(false);
+                    if let Some(dev) = port.device.as_mut() {
+                        dev.model_mut()
+                            .set_suspended(self.upstream_suspended || port.suspended);
+                    }
+                }
+            }
+
+            // Do not tick downstream devices while their port is suspended; this matches root hub
+            // behaviour (traffic is quiesced during suspend).
+            if port.suspended {
+                continue;
+            }
             if let Some(dev) = port.device.as_mut() {
                 dev.tick_1ms();
             }
