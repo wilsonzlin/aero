@@ -69,7 +69,7 @@ See `docs/graphics/aerogpu-protocols.md` for the full mapping.
 
 #### USB note (browser runtime)
 
-The repo contains multiple generations of USB/UHCI work. The **canonical browser runtime** USB
+The repo contains multiple generations of USB host controller work. The **canonical browser runtime** USB
 stack is defined by [ADR 0015](./adr/0015-canonical-usb-stack.md):
 
 - Rust USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb`

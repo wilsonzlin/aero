@@ -2,7 +2,7 @@
 
 ## Context
 
-The repository historically accumulated multiple overlapping USB/UHCI implementations:
+The repository historically accumulated multiple overlapping USB host controller implementations:
 
 - **Browser/WASM path (active):**
   - Rust USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb`
@@ -46,7 +46,7 @@ Note: the canonical browser host entrypoint is the repo-root Vite app, but it im
 modules from `web/src/*`. The `web/` directory’s own `web/index.html` entrypoint is legacy, but the
 USB host integration under `web/src/usb/*` is the maintained implementation.
 
-The browser runtime must **not** implement a parallel USB/UHCI stack in `crates/emulator` or in
+The browser runtime must **not** implement a parallel USB stack in `crates/emulator` or in
 TypeScript.
 
 ### 2) Canonical ownership of the WebUSB passthrough wire contract
@@ -67,7 +67,7 @@ Rust and TS tests passing.
 - **PCI/PortIO device integration** (UHCI as a PCI device in the native emulator)
 - **Backwards-compatible import paths** for tests and callers
 
-The underlying USB/UHCI implementation is owned by `crates/aero-usb`. The emulator should **not**
+The underlying USB implementation is owned by `crates/aero-usb`. The emulator should **not**
 reintroduce an independent USB stack.
 
 ### 4) Where UHCI lives long-term, and how it connects to `aero_machine::Machine`
