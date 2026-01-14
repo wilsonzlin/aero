@@ -102,6 +102,14 @@ fn compute_store_raw_writes_u32_word() {
                     value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
                     mask: WriteMask::X,
                 },
+                // Use a float immediate (`16.0`) for the byte address to exercise the
+                // float-to-u32 conversion heuristic in the translator.
+                Sm4Inst::StoreRaw {
+                    uav: UavRef { slot: 0 },
+                    addr: src_imm_bits([16.0f32.to_bits(); 4]),
+                    value: src_imm_bits([0xcafe_babeu32, 0, 0, 0]),
+                    mask: WriteMask::X,
+                },
                 Sm4Inst::Ret,
             ],
         };
@@ -114,7 +122,8 @@ fn compute_store_raw_writes_u32_word() {
             source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
         });
 
-        const BUF_SIZE: u64 = 16;
+        // Need at least 16 bytes to write word index 4 (byte offset 16).
+        const BUF_SIZE: u64 = 32;
         let uav = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("compute_store_raw uav buffer"),
             size: BUF_SIZE,
@@ -206,10 +215,12 @@ fn compute_store_raw_writes_u32_word() {
             .unwrap();
 
         let mapped = slice.get_mapped_range();
-        let got = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+        let got0 = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+        let got4 = u32::from_le_bytes(mapped[16..20].try_into().unwrap());
         drop(mapped);
         staging.unmap();
 
-        assert_eq!(got, 0xdead_beefu32);
+        assert_eq!(got0, 0xdead_beefu32);
+        assert_eq!(got4, 0xcafe_babeu32);
     });
 }

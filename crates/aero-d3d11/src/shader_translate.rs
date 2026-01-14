@@ -3908,7 +3908,7 @@ fn emit_instructions(
             Sm4Inst::LdRaw { dst, addr, buffer } => {
                 // Raw buffer loads operate on byte offsets. Model buffers as a storage
                 // `array<u32>` and derive a word index from the byte address.
-                let addr_u = emit_src_vec4_u32(addr, inst_index, "ld_raw", ctx)?;
+                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "ld_raw", ctx)?;
                 let base_name = format!("ld_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
@@ -3951,12 +3951,11 @@ fn emit_instructions(
                         mask: *mask,
                     });
                 }
-
-                let addr_u = emit_src_vec4_u32(addr, inst_index, "store_raw", ctx)?;
+                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "store_raw", ctx)?;
                 let base_name = format!("store_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
-                let value_u = emit_src_vec4_u32(value, inst_index, "store_raw", ctx)?;
+                let value_u = emit_src_vec4_u32_int(value, inst_index, "store_raw", ctx)?;
                 let value_name = format!("store_raw_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
@@ -3994,8 +3993,8 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32(index, inst_index, "ld_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32(offset, inst_index, "ld_structured", ctx)?;
+                let index_u = emit_src_vec4_u32_int(index, inst_index, "ld_structured", ctx)?;
+                let offset_u = emit_src_vec4_u32_int(offset, inst_index, "ld_structured", ctx)?;
                 let base_name = format!("ld_struct_base{inst_index}");
                 w.line(&format!(
                     "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
@@ -4054,14 +4053,14 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32(index, inst_index, "store_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32(offset, inst_index, "store_structured", ctx)?;
+                let index_u = emit_src_vec4_u32_int(index, inst_index, "store_structured", ctx)?;
+                let offset_u = emit_src_vec4_u32_int(offset, inst_index, "store_structured", ctx)?;
                 let base_name = format!("store_struct_base{inst_index}");
                 w.line(&format!(
                     "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
                 ));
 
-                let value_u = emit_src_vec4_u32(value, inst_index, "store_structured", ctx)?;
+                let value_u = emit_src_vec4_u32_int(value, inst_index, "store_structured", ctx)?;
                 let value_name = format!("store_struct_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
