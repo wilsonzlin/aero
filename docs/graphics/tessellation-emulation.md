@@ -30,8 +30,9 @@ This document describes the chosen HS/DS emulation approach so future contributo
 >   HS/DS DXBC is not executed yet (tess factors are currently fixed in the passthrough HS).
 > - The in-progress tessellation runtime lives under
 >   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
->   tri-domain integer index generation, DS evaluation templates, sizing/guardrails), but is not yet
->   fully wired into the command-stream draw path.
+>   tri-domain integer index generation, DS evaluation templates, sizing/guardrails). This code is
+>   now wired into the command-stream draw path for PatchList3+HS+DS bring-up, but the guest HS/DS
+>   DXBC is still not executed yet (the pipeline currently uses passthrough/stub stages).
 >
 > See [`docs/graphics/status.md`](./status.md) for an implementation-status checklist.
 
