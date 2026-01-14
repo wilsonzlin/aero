@@ -129,7 +129,8 @@ Minimum supported commands:
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
   to `<cmd_path>.alloc_table.bin` (one file per dumped submission).
 
-  dbgctl also writes a small metadata summary to `<path>.txt` (ring/fence/GPAs/sizes) when possible.
+  dbgctl also writes a small metadata summary to `<cmd_path>.txt` (ring/fence/GPAs/sizes) when possible (one file per dumped submission).
+  Note: this is appended to the full cmd path, so dumping `last_cmd_0.bin` produces `last_cmd_0.bin.txt`.
 
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
 
