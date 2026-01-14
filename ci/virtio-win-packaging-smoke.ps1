@@ -1724,10 +1724,13 @@ if (-not $python) {
 $driverIsoPath = Join-Path $OutRoot "aero-virtio-win7-drivers.iso"
 $driverIsoLog = Join-Path $logsDir "make-virtio-driver-iso.log"
 $verifyIsoLog = Join-Path $logsDir "verify-virtio-driver-iso.log"
-
+ 
 Write-Host "Running make-virtio-driver-iso.ps1..."
 $driverIsoArgs = @(
   "-OutIso", $driverIsoPath,
+  # Prefer the deterministic Rust ISO writer and a fixed timestamp for reproducibility.
+  "-IsoBackend", "rust",
+  "-SourceDateEpoch", "0",
   "-CleanStage"
 )
 if ($TestIsoMode) {
