@@ -617,10 +617,34 @@ impl UsbHidPassthrough {
     }
 
     fn alloc_feature_report_request_id(&mut self) -> u32 {
-        let id = self.next_feature_report_request_id;
-        self.next_feature_report_request_id =
-            self.next_feature_report_request_id.wrapping_add(1).max(1);
-        id
+        // Allocate a new non-zero request ID, skipping any IDs that are currently in-flight.
+        //
+        // Request IDs are part of the Rust<->host integration contract and are used to correlate
+        // asynchronous completions (e.g. WebHID `getFeatureReport`). While the u32 space makes
+        // collisions unlikely, snapshot restore or counter wrap-around can otherwise cause reuse
+        // while older requests are still pending.
+        loop {
+            let id = self.next_feature_report_request_id.max(1);
+            self.next_feature_report_request_id =
+                self.next_feature_report_request_id.wrapping_add(1).max(1);
+            if !self.feature_report_request_id_in_use(id) {
+                return id;
+            }
+        }
+    }
+
+    fn feature_report_request_id_in_use(&self, request_id: u32) -> bool {
+        self.feature_report_request_queue
+            .iter()
+            .any(|req| req.request_id == request_id)
+            || self
+                .feature_report_requests_pending
+                .values()
+                .any(|&id| id == request_id)
+            || self
+                .feature_report_requests_failed
+                .values()
+                .any(|&id| id == request_id)
     }
 
     fn enqueue_feature_report_request(&mut self, report_id: u8) {
@@ -2278,10 +2302,29 @@ impl IoSnapshot for UsbHidPassthrough {
         });
 
         let mut queued = BTreeSet::<u32>::new();
+        let mut request_id_owner = BTreeMap::<u32, u8>::new();
         for req in &self.feature_report_request_queue {
             queued.insert(req.request_id);
+            if let Some(prev) = request_id_owner.insert(req.request_id, req.report_id) {
+                if prev != req.report_id {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests pending",
+                    ));
+                }
+            }
         }
+
         for (&report_id, &request_id) in &self.feature_report_requests_pending {
+            if let Some(&prev_report_id) = request_id_owner.get(&request_id) {
+                if prev_report_id != report_id {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests pending",
+                    ));
+                }
+            } else {
+                request_id_owner.insert(request_id, report_id);
+            }
+
             if self.feature_report_requests_failed.get(&report_id) == Some(&request_id) {
                 // Failed requests are surfaced to the guest as `Timeout` and then cleared; they do
                 // not need to be re-queued to the host runtime.
@@ -2290,6 +2333,7 @@ impl IoSnapshot for UsbHidPassthrough {
             if queued.contains(&request_id) {
                 continue;
             }
+            queued.insert(request_id);
             self.feature_report_request_queue
                 .push_back(UsbHidPassthroughFeatureReportRequest {
                     request_id,
@@ -4111,6 +4155,46 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_restore_rejects_duplicate_feature_report_requests_pending_request_ids() {
+        const TAG_FEATURE_REPORT_REQUESTS_PENDING: u16 = 28;
+
+        let pending = Encoder::new()
+            .u32(2)
+            .u8(3)
+            .u32(1)
+            .u8(4)
+            .u32(1) // duplicate request_id across different report IDs
+            .finish();
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_FEATURE_REPORT_REQUESTS_PENDING, pending);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("feature report requests pending")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn snapshot_restore_bumps_next_feature_report_request_id_past_inflight_ids() {
         const TAG_NEXT_FEATURE_REPORT_REQUEST_ID: u16 = 26;
         const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
@@ -4168,6 +4252,65 @@ mod tests {
             .pop_feature_report_request()
             .expect("expected newly enqueued request");
         assert_eq!(second.request_id, 6);
+        assert_eq!(second.report_id, 4);
+    }
+
+    #[test]
+    fn alloc_feature_report_request_id_skips_ids_in_use() {
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0xA1, // DeviceToHost | Class | Interface
+                    b_request: HID_REQUEST_GET_REPORT,
+                    w_value: (3u16 << 8) | 3u16, // Feature report, report_id=3.
+                    w_index: 0,
+                    w_length: 64,
+                },
+                None,
+            ),
+            ControlResponse::Nak
+        );
+        let first = dev
+            .pop_feature_report_request()
+            .expect("expected initial feature report request");
+        assert_eq!(first.request_id, 1);
+        assert_eq!(first.report_id, 3);
+
+        // Simulate a buggy/corrupt allocator state that would otherwise reuse ID 1. The allocator
+        // must skip IDs that are already pending.
+        dev.inner.borrow_mut().next_feature_report_request_id = 1;
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0xA1,
+                    b_request: HID_REQUEST_GET_REPORT,
+                    w_value: (3u16 << 8) | 4u16, // Feature report, report_id=4.
+                    w_index: 0,
+                    w_length: 64,
+                },
+                None,
+            ),
+            ControlResponse::Nak
+        );
+        let second = dev
+            .pop_feature_report_request()
+            .expect("expected second feature report request");
+        assert_eq!(second.request_id, 2);
         assert_eq!(second.report_id, 4);
     }
 }
