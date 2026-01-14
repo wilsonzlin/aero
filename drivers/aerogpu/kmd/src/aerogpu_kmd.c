@@ -785,7 +785,14 @@ static VOID AeroGpuTraceCreateAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
     KeReleaseSpinLock(&Adapter->CreateAllocationTraceLock, oldIrql);
 }
 
-static PVOID AeroGpuAllocContiguous(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
+/*
+ * Allocate a physically contiguous non-cached buffer without initializing it.
+ *
+ * This must only be used for buffers that are guaranteed to be fully overwritten
+ * before the device can observe them (e.g. DMA copy buffers populated via a
+ * single RtlCopyMemory of the full allocation size).
+ */
+static PVOID AeroGpuAllocContiguousNoInit(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
 {
     PHYSICAL_ADDRESS low;
     PHYSICAL_ADDRESS high;
@@ -800,8 +807,18 @@ static PVOID AeroGpuAllocContiguous(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa
         return NULL;
     }
 
-    RtlZeroMemory(va, Size);
     *Pa = MmGetPhysicalAddress(va);
+    return va;
+}
+
+static PVOID AeroGpuAllocContiguous(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
+{
+    PVOID va = AeroGpuAllocContiguousNoInit(Size, Pa);
+    if (!va) {
+        return NULL;
+    }
+
+    RtlZeroMemory(va, Size);
     return va;
 }
 
@@ -6982,7 +6999,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     }
 
     if (dmaSizeBytes != 0) {
-        dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
+        /*
+         * This is a temporary DMA copy buffer that is immediately and fully
+         * overwritten below via RtlCopyMemory, so avoid zeroing it.
+         */
+        dmaVa = AeroGpuAllocContiguousNoInit(dmaSizeBytes, &dmaPa);
         if (!dmaVa) {
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -6996,7 +7017,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
          * and future host-side validators can accept it.
          */
         dmaSizeBytes = sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_hdr);
-        dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
+        /* Fully initialized below (header + NOP packet). */
+        dmaVa = AeroGpuAllocContiguousNoInit(dmaSizeBytes, &dmaPa);
         if (!dmaVa) {
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INSUFFICIENT_RESOURCES;
