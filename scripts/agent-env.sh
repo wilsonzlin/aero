@@ -28,6 +28,26 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # actually takes effect.
 case "${AERO_ISOLATE_CARGO_HOME:-}" in
   "" | 0 | false | FALSE | no | NO | off | OFF)
+    # Convenience: if a per-checkout Cargo home already exists (created by a previous run or by
+    # `scripts/safe-run.sh`), prefer using it automatically as long as the caller hasn't set a
+    # custom `CARGO_HOME`.
+    #
+    # Treat the default `CARGO_HOME` (`$HOME/.cargo`) as non-custom even when exported in the
+    # environment (some CI/agent sandboxes export it explicitly). This keeps the behavior stable
+    # for developers with a truly custom Cargo home while still reducing global cache lock
+    # contention for the common default case.
+    _aero_default_cargo_home=""
+    if [[ -n "${HOME:-}" ]]; then
+      _aero_default_cargo_home="${HOME%/}/.cargo"
+    fi
+    _aero_effective_cargo_home="${CARGO_HOME:-}"
+    _aero_effective_cargo_home="${_aero_effective_cargo_home%/}"
+    if [[ -d "$REPO_ROOT/.cargo-home" ]] \
+      && { [[ -z "${_aero_effective_cargo_home}" ]] || [[ -n "${_aero_default_cargo_home}" && "${_aero_effective_cargo_home}" == "${_aero_default_cargo_home}" ]]; }
+    then
+      export CARGO_HOME="$REPO_ROOT/.cargo-home"
+    fi
+    unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
     ;;
   1 | true | TRUE | yes | YES | on | ON)
     export CARGO_HOME="$REPO_ROOT/.cargo-home"
