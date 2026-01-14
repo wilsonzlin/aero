@@ -283,10 +283,14 @@ fn validate_sampler_texture_types(
     used_samplers: &BTreeSet<u16>,
     sampler_texture_types: &HashMap<u16, TextureType>,
 ) -> Result<(), ShaderTranslateError> {
-    // D3D9 supports 1D/2D/3D/Cube sampler declarations.
+    // D3D9 bytecode supports 1D/2D/3D/Cube sampler declarations.
     //
-    // The D3D9 executor does not currently support binding 1D/3D textures, but unknown sampler
-    // texture type encodings are treated as malformed bytecode and must still be rejected.
+    // The Aero D3D9 runtime/executor only supports binding 2D + cube textures today, but it can
+    // tolerate unsupported sampler declarations as long as the sampler is never used (we don't emit
+    // bindings for unused samplers).
+    //
+    // Unknown sampler texture type encodings are treated as malformed bytecode and must still be
+    // rejected deterministically.
     for &sampler in used_samplers {
         let ty = sampler_texture_types
             .get(&sampler)
