@@ -417,6 +417,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test hid_usage_keyboard_fixture \
   --test hid_usage_consumer_fixture \
   --test xhci_enum_smoke \
+  --test xhci_port_remote_wakeup \
   --test xhci_controller_webusb_ep0 \
   --test xhci_doorbell0 \
   --test xhci_stop_endpoint_unschedules \

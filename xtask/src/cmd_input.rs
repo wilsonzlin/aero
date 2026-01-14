@@ -59,6 +59,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
     "hid_usage_keyboard_fixture",
     "hid_usage_consumer_fixture",
     "xhci_enum_smoke",
+    "xhci_port_remote_wakeup",
     "xhci_controller_webusb_ep0",
     "xhci_doorbell0",
     "xhci_stop_endpoint_unschedules",
