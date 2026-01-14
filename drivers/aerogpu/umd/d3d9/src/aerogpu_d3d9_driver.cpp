@@ -20726,7 +20726,10 @@ bool vertex_decl_used_streams(const VertexDecl* decl, std::bitset<16>* out) {
 
 struct InstancingConfig {
   uint32_t instance_count = 1;
-  std::array<bool, 16> stream_is_instanced{};
+  // For each stream, 0 means "per-vertex" (default / INDEXEDDATA / freq==1).
+  // Non-zero means "per-instance" and encodes the D3D9 INSTANCEDATA divisor:
+  // how many instances to draw for each element of the instanced stream.
+  std::array<uint32_t, 16> instanced_divisor{};
 };
 
 HRESULT parse_instancing_config_locked(Device* dev, const std::bitset<16>& used_streams, InstancingConfig* out) {
@@ -20735,7 +20738,7 @@ HRESULT parse_instancing_config_locked(Device* dev, const std::bitset<16>& used_
   }
   *out = {};
   out->instance_count = 1;
-  out->stream_is_instanced.fill(false);
+  out->instanced_divisor.fill(0u);
 
   // Instancing in D3D9 is driven by stream 0's INDEXEDDATA | N encoding.
   if (!used_streams.test(0)) {
@@ -20773,10 +20776,10 @@ HRESULT parse_instancing_config_locked(Device* dev, const std::bitset<16>& used_
       continue;
     }
     if (mode == kD3DStreamSourceInstanceData) {
-      if (val != 1u) {
+      if (val == 0u) {
         return kD3DErrInvalidCall;
       }
-      out->stream_is_instanced[s] = true;
+      out->instanced_divisor[s] = val;
       continue;
     }
     return kD3DErrInvalidCall;
@@ -20810,10 +20813,12 @@ HRESULT try_draw_instanced_primitive_locked(
     return S_FALSE;
   }
 
-  // MVP guardrail: CPU expansion currently only supports triangle lists.
-  if (type != D3DDDIPT_TRIANGLELIST) {
-    return kD3DErrInvalidCall;
-  }
+  // D3D9 instancing can be used with strip/fan topologies. When CPU-expanding
+  // instancing into a single draw, we must avoid connecting primitives across
+  // instance boundaries. For list topologies, concatenating instances is safe;
+  // for strip/fan, we issue one draw per instance below.
+  const bool single_draw_safe =
+      (type == D3DDDIPT_TRIANGLELIST || type == D3DDDIPT_LINELIST || type == D3DDDIPT_POINTLIST);
 
   std::bitset<16> used_streams{};
   if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
@@ -20839,7 +20844,7 @@ HRESULT try_draw_instanced_primitive_locked(
 
   bool has_instanced_stream = false;
   for (uint32_t s = 0; s < 16; ++s) {
-    if (used_streams.test(s) && cfg.stream_is_instanced[s]) {
+    if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
       has_instanced_stream = true;
       break;
     }
@@ -20893,9 +20898,12 @@ HRESULT try_draw_instanced_primitive_locked(
 
     uint8_t* dst_all = expanded_streams[s].data();
 
-    if (cfg.stream_is_instanced[s]) {
+    if (cfg.instanced_divisor[s] != 0u) {
+      const uint32_t divisor = cfg.instanced_divisor[s];
+      const uint64_t element_count_u64 =
+          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) / static_cast<uint64_t>(divisor);
       const uint64_t src_offset = ss.offset_bytes;
-      const uint64_t src_size = static_cast<uint64_t>(cfg.instance_count) * stride;
+      const uint64_t src_size = element_count_u64 * stride;
       ScopedResourceRead src;
       hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
       if (FAILED(hr) || !src.data) {
@@ -20903,7 +20911,8 @@ HRESULT try_draw_instanced_primitive_locked(
       }
 
       for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        const uint8_t* inst_data = src.data + static_cast<size_t>(inst) * static_cast<size_t>(stride);
+        const uint32_t elem = inst / divisor;
+        const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
         uint8_t* dst_base =
             dst_all + (static_cast<size_t>(inst) * vertices_per_instance) * static_cast<size_t>(stride);
         for (uint32_t v = 0; v < vertices_per_instance; ++v) {
@@ -20990,9 +20999,9 @@ HRESULT try_draw_instanced_primitive_locked(
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
-  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
-                            align_up(sizeof(aerogpu_cmd_draw), 4);
-  if (!ensure_cmd_space(dev, draw_bytes)) {
+  const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw), 4);
+  const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
+  if (!ensure_cmd_space(dev, min_bytes)) {
     (void)restore_streams();
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
@@ -21001,25 +21010,49 @@ HRESULT try_draw_instanced_primitive_locked(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
-    (void)restore_streams();
-    return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  hr = track_draw_state_locked(dev);
-  if (FAILED(hr)) {
-    (void)restore_streams();
-    return hr;
-  }
+  if (single_draw_safe) {
+    if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
 
-  auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
-  if (!cmd) {
-    (void)restore_streams();
-    return device_lost_override(dev, E_OUTOFMEMORY);
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+    if (!cmd) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    cmd->vertex_count = expanded_vertex_count;
+    cmd->instance_count = 1;
+    cmd->first_vertex = 0;
+    cmd->first_instance = 0;
+  } else {
+    for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+      if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+      hr = track_draw_state_locked(dev);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+
+      auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+      if (!cmd) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+      cmd->vertex_count = vertices_per_instance;
+      cmd->instance_count = 1;
+      cmd->first_vertex = inst * vertices_per_instance;
+      cmd->first_instance = 0;
+    }
   }
-  cmd->vertex_count = expanded_vertex_count;
-  cmd->instance_count = 1;
-  cmd->first_vertex = 0;
-  cmd->first_instance = 0;
 
   if (!restore_streams()) {
     return device_lost_override(dev, E_OUTOFMEMORY);
@@ -21044,10 +21077,11 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     return S_FALSE;
   }
 
-  // MVP guardrail: CPU expansion currently only supports triangle lists.
-  if (type != D3DDDIPT_TRIANGLELIST) {
-    return kD3DErrInvalidCall;
-  }
+  // See try_draw_instanced_primitive_locked() for discussion: strip/fan
+  // topologies must be issued as one draw per instance to avoid connecting
+  // primitives across instance boundaries.
+  const bool single_draw_safe =
+      (type == D3DDDIPT_TRIANGLELIST || type == D3DDDIPT_LINELIST || type == D3DDDIPT_POINTLIST);
 
   std::bitset<16> used_streams{};
   if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
@@ -21073,7 +21107,7 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
 
   bool has_instanced_stream = false;
   for (uint32_t s = 0; s < 16; ++s) {
-    if (used_streams.test(s) && cfg.stream_is_instanced[s]) {
+    if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
       has_instanced_stream = true;
       break;
     }
@@ -21172,9 +21206,12 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
 
     uint8_t* dst_all = expanded_streams[s].data();
 
-    if (cfg.stream_is_instanced[s]) {
+    if (cfg.instanced_divisor[s] != 0u) {
+      const uint32_t divisor = cfg.instanced_divisor[s];
+      const uint64_t element_count_u64 =
+          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) / static_cast<uint64_t>(divisor);
       const uint64_t src_offset = ss.offset_bytes;
-      const uint64_t src_size = static_cast<uint64_t>(cfg.instance_count) * stride;
+      const uint64_t src_size = element_count_u64 * stride;
       ScopedResourceRead src;
       hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
       if (FAILED(hr) || !src.data) {
@@ -21182,7 +21219,8 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
       }
 
       for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        const uint8_t* inst_data = src.data + static_cast<size_t>(inst) * static_cast<size_t>(stride);
+        const uint32_t elem = inst / divisor;
+        const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
         uint8_t* dst_base = dst_all + (static_cast<size_t>(inst) * num_vertices) * static_cast<size_t>(stride);
         for (uint32_t v = 0; v < num_vertices; ++v) {
           std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
@@ -21313,9 +21351,9 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
   ib_cmd->reserved0 = 0;
 
   const uint32_t topology = d3d9_prim_to_topology(type);
-  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
-                            align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
-  if (!ensure_cmd_space(dev, draw_bytes)) {
+  const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+  const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
+  if (!ensure_cmd_space(dev, min_bytes)) {
     (void)restore_streams();
     (void)restore_index();
     return device_lost_override(dev, E_OUTOFMEMORY);
@@ -21326,29 +21364,57 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
-    (void)restore_streams();
-    (void)restore_index();
-    return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  hr = track_draw_state_locked(dev);
-  if (FAILED(hr)) {
-    (void)restore_streams();
-    (void)restore_index();
-    return hr;
-  }
+  if (single_draw_safe) {
+    if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+      (void)restore_streams();
+      (void)restore_index();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      (void)restore_index();
+      return hr;
+    }
 
-  auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
-  if (!cmd) {
-    (void)restore_streams();
-    (void)restore_index();
-    return device_lost_override(dev, E_OUTOFMEMORY);
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+    if (!cmd) {
+      (void)restore_streams();
+      (void)restore_index();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    cmd->index_count = expanded_index_count;
+    cmd->instance_count = 1;
+    cmd->first_index = 0;
+    cmd->base_vertex = 0;
+    cmd->first_instance = 0;
+  } else {
+    for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+      if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+        (void)restore_streams();
+        (void)restore_index();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+      hr = track_draw_state_locked(dev);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        (void)restore_index();
+        return hr;
+      }
+
+      auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+      if (!cmd) {
+        (void)restore_streams();
+        (void)restore_index();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+      cmd->index_count = index_count;
+      cmd->instance_count = 1;
+      cmd->first_index = inst * index_count;
+      cmd->base_vertex = 0;
+      cmd->first_instance = 0;
+    }
   }
-  cmd->index_count = expanded_index_count;
-  cmd->instance_count = 1;
-  cmd->first_index = 0;
-  cmd->base_vertex = 0;
-  cmd->first_instance = 0;
 
   if (!restore_streams()) {
     return device_lost_override(dev, E_OUTOFMEMORY);
