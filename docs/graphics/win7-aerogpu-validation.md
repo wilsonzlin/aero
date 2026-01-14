@@ -336,6 +336,7 @@ For quick guest-side sanity checks:
   * CreateAllocation trace dump (`AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`): `drivers/aerogpu/tests/win7/dump_createalloc_sanity`
   * UMDRIVERPRIVATE discovery blob (`D3DKMTQueryAdapterInfo`): `drivers/aerogpu/tests/win7/umd_private_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
+  * D3D9 fixed-function WVP transforms (legacy apps + DWM fixed-function bring-up): `drivers/aerogpu/tests/win7/d3d9_fixedfunc_wvp_triangle` and `drivers/aerogpu/tests/win7/d3d9_fixedfunc_textured_wvp`
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
   * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling; on AGPU also validates ring descriptor `AEROGPU_SUBMIT_FLAG_PRESENT` + non-zero `alloc_table_gpa` for presents): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
