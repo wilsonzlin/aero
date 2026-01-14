@@ -116,4 +116,3 @@ fn inject_input_batch_mouse_button_release_stays_on_usb_when_virtio_becomes_read
         "expected button release to clear USB state even if virtio becomes ready mid-hold"
     );
 }
-

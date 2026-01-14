@@ -43,4 +43,3 @@ fn usb_hid_bridge_consumer_event_produces_press_and_release_reports() {
         "expected no further consumer-control reports"
     );
 }
-

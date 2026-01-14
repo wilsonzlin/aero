@@ -696,7 +696,10 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_DCL_INPUT), Some("dcl_input"));
         assert_eq!(opcode_name(OPCODE_DCL_OUTPUT), Some("dcl_output"));
         assert_eq!(opcode_name(OPCODE_DCL_SAMPLER), Some("dcl_sampler"));
-        assert_eq!(opcode_name(OPCODE_DCL_THREAD_GROUP), Some("dcl_thread_group"));
+        assert_eq!(
+            opcode_name(OPCODE_DCL_THREAD_GROUP),
+            Some("dcl_thread_group")
+        );
     }
 
     #[test]

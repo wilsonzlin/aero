@@ -529,7 +529,10 @@ fn tier2_trace_wasm_updates_rflags_even_when_flags_are_not_observed_in_trace() {
                 dst: v(0),
                 value: 0xffff_ffff_ffff_ffff,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -630,7 +633,10 @@ fn tier2_trace_wasm_spills_rflags_on_side_exit_when_flags_are_not_observed_in_tr
                 dst: v(0),
                 value: 0xffff_ffff_ffff_ffff,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,

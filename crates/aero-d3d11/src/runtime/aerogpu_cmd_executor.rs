@@ -4223,15 +4223,17 @@ impl AerogpuD3d11Executor {
             guest_mem,
         )?;
 
-        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
         let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
             > ShaderStage::Geometry.as_bind_group_index() as usize
         {
             (
-                &gs_resource_bindings.group_layouts[ShaderStage::Geometry.as_bind_group_index()
-                    as usize],
-                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
-                    as usize]
+                &gs_resource_bindings.group_layouts
+                    [ShaderStage::Geometry.as_bind_group_index() as usize],
+                gs_resource_bindings.group_bindings
+                    [ShaderStage::Geometry.as_bind_group_index() as usize]
                     .as_slice(),
             )
         } else {
@@ -5069,15 +5071,17 @@ impl AerogpuD3d11Executor {
             guest_mem,
         )?;
 
-        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
         let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
             > ShaderStage::Geometry.as_bind_group_index() as usize
         {
             (
-                &gs_resource_bindings.group_layouts[ShaderStage::Geometry.as_bind_group_index()
-                    as usize],
-                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
-                    as usize]
+                &gs_resource_bindings.group_layouts
+                    [ShaderStage::Geometry.as_bind_group_index() as usize],
+                gs_resource_bindings.group_bindings
+                    [ShaderStage::Geometry.as_bind_group_index() as usize]
                     .as_slice(),
             )
         } else {
@@ -5197,7 +5201,11 @@ impl AerogpuD3d11Executor {
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
             bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
-            pass.set_bind_group(ShaderStage::Geometry.as_bind_group_index(), gs_group3_bg.as_ref(), &[]);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
         {
@@ -5208,7 +5216,11 @@ impl AerogpuD3d11Executor {
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
             bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
-            pass.set_bind_group(ShaderStage::Geometry.as_bind_group_index(), gs_group3_bg.as_ref(), &[]);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
             pass.dispatch_workgroups(1, 1, 1);
         }
 
@@ -12924,7 +12936,8 @@ impl AerogpuD3d11Executor {
                 // with that GS bound will later return a clear "geometry shader not supported"
                 // error.
                 let translation: Option<super::gs_translate::GsPrepassTranslation> =
-                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream") {
+                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
+                    {
                         Ok(module) => {
                             bindings = crate::shader_translate::reflect_resource_bindings(&module)
                                 .ok()

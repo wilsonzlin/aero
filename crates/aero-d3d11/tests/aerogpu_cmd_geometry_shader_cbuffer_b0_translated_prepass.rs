@@ -439,4 +439,3 @@ fn aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass() {
         assert_eq!(px(&pixels1, w / 2, h / 2), [255, 0, 0, 255]);
     });
 }
-

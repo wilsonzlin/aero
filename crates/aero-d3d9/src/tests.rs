@@ -4031,14 +4031,7 @@ fn translate_entrypoint_rejects_relative_def_destination_operand() {
     let rel = enc_src(3, 0, 0x00); // a0.x
     words.extend(enc_inst(
         0x0051,
-        &[
-            dst,
-            rel,
-            0x3F80_0000,
-            0x0000_0000,
-            0x0000_0000,
-            0x3F80_0000,
-        ],
+        &[dst, rel, 0x3F80_0000, 0x0000_0000, 0x0000_0000, 0x3F80_0000],
     ));
     // mov oC0, c0
     words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));

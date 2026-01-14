@@ -115,12 +115,7 @@ fn aerogpu_cmd_uav_buffers_do_not_clobber_compute_textures() {
         // Unbind the UAV buffer; the SRV texture should remain bound.
         {
             let mut stream = new_stream();
-            push_set_unordered_access_buffer(
-                &mut stream,
-                AerogpuShaderStage::Compute as u32,
-                0,
-                0,
-            );
+            push_set_unordered_access_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, 0);
             let stream = finish_stream(stream);
             exec.execute_cmd_stream(&stream, None, &mut guest_mem)
                 .expect("command stream should execute");

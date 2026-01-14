@@ -3168,7 +3168,10 @@ mod tests {
                 msg.contains("CreateRenderPipeline requires compute shaders"),
                 "unexpected error: {msg:#}"
             );
-            assert!(msg.contains("does not support compute"), "unexpected error: {msg:#}");
+            assert!(
+                msg.contains("does not support compute"),
+                "unexpected error: {msg:#}"
+            );
         });
     }
 

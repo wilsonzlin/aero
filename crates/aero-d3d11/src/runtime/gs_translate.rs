@@ -338,7 +338,9 @@ fn decode_output_topology(
 }
 
 #[cfg(test)]
-fn module_output_topology_kind(module: &Sm4Module) -> Result<GsOutputTopologyKind, GsTranslateError> {
+fn module_output_topology_kind(
+    module: &Sm4Module,
+) -> Result<GsOutputTopologyKind, GsTranslateError> {
     let mut input_primitive: Option<GsInputPrimitive> = None;
     let mut output_topology: Option<GsOutputTopology> = None;
     for decl in &module.decls {

@@ -261,7 +261,10 @@ fn boot_protocol_wheel_still_triggers_remote_wakeup() {
         mouse.poll_remote_wakeup(),
         "expected scroll input to set remote wakeup pending even in boot protocol"
     );
-    assert!(!mouse.poll_remote_wakeup(), "remote wakeup should be edge-triggered");
+    assert!(
+        !mouse.poll_remote_wakeup(),
+        "remote wakeup should be edge-triggered"
+    );
 }
 
 #[test]

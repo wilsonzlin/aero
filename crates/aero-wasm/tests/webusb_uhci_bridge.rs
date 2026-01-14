@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_io_snapshot::io::state::{SnapshotVersion, SnapshotWriter};
 use aero_io_snapshot::io::state::codec::Encoder;
+use aero_io_snapshot::io::state::{SnapshotVersion, SnapshotWriter};
 use aero_usb::passthrough::UsbHostAction;
 use aero_wasm::{UhciControllerBridge, UhciRuntime, WEBUSB_ROOT_PORT, WebUsbUhciBridge};
 use wasm_bindgen::{JsCast, JsValue};

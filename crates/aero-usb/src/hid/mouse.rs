@@ -426,7 +426,8 @@ impl UsbHidMouse {
         // queue with no-op packets when a host injects scroll events while the guest has the mouse
         // in boot mode. Still treat scroll as user activity for remote-wakeup purposes.
         if self.protocol == HidProtocol::Boot {
-            if (self.wheel != 0 || self.hwheel != 0) && self.suspended && self.remote_wakeup_enabled {
+            if (self.wheel != 0 || self.hwheel != 0) && self.suspended && self.remote_wakeup_enabled
+            {
                 self.remote_wakeup_pending = true;
             }
             self.wheel = 0;

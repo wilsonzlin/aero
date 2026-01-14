@@ -51,7 +51,9 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
         let bar1 = cfg
             .bar_range(1)
             .expect("AeroGPU BAR1 should be assigned by PCI BIOS POST");
-        (id, class, command, bar0, bar1, bar0_reg, bar1_reg, int_line, int_pin)
+        (
+            id, class, command, bar0, bar1, bar0_reg, bar1_reg, int_line, int_pin,
+        )
     };
 
     assert_eq!(id.vendor_id, 0xA3A0, "AeroGPU vendor ID drifted");
@@ -66,8 +68,7 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     let router = PciIntxRouter::new(PciIntxRouterConfig::default());
     let expected_gsi = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
     assert_eq!(
-        int_line,
-        expected_gsi as u8,
+        int_line, expected_gsi as u8,
         "AeroGPU PCI Interrupt Line does not match router swizzle"
     );
     assert_eq!(

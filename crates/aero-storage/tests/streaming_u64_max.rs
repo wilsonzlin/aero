@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, DEFAULT_SECTOR_SIZE};
+use aero_storage::{
+    StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, DEFAULT_SECTOR_SIZE,
+};
 use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};

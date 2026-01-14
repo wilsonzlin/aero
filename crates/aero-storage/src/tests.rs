@@ -851,11 +851,7 @@ fn read_only_disk_allows_reads_but_blocks_writes() {
 fn sparse_open_rejects_huge_allocation_table() {
     let mut backend = MemBackend::new();
     // 1,000,000,000 entries => 8 GiB table.
-    let header = make_header(
-        (SECTOR_SIZE as u64) * 1_000_000_000,
-        SECTOR_SIZE as u32,
-        0,
-    );
+    let header = make_header((SECTOR_SIZE as u64) * 1_000_000_000, SECTOR_SIZE as u32, 0);
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
     assert!(matches!(

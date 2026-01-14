@@ -1824,9 +1824,7 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &base,
                         expected_rev,
                     )
-                    .with_context(|| {
-                        format!("{name}: validate virtio-input DeviceDesc split")
-                    })?;
+                    .with_context(|| format!("{name}: validate virtio-input DeviceDesc split"))?;
 
                     // Optional: validate the legacy filename alias INF (if present). This alias is kept for
                     // compatibility with workflows/tools that still reference `virtio-input.inf`.
@@ -2289,7 +2287,10 @@ fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
         return Ok(data[line_start..].to_vec());
     }
 
-    bail!("{}: could not find a section header (e.g. [Version])", path.display());
+    bail!(
+        "{}: could not find a section header (e.g. [Version])",
+        path.display()
+    );
 }
 
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {

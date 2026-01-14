@@ -282,7 +282,10 @@ fn aerogpu_cmd_geometry_shader_line_strip_output_renders_lines() {
 
         exec.poll_wait();
 
-        let pixels = exec.read_texture_rgba8(RT).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .expect("readback should succeed");
         assert_eq!(pixels.len(), (W * H * 4) as usize);
 
         let w = W as usize;
@@ -298,4 +301,3 @@ fn aerogpu_cmd_geometry_shader_line_strip_output_renders_lines() {
         assert_eq!(corner, [255, 0, 0, 255]);
     });
 }
-

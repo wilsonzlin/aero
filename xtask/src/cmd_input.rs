@@ -276,12 +276,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let has_node_modules =
         repo_root.join("node_modules").is_dir() || repo_root.join("web/node_modules").is_dir();
     if !has_node_modules {
-        return Err(XtaskError::Message(
-            format!(
-                "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
+        return Err(XtaskError::Message(format!(
+            "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
                  or run `{rust_only_hint}` to skip npm + Playwright"
-            ),
-        ));
+        )));
     }
 
     let mut cmd = tools::npm();
