@@ -68,6 +68,36 @@ describe("runtime/jit_wasm_loader", () => {
   );
 
   it(
+    "accepts camelCase compileTier1Block export (backwards compatibility)",
+    async () => {
+      const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+      const fakeModule = {
+        default: async (_input?: unknown) => {},
+        compileTier1Block: () => ({
+          wasm_bytes: new Uint8Array(WASM_EMPTY_MODULE_BYTES),
+          code_byte_len: 0,
+          exit_to_interpreter: false,
+        }),
+      };
+
+      globalThis.__aeroJitWasmJsImporterOverride = {
+        single: async () => fakeModule,
+        threaded: async () => fakeModule,
+      };
+
+      const { initJitWasm } = await import("./jit_wasm_loader");
+      const { api } = await initJitWasm({ module });
+      const out = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+      const bytes = out instanceof Uint8Array ? out : out.wasm_bytes;
+      const bytesForWasm: Uint8Array<ArrayBuffer> =
+        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+      expect(WebAssembly.validate(bytesForWasm)).toBe(true);
+    },
+    20_000,
+  );
+
+  it(
     "prefers pkg-jit-single even when WASM threads are available (avoids huge SharedArrayBuffer allocation)",
     async () => {
     // Simulate a COOP/COEP-capable environment (threads available).

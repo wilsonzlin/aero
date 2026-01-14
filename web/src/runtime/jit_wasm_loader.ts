@@ -94,10 +94,14 @@ function resolveWasmImporter(
 }
 
 function toApi(mod: RawJitWasmModule): JitWasmApi {
-  if (typeof mod.compile_tier1_block !== "function") {
-    throw new Error("aero-jit-wasm did not export `compile_tier1_block`.");
+  // wasm-bindgen historically produced different naming conventions for exports depending on
+  // configuration/tooling (snake_case vs camelCase). Prefer snake_case but accept camelCase for
+  // backwards compatibility with older wasm-pack outputs.
+  const compileTier1Block: unknown = mod.compile_tier1_block ?? mod.compileTier1Block;
+  if (typeof compileTier1Block !== "function") {
+    throw new Error("aero-jit-wasm did not export `compile_tier1_block` (or `compileTier1Block`).");
   }
-  return { compile_tier1_block: mod.compile_tier1_block };
+  return { compile_tier1_block: compileTier1Block as JitWasmApi["compile_tier1_block"] };
 }
 
 async function resolveWasmInputForInit(wasmUrl: URL): Promise<unknown> {
