@@ -130,6 +130,115 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 finally:
                     sys.argv = old_argv
 
+    def test_virtio_disable_msix_mutually_exclusive_with_vectors(self) -> None:
+        h = self.harness
+
+        cases = [
+            (
+                ["--virtio-disable-msix", "--virtio-msix-vectors", "2"],
+                "--virtio-disable-msix is mutually exclusive",
+            ),
+            (
+                ["--virtio-disable-msix", "--virtio-net-vectors", "2"],
+                "--virtio-disable-msix is mutually exclusive",
+            ),
+            (
+                ["--virtio-disable-msix", "--virtio-input-vectors", "2"],
+                "--virtio-disable-msix is mutually exclusive",
+            ),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
+    def test_virtio_disable_msix_incompatible_with_require_msix(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--virtio-disable-msix",
+                "--require-virtio-net-msix",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--virtio-disable-msix is incompatible with --require-virtio-*-msix", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
+    def test_require_intx_and_require_msi_mutually_exclusive(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-intx",
+                "--require-msi",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--require-intx and --require-msi are mutually exclusive", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
+    def test_rejects_udp_port_out_of_range(self) -> None:
+        h = self.harness
+
+        cases = [
+            (["--udp-port", "0"], "--udp-port must be in the range 1..65535"),
+            (["--udp-port", "-1"], "--udp-port must be in the range 1..65535"),
+            (["--udp-port", "65536"], "--udp-port must be in the range 1..65535"),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()
