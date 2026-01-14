@@ -66,8 +66,7 @@ mod wasm {
                 let reflection: ShaderReflection;
                 let wgsl: String;
                 if signature_driven {
-                    let module =
-                        aero_d3d11::sm4::decode_program(&program).map_err(|e| e.to_string())?;
+                    let module = aero_d3d11::sm4::decode_program(&program).map_err(|e| e.to_string())?;
                     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
                         .map_err(|e| e.to_string())?;
                     wgsl = translated.wgsl;

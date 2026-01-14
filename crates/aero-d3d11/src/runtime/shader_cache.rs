@@ -80,6 +80,8 @@ impl PersistedShaderStage {
             ShaderStage::Pixel => Self::Pixel,
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => Self::Ignored,
             ShaderStage::Compute => Self::Compute,
+            // WebGPU does not support these D3D11 stages; persist the "ignored" result so we don't
+            // repeatedly parse/translate them on subsequent boots.
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => Self::Ignored,
         }
     }

@@ -11,14 +11,32 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     // concrete functions to avoid `undefined is not a function` crashes. The compile-time checks are
     // encoded via `@ts-expect-error` comments and validated in CI by `tsc`.
     const machine = {
+      set_boot_drive: (_drive: number) => {},
       set_ahci_port0_disk_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ahci_port0_disk_overlay_ref: () => {},
       set_ide_secondary_master_atapi_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ide_secondary_master_atapi_overlay_ref: () => {},
       set_ide_primary_master_ata_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ide_primary_master_ata_overlay_ref: () => {},
+      set_disk_opfs_and_set_overlay_ref: async (_path: string, _create: boolean, _sizeBytes: bigint) => {},
+      set_disk_opfs_with_progress: async (
+        _path: string,
+        _create: boolean,
+        _sizeBytes: bigint,
+        _progress: (progress: number) => void,
+      ) => {},
+      set_disk_opfs_with_progress_and_set_overlay_ref: async (
+        _path: string,
+        _create: boolean,
+        _sizeBytes: bigint,
+        _progress: (progress: number) => void,
+      ) => {},
+      set_disk_cow_opfs_create: async (_base: string, _overlay: string, _blockSize: number) => {},
+      set_disk_cow_opfs_open: async (_base: string, _overlay: string) => {},
+      attach_ide_primary_master_disk_opfs_and_set_overlay_ref: async (_path: string, _create: boolean, _sizeBytes: bigint) => {},
+      attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref: async (_path: string) => {},
       reattach_restored_disks_from_opfs: async () => {},
-      set_primary_hdd_opfs_cow: (_base: string, _overlay: string) => {},
+      set_primary_hdd_opfs_cow: async (_base: string, _overlay: string, _blockSize: number) => {},
       attach_install_media_iso_opfs: (_path: string) => {},
       attach_install_media_iso_opfs_existing: (_path: string) => {},
       attach_install_media_opfs_iso: (_path: string) => {},
@@ -49,10 +67,26 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machine.set_ide_primary_master_ata_overlay_ref("d2.base", "d2.overlay");
       // @ts-expect-error clear_ide_primary_master_ata_overlay_ref may be undefined
       machine.clear_ide_primary_master_ata_overlay_ref();
+      // @ts-expect-error set_boot_drive may be undefined
+      machine.set_boot_drive(0x80);
+      // @ts-expect-error set_disk_opfs_and_set_overlay_ref may be undefined
+      void machine.set_disk_opfs_and_set_overlay_ref("disk.img", true, 1024n);
+      // @ts-expect-error set_disk_opfs_with_progress may be undefined
+      void machine.set_disk_opfs_with_progress("disk.img", true, 1024n, () => {});
+      // @ts-expect-error set_disk_opfs_with_progress_and_set_overlay_ref may be undefined
+      void machine.set_disk_opfs_with_progress_and_set_overlay_ref("disk.img", true, 1024n, () => {});
+      // @ts-expect-error set_disk_cow_opfs_create may be undefined
+      void machine.set_disk_cow_opfs_create("base.img", "overlay.aerospar", 1024 * 1024);
+      // @ts-expect-error set_disk_cow_opfs_open may be undefined
+      void machine.set_disk_cow_opfs_open("base.img", "overlay.aerospar");
+      // @ts-expect-error attach_ide_primary_master_disk_opfs_and_set_overlay_ref may be undefined
+      void machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref("d2.img", true, 1024n);
+      // @ts-expect-error attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref may be undefined
+      void machine.attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref("d2.img");
       // @ts-expect-error reattach_restored_disks_from_opfs may be undefined
       void machine.reattach_restored_disks_from_opfs();
       // @ts-expect-error set_primary_hdd_opfs_cow may be undefined
-      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay");
+      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay", 32 * 1024);
       // @ts-expect-error attach_install_media_iso_opfs may be undefined
       void machine.attach_install_media_iso_opfs("win7.iso");
       // @ts-expect-error attach_install_media_iso_opfs_existing may be undefined
@@ -100,11 +134,35 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     if (machine.clear_ide_primary_master_ata_overlay_ref) {
       machine.clear_ide_primary_master_ata_overlay_ref();
     }
+    if (machine.set_boot_drive) {
+      machine.set_boot_drive(0x80);
+    }
+    if (machine.set_disk_opfs_and_set_overlay_ref) {
+      void machine.set_disk_opfs_and_set_overlay_ref("disk.img", true, 1024n);
+    }
+    if (machine.set_disk_opfs_with_progress) {
+      void machine.set_disk_opfs_with_progress("disk.img", true, 1024n, () => {});
+    }
+    if (machine.set_disk_opfs_with_progress_and_set_overlay_ref) {
+      void machine.set_disk_opfs_with_progress_and_set_overlay_ref("disk.img", true, 1024n, () => {});
+    }
+    if (machine.set_disk_cow_opfs_create) {
+      void machine.set_disk_cow_opfs_create("base.img", "overlay.aerospar", 1024 * 1024);
+    }
+    if (machine.set_disk_cow_opfs_open) {
+      void machine.set_disk_cow_opfs_open("base.img", "overlay.aerospar");
+    }
+    if (machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref) {
+      void machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref("d2.img", true, 1024n);
+    }
+    if (machine.attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref) {
+      void machine.attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref("d2.img");
+    }
     if (machine.reattach_restored_disks_from_opfs) {
       void machine.reattach_restored_disks_from_opfs();
     }
     if (machine.set_primary_hdd_opfs_cow) {
-      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay");
+      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay", 32 * 1024);
     }
     if (machine.attach_install_media_iso_opfs) {
       void machine.attach_install_media_iso_opfs("win7.iso");

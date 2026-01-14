@@ -36,7 +36,7 @@ export type MachineHandle = {
     cpu_count?(): number;
     reset(): void;
     /**
-     * Set the BIOS boot drive number (`DL`) used for the next boot attempt.
+     * Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
      *
      * Recommended values:
      * - `0x80`: primary HDD (normal boot)
@@ -58,6 +58,13 @@ export type MachineHandle = {
      */
     set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
     /**
+     * Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk, and set
+     * the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs_and_set_overlay_ref?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
+    /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
      * reporting create/resize progress via a callback.
      *
@@ -72,12 +79,60 @@ export type MachineHandle = {
         progress: (progress: number) => void,
     ): Promise<void>;
     /**
+     * Like {@link set_disk_opfs_with_progress}, but also records `base_image=path, overlay_image=\"\"`
+     * in the snapshot `DISKS` overlay refs (`disk_id=0`).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs_with_progress_and_set_overlay_ref?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+        progress: (progress: number) => void,
+    ): Promise<void>;
+    /**
      * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
      * the machine's canonical disk.
      *
      * Optional for older WASM builds.
      */
     set_disk_opfs_existing?(path: string): Promise<void>;
+    /**
+     * Create an OPFS-backed copy-on-write disk: `base_path` (read-only, any supported format) +
+     * `overlay_path` (writable Aero sparse overlay).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_cow_opfs_create?(
+        basePath: string,
+        overlayPath: string,
+        overlayBlockSizeBytes: number,
+    ): Promise<void>;
+    /**
+     * Like {@link set_disk_cow_opfs_create}, but also records `base_image`/`overlay_image` into the
+     * snapshot `DISKS` overlay refs (`disk_id=0`).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_cow_opfs_create_and_set_overlay_ref?(
+        basePath: string,
+        overlayPath: string,
+        overlayBlockSizeBytes: number,
+    ): Promise<void>;
+    /**
+     * Open an existing OPFS-backed copy-on-write disk: `base_path` (read-only) + `overlay_path`
+     * (existing writable Aero sparse overlay).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_cow_opfs_open?(basePath: string, overlayPath: string): Promise<void>;
+    /**
+     * Like {@link set_disk_cow_opfs_open}, but also records `base_image`/`overlay_image` into the
+     * snapshot `DISKS` overlay refs (`disk_id=0`).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_cow_opfs_open_and_set_overlay_ref?(basePath: string, overlayPath: string): Promise<void>;
     /**
      * Attach the canonical primary HDD (`disk_id=0`, AHCI port 0) as an OPFS base disk plus an
      * aerosparse copy-on-write overlay (both in OPFS).
@@ -140,9 +195,34 @@ export type MachineHandle = {
      * primary channel master ATA disk (`disk_id=2`), reporting create/resize progress via a
      * callback.
      *
+     * The callback is invoked with a numeric progress value in `[0.0, 1.0]`.
+     *
      * Optional for older WASM builds.
      */
     attach_ide_primary_master_disk_opfs_with_progress?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+        progress: (progress: number) => void,
+    ): Promise<void>;
+    /**
+     * Like {@link attach_ide_primary_master_disk_opfs}, but also records `base_image=path, overlay_image=\"\"`
+     * in the snapshot `DISKS` overlay refs (`disk_id=2`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs_and_set_overlay_ref?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+    ): Promise<void>;
+    /**
+     * Like {@link attach_ide_primary_master_disk_opfs_with_progress}, but also records the snapshot
+     * overlay ref (`disk_id=2`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs_with_progress_and_set_overlay_ref?(
         path: string,
         create: boolean,
         sizeBytes: bigint,
@@ -155,6 +235,13 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     attach_ide_primary_master_disk_opfs_existing?(path: string): Promise<void>;
+    /**
+     * Like {@link attach_ide_primary_master_disk_opfs_existing}, but also records `base_image=path, overlay_image=\"\"`
+     * in the snapshot `DISKS` overlay refs (`disk_id=2`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref?(path: string): Promise<void>;
     /**
      * Open an existing OPFS-backed ISO image (using the file's current size) and attach it as the
      * canonical Windows 7 IDE secondary channel master ATAPI CD-ROM (`disk_id=1`).
@@ -456,7 +543,6 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
-    set_primary_hdd_opfs_cow?(base_image: string, overlay_image: string): Promise<void>;
     /**
      * Attach an ISO image (raw bytes) as the canonical install media / ATAPI CD-ROM (`disk_id=1`).
      *

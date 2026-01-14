@@ -1,13 +1,13 @@
-// WASM bindings for the browser-side persistent GPU cache (D3D11).
+// WASM bindings for the browser-side persistent GPU cache.
 //
-// The canonical implementation lives in `web/gpu-cache/persistent_cache.ts` and
-// installs itself as `globalThis.AeroPersistentGpuCache` when imported.
+// The canonical implementation lives in `web/gpu-cache/persistent_cache.ts` and installs itself as
+// `globalThis.AeroPersistentGpuCache` when imported.
 //
-// This shim exists so `wasm-bindgen` can bundle a small JS module alongside the
-// generated WASM package without reaching outside the crate directory.
+// This shim exists so `wasm-bindgen` can bundle a small JS module alongside the generated WASM
+// package without reaching outside the crate directory.
 //
-// NOTE: This intentionally mirrors `crates/aero-d3d9/js/persistent_cache_shim.js`.
-// The D3D11 WASM demo uses the same global persistent cache API surface.
+// NOTE: This intentionally mirrors `crates/aero-d3d9/js/persistent_cache_shim.js` so both D3D9 and
+// D3D11 wasm-pack packages can depend on the same browser-side persistence API.
 function missingApiError() {
   return new Error(
     "AeroPersistentGpuCache is not installed on globalThis. " +
@@ -32,9 +32,9 @@ export async function computeShaderCacheKey(dxbc, flags) {
 /**
  * Order-independent wrapper class used by wasm-bindgen bindings.
  *
- * Previously this module would snapshot `globalThis.AeroPersistentGpuCache.PersistentGpuCache`
- * at module evaluation time, which made import order significant. This wrapper resolves the
- * real implementation at call time and returns a stable JS class identity so Rust
+ * Previously this module would snapshot `globalThis.AeroPersistentGpuCache.PersistentGpuCache` at
+ * module evaluation time, which made import order significant. This wrapper resolves the real
+ * implementation at call time and returns a stable JS class identity so Rust
  * `dyn_into::<JsPersistentGpuCache>()` continues to work regardless of host import order.
  */
 export class PersistentGpuCache {
@@ -90,7 +90,7 @@ export class PersistentGpuCache {
   }
 }
 
-// wasm-bindgen currently generates imports for both the JS symbol name
-// (`PersistentGpuCache`) and the Rust type name (`JsPersistentGpuCache`) when the
-// two differ. Export an alias so bundlers (Vite/Rollup) can satisfy the import.
+// wasm-bindgen currently generates imports for both the JS symbol name (`PersistentGpuCache`) and
+// the Rust type name (`JsPersistentGpuCache`) when the two differ. Export an alias so bundlers
+// (Vite/Rollup) can satisfy the import.
 export { PersistentGpuCache as JsPersistentGpuCache };
