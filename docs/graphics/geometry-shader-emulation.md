@@ -233,7 +233,8 @@ Supported instructions/opcodes:
 
 Supported operand surface (initial):
 
-- temp regs (`r#`) and output regs (`o#`) (note: only `o0` and `o1` are currently consumed by `emit`)
+- temp regs (`r#`) and output regs (`o#`) (note: the translated GS prepass currently stores `o0`
+  (position) plus a small subset of `o#` varyings into the expanded vertex buffer; default is `o1`)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
 - constant buffers (`cb#[]`) for statically indexed reads (requires `dcl_constantbuffer`)
 - resources used by the supported read-only ops above:
@@ -244,7 +245,8 @@ Supported operand surface (initial):
 - swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
-  - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`, values 0..n-1, default 0)
+  - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`; the translated prepass loops
+    `0..GS_INSTANCE_COUNT` per input primitive, values 0..n-1, default 0)
 
 Unsupported today (non-exhaustive): resource writes/stores/UAVs, barrier/synchronization opcodes
 (`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a clear
@@ -269,7 +271,9 @@ Known limitations include:
   - End-to-end, only `trianglestrip` output is supported today (the expanded draw currently renders
     as a triangle list). Other output topologies may translate but are not wired to a matching render
     topology yet.
-  - Only a minimal output payload is supported (currently `o0` + `o1`).
+  - The expanded-vertex record stores `SV_Position` plus up to 32 `@location(N)` varyings
+    (`vec4<f32>` each, indexed by location). The translated GS prepass currently only populates a
+    small subset of those varying slots (default: `o1`); other varying slots default to zero.
 - **No layered rendering semantics**
   - No `SV_RenderTargetArrayIndex` / `SV_ViewportArrayIndex` style outputs (future work)
 - **No fixed-function GS-side rasterizer discard**

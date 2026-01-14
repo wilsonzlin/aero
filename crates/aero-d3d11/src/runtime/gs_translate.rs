@@ -45,8 +45,8 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
-    BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BIND_GROUP_INTERNAL_EMULATION,
+    EXPANDED_VERTEX_MAX_VARYINGS,
 };
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
@@ -73,8 +73,9 @@ pub enum GsTranslateError {
     InvalidVaryingLocation {
         /// Output register location (`o#`) requested as a varying.
         ///
-        /// Location 0 is reserved for position in the expanded-vertex scheme, and varying locations
-        /// must be less than [`EXPANDED_VERTEX_MAX_VARYINGS`].
+        /// Location 0 is reserved for position in the expanded-vertex scheme.
+        ///
+        /// Valid varying locations are `1..EXPANDED_VERTEX_MAX_VARYINGS`.
         loc: u32,
     },
     UnsupportedInputPrimitive {
@@ -121,7 +122,7 @@ impl fmt::Display for GsTranslateError {
             GsTranslateError::InvalidVaryingLocation { loc } => write!(
                 f,
                 "GS translate: invalid output varying location {loc} (valid range is 1..{}; location 0 is reserved for position in the expanded-vertex scheme)",
-                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1)
+                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1),
             ),
             GsTranslateError::UnsupportedInputPrimitive { primitive } => write!(
                 f,
@@ -320,13 +321,13 @@ pub struct GsPrepassTranslation {
 }
 
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
-/// geometry prepass, parameterizing the expanded-vertex layout.
+/// geometry prepass, selecting which output varyings are written into the expanded vertex buffer.
 ///
 /// `varyings` is a sorted, de-duplicated list of D3D output register locations (`o#`) that should be
 /// written into the expanded vertex buffer's varying table (`ExpandedVertex.varyings[loc]`).
 ///
-/// Location 0 is reserved for position (`o0`) and must not be included in `varyings`. Locations must
-/// also be less than [`EXPANDED_VERTEX_MAX_VARYINGS`].
+/// - Location 0 is reserved for position (`o0`) and must not be included in `varyings`.
+/// - Locations must be in `1..EXPANDED_VERTEX_MAX_VARYINGS`.
 ///
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
@@ -1167,6 +1168,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
 
     // Keep the `DrawIndexedIndirectArgs` layout at offset 0 so the executor can feed this buffer
     // directly into `draw_indexed_indirect`.
+    //
+    // Indirect args + counters share a single storage buffer binding so the translated GS prepass
+    // stays within WebGPU's minimum `max_storage_buffers_per_shader_stage` when combined with:
+    //   - out_vertices
+    //   - out_indices
+    //   - gs_inputs.
     w.line("struct GsPrepassState {");
     w.indent();
     w.line("out_indirect: DrawIndexedIndirectArgs,");

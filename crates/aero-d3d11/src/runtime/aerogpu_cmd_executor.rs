@@ -915,9 +915,10 @@ struct GsPrepassMetadata {
 struct GsShaderMetadata {
     /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
     ///
-    /// The WebGPU backend only executes a small subset of the GS token stream today (point-list
-    /// compute prepass); keep enough metadata to fail fast (instead of silently misrendering) when
-    /// unsupported GS instancing is requested.
+    /// Used to size compute-prepass output buffers and to drive `SV_GSInstanceID` semantics.
+    ///
+    /// - The placeholder prepass dispatches `dispatch_workgroups(primitive_count, gs_instance_count, 1)`.
+    /// - The translated GS prepass executes a per-primitive loop `0..GS_INSTANCE_COUNT`.
     instance_count: u32,
     /// Parsed geometry prepass parameters when the GS token stream is translateable.
     prepass: Option<GsPrepassMetadata>,
@@ -3767,16 +3768,25 @@ impl AerogpuD3d11Executor {
             .expansion_scratch
             .alloc_index_output(&self.device, expanded_index_size)
             .map_err(|e| anyhow!("GS prepass: alloc expanded index buffer: {e}"))?;
-        let indirect_args_alloc = self
+        // The translated GS prepass uses both atomic counters and indirect args. Keep them in a
+        // single storage buffer binding (see `runtime::gs_translate`) to stay within the WebGPU
+        // minimum `max_storage_buffers_per_shader_stage` on downlevel backends.
+        let state_alloc = self
             .expansion_scratch
             .alloc_gs_prepass_state_draw_indexed(&self.device)
             .map_err(|e| anyhow!("GS prepass: alloc indirect+counter state buffer: {e}"))?;
-        let counter_offset = indirect_args_alloc
+        let indirect_args_alloc = ExpansionScratchAlloc {
+            buffer: state_alloc.buffer.clone(),
+            offset: state_alloc.offset,
+            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+        };
+        let counter_offset = state_alloc
             .offset
             .checked_add(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES)
             .ok_or_else(|| anyhow!("GS prepass: state counter offset overflows u64"))?;
+        // Clear counters before dispatch so the prepass has deterministic behavior.
         self.queue.write_buffer(
-            indirect_args_alloc.buffer.as_ref(),
+            state_alloc.buffer.as_ref(),
             counter_offset,
             &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
         );
@@ -3910,9 +3920,9 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: indirect_args_alloc.buffer.as_ref(),
-                        offset: indirect_args_alloc.offset,
-                        size: wgpu::BufferSize::new(indirect_args_alloc.size),
+                        buffer: state_alloc.buffer.as_ref(),
+                        offset: state_alloc.offset,
+                        size: wgpu::BufferSize::new(state_alloc.size),
                     }),
                 },
                 wgpu::BindGroupEntry {

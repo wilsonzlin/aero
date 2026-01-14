@@ -27,17 +27,17 @@
 //!
 //! There are two valid passthrough strategies in the repo:
 //!
-//! - **Vertex-buffer passthrough (current expanded-draw path):** bind the expanded output as a
-//!   WebGPU vertex buffer (`set_vertex_buffer`) and use `@location(N)` vertex inputs in the
-//!   passthrough VS (see `expanded_draw_passthrough_vs_wgsl` in
-//!   `runtime/aerogpu_cmd_executor.rs`).
-//! - **Storage-buffer vertex pulling (emulation-only variant):** bind the expanded output as a
+//! - **Storage-buffer vertex pulling (current expanded-draw path):** bind the expanded output as a
 //!   `var<storage, read>` buffer and index it with `@builtin(vertex_index)` (see
-//!   `generate_passthrough_vs_wgsl` in `runtime/wgsl_link.rs`).
+//!   `generate_passthrough_vs_wgsl` in `runtime/wgsl_link.rs`). This avoids WebGPU's 16-vertex-attribute
+//!   limit and can support up to [`EXPANDED_VERTEX_MAX_VARYINGS`] varyings.
+//! - **Vertex-buffer passthrough (test/prototype):** bind the expanded output as a WebGPU vertex
+//!   buffer (`set_vertex_buffer`) and use `@location(N)` vertex inputs in the passthrough VS (see
+//!   `expanded_draw_passthrough_vs_wgsl` in `runtime/aerogpu_cmd_executor.rs`). This is limited by
+//!   the device's vertex-attribute limit.
 //!
-//! The binding constants below reserve space for the storage-buffer variant (and the executor may
-//! still bind the expanded buffer at the reserved binding number for pipeline-layout compatibility,
-//! even when using the vertex-buffer variant).
+//! The binding constants below reserve space for the storage-buffer variant, which is the default
+//! execution strategy for expanded draws.
 //!
 //! The emulation passthrough VS binds its expanded-vertex buffer in
 //! [`BIND_GROUP_INTERNAL_EMULATION`] using `@binding` numbers at or above

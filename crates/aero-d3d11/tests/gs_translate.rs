@@ -129,7 +129,7 @@ fn wgsl_from_tokens(mut tokens: Vec<u32>) -> String {
 }
 
 #[test]
-fn sm4_gs_packed_varying_o2_translates_to_expanded_vertex_v0() {
+fn sm4_gs_packed_varying_o2_translates_to_expanded_vertex_location2() {
     let module = Sm4Module {
         stage: ShaderStage::Geometry,
         model: ShaderModel { major: 4, minor: 0 },
