@@ -299,7 +299,13 @@ function Get-PathRelativeToBase {
 }
 
 $SelftestExePath = (Resolve-Path -LiteralPath $SelftestExePath).Path
+if (Test-Path -LiteralPath $SelftestExePath -PathType Container) {
+  throw "-SelftestExePath must be a file path (got a directory): $SelftestExePath"
+}
 $DriversDir = (Resolve-Path -LiteralPath $DriversDir).Path
+if (-not (Test-Path -LiteralPath $DriversDir -PathType Container)) {
+  throw "-DriversDir must be a directory path (got a file): $DriversDir"
+}
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
