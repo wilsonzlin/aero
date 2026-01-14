@@ -3164,8 +3164,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Fail the harness if the virtio-blk miniport reports any abort/reset/PnP/IOCTL-reset activity "
-            "(via abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset counters) when those fields are "
-            "present on the guest virtio-blk test marker. On failure, emits: "
+            "(via abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset counters) when available from either:\n"
+            "  - legacy fields on the guest virtio-blk test marker, or\n"
+            "  - the dedicated virtio-blk-counters marker.\n"
+            "On failure, emits: "
             "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
         ),
     )

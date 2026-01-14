@@ -101,7 +101,9 @@ param(
   [switch]$RequireExpectBlkMsi,
 
   # If set, fail if the guest virtio-blk selftest reports non-zero StorPort recovery counters
-  # (abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset) on its machine marker.
+  # (abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset) when available from either:
+  # - legacy fields on the guest virtio-blk marker, or
+  # - the dedicated guest virtio-blk-counters marker.
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkRecovery,
   
