@@ -14,11 +14,11 @@ use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
 
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::cursor_state::CursorStateUpdate;
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
 };
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-use aero_shared::cursor_state::CursorStateUpdate;
 
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;

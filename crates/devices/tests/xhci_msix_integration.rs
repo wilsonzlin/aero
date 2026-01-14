@@ -139,7 +139,11 @@ fn xhci_msix_unprogrammed_entry_sets_pba_and_suppresses_msi() {
             .pba_offset(),
     );
     let pba = MmioHandler::read(&mut dev, pba_base, 8);
-    assert_eq!(pba & 1, 1, "unprogrammed MSI-X entry should set PBA pending bit");
+    assert_eq!(
+        pba & 1,
+        1,
+        "unprogrammed MSI-X entry should set PBA pending bit"
+    );
 }
 
 #[test]

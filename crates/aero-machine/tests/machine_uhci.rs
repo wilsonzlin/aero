@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::pci::profile::USB_EHCI_ICH9;
+use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::ehci::regs as ehci_regs;
 use aero_devices::usb::uhci::{regs, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -431,10 +431,7 @@ fn usb_tick_remainders_roundtrip_with_uhci_and_ehci_enabled() {
             .expect("EHCI PCI function should exist");
         // Ensure MMIO decoding is enabled so `read_physical_u32/write_physical_u32` reach EHCI.
         ehci_cfg.set_command(ehci_cfg.command() | 0x2);
-        let ehci_bar0_base = ehci_cfg
-            .bar_range(0)
-            .map(|range| range.base)
-            .unwrap_or(0);
+        let ehci_bar0_base = ehci_cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
         assert_ne!(
             ehci_bar0_base, 0,
             "EHCI BAR0 base should be assigned by BIOS POST"
@@ -483,10 +480,7 @@ fn usb_tick_remainders_roundtrip_with_uhci_and_ehci_enabled() {
             .bus_mut()
             .device_config(USB_EHCI_ICH9.bdf)
             .expect("EHCI PCI function should exist");
-        let ehci_bar0_base = ehci_cfg
-            .bar_range(0)
-            .map(|range| range.base)
-            .unwrap_or(0);
+        let ehci_bar0_base = ehci_cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
 
         (
             u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16"),
@@ -504,7 +498,10 @@ fn usb_tick_remainders_roundtrip_with_uhci_and_ehci_enabled() {
     restored.tick_platform(500_000);
 
     let uhci_frnum_after_tick = restored.io_read(uhci_base_restored + regs::REG_FRNUM, 2) as u16;
-    assert_eq!(uhci_frnum_after_tick, (uhci_frnum_before.wrapping_add(1)) & 0x07ff);
+    assert_eq!(
+        uhci_frnum_after_tick,
+        (uhci_frnum_before.wrapping_add(1)) & 0x07ff
+    );
 
     let ehci_frindex_after_tick =
         restored.read_physical_u32(ehci_base_restored + ehci_regs::REG_FRINDEX);

@@ -107,12 +107,12 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::cursor_state::{CursorState, CursorStateUpdate, CURSOR_FORMAT_B8G8R8A8};
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::scanout_state::{
     ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
     SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-use aero_shared::cursor_state::{CursorState, CursorStateUpdate, CURSOR_FORMAT_B8G8R8A8};
 use aero_snapshot as snapshot;
 use aero_storage::{MemBackend, RawDisk};
 use aero_usb::usb2_port::Usb2PortMux;

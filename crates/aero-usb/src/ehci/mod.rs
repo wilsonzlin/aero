@@ -37,10 +37,10 @@ mod schedule_periodic;
 
 pub mod regs;
 
+use crate::memory::MemoryBus;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use crate::memory::MemoryBus;
 
 use regs::*;
 use schedule_async::{process_async_schedule, AsyncScheduleContext};

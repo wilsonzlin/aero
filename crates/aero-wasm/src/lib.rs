@@ -3605,7 +3605,8 @@ fn opfs_snapshot_error_to_js(
 #[wasm_bindgen]
 impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
-        let inner = aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let inner =
+            aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let mut inner = inner;
