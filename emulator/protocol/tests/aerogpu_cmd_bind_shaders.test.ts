@@ -51,7 +51,7 @@ test("decodeCmdBindShadersPayload ignores unknown trailing bytes in base packets
 
 test("decodeCmdBindShadersPayload decodes extended packet", () => {
   const w = new AerogpuCmdWriter();
-  w.bindShadersEx(1, 2, 3, 4, 5, 6);
+  w.bindShadersEx(1, 2, 3, { gs: 4, hs: 5, ds: 6 });
   const stream = w.finish();
   const bytes = stream.subarray(AEROGPU_CMD_STREAM_HEADER_SIZE);
 

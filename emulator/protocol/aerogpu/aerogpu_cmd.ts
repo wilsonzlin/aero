@@ -2027,20 +2027,50 @@ export class AerogpuCmdWriter {
     vs: AerogpuHandle,
     ps: AerogpuHandle,
     cs: AerogpuHandle,
-    gs: AerogpuHandle,
-    hs: AerogpuHandle,
-    ds: AerogpuHandle,
+    gsOrEx: AerogpuHandle | BindShadersEx,
+    hsOrMirror?: AerogpuHandle | boolean,
+    ds?: AerogpuHandle,
     mirrorGsToReserved0 = false,
   ): void {
+    let gs: AerogpuHandle;
+    let hs: AerogpuHandle;
+    let dsFinal: AerogpuHandle;
+    let mirror = mirrorGsToReserved0;
+    if (typeof gsOrEx === "object" && gsOrEx !== null) {
+      gs = gsOrEx.gs;
+      hs = gsOrEx.hs;
+      dsFinal = gsOrEx.ds;
+      // Object-call form: bindShadersEx(vs, ps, cs, {gs,hs,ds}, mirrorGsToReserved0?)
+      if (typeof hsOrMirror === "boolean") {
+        mirror = hsOrMirror;
+      } else if (hsOrMirror !== undefined) {
+        throw new Error("bindShadersEx: when passing {gs,hs,ds}, the 5th argument must be mirrorGsToReserved0");
+      }
+      if (ds !== undefined) {
+        throw new Error("bindShadersEx: too many arguments for {gs,hs,ds} form");
+      }
+    } else {
+      gs = gsOrEx;
+      // Handle-call form: bindShadersEx(vs, ps, cs, gs, hs, ds, mirrorGsToReserved0?)
+      if (hsOrMirror === undefined || typeof hsOrMirror === "boolean") {
+        throw new Error("bindShadersEx: missing hs handle");
+      }
+      hs = hsOrMirror;
+      if (ds === undefined) {
+        throw new Error("bindShadersEx: missing ds handle");
+      }
+      dsFinal = ds;
+    }
+
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
-    this.view.setUint32(base + 20, mirrorGsToReserved0 ? gs : 0, true);
+    this.view.setUint32(base + 20, mirror ? gs : 0, true);
     // ABI extension payload: trailing `{gs, hs, ds}`.
     this.view.setUint32(base + 24, gs, true);
     this.view.setUint32(base + 28, hs, true);
-    this.view.setUint32(base + 32, ds, true);
+    this.view.setUint32(base + 32, dsFinal, true);
   }
 
   /**
