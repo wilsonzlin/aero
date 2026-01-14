@@ -37,6 +37,9 @@ bind layout population (`bind_group_layout.{sampler_group,sampler_bindings,sampl
 Sampler texture types come from `dcl_* s#` when present; when absent, samplers default to `Texture2D`
 (and this default is recorded in `bind_group_layout.sampler_texture_types`).
 
+Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate dimensionality
+`x`/`xy`/`xyz` (including for `texldp`/`texldd`).
+
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
