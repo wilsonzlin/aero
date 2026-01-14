@@ -120,7 +120,7 @@ fn px(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     rgba[idx..idx + 4].try_into().unwrap()
 }
 
-fn run(half_pixel_center: bool, set_viewport: bool) -> Option<Vec<u8>> {
+fn run(half_pixel_center: bool, viewport: Option<(f32, f32)>) -> Option<Vec<u8>> {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
         AerogpuD3d9ExecutorConfig { half_pixel_center },
     )) {
@@ -162,17 +162,17 @@ fn run(half_pixel_center: bool, set_viewport: bool) -> Option<Vec<u8>> {
     let width = 4u32;
     let height = 4u32;
 
-    // Build a rectangle whose window-space bounds are [0.75, 1.75] in both X and Y.
+    // Build a rectangle whose window-space bounds are [0.9, 1.9] in both X and Y.
     //
     // Without the half-pixel adjustment, this should cover the pixel centered at (1.5, 1.5)
     // (i.e. pixel (1,1) in a 4x4 target). With the adjustment, the vertex shader shifts the
     // geometry by (-0.5, -0.5) pixels, so it should instead cover pixel (0,0).
     let vp_w = width as f32;
     let vp_h = height as f32;
-    let x0 = 0.75f32;
-    let x1 = 1.75f32;
-    let y0 = 0.75f32;
-    let y1 = 1.75f32;
+    let x0 = 0.9f32;
+    let x1 = 1.9f32;
+    let y0 = 0.9f32;
+    let y1 = 1.9f32;
     let ndc_x0 = (x0 / vp_w) * 2.0 - 1.0;
     let ndc_x1 = (x1 / vp_w) * 2.0 - 1.0;
     let ndc_y0 = 1.0 - (y0 / vp_h) * 2.0;
@@ -299,13 +299,14 @@ fn run(half_pixel_center: bool, set_viewport: bool) -> Option<Vec<u8>> {
         });
 
         // Deliberately omit SetViewport in some tests to validate the D3D9 default viewport
-        // behavior (full render target).
-        if set_viewport {
+        // behavior (full render target). Some tests also pass an oversized viewport to validate
+        // that we use the *effective clamped viewport* for half-pixel calculations.
+        if let Some((vp_w, vp_h)) = viewport {
             emit_packet(out, OPC_SET_VIEWPORT, |out| {
                 push_u32(out, 0.0f32.to_bits()); // x
                 push_u32(out, 0.0f32.to_bits()); // y
-                push_u32(out, (width as f32).to_bits()); // width
-                push_u32(out, (height as f32).to_bits()); // height
+                push_u32(out, vp_w.to_bits()); // width
+                push_u32(out, vp_h.to_bits()); // height
                 push_u32(out, 0.0f32.to_bits()); // min_depth
                 push_u32(out, 1.0f32.to_bits()); // max_depth
             });
@@ -408,14 +409,27 @@ fn assert_half_pixel_center_shift(off: &[u8], on: &[u8]) {
 
 #[test]
 fn d3d9_half_pixel_center_shifts_rasterization() {
-    let Some(off) = run(false, true) else { return };
-    let Some(on) = run(true, true) else { return };
+    let w = 4.0f32;
+    let h = 4.0f32;
+    let Some(off) = run(false, Some((w, h))) else { return };
+    let Some(on) = run(true, Some((w, h))) else { return };
     assert_half_pixel_center_shift(&off, &on);
 }
 
 #[test]
 fn d3d9_half_pixel_center_default_viewport_shifts_rasterization() {
-    let Some(off) = run(false, false) else { return };
-    let Some(on) = run(true, false) else { return };
+    let Some(off) = run(false, None) else { return };
+    let Some(on) = run(true, None) else { return };
+    assert_half_pixel_center_shift(&off, &on);
+}
+
+#[test]
+fn d3d9_half_pixel_center_clamped_viewport_shifts_rasterization() {
+    // Set a viewport larger than the render target; the executor will clamp it to RT bounds.
+    // Half-pixel calculations should use the *effective* (clamped) viewport dimensions.
+    let w = 8.0f32;
+    let h = 8.0f32;
+    let Some(off) = run(false, Some((w, h))) else { return };
+    let Some(on) = run(true, Some((w, h))) else { return };
     assert_half_pixel_center_shift(&off, &on);
 }
