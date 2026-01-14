@@ -106,6 +106,7 @@ The fastest way to make progress is to **never skip steps**. Each step has a “
 
 - Screen Resolution settings show expected modes.
 - Switch between two known modes (e.g., 800×600 and 1024×768) and back.
+  - Or run `drivers/aerogpu/tests/win7/modeset_roundtrip_sanity` to validate a mode switch + scanout state roundtrip in an automated way.
 
 **Pass criteria**
 
@@ -322,6 +323,7 @@ For quick guest-side sanity checks:
   * Fence counters (`AEROGPU_ESCAPE_OP_QUERY_FENCE`): `drivers/aerogpu/tests/win7/fence_state_sanity`
   * Ring snapshot (`AEROGPU_ESCAPE_OP_DUMP_RING_V2`): `drivers/aerogpu/tests/win7/ring_state_sanity`
   * Scanout mode caching vs MMIO scanout state (`DxgkDdiCommitVidPn`): `drivers/aerogpu/tests/win7/scanout_state_sanity`
+  * Mode set roundtrip (switch to an alternate reported mode and back): `drivers/aerogpu/tests/win7/modeset_roundtrip_sanity`
   * Cursor MMIO state (`AEROGPU_ESCAPE_OP_QUERY_CURSOR`): `drivers/aerogpu/tests/win7/cursor_state_sanity`
   * CreateAllocation trace dump (`AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`): `drivers/aerogpu/tests/win7/dump_createalloc_sanity`
   * UMDRIVERPRIVATE discovery blob (`D3DKMTQueryAdapterInfo`): `drivers/aerogpu/tests/win7/umd_private_sanity`
