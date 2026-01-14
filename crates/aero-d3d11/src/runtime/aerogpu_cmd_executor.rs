@@ -12242,6 +12242,7 @@ fn group_index_to_stage(group: u32) -> Result<ShaderStage> {
     }
 }
 
+#[allow(dead_code)]
 fn d3d_topology_requires_gs_hs_ds_emulation(topology: u32) -> bool {
     // D3D11 topology values:
     // - 10..13: *_ADJ adjacency topologies (geometry shader input)
@@ -13063,6 +13064,7 @@ fn write_texture_subresource_linear(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn write_texture_linear(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,

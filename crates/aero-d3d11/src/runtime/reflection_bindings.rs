@@ -329,6 +329,7 @@ pub(super) struct BufferBinding<'a> {
 pub(super) trait BindGroupResourceProvider {
     fn constant_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
     fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)>;
+    #[allow(dead_code)]
     fn storage_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
     fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
