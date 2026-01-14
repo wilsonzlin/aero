@@ -168,6 +168,9 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         let _ = dxbc.get_signature(FourCC(*b"ISG1"));
         let _ = dxbc.get_signature(FourCC(*b"OSG1"));
         let _ = dxbc.get_signature(FourCC(*b"PSG1"));
+        // Patch-constant signature variants (these are also parsed by `aero-d3d11::parse_signatures`).
+        let _ = dxbc.get_signature(FourCC(*b"PCSG"));
+        let _ = dxbc.get_signature(FourCC(*b"PCG1"));
         let _ = aero_d3d11::parse_signatures(&dxbc);
     }
 
