@@ -21,6 +21,7 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         # Host marker extraction
         for marker in (
             "VIRTIO_BLK_IO|",
+            "VIRTIO_BLK_MSIX|",
             "VIRTIO_BLK_RESET_RECOVERY|",
             "VIRTIO_BLK_MINIPORT_FLAGS|",
             "VIRTIO_BLK_MINIPORT_RESET_RECOVERY|",
@@ -29,12 +30,14 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
             "VIRTIO_NET_UDP_DNS|",
             "VIRTIO_NET_OFFLOAD_CSUM|",
             "VIRTIO_NET_DIAG|",
+            "VIRTIO_NET_MSIX|",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.text)
 
         # Job summary bullet labels
         self.assertIn("Host virtio-blk I/O marker", self.text)
+        self.assertIn("Host virtio-blk MSI-X marker", self.text)
         self.assertIn("Host virtio-blk-reset-recovery marker", self.text)
         self.assertIn("Host virtio-blk miniport flags marker", self.text)
         self.assertIn("Host virtio-blk miniport reset recovery marker", self.text)
@@ -43,6 +46,7 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         self.assertIn("Host virtio-net-udp-dns marker", self.text)
         self.assertIn("Host virtio-net-offload-csum marker", self.text)
         self.assertIn("Host virtio-net-diag marker", self.text)
+        self.assertIn("Host virtio-net MSI-X marker", self.text)
 
 
 if __name__ == "__main__":

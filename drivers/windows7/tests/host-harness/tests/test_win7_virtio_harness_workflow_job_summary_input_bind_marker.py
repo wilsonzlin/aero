@@ -22,7 +22,11 @@ class Win7VirtioHarnessWorkflowJobSummaryInputBindMarkerTests(unittest.TestCase)
         self.assertIn("VIRTIO_INPUT_BIND|", self.text)
         self.assertIn("Host virtio-input bind marker", self.text)
 
+    def test_job_summary_surfaces_input_msix_host_marker(self) -> None:
+        self.assertIn("input_msix_host_marker", self.text)
+        self.assertIn("VIRTIO_INPUT_MSIX|", self.text)
+        self.assertIn("Host virtio-input MSI-X marker", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
-

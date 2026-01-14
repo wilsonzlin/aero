@@ -20,6 +20,7 @@ class Win7VirtioHarnessWorkflowJobSummarySndMarkersTests(unittest.TestCase):
     def test_job_summary_surfaces_host_snd_markers(self) -> None:
         for marker in (
             "VIRTIO_SND|",
+            "VIRTIO_SND_MSIX|",
             "VIRTIO_SND_CAPTURE|",
             "VIRTIO_SND_DUPLEX|",
             "VIRTIO_SND_BUFFER_LIMITS|",
@@ -30,6 +31,7 @@ class Win7VirtioHarnessWorkflowJobSummarySndMarkersTests(unittest.TestCase):
                 self.assertIn(marker, self.text)
 
         self.assertIn("Host virtio-snd marker", self.text)
+        self.assertIn("Host virtio-snd MSI-X marker", self.text)
         self.assertIn("Host virtio-snd-capture marker", self.text)
         self.assertIn("Host virtio-snd-duplex marker", self.text)
         self.assertIn("Host virtio-snd-buffer-limits marker", self.text)
@@ -39,4 +41,3 @@ class Win7VirtioHarnessWorkflowJobSummarySndMarkersTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
