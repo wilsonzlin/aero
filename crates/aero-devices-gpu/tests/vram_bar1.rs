@@ -18,6 +18,32 @@ fn bar1_mmio_read_write_roundtrip() {
 }
 
 #[test]
+fn bar1_mmio_out_of_range_reads_float_high_and_writes_are_ignored() {
+    let dev = AeroGpuPciDevice::default();
+    let mut bar1 = dev.bar1_mmio_handler();
+
+    // Writes past the end should not panic and should have no effect.
+    bar1.write(AEROGPU_VRAM_SIZE, 1, 0x00);
+
+    // Reads past the end should float high (0xFF bytes).
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0xFF);
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0xFFFF_FFFF);
+}
+
+#[test]
+fn bar1_mmio_rejects_sizes_larger_than_8_bytes() {
+    let dev = AeroGpuPciDevice::default();
+    let mut bar1 = dev.bar1_mmio_handler();
+
+    // Read >8 bytes returns all ones.
+    assert_eq!(bar1.read(0, 9), u64::MAX);
+
+    // Write >8 bytes is ignored.
+    bar1.write(0, 9, 0);
+    assert_eq!(bar1.read(0, 1), 0);
+}
+
+#[test]
 fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
     // Text mode memory lives at 0xB8000. In the legacy VGA window (0xA0000..0xC0000), that should
     // map to an offset of 0x18000 from the window base (0xA0000).
