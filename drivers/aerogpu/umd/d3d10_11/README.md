@@ -85,7 +85,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings, but the current compute-prepass path does not execute GS DXBC yet.
   - Host/WebGPU execution:
-    - WebGPU has no geometry stage; AeroGPU routes draws with a bound GS through a **compute prepass + indirect draw** scaffolding path.
+    - WebGPU has no geometry stage; AeroGPU routes draws requiring GS/HS/DS-style emulation through a **compute prepass + indirect draw** scaffolding path.
     - Current limitation: the draw-time compute prepass is currently a **placeholder** (see `GEOMETRY_PREPASS_CS_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`) and does **not** execute GS DXBC yet.
     - A prototype GS DXBC/SM4 → WGSL compute translator lives in `crates/aero-d3d11/src/runtime/gs_translate.rs`, with strip restart expansion helpers in `crates/aero-d3d11/src/runtime/strip_to_list.rs` (not yet wired into the executor).
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
