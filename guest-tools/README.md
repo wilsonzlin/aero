@@ -46,7 +46,7 @@ Guest Tools media can optionally ship additional **guest-side utilities** (debug
 
 Note: the AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongside the AeroGPU driver package (not under `tools\`):
 
-- `drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe`
+- `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
 If the input Guest Tools tree contains a `tools\` directory, `tools/packaging/aero_packager` will package it recursively into the ISO/zip under `tools\...`.
 
@@ -286,7 +286,7 @@ If `-PingTarget` is not provided, the script will attempt to ping the default ga
 
 `-RunDbgctl` is **off by default**. When enabled and an **AeroGPU** device is detected, `verify.ps1` will attempt to run:
 
-- `drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe --status --timeout-ms 2000`
+- `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status --timeout-ms 2000`
 
 The captured stdout/stderr/exit code is embedded into:
 

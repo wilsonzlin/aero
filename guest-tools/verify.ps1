@@ -4297,8 +4297,8 @@ try {
     $summary = ""
     $details = @()
 
-    # Template: drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe
-    $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe'
+    # Template: drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+    $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
 
     $data = @{
         enabled = $RunDbgctl
@@ -4319,6 +4319,20 @@ try {
         timed_out = $false
         output_path = $null
     }
+
+    # Resolve expected path early so it is always present in report.json surfaces
+    # (even when dbgctl is skipped).
+    $is64 = $false
+    if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+        $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+    } else {
+        $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+    }
+
+    $arch = (if ($is64) { "amd64" } else { "x86" })
+    $rel = $dbgctlRelTemplate.Replace("<arch>", $arch)
+    $expectedPath = Join-Path $scriptDir $rel
+    $data.expected_path = $expectedPath
 
     # Detect AeroGPU presence via the device binding check (A3A0:0001).
     $aeroOnlyRx = '(?i)^PCI\\(?:VEN|VID)_A3A0&(?:DEV|DID)_0001'
@@ -4356,18 +4370,6 @@ try {
         $summary = "Skipped: AeroGPU device detected but not healthy (ConfigManagerErrorCode != 0)."
         if ($codes -and $codes.Count -gt 0) { $summary += " CM=" + ($codes -join ",") }
     } else {
-        $is64 = $false
-        if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
-            $is64 = ("" + $report.checks.os.data.architecture) -match '64'
-        } else {
-            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
-        }
-
-        $arch = (if ($is64) { "amd64" } else { "x86" })
-        $rel = $dbgctlRelTemplate.Replace("<arch>", $arch)
-        $expectedPath = Join-Path $scriptDir $rel
-        $data.expected_path = $expectedPath
-
         # Prefer the canonical packaged location, then fall back to a broader search.
         if (Test-Path $expectedPath) {
             $data.found = $true
@@ -4438,6 +4440,8 @@ try {
     # Ensure a stable JSON surface for bug reports: aerogpu.dbgctl.
     if (-not $report.aerogpu) { $report.aerogpu = @{} }
     $report.aerogpu.dbgctl = @{
+        expected_path_template = $data.expected_path_template
+        expected_path = $data.expected_path
         path = $data.path
         exit_code = $data.exit_code
         stdout = $data.stdout

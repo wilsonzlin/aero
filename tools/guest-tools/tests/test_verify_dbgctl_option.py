@@ -16,7 +16,7 @@ class VerifyDbgctlOptionTests(unittest.TestCase):
 
         # Expected packaged media path is referenced (template string used by the script).
         self.assertIn(
-            r"drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe",
+            r"drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe",
             text,
         )
 
