@@ -16,8 +16,14 @@ use aero_usb::MemoryBus;
 
 /// Abstract access to the underlying linear-memory backing store.
 ///
-/// In wasm32 builds this is implemented by directly copying from/to the module's linear memory via
-/// raw pointers. In unit tests we can provide an in-memory implementation.
+/// In wasm32 builds this is implemented by copying from/to the module's linear memory via raw
+/// pointers.
+///
+/// In shared-memory (`+atomics`) builds, the backing [`WebAssembly.Memory`] is shared across wasm
+/// threads. Unsynchronized non-atomic reads/writes would be Rust UB (data race), so the wasm32
+/// implementation uses byte-granular atomic loads/stores.
+///
+/// In unit tests we can provide an in-memory implementation.
 pub(crate) trait LinearMemory {
     fn read(&self, linear: u32, dst: &mut [u8]);
     fn write(&mut self, linear: u32, src: &[u8]);
@@ -179,18 +185,46 @@ pub(crate) struct WasmLinearMemory;
 impl LinearMemory for WasmLinearMemory {
     #[inline]
     fn read(&self, linear: u32, dst: &mut [u8]) {
-        // Safety: Callers validate `linear` is within the module's linear memory and that the
-        // requested range lies within the configured guest RAM size.
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = linear as *const AtomicU8;
+            for (i, slot) in dst.iter_mut().enumerate() {
+                // Safety: callers validate the range is within linear memory and `AtomicU8` has
+                // alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: Callers validate `linear` is within the module's linear memory and that the
+            // requested range lies within the configured guest RAM size.
             core::ptr::copy_nonoverlapping(linear as *const u8, dst.as_mut_ptr(), dst.len());
         }
     }
 
     #[inline]
     fn write(&mut self, linear: u32, src: &[u8]) {
-        // Safety: Callers validate `linear` is within the module's linear memory and that the
-        // requested range lies within the configured guest RAM size.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = linear as *const AtomicU8;
+            for (i, byte) in src.iter().copied().enumerate() {
+                // Safety: callers validate the range is within linear memory and `AtomicU8` has
+                // alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: Callers validate `linear` is within the module's linear memory and that the
+            // requested range lies within the configured guest RAM size.
             core::ptr::copy_nonoverlapping(src.as_ptr(), linear as *mut u8, src.len());
         }
     }

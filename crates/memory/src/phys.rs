@@ -238,10 +238,12 @@ impl GuestMemory for WasmSharedGuestMemory {
     }
 
     fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+        // Preserve the crate-wide convention that even zero-length reads validate `paddr` is within
+        // `[0, size]` (i.e. one-past-the-end is allowed but anything larger is rejected).
+        let src = self.range_to_ptr(paddr, dst.len())?;
         if dst.is_empty() {
             return Ok(());
         }
-        let src = self.range_to_ptr(paddr, dst.len())?;
 
         // Shared-memory (atomics) builds: use atomic byte reads to avoid Rust data-race UB.
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -265,10 +267,12 @@ impl GuestMemory for WasmSharedGuestMemory {
     }
 
     fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+        // Preserve the crate-wide convention that even zero-length writes validate `paddr` is
+        // within `[0, size]` (i.e. one-past-the-end is allowed but anything larger is rejected).
+        let dst = self.range_to_ptr(paddr, src.len())?;
         if src.is_empty() {
             return Ok(());
         }
-        let dst = self.range_to_ptr(paddr, src.len())?;
 
         // Shared-memory (atomics) builds: use atomic byte writes to avoid Rust data-race UB.
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -628,6 +632,18 @@ mod tests {
         ));
         assert!(matches!(
             mem.write_from(16, &[1u8]),
+            Err(GuestMemoryError::OutOfRange { .. })
+        ));
+
+        // Even zero-length reads/writes validate that `paddr` is within `[0, size]`.
+        mem.read_into(16, &mut []).unwrap();
+        mem.write_from(16, &[]).unwrap();
+        assert!(matches!(
+            mem.read_into(17, &mut []),
+            Err(GuestMemoryError::OutOfRange { .. })
+        ));
+        assert!(matches!(
+            mem.write_from(17, &[]),
             Err(GuestMemoryError::OutOfRange { .. })
         ));
 
