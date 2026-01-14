@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! AeroGPU device-side helpers.
 //!
 //! This crate intentionally focuses on the "hardware" view of the AeroGPU device model
@@ -13,7 +15,6 @@
 //! - BAR0 MMIO register handling + vblank scheduling via an externally driven `now_ns` clock, and
 //! - a BAR1-backed VRAM aperture that can also be aliased into the legacy VGA
 //!   (`0xA0000..0xC0000`) and VBE linear framebuffer mappings.
-#![forbid(unsafe_code)]
 //!
 //! By default, the crate is GPU-free. Enable the `aerogpu-native` feature (or its compatibility
 //! alias `wgpu-backend`) to execute command streams in-process via a WGPU/WebGPU-backed executor
@@ -27,6 +28,7 @@ pub mod pci_device;
 pub mod regs;
 pub mod ring;
 pub mod scanout;
+pub mod vblank;
 
 #[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
 pub use backend::NativeAeroGpuBackend;

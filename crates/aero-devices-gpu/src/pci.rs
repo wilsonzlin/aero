@@ -1,3 +1,5 @@
+//! PCI device glue for the AeroGPU device model.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
