@@ -240,6 +240,9 @@ jobs:
       - name: cargo test (wasm32, workspace, no-run)
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown --workspace --tests --no-run
 
+      - name: wasm32 compile check (aero-devices-gpu)
+        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- wasm-check
+
       - name: cargo test (wasm32, aero-gpu, no-run)
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-gpu --tests --no-run
 

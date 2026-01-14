@@ -9,6 +9,7 @@ mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_input;
 mod cmd_wasm;
+mod cmd_wasm_check;
 mod cmd_web;
 mod cmd_conformance;
 mod error;
@@ -49,6 +50,7 @@ fn try_main() -> Result<()> {
         "snapshot" => cmd_snapshot::cmd(args.collect()),
         "test-all" => cmd_test_all::cmd(args.collect()),
         "wasm" => cmd_wasm::cmd(args.collect()),
+        "wasm-check" => cmd_wasm_check::cmd(args.collect()),
         "web" => cmd_web::cmd(args.collect()),
         "-h" | "--help" | "help" => help(),
         other => Err(format!("unknown xtask subcommand `{other}` (run `cargo xtask help`)").into()),
@@ -68,6 +70,7 @@ Usage:
   cargo xtask snapshot diff <path_a> <path_b> [--deep]
   cargo xtask test-all [options] [-- <extra playwright args>]
   cargo xtask wasm [single|threaded|both] [dev|release]
+  cargo xtask wasm-check
   cargo xtask web dev|build|preview
 
 Commands:
@@ -79,6 +82,7 @@ Commands:
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright). Also validates
              deterministic in-repo fixtures when Rust tests are enabled.
   wasm       Build the Rust→WASM packages used by the web app.
+  wasm-check Compile-check wasm32 compatibility for selected crates (e.g. `aero-devices-gpu`).
   web        Run web (Node/Vite) tasks via npm.
 
 Run `cargo xtask <command> --help` for command-specific help.

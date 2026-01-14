@@ -262,6 +262,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 
+# WASM compatibility checks (browser runtime)
+bash ./scripts/safe-run.sh cargo xtask wasm-check
+
 # Run protocol TypeScript tests (Node test runner)
 npm run test:protocol
 
