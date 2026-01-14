@@ -1,6 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdOpcode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -437,6 +437,36 @@ fn decodes_cmd_stream_built_by_writer() {
 }
 
 #[test]
+fn stable_listing_decodes_vertex_and_index_buffers() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_vertex_buffers(
+        0,
+        &[AerogpuVertexBufferBinding {
+            buffer: 7,
+            stride_bytes: 16,
+            offset_bytes: 32,
+            reserved0: 0,
+        }],
+    );
+    w.set_index_buffer(8, AerogpuIndexFormat::Uint16, 12);
+    let bytes = w.finish();
+
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed in non-strict mode");
+
+    assert!(
+        listing.contains("SetVertexBuffers")
+            && listing.contains("start_slot=0 buffer_count=1 vb0_buffer=7 vb0_stride_bytes=16 vb0_offset_bytes=32"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("SetIndexBuffer")
+            && listing.contains("buffer=8 format=0 offset_bytes=12 format_name=Uint16"),
+        "{listing}"
+    );
+}
+
+#[test]
 fn json_listing_decodes_new_opcodes() {
     let bytes = build_fixture_cmd_stream();
     let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
@@ -538,6 +568,31 @@ fn json_listing_decodes_new_opcodes() {
 
     let destroy_view = find_packet("DestroyTextureView");
     assert_eq!(destroy_view["decoded"]["view_handle"], 0x1000);
+}
+
+#[test]
+fn json_listing_decodes_index_buffer_format_name() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_index_buffer(8, AerogpuIndexFormat::Uint32, 4);
+    let bytes = w.finish();
+
+    let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&listing).expect("parse json listing");
+
+    let records = v["records"].as_array().expect("records array");
+    let pkt = records
+        .iter()
+        .find(|r| r["type"] == "packet" && r["opcode"] == "SetIndexBuffer")
+        .expect("missing SetIndexBuffer packet");
+
+    assert_eq!(pkt["decoded"]["buffer"], 8);
+    assert_eq!(pkt["decoded"]["format"], 1);
+    assert_eq!(pkt["decoded"]["format_name"], "Uint32");
+    assert_eq!(pkt["decoded"]["offset_bytes"], 4);
 }
 
 #[test]

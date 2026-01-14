@@ -488,6 +488,25 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
+        AerogpuCmdOpcode::SetIndexBuffer => {
+            if let Some(v) = read_u32_le(pkt.payload, 0) {
+                out.insert("buffer".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 4) {
+                out.insert("format".into(), json!(v));
+                if let Some(name) = decode_index_format_name(v) {
+                    out.insert("format_name".into(), json!(name));
+                }
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 8) {
+                out.insert("offset_bytes".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 12) {
+                if v != 0 {
+                    out.insert("reserved0".into(), json!(v));
+                }
+            }
+        }
         AerogpuCmdOpcode::SetPrimitiveTopology => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
                 out.insert("topology".into(), json!(v));
@@ -880,6 +899,14 @@ fn decode_known_fields(
 
 fn decode_topology_name(topology: u32) -> Option<String> {
     AerogpuPrimitiveTopology::from_u32(topology).map(|t| format!("{t:?}"))
+}
+
+fn decode_index_format_name(format: u32) -> Option<&'static str> {
+    Some(match format {
+        0 => "Uint16",
+        1 => "Uint32",
+        _ => return None,
+    })
 }
 
 fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {

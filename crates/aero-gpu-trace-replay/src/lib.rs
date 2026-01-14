@@ -928,6 +928,14 @@ fn topology_name(topology: u32) -> Option<String> {
     AerogpuPrimitiveTopology::from_u32(topology).map(|t| format!("{t:?}"))
 }
 
+fn index_format_name(format: u32) -> Option<&'static str> {
+    Some(match format {
+        0 => "Uint16",
+        1 => "Uint32",
+        _ => return None,
+    })
+}
+
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
 /// stable, grep-friendly opcode listing.
 ///
@@ -1853,6 +1861,49 @@ pub fn decode_cmd_stream_listing(
                             " group_count_x={group_count_x} group_count_y={group_count_y} group_count_z={group_count_z}"
                         );
                     }
+                    AerogpuCmdOpcode::SetVertexBuffers => {
+                        let (cmd, bindings) = pkt
+                            .decode_set_vertex_buffers_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        let start_slot = cmd.start_slot;
+                        let buffer_count = cmd.buffer_count;
+                        let _ = write!(line, " start_slot={start_slot} buffer_count={buffer_count}");
+                        if let Some(b0) = bindings.first() {
+                            // Avoid taking references to packed fields.
+                            let vb0_buffer = b0.buffer;
+                            let vb0_stride_bytes = b0.stride_bytes;
+                            let vb0_offset_bytes = b0.offset_bytes;
+                            let _ = write!(
+                                line,
+                                " vb0_buffer={vb0_buffer} vb0_stride_bytes={vb0_stride_bytes} vb0_offset_bytes={vb0_offset_bytes}"
+                            );
+                        }
+                    }
+                    AerogpuCmdOpcode::SetIndexBuffer => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let buffer = u32_le_at(pkt.payload, 0).unwrap();
+                        let format = u32_le_at(pkt.payload, 4).unwrap();
+                        let offset_bytes = u32_le_at(pkt.payload, 8).unwrap();
+                        let reserved0 = u32_le_at(pkt.payload, 12).unwrap();
+                        let _ =
+                            write!(line, " buffer={buffer} format={format} offset_bytes={offset_bytes}");
+                        if let Some(name) = index_format_name(format) {
+                            let _ = write!(line, " format_name={name}");
+                        }
+                        if reserved0 != 0 {
+                            let _ = write!(line, " reserved0=0x{reserved0:08X}");
+                        }
+                    }
                     AerogpuCmdOpcode::SetPrimitiveTopology => {
                         if pkt.payload.len() < 8 {
                             return Err(CmdStreamDecodeError::MalformedPayload {
@@ -1875,8 +1926,6 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::SetBlendState
                     | AerogpuCmdOpcode::SetDepthStencilState
                     | AerogpuCmdOpcode::SetRasterizerState
-                    | AerogpuCmdOpcode::SetVertexBuffers
-                    | AerogpuCmdOpcode::SetIndexBuffer
                     | AerogpuCmdOpcode::SetSamplerState
                     | AerogpuCmdOpcode::SetRenderState
                     | AerogpuCmdOpcode::CreateSampler
