@@ -3,7 +3,9 @@ use std::boxed::Box;
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
+use aero_usb::{
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult,
+};
 
 mod util;
 
@@ -160,4 +162,3 @@ fn xhci_does_not_execute_ep0_transfers_when_trdp_reserved_bits_set() {
         "controller must not emit transfer events when TRDP reserved bits are set"
     );
 }
-

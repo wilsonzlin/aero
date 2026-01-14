@@ -3742,7 +3742,9 @@ impl AerogpuD3d11Executor {
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
             if indexed_draw {
-                out.push_str("  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n");
+                out.push_str(
+                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n",
+                );
             } else {
                 out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
             }

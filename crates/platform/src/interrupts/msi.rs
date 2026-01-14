@@ -208,7 +208,10 @@ mod tests {
         enable_lapic_svr_for_apic(&ints, 0);
 
         // Address 0 is not a valid LAPIC MSI address; it should not inject an interrupt.
-        ints.trigger_msi(MsiMessage { address: 0, data: 0x0044 });
+        ints.trigger_msi(MsiMessage {
+            address: 0,
+            data: 0x0044,
+        });
         assert_eq!(ints.get_pending_for_apic(0), None);
 
         // High dword set is also invalid in our xAPIC-only MSI model.

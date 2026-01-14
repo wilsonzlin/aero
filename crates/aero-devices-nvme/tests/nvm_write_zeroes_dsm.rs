@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use aero_devices_nvme::NvmeController;
-use aero_storage::{DiskError as StorageDiskError, Result as StorageResult, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{
+    DiskError as StorageDiskError, Result as StorageResult, VirtualDisk, SECTOR_SIZE,
+};
 use memory::MemoryBus;
 
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;

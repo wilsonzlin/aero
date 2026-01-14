@@ -3,7 +3,9 @@ use std::boxed::Box;
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
+use aero_usb::{
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult,
+};
 
 mod util;
 
@@ -177,8 +179,7 @@ fn xhci_misaligned_dcbaa_ptr_stops_already_scheduled_ep0() {
 
     mem.read_physical(data_buf, &mut buf);
     assert_eq!(
-        buf,
-        [0u8; 8],
+        buf, [0u8; 8],
         "ep0 must not DMA after DCBAA pointer becomes misaligned"
     );
     assert_eq!(
@@ -187,4 +188,3 @@ fn xhci_misaligned_dcbaa_ptr_stops_already_scheduled_ep0() {
         "no transfer event expected after DCBAA pointer becomes misaligned"
     );
 }
-
