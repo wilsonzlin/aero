@@ -112,6 +112,7 @@ impl AhciPciDevice {
         // Note: We implement `PciDevice::reset` for this type by calling this method, so avoid
         // calling the trait method here (it would recurse).
         self.config.set_command(0);
+        self.config.disable_msi_msix();
         self.controller.reset();
         self.last_irq_level = self.irq.level();
     }
@@ -489,5 +490,29 @@ mod tests {
         // Clear only bit8 (byte lane 1) with a 2-byte write, leaving bit0 and higher bytes intact.
         dev.mmio_write(px_is_off, 2, 0x0100);
         assert_eq!(dev.mmio_read(px_is_off, 4), 0x0101_0001);
+    }
+
+    #[test]
+    fn reset_disables_msi_enable_bit() {
+        let mut dev = AhciPciDevice::new(1);
+        let cap_offset = dev
+            .config_mut()
+            .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            .expect("AHCI device should expose an MSI capability") as u16;
+
+        // Enable MSI.
+        {
+            let cfg = dev.config_mut();
+            let ctrl = cfg.read(cap_offset + 0x02, 2) as u16;
+            cfg.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+            assert!(cfg.capability::<MsiCapability>().unwrap().enabled());
+        }
+
+        dev.reset();
+
+        assert!(
+            !dev.config_mut().capability::<MsiCapability>().unwrap().enabled(),
+            "MSI must be disabled after PCI device reset"
+        );
     }
 }

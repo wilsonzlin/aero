@@ -267,33 +267,11 @@ impl VirtioPciDevice {
         // Clear MSI/MSI-X enable state so a platform reset starts from a sane baseline. This
         // mirrors the default `aero_devices::pci::PciDevice::reset` implementation, but needs to
         // live here as well because `VirtioPciDevice` overrides that trait method.
-        let cfg = &mut self.config;
-
-        // MSI: clear Message Control bit 0 (MSI Enable).
-        if let Some(cap) = cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI) {
-            let ctrl_off = usize::from(cap).saturating_add(0x02);
-            if ctrl_off.saturating_add(2) <= aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE
-            {
-                let off = u16::from(cap).saturating_add(0x02);
-                let ctrl = cfg.read(off, 2) as u16;
-                cfg.write(off, 2, u32::from(ctrl & !0x0001));
-            }
-        }
-
-        // MSI-X: clear Message Control bits 15 (Enable) and 14 (Function Mask).
-        if let Some(cap) = cfg.find_capability(aero_devices::pci::msix::PCI_CAP_ID_MSIX) {
-            let ctrl_off = usize::from(cap).saturating_add(0x02);
-            if ctrl_off.saturating_add(2) <= aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE
-            {
-                let off = u16::from(cap).saturating_add(0x02);
-                let ctrl = cfg.read(off, 2) as u16;
-                cfg.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
-            }
-        }
+        self.config.disable_msi_msix();
 
         // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset deasserts
         // all interrupts deterministically.
-        if let Some(msix) = cfg.capability_mut::<MsixCapability>() {
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
             let zeros = vec![0u64; msix.snapshot_pba().len()];
             let _ = msix.restore_pba(&zeros);
         }

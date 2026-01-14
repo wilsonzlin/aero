@@ -2555,7 +2555,20 @@ impl PciDevice for NvmePciDevice {
 
     fn reset(&mut self) {
         // Preserve BAR programming but disable decoding.
-        self.config_mut().set_command(0);
+        //
+        // Also clear MSI/MSI-X enable state so platform resets start from a sane baseline.
+        {
+            let cfg = self.config_mut();
+            cfg.set_command(0);
+            cfg.disable_msi_msix();
+
+            // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset starts
+            // from a deterministic interrupt state.
+            if let Some(msix) = cfg.capability_mut::<MsixCapability>() {
+                let zeros = vec![0u64; msix.snapshot_pba().len()];
+                let _ = msix.restore_pba(&zeros);
+            }
+        }
 
         // Reset controller register/queue state while preserving the attached disk backend.
         self.controller.reset();
@@ -2775,6 +2788,8 @@ impl IoSnapshot for NvmePciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_devices::pci::msi::PCI_CAP_ID_MSI;
+    use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
     use aero_storage::{
         AeroSparseConfig, AeroSparseDisk, MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk,
         SECTOR_SIZE,
@@ -2807,6 +2822,57 @@ mod tests {
             assert!(end <= self.buf.len(), "out-of-bounds DMA write");
             self.buf[start..end].copy_from_slice(buf);
         }
+    }
+
+    #[test]
+    fn pci_device_reset_disables_msi_and_msix_enable_bits() {
+        let mut dev = NvmePciDevice::default();
+        let msi_off = dev
+            .config_mut()
+            .find_capability(PCI_CAP_ID_MSI)
+            .expect("NVMe device should expose an MSI capability") as u16;
+        let msix_off = dev
+            .config_mut()
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("NVMe device should expose an MSI-X capability") as u16;
+
+        // Seed the MSI-X PBA with a pending bit so we can verify reset clears it.
+        {
+            let msix = dev.config_mut().capability_mut::<MsixCapability>().unwrap();
+            msix.restore_pba(&[1]).unwrap();
+            assert_eq!(msix.snapshot_pba()[0] & 1, 1);
+        }
+
+        // Enable MSI.
+        {
+            let cfg = dev.config_mut();
+            let ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+            cfg.write(msi_off + 0x02, 2, u32::from(ctrl | 0x0001));
+            assert!(cfg.capability::<MsiCapability>().unwrap().enabled());
+        }
+
+        // Enable MSI-X and set Function Mask.
+        {
+            let cfg = dev.config_mut();
+            let ctrl = cfg.read(msix_off + 0x02, 2) as u16;
+            cfg.write(
+                msix_off + 0x02,
+                2,
+                u32::from(ctrl | (1 << 15) | (1 << 14)),
+            );
+            let msix = cfg.capability::<MsixCapability>().unwrap();
+            assert!(msix.enabled());
+            assert!(msix.function_masked());
+        }
+
+        // PCI bus/device reset should clear MSI/MSI-X enable bits.
+        <NvmePciDevice as PciDevice>::reset(&mut dev);
+
+        assert!(!dev.config_mut().capability::<MsiCapability>().unwrap().enabled());
+        let msix = dev.config_mut().capability::<MsixCapability>().unwrap();
+        assert!(!msix.enabled());
+        assert!(!msix.function_masked());
+        assert_eq!(msix.snapshot_pba()[0], 0, "reset should clear MSI-X PBA pending bits");
     }
 
     #[derive(Clone)]

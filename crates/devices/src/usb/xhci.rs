@@ -254,25 +254,8 @@ impl PciDevice for XhciPciDevice {
 
     fn reset(&mut self) {
         // Preserve BAR programming but disable decoding.
-        //
-        // Also disable MSI/MSI-X enable bits so a platform reset always starts from a sane
-        // baseline. (See `crate::pci::config::PciDevice::reset` default implementation.)
-        let cfg = &mut self.config;
-        cfg.set_command(0);
-
-        // Disable MSI by clearing Message Control bit 0 (MSI Enable).
-        if let Some(cap) = cfg.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
-            let off = u16::from(cap).saturating_add(0x02);
-            let ctrl = cfg.read(off, 2) as u16;
-            cfg.write(off, 2, u32::from(ctrl & !0x0001));
-        }
-
-        // Disable MSI-X by clearing Message Control bits 15 (Enable) and 14 (Function Mask).
-        if let Some(cap) = cfg.find_capability(crate::pci::msix::PCI_CAP_ID_MSIX) {
-            let off = u16::from(cap).saturating_add(0x02);
-            let ctrl = cfg.read(off, 2) as u16;
-            cfg.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
-        }
+        self.config.set_command(0);
+        self.config.disable_msi_msix();
 
         self.controller = XhciController::new();
         self.irq.set_level(false);

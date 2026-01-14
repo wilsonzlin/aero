@@ -457,6 +457,35 @@ impl PciConfigSpace {
             .map(|cap| cap.offset)
     }
 
+    /// Disables MSI/MSI-X interrupt delivery in PCI configuration space.
+    ///
+    /// This is intended for platform/device reset flows: real hardware clears MSI/MSI-X enable
+    /// bits on reset so a reboot starts from a sane interrupt baseline.
+    ///
+    /// This is capability-aware and defensive: it first locates the capabilities via the standard
+    /// PCI capabilities list, and then bounds-checks the computed config-space offsets.
+    pub fn disable_msi_msix(&mut self) {
+        // Disable MSI by clearing Message Control bit 0 (MSI Enable).
+        if let Some(cap) = self.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = self.read(off, 2) as u16;
+                self.write(off, 2, u32::from(ctrl & !0x0001));
+            }
+        }
+
+        // Disable MSI-X by clearing Message Control bits 15 (MSI-X Enable) and 14 (Function Mask).
+        if let Some(cap) = self.find_capability(crate::pci::msix::PCI_CAP_ID_MSIX) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = self.read(off, 2) as u16;
+                self.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
+            }
+        }
+    }
+
     pub fn capability<T: 'static>(&self) -> Option<&T> {
         self.capabilities
             .iter()
@@ -791,26 +820,7 @@ pub trait PciDevice {
         // never interrupts until the guest reprograms MSI-X.
         let cfg = self.config_mut();
         cfg.set_command(0);
-
-        // Disable MSI by clearing Message Control bit 0 (MSI Enable).
-        if let Some(cap) = cfg.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
-            let ctrl_off = usize::from(cap).saturating_add(0x02);
-            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
-                let off = u16::from(cap).saturating_add(0x02);
-                let ctrl = cfg.read(off, 2) as u16;
-                cfg.write(off, 2, u32::from(ctrl & !0x0001));
-            }
-        }
-
-        // Disable MSI-X by clearing Message Control bits 15 (Enable) and 14 (Function Mask).
-        if let Some(cap) = cfg.find_capability(crate::pci::msix::PCI_CAP_ID_MSIX) {
-            let ctrl_off = usize::from(cap).saturating_add(0x02);
-            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
-                let off = u16::from(cap).saturating_add(0x02);
-                let ctrl = cfg.read(off, 2) as u16;
-                cfg.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
-            }
-        }
+        cfg.disable_msi_msix();
     }
 }
 
