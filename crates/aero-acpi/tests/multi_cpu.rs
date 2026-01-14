@@ -106,10 +106,11 @@ fn multi_cpu_tables_emit_topology_in_madt_and_dsdt() {
                         .checked_sub(pkg_len_bytes)
                         .expect("DeviceOp PkgLength should include its own encoding bytes");
                     let pkg_end = payload_start + payload_len;
-                    if pkg_end <= aml.len() && payload_start + 4 <= pkg_end {
-                        if aml[payload_start..payload_start + 4] == name {
-                            count += 1;
-                        }
+                    if pkg_end <= aml.len()
+                        && payload_start + 4 <= pkg_end
+                        && aml[payload_start..payload_start + 4] == name
+                    {
+                        count += 1;
                     }
                     i = pkg_end;
                     continue;
