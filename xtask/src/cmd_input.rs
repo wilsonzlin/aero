@@ -210,7 +210,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "usb_snapshot_host_state",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            "Rust: cargo test -p aero-machine --lib --locked (focused USB wiring)",
             &mut cmd,
         )?;
     }
@@ -228,7 +228,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "machine_input_backends",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends",
+            "Rust: cargo test -p aero-wasm --locked (focused input integration)",
             &mut cmd,
         )?;
     }
