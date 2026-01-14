@@ -5287,10 +5287,12 @@ static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps)
   }
 
   // VS-only interop (user VS bound, PS NULL): fixed-function stage0 PS fallback.
-  //
-  // Use the dedicated interop cache slot so SetShader() and draw-time binding
-  // agree on the PS handle (avoid redundant binds/restores around draws).
+  // Cache it in `fixedfunc_ps_interop` so SetShader() and draw-time binding agree
+  // on the PS handle (avoid redundant bind/restores around draws).
   Shader** ps_slot = &dev->fixedfunc_ps_interop;
+
+  // This helper selects/creates the fixed-function PS variant based on stage0
+  // state. It also hot-rebinds if the PS being replaced is currently bound.
   HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
   if (FAILED(hr)) {
     return hr;
