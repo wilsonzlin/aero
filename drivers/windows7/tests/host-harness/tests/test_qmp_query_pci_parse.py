@@ -89,6 +89,40 @@ class QmpQueryPciParsingTests(unittest.TestCase):
         self.assertEqual(devs[0].device_id, 0x1041)
         self.assertEqual(devs[0].revision, 0x01)
 
+    def test_recurses_pci_bridge_bus(self) -> None:
+        h = self.harness
+        query = [
+            {
+                "bus": 0,
+                "devices": [
+                    {
+                        "bus": 0,
+                        "slot": 1,
+                        "function": 0,
+                        "vendor_id": 0x8086,
+                        "device_id": 0x1234,
+                        "pci_bridge": {
+                            "bus": {
+                                "number": 1,
+                                "devices": [
+                                    {
+                                        "bus": 1,
+                                        "slot": 2,
+                                        "function": 0,
+                                        "vendor_id": 0x1AF4,
+                                        "device_id": 0x1041,
+                                        "revision": 0x01,
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+        devs = h._iter_qmp_query_pci_devices(query)
+        self.assertTrue(any(d.vendor_id == 0x1AF4 and d.device_id == 0x1041 for d in devs))
+
     def test_ignores_missing_vendor_or_device_id(self) -> None:
         h = self.harness
         query = [

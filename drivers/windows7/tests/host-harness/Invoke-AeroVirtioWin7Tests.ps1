@@ -4995,13 +4995,31 @@ function Get-AeroPciIdsFromQueryPci {
     [Parameter(Mandatory = $true)] $QueryPciReturn
   )
 
-  $ids = @()
-  if ($null -eq $QueryPciReturn) { return $ids }
+  if ($null -eq $QueryPciReturn) { return @() }
+  $ids = [System.Collections.ArrayList]::new()
 
-  foreach ($bus in $QueryPciReturn) {
-    $busNum = Convert-AeroPciInt $bus.bus
-    $devs = $bus.devices
-    if ($null -eq $devs) { continue }
+  $seenBuses = @{}
+
+  function Visit-AeroQueryPciBus {
+    param(
+      [Parameter(Mandatory = $true)] $BusObj,
+      [Parameter(Mandatory = $false)] [Nullable[int]]$BusFallback
+    )
+
+    if ($null -eq $BusObj) { return }
+
+    $busNum = Convert-AeroPciInt $BusObj.bus
+    if ($null -eq $busNum) { $busNum = Convert-AeroPciInt $BusObj.number }
+    if ($null -eq $busNum) { $busNum = $BusFallback }
+
+    if ($null -ne $busNum) {
+      $k = [string]$busNum
+      if ($seenBuses.ContainsKey($k)) { return }
+      $seenBuses[$k] = $true
+    }
+
+    $devs = $BusObj.devices
+    if ($null -eq $devs) { return }
     foreach ($dev in $devs) {
       $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
       $vendor = $vd.VendorId
@@ -5017,7 +5035,7 @@ function Get-AeroPciIdsFromQueryPci {
       $slot = Convert-AeroPciInt $dev.slot
       $function = Convert-AeroPciInt $dev.function
 
-      $ids += [pscustomobject]@{
+      $null = $ids.Add([pscustomobject]@{
         VendorId          = $vendor
         DeviceId          = $device
         Revision          = $rev
@@ -5026,10 +5044,21 @@ function Get-AeroPciIdsFromQueryPci {
         Bus               = $devBus
         Slot              = $slot
         Function          = $function
+      })
+
+      # Recurse into bridge bus, if present.
+      $childBus = $null
+      try { $childBus = $dev.pci_bridge.bus } catch { }
+      if ($null -ne $childBus) {
+        Visit-AeroQueryPciBus -BusObj $childBus -BusFallback $busNum
       }
     }
   }
-  return $ids
+
+  foreach ($bus in $QueryPciReturn) {
+    Visit-AeroQueryPciBus -BusObj $bus -BusFallback $null
+  }
+  return $ids.ToArray()
 }
 
 function Format-AeroPciIdSummary {
@@ -5200,13 +5229,31 @@ function Get-AeroPciMsixInfoFromQueryPci {
     [Parameter(Mandatory = $true)] $QueryPciReturn
   )
 
-  $infos = @()
-  if ($null -eq $QueryPciReturn) { return $infos }
+  if ($null -eq $QueryPciReturn) { return @() }
+  $infos = [System.Collections.ArrayList]::new()
 
-  foreach ($bus in $QueryPciReturn) {
-    $busNum = Convert-AeroPciInt $bus.bus
-    $devs = $bus.devices
-    if ($null -eq $devs) { continue }
+  $seenBuses = @{}
+
+  function Visit-AeroQueryPciBusForMsix {
+    param(
+      [Parameter(Mandatory = $true)] $BusObj,
+      [Parameter(Mandatory = $false)] [Nullable[int]]$BusFallback
+    )
+
+    if ($null -eq $BusObj) { return }
+
+    $busNum = Convert-AeroPciInt $BusObj.bus
+    if ($null -eq $busNum) { $busNum = Convert-AeroPciInt $BusObj.number }
+    if ($null -eq $busNum) { $busNum = $BusFallback }
+
+    if ($null -ne $busNum) {
+      $k = [string]$busNum
+      if ($seenBuses.ContainsKey($k)) { return }
+      $seenBuses[$k] = $true
+    }
+
+    $devs = $BusObj.devices
+    if ($null -eq $devs) { return }
     foreach ($dev in $devs) {
       $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
       $vendor = $vd.VendorId
@@ -5237,7 +5284,7 @@ function Get-AeroPciMsixInfoFromQueryPci {
       $slot = Convert-AeroPciInt $dev.slot
       $function = Convert-AeroPciInt $dev.function
 
-      $infos += [pscustomobject]@{
+      $null = $infos.Add([pscustomobject]@{
         VendorId    = $vendor
         DeviceId    = $device
         Bus         = $devBus
@@ -5245,10 +5292,21 @@ function Get-AeroPciMsixInfoFromQueryPci {
         Function    = $function
         MsixEnabled = $msixEnabled
         Source      = "query-pci"
+      })
+
+      # Recurse into bridge bus, if present.
+      $childBus = $null
+      try { $childBus = $dev.pci_bridge.bus } catch { }
+      if ($null -ne $childBus) {
+        Visit-AeroQueryPciBusForMsix -BusObj $childBus -BusFallback $busNum
       }
     }
   }
-  return $infos
+
+  foreach ($bus in $QueryPciReturn) {
+    Visit-AeroQueryPciBusForMsix -BusObj $bus -BusFallback $null
+  }
+  return $infos.ToArray()
 }
 
 function Get-AeroPciMsixInfoFromInfoPci {

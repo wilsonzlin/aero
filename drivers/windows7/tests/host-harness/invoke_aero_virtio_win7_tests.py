@@ -497,6 +497,59 @@ class _PciId:
     revision: Optional[int]
 
 
+def _iter_qmp_query_pci_buses(query_pci_result: object) -> list[tuple[Optional[int], dict[str, object]]]:
+    """
+    Flatten the QMP `query-pci` bus tree into a list of bus objects.
+
+    QEMU represents subordinate PCI buses behind bridge devices via a nested structure:
+      - bus.devices[*].pci_bridge.bus.devices[*]...
+
+    Older versions may also return a flat list. We support both by:
+      - starting from the top-level list (when present), and
+      - recursively traversing any nested `pci_bridge.bus` objects.
+
+    We deduplicate by bus number when available to avoid double-counting if a given bus appears both
+    in the top-level list and under a bridge (best-effort; bus numbers are assumed unique for the
+    harness's usage).
+    """
+    buses: list[tuple[Optional[int], dict[str, object]]] = []
+    if not isinstance(query_pci_result, list):
+        return buses
+
+    # Worklist of bus objects to visit.
+    stack: list[dict[str, object]] = [b for b in query_pci_result if isinstance(b, dict)]
+    seen_bus_nums: set[int] = set()
+
+    while stack:
+        bus_obj = stack.pop()
+        bus_num = _qmp_maybe_int(bus_obj.get("bus"))
+        if bus_num is None:
+            # Nested buses under `pci_bridge` use `number` rather than `bus` in the QAPI schema.
+            bus_num = _qmp_maybe_int(bus_obj.get("number"))
+
+        if bus_num is not None:
+            if bus_num in seen_bus_nums:
+                continue
+            seen_bus_nums.add(bus_num)
+
+        buses.append((bus_num, bus_obj))
+
+        devs = bus_obj.get("devices")
+        if not isinstance(devs, list):
+            continue
+        for dev_obj in devs:
+            if not isinstance(dev_obj, dict):
+                continue
+            bridge_obj = dev_obj.get("pci_bridge")
+            if not isinstance(bridge_obj, dict):
+                continue
+            child_bus = bridge_obj.get("bus")
+            if isinstance(child_bus, dict):
+                stack.append(child_bus)
+
+    return buses
+
+
 def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
     """
     Attempt to extract vendor/device/subsystem/revision from QMP `query-pci` output.
@@ -506,12 +559,7 @@ def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
     """
     devices: list[_PciId] = []
 
-    if not isinstance(query_pci_result, list):
-        return devices
-
-    for bus in query_pci_result:
-        if not isinstance(bus, dict):
-            continue
+    for _, bus in _iter_qmp_query_pci_buses(query_pci_result):
         bus_devices = bus.get("devices")
         if not isinstance(bus_devices, list):
             continue
@@ -1018,13 +1066,7 @@ def _parse_qmp_query_pci_msix_info(query_pci_return: object) -> list[_PciMsixInf
     Parse QMP `query-pci` output and extract MSI-X enabled state when available.
     """
     infos: list[_PciMsixInfo] = []
-    if not isinstance(query_pci_return, list):
-        return infos
-
-    for bus_obj in query_pci_return:
-        if not isinstance(bus_obj, dict):
-            continue
-        bus_num = _qmp_maybe_int(bus_obj.get("bus"))
+    for bus_num, bus_obj in _iter_qmp_query_pci_buses(query_pci_return):
         devs = bus_obj.get("devices")
         if not isinstance(devs, list):
             continue

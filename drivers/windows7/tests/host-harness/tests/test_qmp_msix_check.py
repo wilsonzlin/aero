@@ -83,6 +83,42 @@ class QmpMsixParsingTests(unittest.TestCase):
         net = next(i for i in infos if i.vendor_id == 0x1AF4 and i.device_id == 0x1041)
         self.assertIsNone(net.msix_enabled)
 
+    def test_query_pci_msix_recurses_pci_bridge_bus(self) -> None:
+        h = self.harness
+        query = [
+            {
+                "bus": 0,
+                "devices": [
+                    {
+                        "bus": 0,
+                        "slot": 1,
+                        "function": 0,
+                        "vendor_id": 0x8086,
+                        "device_id": 0x1234,
+                        "pci_bridge": {
+                            "bus": {
+                                "number": 1,
+                                "devices": [
+                                    {
+                                        # Deliberately omit `bus` so the parser must use the bus context.
+                                        "slot": 3,
+                                        "function": 0,
+                                        "vendor_id": 0x1AF4,
+                                        "device_id": 0x1041,
+                                        "capabilities": [{"id": "msix", "msix": {"enabled": True}}],
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+        infos = h._parse_qmp_query_pci_msix_info(query)
+        net = next(i for i in infos if i.vendor_id == 0x1AF4 and i.device_id == 0x1041)
+        self.assertEqual(net.msix_enabled, True)
+        self.assertEqual(net.bdf(), "01:03.0")
+
     def test_hmp_info_pci_msix_enabled_disabled(self) -> None:
         h = self.harness
         info_pci = "\n".join(

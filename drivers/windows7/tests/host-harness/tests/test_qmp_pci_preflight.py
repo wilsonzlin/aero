@@ -35,10 +35,26 @@ class QmpPciPreflightTests(unittest.TestCase):
             {
                 "bus": 0,
                 "devices": [
-                    {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x01},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
+                    {
+                        # Exercise the common q35/PCIe root-port structure where devices are behind
+                        # a bridge (pci_bridge.bus.devices).
+                        "bus": 0,
+                        "slot": 1,
+                        "function": 0,
+                        "vendor_id": 0x8086,
+                        "device_id": 0x1234,
+                        "pci_bridge": {
+                            "bus": {
+                                "number": 1,
+                                "devices": [
+                                    {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x01},
+                                    {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01},
+                                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
+                                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
+                                ],
+                            }
+                        },
+                    }
                 ],
             }
         ]
@@ -118,4 +134,3 @@ class QmpPciPreflightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -79,6 +79,51 @@ def _qmp_device_vendor_device_id(dev: dict[str, object]) -> tuple[int | None, in
     return vendor, device
 
 
+def _iter_query_pci_buses(query_pci_result: object) -> list[dict[str, object]]:
+    """
+    Flatten QMP `query-pci` output into a list of bus objects.
+
+    QEMU represents subordinate buses behind bridge devices via:
+      bus.devices[*].pci_bridge.bus.devices[*]...
+
+    Some versions may also return a flat list. This helper supports both and deduplicates by bus
+    number when present.
+    """
+    buses: list[dict[str, object]] = []
+    if not isinstance(query_pci_result, list):
+        return buses
+
+    stack: list[dict[str, object]] = [b for b in query_pci_result if isinstance(b, dict)]
+    seen_nums: set[int] = set()
+
+    while stack:
+        bus_obj = stack.pop()
+        bus_num = _qmp_maybe_int(bus_obj.get("bus"))
+        if bus_num is None:
+            bus_num = _qmp_maybe_int(bus_obj.get("number"))
+        if bus_num is not None:
+            if bus_num in seen_nums:
+                continue
+            seen_nums.add(bus_num)
+
+        buses.append(bus_obj)
+
+        devs = bus_obj.get("devices")
+        if not isinstance(devs, list):
+            continue
+        for dev_obj in devs:
+            if not isinstance(dev_obj, dict):
+                continue
+            bridge_obj = dev_obj.get("pci_bridge")
+            if not isinstance(bridge_obj, dict):
+                continue
+            child_bus = bridge_obj.get("bus")
+            if isinstance(child_bus, dict):
+                stack.append(child_bus)
+
+    return buses
+
+
 def _qemu_device_help_text(qemu_system: str) -> str | None:
     try:
         proc = subprocess.run(
@@ -230,12 +275,7 @@ def _iter_pci_devices(query_pci_result: object) -> list[_PciId]:
     """
     devices: list[_PciId] = []
 
-    if not isinstance(query_pci_result, list):
-        return devices
-
-    for bus in query_pci_result:
-        if not isinstance(bus, dict):
-            continue
+    for bus in _iter_query_pci_buses(query_pci_result):
         bus_devices = bus.get("devices")
         if not isinstance(bus_devices, list):
             continue
