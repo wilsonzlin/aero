@@ -196,6 +196,44 @@ fn event_ring_invalid_config_sets_host_controller_error() {
 }
 
 #[test]
+fn event_ring_invalid_erdp_sets_host_controller_error() {
+    let mut mem = TestMemory::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    let erstba = 0x1000;
+    let ring_base = 0x2000;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+
+    // ERDP points outside the configured segment (segment length = 4 * 16 bytes = 0x40).
+    let invalid_erdp = ring_base + 0x1000;
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, invalid_erdp as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (invalid_erdp >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "invalid ERDP must not consume the queued event"
+    );
+
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(
+        sts & regs::USBSTS_HCE,
+        0,
+        "controller should latch HCE on invalid ERDP"
+    );
+}
+
+#[test]
 fn event_ring_wrap_and_budget_are_bounded() {
     let mut mem = TestMemory::new(0x40_000);
 
