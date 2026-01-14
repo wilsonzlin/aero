@@ -153,6 +153,26 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
 }
 
 #[wasm_bindgen_test]
+fn webusb_uhci_bridge_detach_at_path_rejects_reserved_root_ports() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+
+    // Root port 0 hosts the external hub and must not be detached via the topology helper.
+    let hub_path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("hub path");
+    assert!(
+        bridge.detach_at_path(hub_path).is_err(),
+        "expected detach_at_path([0]) to error"
+    );
+
+    // Root port 1 is reserved for WebUSB passthrough and must be managed via set_connected().
+    let webusb_path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("webusb path");
+    assert!(
+        bridge.detach_at_path(webusb_path).is_err(),
+        "expected detach_at_path([1]) to error"
+    );
+}
+
+#[wasm_bindgen_test]
 fn uhci_controller_bridge_does_not_reuse_action_ids_across_disconnect_reconnect() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
     let fl_base = install_control_in_schedule(guest_base);

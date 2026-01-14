@@ -206,10 +206,21 @@ impl WebUsbUhciBridge {
     /// - `path[1..]` are hub ports (1-based).
     pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
-        if path.len() == 1 && path[0] as usize == ROOT_PORT_EXTERNAL_HUB {
-            return Err(
-                js_sys::Error::new("Cannot detach the external USB hub from root port 0").into(),
-            );
+        if path.len() == 1 {
+            if path[0] as usize == ROOT_PORT_EXTERNAL_HUB {
+                return Err(
+                    js_sys::Error::new("Cannot detach the external USB hub from root port 0")
+                        .into(),
+                );
+            }
+            if path[0] as usize == ROOT_PORT_WEBUSB {
+                return Err(
+                    js_sys::Error::new(
+                        "Cannot detach the WebUSB passthrough device from root port 1; use set_connected(false)",
+                    )
+                    .into(),
+                );
+            }
         }
         crate::uhci_controller_bridge::detach_device_at_path(&mut self.controller, &path)
     }
