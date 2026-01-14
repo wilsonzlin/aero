@@ -65,6 +65,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_event_query/
   d3d9ex_dwm_ddi_sanity/
   d3d9ex_getters_sanity/
+  d3d9_caps_smoke/
   d3d9ex_fixedfunc_state_roundtrip/
   d3d9ex_submit_fence_stress/
   fence_state_sanity/
