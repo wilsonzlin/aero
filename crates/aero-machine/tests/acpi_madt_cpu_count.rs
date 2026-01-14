@@ -78,6 +78,7 @@ fn acpi_madt_enumerates_machine_cpu_count() {
         ram_size_bytes: RAM_SIZE_BYTES,
         cpu_count: CPU_COUNT,
         enable_pc_platform: true,
+        enable_acpi: true,
         ..Default::default()
     })
     .unwrap();
@@ -122,4 +123,3 @@ fn acpi_madt_enumerates_machine_cpu_count() {
     assert_eq!(apic_ids.len(), CPU_COUNT as usize);
     assert_eq!(apic_ids, (0..CPU_COUNT).collect::<Vec<u8>>());
 }
-
