@@ -51,6 +51,35 @@ static void ResetObject(T* obj) {
   new (obj) T();
 }
 
+static void LogTexture2DPitchMismatchRateLimited(const char* label,
+                                                 const Resource* res,
+                                                 uint32_t subresource,
+                                                 uint32_t expected_pitch,
+                                                 uint32_t runtime_pitch) {
+  if (!label || !res) {
+    return;
+  }
+  if (runtime_pitch == 0 || runtime_pitch == expected_pitch) {
+    return;
+  }
+  static std::atomic<uint32_t> g_pitch_mismatch_logs{0};
+  const uint32_t n = g_pitch_mismatch_logs.fetch_add(1, std::memory_order_relaxed);
+  if (n < 32) {
+    AEROGPU_D3D10_11_LOG(
+        "%s: Texture2D pitch mismatch: handle=%u alloc_id=%u sub=%u (mip=%u layer=%u) expected_pitch=%u runtime_pitch=%u",
+        label,
+        static_cast<unsigned>(res->handle),
+        static_cast<unsigned>(res->backing_alloc_id),
+        static_cast<unsigned>(subresource),
+        static_cast<unsigned>((subresource < res->tex2d_subresources.size()) ? res->tex2d_subresources[subresource].mip_level : 0u),
+        static_cast<unsigned>((subresource < res->tex2d_subresources.size()) ? res->tex2d_subresources[subresource].array_layer : 0u),
+        static_cast<unsigned>(expected_pitch),
+        static_cast<unsigned>(runtime_pitch));
+  } else if (n == 32) {
+    AEROGPU_D3D10_11_LOG("Texture2D pitch mismatch: log limit reached; suppressing further messages");
+  }
+}
+
 static bool IsDeviceLive(D3D11DDI_HDEVICE hDevice) {
   void* device_mem = hDevice.pDrvPrivate;
   if (!device_mem) {
@@ -964,12 +993,10 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
       goto Unlock;
     }
 
-    uint32_t dst_pitch = res->row_pitch_bytes;
-    __if_exists(D3DDDICB_LOCK::Pitch) {
-      if (lock_pitch) {
-        dst_pitch = lock_pitch;
-      }
-    }
+    // Guest-backed textures are interpreted by the host using the protocol pitch
+    // (`CREATE_TEXTURE2D.row_pitch_bytes`). Do not honor a runtime-reported pitch
+    // here, otherwise we'd write rows with a stride the host does not expect.
+    const uint32_t dst_pitch = res->row_pitch_bytes;
     if (dst_pitch < row_bytes) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
@@ -9580,6 +9607,10 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           lock_pitch = lock_args.Pitch;
         }
 
+        // Guest-backed staging resources are interpreted by the host using the
+        // protocol pitch (CREATE_TEXTURE2D.row_pitch_bytes). Ignore the runtime's
+        // LockCb pitch here so the bytes written into guest memory match the
+        // host's interpretation.
         dst_wddm_pitch = dst_sub_layout.row_pitch_bytes;
         const bool use_lock_pitch = (dst_sub_layout.mip_level == 0);
         if (use_lock_pitch && lock_pitch) {
@@ -9588,20 +9619,6 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
                                                dst_subresource,
                                                dst_sub_layout.row_pitch_bytes,
                                                lock_pitch);
-          if (lock_pitch < dst_min_row || dst_row_needed > lock_pitch) {
-            D3DDDICB_UNLOCK unlock_args = {};
-            unlock_args.hAllocation = lock_args.hAllocation;
-            __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-              unlock_args.SubresourceIndex = 0;
-            }
-            __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-              unlock_args.SubResourceIndex = 0;
-            }
-            (void)unlock(&unlock_args);
-            SetError(dev, E_INVALIDARG);
-            return;
-          }
-          dst_wddm_pitch = lock_pitch;
         }
         if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
           D3DDDICB_UNLOCK unlock_args = {};
@@ -10078,14 +10095,25 @@ static HRESULT MapLocked11(Device* dev,
     const bool use_lock_pitch = (sub_layout.mip_level == 0);
 
     if (use_lock_pitch) {
+      uint32_t lock_row_pitch = 0;
+      uint32_t lock_slice_pitch = 0;
       __if_exists(D3DDDICB_LOCK::Pitch) {
-        mapped_row_pitch = lock.Pitch;
+        lock_row_pitch = lock.Pitch;
       }
       __if_exists(D3DDDICB_LOCK::SlicePitch) {
-        mapped_slice_pitch = lock.SlicePitch;
+        lock_slice_pitch = lock.SlicePitch;
       }
-      if (mapped_row_pitch != 0) {
-        LogTexture2DPitchMismatchRateLimited("MapLocked11", res, subresource, expected_pitch, mapped_row_pitch);
+      if (lock_row_pitch != 0) {
+        LogTexture2DPitchMismatchRateLimited("MapLocked11", res, subresource, expected_pitch, lock_row_pitch);
+      }
+
+      // Guest-backed resources are interpreted by the host using the protocol
+      // pitch (CREATE_TEXTURE2D.row_pitch_bytes). Do not propagate a runtime
+      // pitch to the D3D runtime for guest-backed textures as that would cause
+      // apps to write with a different stride than the host expects.
+      if (!is_guest_backed) {
+        mapped_row_pitch = lock_row_pitch;
+        mapped_slice_pitch = lock_slice_pitch;
       }
     }
 
@@ -10890,20 +10918,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
                                            dst_subresource,
                                            dst_sub_layout.row_pitch_bytes,
                                            lock_pitch);
-      if (lock_pitch < min_row_bytes || row_needed > lock_pitch) {
-        D3DDDICB_UNLOCK unlock_args = {};
-        unlock_args.hAllocation = lock_args.hAllocation;
-        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-          unlock_args.SubresourceIndex = 0;
-        }
-        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-          unlock_args.SubResourceIndex = 0;
-        }
-        (void)unlock(&unlock_args);
-        SetError(dev, E_INVALIDARG);
-        return;
-      }
-      wddm_pitch = lock_pitch;
     }
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
       const size_t dst_off =

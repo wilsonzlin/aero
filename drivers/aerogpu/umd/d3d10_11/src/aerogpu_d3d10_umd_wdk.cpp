@@ -716,7 +716,7 @@ struct AeroGpuResource {
 // Some WDK/runtime combinations omit `D3DDDICB_LOCK::Pitch` or report it as 0 for
 // non-surface allocations. When a non-zero pitch is reported, validate only that
 // it is large enough to contain a texel row for the resource's mip0.
-static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
+[[maybe_unused]] static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
   if (!res || res->kind != ResourceKind::Texture2D) {
     return true;
   }
@@ -1431,16 +1431,14 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
 
       const Texture2DSubresourceLayout& sub = res->tex2d_subresources[i];
       const uint32_t expected_pitch = sub.row_pitch_bytes;
-      // We lock SubresourceIndex=0 for packed Texture2D allocations. Treat the
-      // runtime-provided Pitch as applying to mip0 subresources (same width per
-      // array layer); other mips use our packed layout pitch.
-      const bool pitch_applies = (sub.mip_level == 0);
-      const uint32_t effective_lock_pitch = pitch_applies ? lock_pitch : 0;
-      const uint32_t dst_pitch = effective_lock_pitch ? effective_lock_pitch : expected_pitch;
-
-      if (pitch_applies) {
+      // Guest-backed textures are interpreted by the host using the protocol
+      // pitch (CREATE_TEXTURE2D.row_pitch_bytes). Ignore the runtime's LockCb
+      // pitch here so the bytes written into the guest allocation match what the
+      // host expects.
+      if (sub.mip_level == 0) {
         LogLockPitchMismatchMaybe(res->dxgi_format, static_cast<uint32_t>(i), sub, expected_pitch, lock_pitch);
       }
+      const uint32_t dst_pitch = expected_pitch;
 
       uint32_t row_bytes = 0;
       if (!ValidateTexture2DRowSpan(aer_fmt, sub, dst_pitch, allocation_size, &row_bytes)) {
@@ -4202,6 +4200,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   res->mapped_wddm_ptr = lock_cb.pData;
   res->mapped_wddm_allocation = alloc_handle;
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
 
   uint32_t tex_row_bytes = 0;
   uint32_t tex_rows = 0;
@@ -4249,7 +4248,10 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     if (pitch_applies) {
       LogLockPitchMismatchMaybe(res->dxgi_format, subresource, *tex_layout, map_row_pitch, lock_pitch);
     }
-    tex_pitch = lock_pitch ? lock_pitch : map_row_pitch;
+    // Guest-backed resources are interpreted by the host using the protocol pitch
+    // (CREATE_TEXTURE2D.row_pitch_bytes). Ignore the runtime's LockCb pitch so
+    // Map returns the same row stride that the host will use.
+    tex_pitch = (!is_guest_backed && lock_pitch) ? lock_pitch : map_row_pitch;
     const uint32_t lock_slice = pitch_applies ? aerogpu_lock_slice_pitch_bytes(lock_cb) : 0;
     const uint64_t allocation_size =
         res->wddm_allocation_size_bytes ? res->wddm_allocation_size_bytes : total;
@@ -4265,7 +4267,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     }
     tex_rows = tex_layout->rows_in_layout;
 
-    if (lock_slice) {
+    if (!is_guest_backed && lock_slice) {
       tex_slice_pitch = lock_slice;
     } else {
       const uint64_t slice_pitch_u64 =
@@ -4283,14 +4285,16 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       tex_slice_pitch = static_cast<uint32_t>(slice_pitch_u64);
     }
 
-    res->mapped_wddm_pitch = tex_pitch;
-    res->mapped_wddm_slice_pitch = tex_slice_pitch;
+    // We keep the runtime pitch around for host-owned resources so Unmap can
+    // translate the runtime allocation layout into our protocol layout. For
+    // guest-backed resources we always interpret memory using protocol pitches.
+    res->mapped_wddm_pitch = is_guest_backed ? 0u : tex_pitch;
+    res->mapped_wddm_slice_pitch = is_guest_backed ? 0u : tex_slice_pitch;
   } else {
     res->mapped_wddm_pitch = aerogpu_lock_pitch_bytes(lock_cb);
     res->mapped_wddm_slice_pitch = aerogpu_lock_slice_pitch_bytes(lock_cb);
   }
 
-  const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
     if (res->kind == ResourceKind::Texture2D && tex_pitch && tex_row_bytes && tex_rows && tex_layout) {
       const uint64_t allocation_size =
@@ -5093,17 +5097,22 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       __if_exists(D3DDDICB_LOCK::Pitch) {
         wddm_pitch = lock_args.Pitch;
       }
-      uint32_t dst_pitch = dst_layout.row_pitch_bytes;
-      __if_exists(D3DDDICB_LOCK::Pitch) {
-        if (wddm_pitch && dst_layout.mip_level == 0) {
-          dst_pitch = wddm_pitch;
-        }
+      if (dst_layout.mip_level == 0) {
+        LogLockPitchMismatchMaybe(res->dxgi_format,
+                                  static_cast<uint32_t>(pUpdate->DstSubresource),
+                                  dst_layout,
+                                  dst_layout.row_pitch_bytes,
+                                  wddm_pitch);
       }
 
+      // Guest-backed textures are interpreted by the host using the protocol
+      // pitch (CREATE_TEXTURE2D.row_pitch_bytes). Ignore the runtime's LockCb
+      // pitch so CPU writes into the guest allocation match what the host
+      // expects.
+      const uint32_t dst_pitch = dst_layout.row_pitch_bytes;
+
       HRESULT copy_hr = S_OK;
-      if (!ValidateWddmTexturePitch(dev, res, wddm_pitch)) {
-        copy_hr = E_INVALIDARG;
-      } else if (dst_pitch < row_bytes) {
+      if (dst_pitch < row_bytes) {
         copy_hr = E_INVALIDARG;
       } else {
         uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
