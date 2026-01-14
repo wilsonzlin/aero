@@ -58,7 +58,7 @@ use aero_virtio::memory::GuestMemory as VirtioGuestMemory;
 use aero_virtio::pci::VirtioPciDevice;
 use memory::MemoryBus;
 
-/// Default frame budget for each direction per [`E1000Pump::poll`] call.
+/// Default frame/queue work budget used by tick/poll helpers in this crate.
 pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
 
 /// Frame/byte throughput pumped in each direction during a tick/poll.
