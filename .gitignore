@@ -6,8 +6,8 @@ bench/compare.json
 # Local-only agent notes
 scratchpad.md
 handoff.md
-.cargo-home/
-.cargo_home/
+.cargo-home*/
+.cargo_home*/
 /target-worker*/
 
 # `crates/legacy/aero-d3d9-shader` may be built standalone; Cargo can generate a per-crate
