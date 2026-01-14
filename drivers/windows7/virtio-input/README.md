@@ -440,7 +440,7 @@ Then reboot (or disable/enable the device). With the included `hidtest.exe`, you
 
 - `hidtest.exe --keyboard --state` (confirm `StatusQDropOnFull` is enabled)
 - `hidtest.exe --keyboard --led-spam 10000`
-- `hidtest.exe --keyboard --counters` (watch `VirtioStatusDrops`)
+- `hidtest.exe --keyboard --counters` (watch `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
 
 ## QEMU / emulator notes (expected device)
 
