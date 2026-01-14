@@ -1681,6 +1681,20 @@ def _parse_chunked_manifest_v1(raw: object) -> ChunkedDiskManifest:
     _require(chunk_count > 0, f"chunkCount must be > 0, got {chunk_count}")
     _require(chunk_index_width > 0, f"chunkIndexWidth must be > 0, got {chunk_index_width}")
 
+    # Defensive bounds to avoid pathological allocations when validating untrusted manifests.
+    # Mirror the browser client bounds (`web/src/storage/remote_chunked_disk.ts`) so conformance
+    # matches what Aero will actually accept.
+    max_chunk_size = 64 * 1024 * 1024  # 64 MiB
+    max_chunk_count = 500_000
+    _require(
+        chunk_size <= max_chunk_size,
+        f"chunkSize too large: max={max_chunk_size} got={chunk_size}",
+    )
+    _require(
+        chunk_count <= max_chunk_count,
+        f"chunkCount too large: max={max_chunk_count} got={chunk_count}",
+    )
+
     expected_chunk_count = (total_size + chunk_size - 1) // chunk_size
     _require(
         chunk_count == expected_chunk_count,
