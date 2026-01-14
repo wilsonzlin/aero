@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_usb::xhci::{regs, XhciController};
 use aero_usb::MemoryBus;
 
@@ -198,6 +198,56 @@ fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
     ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+}
+
+#[test]
+fn xhci_controller_tick_dma_dword_is_snapshotted() {
+    // Snapshot tags for controller-local time and last tick DMA dword.
+    const TAG_TIME_MS: u16 = 27;
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    // Seed the DMA source for the tick-driven "DMA touch-point" at CRCR.
+    mem.data[0x1000..0x1004].copy_from_slice(&0xfeed_beefu32.to_le_bytes());
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+
+    // Enable RUN so `tick_1ms_with_dma` will read from CRCR.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.tick_1ms_with_dma(&mut mem);
+
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
+    assert_eq!(
+        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        1,
+        "expected internal time to advance by 1ms"
+    );
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        0xfeed_beef,
+        "expected last_tick_dma_dword to be snapshotted"
+    );
+
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+    let restored_bytes = restored.save_state();
+    let restored_r = SnapshotReader::parse(&restored_bytes, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(
+        restored_r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        1
+    );
+    assert_eq!(
+        restored_r
+            .u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        0xfeed_beef
+    );
 }
 
 #[test]
