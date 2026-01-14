@@ -44,7 +44,7 @@ Supported fields:
   - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 - `toolFiles` (optional): list of user-mode helper tool binaries to include in staged packages (paths relative to the driver directory).
   - Entries must have a `.exe` extension.
-  - Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
+  - Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain `..` segments, and must resolve under the driver directory.
   - CI copies each tool into the staged package directory preserving the relative path.
   - `.exe` is intentionally disallowed in `additionalFiles`; `toolFiles` is the explicit opt-in mechanism for shipping `.exe` alongside the driver.
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.

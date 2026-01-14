@@ -90,7 +90,7 @@ for **non-binary** assets like README/license text or helper scripts.
 List of user-mode helper tool binaries to include in staged packages.
 
 - Entries must be paths (relative to the driver directory) to `.exe` files.
-- Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
+- Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain `..` segments, and must resolve under the driver directory.
 - CI copies each entry into `out/packages/<driver>/<arch>/` preserving the relative path.
 
 Example:
