@@ -82,6 +82,7 @@ fn pm1_sleep_button_status_w1c_and_sci_level() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -329,6 +330,7 @@ fn wak_sts_does_not_assert_sci_by_itself() {
     let irq = TestIrqLevel::new();
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(irq.clone()),
+        request_sleep: None,
         request_power_off: None,
     };
 
