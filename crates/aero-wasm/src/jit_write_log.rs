@@ -1,8 +1,8 @@
 //! Guest RAM write logging for browser-tiered execution.
 //!
-//! The CPU/JIT runtime (`aero_cpu_core::jit::runtime::JitRuntime`) tracks a monotonically
-//! increasing version per 4KiB guest page. Compiled blocks capture a snapshot of the versions for
-//! the code pages they cover; the runtime rejects / evicts blocks when the snapshot is stale.
+//! The CPU/JIT runtime (`aero_cpu_core::jit::runtime::JitRuntime`) tracks a wrapping (modulo-2^32)
+//! version counter per 4KiB guest page. Compiled blocks capture a snapshot of the versions for the
+//! code pages they cover; the runtime rejects / evicts blocks when the snapshot is stale.
 //!
 //! In native embeddings, the MMU/bus layer can call `jit.on_guest_write(paddr, len)` whenever a
 //! guest write hits RAM. In the browser tiered VM, Tier-0 interpreter writes occur inside the WASM

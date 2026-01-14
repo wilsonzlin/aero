@@ -462,7 +462,7 @@ In the current implementation these correspond to `aero_jit::{TLB_FLAG_READ, TLB
 
 Self-modifying code invalidation is handled by the runtime using page-version snapshots:
 
-- `aero_cpu_core::jit::runtime::PageVersionTracker` maintains a monotonically-incrementing version for each 4KB guest physical page (indexed by `paddr >> 12`).
+- `aero_cpu_core::jit::runtime::PageVersionTracker` maintains a wrapping (modulo-2^32) `u32` version counter for each 4KB guest physical page (indexed by `paddr >> 12`). Each observed write bumps the touched page versions by `1` (`u32::MAX + 1 == 0`).
 - The embedding/runtime must call `JitRuntime::on_guest_write(paddr, len)` for any guest physical write that could hit RAM/code. This bumps the version for every covered 4KB page.
 - When compiling a block/trace, the compiler captures metadata at the time it reads instruction bytes:
   - `JitRuntime::snapshot_meta(code_paddr, byte_len) -> CompiledBlockMeta`
