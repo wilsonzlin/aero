@@ -1682,7 +1682,7 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_storage::{MemBackend, RawDisk};
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk};
     use memory::{Bus, MemoryBus};
 
     struct TestIsoBackend {
@@ -2374,6 +2374,34 @@ mod tests {
         ctl
     }
 
+    fn setup_primary_ata_controller_with_sector0(fill: u8) -> IdeController {
+        let capacity = SECTOR_SIZE as u64;
+        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        disk.write_sectors(0, &vec![fill; SECTOR_SIZE]).unwrap();
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+        ctl
+    }
+
+    fn read_primary_sector0_via_pio(ctl: &mut IdeController) -> Vec<u8> {
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+
+        // READ SECTORS for LBA 0, 1 sector.
+        ctl.io_write(cmd_base + ATA_REG_DEVICE, 1, 0xE0);
+        ctl.io_write(cmd_base + ATA_REG_SECTOR_COUNT, 1, 1);
+        ctl.io_write(cmd_base + ATA_REG_LBA0, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA1, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA2, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_STATUS_COMMAND, 1, 0x20);
+
+        let mut out = vec![0u8; SECTOR_SIZE];
+        for i in 0..(SECTOR_SIZE / 2) {
+            let w = ctl.io_read(cmd_base + ATA_REG_DATA, 2) as u16;
+            out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+        }
+        out
+    }
+
     #[test]
     fn ata_dma_prd_missing_eot_aborts_command_and_signals_interrupt() {
         let mut ctl = setup_primary_ata_controller();
@@ -2546,6 +2574,142 @@ mod tests {
             got.iter().all(|&b| b == 0xFF),
             "direction mismatch should prevent any DMA writes"
         );
+    }
+
+    #[test]
+    fn ata_write_dma_prd_missing_eot_aborts_command_and_does_not_write_disk() {
+        let mut ctl = setup_primary_ata_controller_with_sector0(0x11);
+        let mut mem = Bus::new(0x8000);
+
+        let prd_addr: u64 = 0x1000;
+        let dma_buf: u64 = 0x2000;
+
+        // One PRD entry without EOT (malformed), but long enough to cover the sector.
+        mem.write_u32(prd_addr, dma_buf as u32);
+        mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+        mem.write_u16(prd_addr + 6, 0x0000);
+
+        // Fill the guest DMA source buffer with a recognizable pattern.
+        mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+        let bm_base = ctl.bus_master_base();
+        ctl.io_write(bm_base + 4, 4, prd_addr as u32);
+
+        // WRITE DMA for LBA 0, 1 sector.
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        ctl.io_write(cmd_base + ATA_REG_DEVICE, 1, 0xE0);
+        ctl.io_write(cmd_base + ATA_REG_SECTOR_COUNT, 1, 1);
+        ctl.io_write(cmd_base + ATA_REG_LBA0, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA1, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA2, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_STATUS_COMMAND, 1, 0xCA);
+
+        // Start bus master (direction = from memory).
+        ctl.io_write(bm_base, 1, 0x01);
+        ctl.tick(&mut mem);
+
+        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
+        assert_ne!(st & IDE_STATUS_ERR, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert_eq!(st & IDE_STATUS_DRQ, 0);
+        assert_ne!(st & IDE_STATUS_DRDY, 0);
+
+        // Clear the IRQ latch so the subsequent PIO read starts cleanly.
+        let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
+
+        // The disk should not have been modified by a malformed PRD list (no commit should occur).
+        let got = read_primary_sector0_via_pio(&mut ctl);
+        assert_eq!(got, vec![0x11u8; SECTOR_SIZE]);
+    }
+
+    #[test]
+    fn ata_write_dma_prd_too_short_aborts_command_and_does_not_write_disk() {
+        let mut ctl = setup_primary_ata_controller_with_sector0(0x11);
+        let mut mem = Bus::new(0x8000);
+
+        let prd_addr: u64 = 0x1000;
+        let dma_buf: u64 = 0x2000;
+
+        // Single 256-byte PRD with EOT, but the request is 512 bytes.
+        mem.write_u32(prd_addr, dma_buf as u32);
+        mem.write_u16(prd_addr + 4, 256);
+        mem.write_u16(prd_addr + 6, 0x8000);
+        mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+        let bm_base = ctl.bus_master_base();
+        ctl.io_write(bm_base + 4, 4, prd_addr as u32);
+
+        // WRITE DMA for LBA 0, 1 sector.
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        ctl.io_write(cmd_base + ATA_REG_DEVICE, 1, 0xE0);
+        ctl.io_write(cmd_base + ATA_REG_SECTOR_COUNT, 1, 1);
+        ctl.io_write(cmd_base + ATA_REG_LBA0, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA1, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA2, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_STATUS_COMMAND, 1, 0xCA);
+
+        ctl.io_write(bm_base, 1, 0x01);
+        ctl.tick(&mut mem);
+
+        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
+        let got = read_primary_sector0_via_pio(&mut ctl);
+        assert_eq!(got, vec![0x11u8; SECTOR_SIZE]);
+    }
+
+    #[test]
+    fn ata_write_dma_direction_mismatch_aborts_command_and_does_not_write_disk() {
+        let mut ctl = setup_primary_ata_controller_with_sector0(0x11);
+        let mut mem = Bus::new(0x8000);
+
+        let prd_addr: u64 = 0x1000;
+        let dma_buf: u64 = 0x2000;
+
+        // Valid PRD entry: one 512-byte segment, EOT set.
+        mem.write_u32(prd_addr, dma_buf as u32);
+        mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+        mem.write_u16(prd_addr + 6, 0x8000);
+        mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+        let bm_base = ctl.bus_master_base();
+        ctl.io_write(bm_base + 4, 4, prd_addr as u32);
+
+        // WRITE DMA for LBA 0, 1 sector (guest memory -> device).
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        ctl.io_write(cmd_base + ATA_REG_DEVICE, 1, 0xE0);
+        ctl.io_write(cmd_base + ATA_REG_SECTOR_COUNT, 1, 1);
+        ctl.io_write(cmd_base + ATA_REG_LBA0, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA1, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA2, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_STATUS_COMMAND, 1, 0xCA);
+
+        // Start bus master with direction=ToMemory (bit3 set), which mismatches a WRITE DMA.
+        ctl.io_write(bm_base, 1, 0x09);
+        ctl.tick(&mut mem);
+
+        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
+        let got = read_primary_sector0_via_pio(&mut ctl);
+        assert_eq!(got, vec![0x11u8; SECTOR_SIZE]);
     }
 
     #[test]
