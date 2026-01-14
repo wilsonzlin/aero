@@ -13070,6 +13070,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * For scanout we fall back to physical translation via MmGetVirtualForPhysical below.
          */
         {
+            /*
+             * Ring and fence-page pointers can be detached/freed during teardown. Hold RingLock while
+             * copying from these buffers so we never race AeroGpuRingCleanup.
+             */
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
             struct range {
                 ULONGLONG Base;
                 ULONGLONG Size;
@@ -13094,15 +13101,17 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 }
 
                 const ULONGLONG maxBytesU64 = size - offset;
-                const ULONG bytesToCopy =
-                    (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                const ULONG bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
                 const NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
 
                 RtlCopyMemory(io->data, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
                 io->status = (uint32_t)opSt;
                 io->bytes_copied = (uint32_t)bytesToCopy;
+                KeReleaseSpinLock(&adapter->RingLock, ringIrql);
                 return STATUS_SUCCESS;
             }
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
         }
 
         /* Cursor framebuffer backing store (protocol cursor regs). */
