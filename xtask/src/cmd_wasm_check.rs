@@ -13,6 +13,8 @@ Usage:
 
 Currently checked:
   - aero-devices-gpu
+  - aero-machine
+  - aero-wasm
 "
     );
 }
@@ -32,17 +34,35 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let runner = Runner::new();
 
     let cargo_locked = repo_root.join("Cargo.lock").is_file();
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(&repo_root)
-        .arg("check")
-        .arg("--target")
-        .arg("wasm32-unknown-unknown")
-        .arg("-p")
-        .arg("aero-devices-gpu");
-    if cargo_locked {
-        cmd.arg("--locked");
+    {
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .arg("check")
+            .arg("--target")
+            .arg("wasm32-unknown-unknown")
+            .arg("-p")
+            .arg("aero-devices-gpu");
+        if cargo_locked {
+            cmd.arg("--locked");
+        }
+        runner.run_step("Rust: cargo check (wasm32, aero-devices-gpu)", &mut cmd)?;
     }
-    runner.run_step("Rust: cargo check (wasm32, aero-devices-gpu)", &mut cmd)?;
+
+    {
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .arg("check")
+            .arg("--target")
+            .arg("wasm32-unknown-unknown")
+            .arg("-p")
+            .arg("aero-machine")
+            .arg("-p")
+            .arg("aero-wasm");
+        if cargo_locked {
+            cmd.arg("--locked");
+        }
+        runner.run_step("Rust: cargo check (wasm32, aero-machine, aero-wasm)", &mut cmd)?;
+    }
 
     Ok(())
 }
