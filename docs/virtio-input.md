@@ -56,8 +56,17 @@ Virtio-input spans both the Rust device model and the current browser/worker run
   - TypeScript PCI wrapper + event injection: `web/src/io/devices/virtio_input.ts`
   - PCI registration helper (canonical BDF for the keyboard function): `web/src/workers/io_virtio_input_register.ts`
   - IO worker integration + routing decisions: `web/src/workers/io.worker.ts`
-- **Canonical-machine wiring (planned):**
-  - As the web runtime migrates to the canonical `aero_machine::Machine` stack (ADR 0014), virtio-input is expected to be enabled/disabled via a `Machine` configuration flag and wired through the machine’s Rust-owned PCI/device graph rather than the JS worker PCI bus.
+- **Canonical full-system machine wiring (available):**
+  - The canonical `aero_machine::Machine` supports virtio-input behind an explicit config flag:
+    - `MachineConfig.enable_virtio_input = true` (requires `MachineConfig.enable_pc_platform = true`)
+    - Fixed PCI BDFs:
+      - `00:0A.0` — virtio-input keyboard (`aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD`)
+      - `00:0A.1` — virtio-input mouse (`aero_devices::pci::profile::VIRTIO_INPUT_MOUSE`)
+  - In the JS/WASM “single machine” API (`crates/aero-wasm::Machine`), virtio-input is opt-in at construction time:
+    - `Machine.new_with_options(..., { enable_virtio_input: true })`
+    - Injection APIs: `inject_virtio_key/rel/button/wheel` (Linux `evdev`-style codes)
+    - Driver status probes: `virtio_input_keyboard_driver_ok()` / `virtio_input_mouse_driver_ok()`
+  - The production worker runtime still uses the TypeScript PCI wrapper today; future work may migrate it to drive the canonical `aero_machine::Machine` device graph directly.
 
 ---
 
