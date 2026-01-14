@@ -226,3 +226,71 @@ fn wgsl_relative_constant_indexing_uses_addr_component_y() {
         );
     }
 }
+
+#[test]
+fn wgsl_mova_applies_shift_before_saturate() {
+    // `mova` shares result modifier encoding with other float ops. D3D9 defines the ordering as:
+    //   shift -> saturate -> float->int conversion.
+    //
+    // This test ensures we don't accidentally apply saturate before shift in the WGSL lowering.
+    for stage in [ShaderStage::Vertex, ShaderStage::Pixel] {
+        let mut tokens = vec![
+            version_token(stage, 3, 0),
+            // mova_sat_div2 a0.x, c0
+            //
+            // Result modifier bits are stored in opcode_token[20..24], encoded as:
+            //   mod_bits = saturate_bit | (shift_bits << 1)
+            // For saturate + div2: saturate=1, shift_bits=4 => mod_bits=9.
+            opcode_token(46, 2) | (9u32 << 20),
+            dst_token(3, 0, 0x1), // a0.x (regtype 3)
+            src_token(2, 0, 0xE4, 0),
+        ];
+
+        match stage {
+            ShaderStage::Vertex => {
+                // mov oPos, c0 (dummy output)
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(4, 0, 0xF),
+                    src_token(2, 0, 0xE4, 0),
+                ]);
+            }
+            ShaderStage::Pixel => {
+                // mov oC0, c0 (dummy output)
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(8, 0, 0xF),
+                    src_token(2, 0, 0xE4, 0),
+                ]);
+            }
+        }
+        tokens.push(0x0000_FFFF); // end
+
+        let decoded = decode_u32_tokens(&tokens).unwrap();
+        let ir = build_ir(&decoded).unwrap();
+        verify_ir(&ir).unwrap();
+
+        let wgsl = generate_wgsl(&ir).unwrap();
+        let src = &wgsl.wgsl;
+
+        // Expect: `clamp((c0) / 2.0, 0..1)` (shift then saturate).
+        assert!(
+            src.contains("clamp((c0) / 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+            "{src}"
+        );
+
+        // Reject: `clamp(c0, 0..1) / 2.0` (saturate then shift).
+        assert!(
+            !src.contains("clamp(c0, vec4<f32>(0.0), vec4<f32>(1.0)) / 2.0"),
+            "{src}"
+        );
+
+        let module = naga::front::wgsl::parse_str(src).expect("wgsl parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("wgsl validate");
+    }
+}
