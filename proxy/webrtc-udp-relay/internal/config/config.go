@@ -86,30 +86,30 @@ const (
 	envVarTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
 	envVarTURNRESTRealm          = "TURN_REST_REALM"
 
-	DefaultListenAddr                       = "127.0.0.1:8080"
-	DefaultShutdown                         = 15 * time.Second
-	DefaultICEGatherTimeout                 = 2 * time.Second
+	defaultListenAddr                       = "127.0.0.1:8080"
+	defaultShutdown                         = 15 * time.Second
+	defaultICEGatherTimeout                 = 2 * time.Second
 	DefaultWebRTCSessionConnectTimeout      = 30 * time.Second
-	DefaultViolationWindow                  = 10 * time.Second
-	DefaultMode                        Mode = ModeDev
-	// DefaultSessionPreallocTTL is a safety bound for POST /session to avoid
+	defaultViolationWindow                  = 10 * time.Second
+	defaultMode                        Mode = ModeDev
+	// defaultSessionPreallocTTL is a safety bound for POST /session to avoid
 	// permanently consuming session quota due to buggy or malicious callers.
 	// Must be non-zero to avoid unbounded session leaks by default.
-	DefaultSessionPreallocTTL = 60 * time.Second
+	defaultSessionPreallocTTL = 60 * time.Second
 
-	DefaultUDPBindingIdleTimeout     = 60 * time.Second
-	DefaultUDPInboundFilterMode      = UDPInboundFilterModeAddressAndPort
-	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
-	DefaultMaxUDPBindingsPerSession  = 128
+	defaultUDPBindingIdleTimeout     = 60 * time.Second
+	defaultUDPInboundFilterMode      = UDPInboundFilterModeAddressAndPort
+	defaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
+	defaultMaxUDPBindingsPerSession  = 128
 	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
-	// DefaultUDPReadBufferBytes is the default UDP socket read buffer size for
+	// defaultUDPReadBufferBytes is the default UDP socket read buffer size for
 	// each UDP port binding (per IP family).
 	//
 	// The buffer is intentionally sized to MaxDatagramPayloadBytes+1, so the
 	// relay can detect and drop oversized UDP datagrams instead of forwarding a
 	// silently truncated payload.
-	DefaultUDPReadBufferBytes          = DefaultMaxDatagramPayloadBytes + 1
-	DefaultMaxAllowedRemotesPerBinding = 1024
+	defaultUDPReadBufferBytes          = DefaultMaxDatagramPayloadBytes + 1
+	defaultMaxAllowedRemotesPerBinding = 1024
 	DefaultL2MaxMessageBytes           = 4096
 	// DefaultWebRTCDataChannelMaxMessageOverheadBytes is added on top of the
 	// protocol-derived minimum when computing the effective default for
@@ -119,19 +119,19 @@ const (
 	// pion (applies before application-level message decoding).
 	DefaultWebRTCSCTPMaxReceiveBufferBytes = 1 << 20 // 1MiB
 
-	DefaultAuthMode AuthMode = AuthModeAPIKey
+	defaultAuthMode AuthMode = AuthModeAPIKey
 
-	DefaultSignalingAuthTimeout          = 2 * time.Second
-	DefaultSignalingWSIdleTimeout        = 60 * time.Second
-	DefaultSignalingWSPingInterval       = 20 * time.Second
-	DefaultMaxSignalingMessageBytes      = int64(64 * 1024)
-	DefaultMaxSignalingMessagesPerSecond = 50
+	defaultSignalingAuthTimeout          = 2 * time.Second
+	defaultSignalingWSIdleTimeout        = 60 * time.Second
+	defaultSignalingWSPingInterval       = 20 * time.Second
+	defaultMaxSignalingMessageBytes      = int64(64 * 1024)
+	defaultMaxSignalingMessagesPerSecond = 50
 
 	DefaultUDPWSIdleTimeout  = 60 * time.Second
 	DefaultUDPWSPingInterval = 20 * time.Second
 
-	DefaultTURNRESTTTLSeconds     int64  = 3600
-	DefaultTURNRESTUsernamePrefix string = "aero"
+	defaultTURNRESTTTLSeconds     int64  = 3600
+	defaultTURNRESTUsernamePrefix string = "aero"
 )
 
 const defaultMaxUDPDestBucketsPerSession = 1024
@@ -149,7 +149,7 @@ const (
 	envVarWebRTCNAT1To1IPCandidateType = "WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE"
 
 	envVarWebRTCUDPListenIP  = "WEBRTC_UDP_LISTEN_IP"
-	DefaultWebRTCUDPListenIP = "0.0.0.0"
+	defaultWebRTCUDPListenIP = "0.0.0.0"
 
 	// WebRTC DataChannel DoS hardening.
 	//
@@ -352,7 +352,7 @@ func Load(args []string) (Config, error) {
 
 func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	envMode, _ := lookup(envVarMode)
-	modeDefault := string(DefaultMode)
+	modeDefault := string(defaultMode)
 	if envMode != "" {
 		modeDefault = envMode
 	}
@@ -371,7 +371,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		logLevelDefault = defaultLogLevelForMode(modeDefault)
 	}
 
-	listenAddr := envOrDefault(lookup, envVarListenAddr, DefaultListenAddr)
+	listenAddr := envOrDefault(lookup, envVarListenAddr, defaultListenAddr)
 	publicBaseURL := envOrDefault(lookup, envVarPublicBaseURL, "")
 	allowedOriginsStr := envOrDefault(lookup, envVarAllowedOrigins, "")
 	iceServersJSON := envOrDefault(lookup, envICEServersJSON, "")
@@ -389,7 +389,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		preferV2 = v
 	}
 	turnRESTSharedSecret := envOrDefault(lookup, envVarTURNRESTSharedSecret, "")
-	turnRESTTTLSeconds := DefaultTURNRESTTTLSeconds
+	turnRESTTTLSeconds := defaultTURNRESTTTLSeconds
 	if raw, ok := lookup(envVarTURNRESTTTLSeconds); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil {
@@ -397,10 +397,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 		turnRESTTTLSeconds = n
 	}
-	turnRESTUsernamePrefix := envOrDefault(lookup, envVarTURNRESTUsernamePrefix, DefaultTURNRESTUsernamePrefix)
+	turnRESTUsernamePrefix := envOrDefault(lookup, envVarTURNRESTUsernamePrefix, defaultTURNRESTUsernamePrefix)
 	turnRESTRealm := envOrDefault(lookup, envVarTURNRESTRealm, "")
 
-	udpBindingIdleTimeout := DefaultUDPBindingIdleTimeout
+	udpBindingIdleTimeout := defaultUDPBindingIdleTimeout
 	if raw, ok := lookup(envVarUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -409,7 +409,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		udpBindingIdleTimeout = d
 	}
 
-	udpInboundFilterModeStr := envOrDefault(lookup, envVarUDPInboundFilterMode, string(DefaultUDPInboundFilterMode))
+	udpInboundFilterModeStr := envOrDefault(lookup, envVarUDPInboundFilterMode, string(defaultUDPInboundFilterMode))
 	udpRemoteAllowlistIdleTimeout := udpBindingIdleTimeout
 	envAllowlistTTL, envAllowlistTTLOK := lookup(envVarUDPRemoteAllowlistIdleTimeout)
 	envAllowlistTTLSet := envAllowlistTTLOK && strings.TrimSpace(envAllowlistTTL) != ""
@@ -434,11 +434,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, envVarDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, envVarDataChannelSendQueueBytes, defaultDataChannelSendQueueBytes)
 	if err != nil {
 		return Config{}, err
 	}
-	maxAllowedRemotesPerBinding, err := envIntOrDefault(lookup, envVarMaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
+	maxAllowedRemotesPerBinding, err := envIntOrDefault(lookup, envVarMaxAllowedRemotesPerBinding, defaultMaxAllowedRemotesPerBinding)
 	if err != nil {
 		return Config{}, err
 	}
@@ -486,7 +486,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 
-	shutdownTimeout := DefaultShutdown
+	shutdownTimeout := defaultShutdown
 	if raw, ok := lookup(envVarShutdownTimeout); ok && raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
@@ -495,7 +495,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		shutdownTimeout = d
 	}
 
-	iceGatherTimeout := DefaultICEGatherTimeout
+	iceGatherTimeout := defaultICEGatherTimeout
 	if raw, ok := lookup(envVarICEGatheringTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
@@ -517,7 +517,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	sessionPreallocTTL := DefaultSessionPreallocTTL
+	sessionPreallocTTL := defaultSessionPreallocTTL
 	if raw, ok := lookup(envVarSessionPreallocTTL); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -537,7 +537,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
+	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPBindingsPerSession, defaultMaxUDPBindingsPerSession)
 	if err != nil {
 		return Config{}, err
 	}
@@ -560,7 +560,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 
-	violationWindow := DefaultViolationWindow
+	violationWindow := defaultViolationWindow
 	if raw, ok := lookup(envVarViolationWindowSeconds); ok && strings.TrimSpace(raw) != "" {
 		seconds, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil {
@@ -571,7 +571,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 	}
 
-	authModeDefault := string(DefaultAuthMode)
+	authModeDefault := string(defaultAuthMode)
 	if raw, ok := lookup(envVarAuthMode); ok && strings.TrimSpace(raw) != "" {
 		authModeDefault = strings.TrimSpace(raw)
 	}
@@ -579,7 +579,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	apiKey := envOrDefault(lookup, envVarAPIKey, "")
 	jwtSecret := envOrDefault(lookup, envVarJWTSecret, "")
 
-	signalingAuthTimeout := DefaultSignalingAuthTimeout
+	signalingAuthTimeout := defaultSignalingAuthTimeout
 	if raw, ok := lookup(envVarSignalingAuthTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -588,7 +588,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		signalingAuthTimeout = d
 	}
 
-	signalingWSIdleTimeout := DefaultSignalingWSIdleTimeout
+	signalingWSIdleTimeout := defaultSignalingWSIdleTimeout
 	if raw, ok := lookup(envVarSignalingWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -597,7 +597,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		signalingWSIdleTimeout = d
 	}
 
-	signalingWSPingInterval := DefaultSignalingWSPingInterval
+	signalingWSPingInterval := defaultSignalingWSPingInterval
 	if raw, ok := lookup(envVarSignalingWSPingInterval); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -606,7 +606,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		signalingWSPingInterval = d
 	}
 
-	maxSignalingMessageBytes := DefaultMaxSignalingMessageBytes
+	maxSignalingMessageBytes := defaultMaxSignalingMessageBytes
 	if raw, ok := lookup(envVarMaxSignalingMessageBytes); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil {
@@ -615,7 +615,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		maxSignalingMessageBytes = n
 	}
 
-	maxSignalingMessagesPerSecond := DefaultMaxSignalingMessagesPerSecond
+	maxSignalingMessagesPerSecond := defaultMaxSignalingMessagesPerSecond
 	if raw, ok := lookup(envVarMaxSignalingMessagesPerSecond); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil {
@@ -665,7 +665,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%s and %s must be set together (or both unset)", envVarWebRTCUDPPortMin, envVarWebRTCUDPPortMax)
 	}
 
-	webrtcUDPListenIPStr := envOrDefault(lookup, envVarWebRTCUDPListenIP, DefaultWebRTCUDPListenIP)
+	webrtcUDPListenIPStr := envOrDefault(lookup, envVarWebRTCUDPListenIP, defaultWebRTCUDPListenIP)
 	webrtcNAT1To1IPsStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPs, "")
 	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
 	fs := flag.NewFlagSet("aero-webrtc-udp-relay", flag.ContinueOnError)

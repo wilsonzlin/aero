@@ -53,26 +53,26 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.WebRTCSCTPMaxReceiveBufferBytes != wantSCTPBuf {
 		t.Fatalf("WebRTCSCTPMaxReceiveBufferBytes=%d, want %d", cfg.WebRTCSCTPMaxReceiveBufferBytes, wantSCTPBuf)
 	}
-	if cfg.UDPBindingIdleTimeout != DefaultUDPBindingIdleTimeout {
-		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, DefaultUDPBindingIdleTimeout)
+	if cfg.UDPBindingIdleTimeout != defaultUDPBindingIdleTimeout {
+		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, defaultUDPBindingIdleTimeout)
 	}
-	if cfg.UDPInboundFilterMode != DefaultUDPInboundFilterMode {
-		t.Fatalf("UDPInboundFilterMode=%q, want %q", cfg.UDPInboundFilterMode, DefaultUDPInboundFilterMode)
+	if cfg.UDPInboundFilterMode != defaultUDPInboundFilterMode {
+		t.Fatalf("UDPInboundFilterMode=%q, want %q", cfg.UDPInboundFilterMode, defaultUDPInboundFilterMode)
 	}
 	if cfg.UDPRemoteAllowlistIdleTimeout != cfg.UDPBindingIdleTimeout {
 		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, cfg.UDPBindingIdleTimeout)
 	}
-	if cfg.UDPReadBufferBytes != DefaultUDPReadBufferBytes {
-		t.Fatalf("UDPReadBufferBytes=%d, want %d", cfg.UDPReadBufferBytes, DefaultUDPReadBufferBytes)
+	if cfg.UDPReadBufferBytes != defaultUDPReadBufferBytes {
+		t.Fatalf("UDPReadBufferBytes=%d, want %d", cfg.UDPReadBufferBytes, defaultUDPReadBufferBytes)
 	}
-	if cfg.DataChannelSendQueueBytes != DefaultDataChannelSendQueueBytes {
-		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	if cfg.DataChannelSendQueueBytes != defaultDataChannelSendQueueBytes {
+		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, defaultDataChannelSendQueueBytes)
 	}
 	if cfg.MaxDatagramPayloadBytes != DefaultMaxDatagramPayloadBytes {
 		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
 	}
-	if cfg.MaxAllowedRemotesPerBinding != DefaultMaxAllowedRemotesPerBinding {
-		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
+	if cfg.MaxAllowedRemotesPerBinding != defaultMaxAllowedRemotesPerBinding {
+		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, defaultMaxAllowedRemotesPerBinding)
 	}
 	if cfg.PreferV2 {
 		t.Fatalf("PreferV2=true, want false")
@@ -98,20 +98,20 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
 		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	}
-	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
-		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
+	if cfg.MaxUDPBindingsPerSession != defaultMaxUDPBindingsPerSession {
+		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, defaultMaxUDPBindingsPerSession)
 	}
 	if cfg.MaxUDPDestBucketsPerSession != defaultMaxUDPDestBucketsPerSession {
 		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, defaultMaxUDPDestBucketsPerSession)
 	}
-	if cfg.SessionPreallocTTL != DefaultSessionPreallocTTL {
-		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, DefaultSessionPreallocTTL)
+	if cfg.SessionPreallocTTL != defaultSessionPreallocTTL {
+		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, defaultSessionPreallocTTL)
 	}
-	if cfg.SignalingWSIdleTimeout != DefaultSignalingWSIdleTimeout {
-		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, DefaultSignalingWSIdleTimeout)
+	if cfg.SignalingWSIdleTimeout != defaultSignalingWSIdleTimeout {
+		t.Fatalf("SignalingWSIdleTimeout=%v, want %v", cfg.SignalingWSIdleTimeout, defaultSignalingWSIdleTimeout)
 	}
-	if cfg.SignalingWSPingInterval != DefaultSignalingWSPingInterval {
-		t.Fatalf("SignalingWSPingInterval=%v, want %v", cfg.SignalingWSPingInterval, DefaultSignalingWSPingInterval)
+	if cfg.SignalingWSPingInterval != defaultSignalingWSPingInterval {
+		t.Fatalf("SignalingWSPingInterval=%v, want %v", cfg.SignalingWSPingInterval, defaultSignalingWSPingInterval)
 	}
 	if cfg.UDPWSIdleTimeout != DefaultUDPWSIdleTimeout {
 		t.Fatalf("UDPWSIdleTimeout=%v, want %v", cfg.UDPWSIdleTimeout, DefaultUDPWSIdleTimeout)
