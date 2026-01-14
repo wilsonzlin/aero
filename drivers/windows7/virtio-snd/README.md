@@ -454,12 +454,18 @@ For a repeatable manual bring-up/validation plan under QEMU, see:
 
 ## INF linter (Linux/macOS)
 
-To catch accidental drift in the contract-v1 INF (HWIDs, KS/WDMAudio + KS interface registration, install/service wiring, and legacy alias INF sync), run:
+To catch accidental drift in the virtio-snd INFs (HWIDs, KS/WDMAudio + KS interface registration, install/service wiring, and legacy alias INF sync), run:
 
 ```sh
 cd drivers/windows7/virtio-snd
 ./scripts/lint-inf.sh
 ```
+
+This script validates:
+
+- The **contract v1** package (`inf/aero_virtio_snd.inf`) and its optional filename alias (`inf/virtio-snd.inf.disabled`)
+- The optional **transitional/QEMU** package (`inf/aero-virtio-snd-legacy.inf`)
+- The optional **legacy I/O-port** bring-up package (`inf/aero-virtio-snd-ioport.inf`)
 
 ## Host unit tests (host builds)
 
