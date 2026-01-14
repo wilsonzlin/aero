@@ -92,6 +92,18 @@ pub fn d3d9_executor(
 /// OOMs in some software adapters) caused by repeatedly creating/dropping `wgpu::Device`s across
 /// many `#[test]` cases in a single process.
 #[allow(dead_code)]
+#[cfg(target_arch = "wasm32")]
+pub fn aerogpu_executor(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync. Keep the
+    // host-style integration tests buildable by treating them as skipped.
+    skip_or_panic(test_name, "AeroGpuExecutor is host-only");
+    None
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn aerogpu_executor(
     test_name: &str,
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {

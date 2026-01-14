@@ -4455,6 +4455,7 @@ mod tests {
         assert!(usage.contains(wgpu::BufferUsages::COPY_SRC));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum MapExpectation {
         Ok {
@@ -4475,12 +4476,14 @@ mod tests {
                 $(pci::AerogpuFormat::$variant,)+
             ];
 
+            #[cfg(not(target_arch = "wasm32"))]
             fn expected_map_bc_off(format: pci::AerogpuFormat) -> MapExpectation {
                 match format {
                     $(pci::AerogpuFormat::$variant => $bc_off,)+
                 }
             }
 
+            #[cfg(not(target_arch = "wasm32"))]
             fn expected_map_bc_on(format: pci::AerogpuFormat) -> MapExpectation {
                 match format {
                     $(pci::AerogpuFormat::$variant => $bc_on,)+

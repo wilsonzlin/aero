@@ -485,6 +485,7 @@ mod tests {
 
     use super::*;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+    #[cfg(not(target_arch = "wasm32"))]
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
     #[cfg(not(target_arch = "wasm32"))]
