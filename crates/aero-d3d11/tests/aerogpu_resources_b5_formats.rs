@@ -1,10 +1,14 @@
 mod common;
 
+use std::collections::HashMap;
+
 use aero_d3d11::runtime::aerogpu_resources::{
     AerogpuResourceManager, DirtyRange, Texture2dCreateDesc, TextureUploadTransform,
 };
+use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_TEXTURE;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, Context, Result};
 
 async fn read_texture_rgba8_subresource(
@@ -475,6 +479,194 @@ fn upload_resource_b5_formats_expand_to_rgba8_for_mips_and_array_layers() -> Res
                 .await?;
                 assert_eq!(readback, expected_px.repeat((w * h) as usize));
             }
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn ensure_texture_uploaded_guest_backed_b5_formats_expand_to_rgba8() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 b5 guest-backed test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
+
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        // Two allocations with distinct GPAs so we can host both textures in one VecGuestMemory.
+        let mut alloc_table: HashMap<u32, AerogpuAllocEntry> = HashMap::new();
+        alloc_table.insert(
+            1,
+            AerogpuAllocEntry {
+                alloc_id: 1,
+                flags: 0,
+                gpa: 0,
+                size_bytes: 0x100,
+                reserved0: 0,
+            },
+        );
+        alloc_table.insert(
+            2,
+            AerogpuAllocEntry {
+                alloc_id: 2,
+                flags: 0,
+                gpa: 0x100,
+                size_bytes: 0x100,
+                reserved0: 0,
+            },
+        );
+
+        let mut guest_mem = VecGuestMemory::new(0x200);
+
+        // ---- B5G6R5Unorm (guest-backed) ----
+        {
+            let tex_handle = 20;
+            let width = 2u32;
+            let height = 2u32;
+            let row_pitch_bytes = 8u32; // 4 bytes pixels + 4 bytes padding
+
+            resources.create_texture2d(
+                tex_handle,
+                Texture2dCreateDesc {
+                    usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: AerogpuFormat::B5G6R5Unorm as u32,
+                    width,
+                    height,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes,
+                    backing_alloc_id: 1,
+                    backing_offset_bytes: 0,
+                },
+            )?;
+
+            // Same pattern as the host-owned regression test; includes non-zero padding bytes that
+            // must be ignored by the upload path.
+            let b5: [u8; 16] = [
+                // row0: red, green
+                0x00, 0xF8, 0xE0, 0x07, // pixels
+                0xDE, 0xAD, 0xBE, 0xEF, // padding
+                // row1: blue, white
+                0x1F, 0x00, 0xFF, 0xFF, // pixels
+                0xFE, 0xED, 0xFA, 0xCE, // padding
+            ];
+            guest_mem
+                .write(0, &b5)
+                .context("write guest memory for B5G6R5 texture")?;
+
+            resources.ensure_texture_uploaded(
+                tex_handle,
+                DirtyRange {
+                    offset_bytes: 0,
+                    size_bytes: b5.len() as u64,
+                },
+                &mut guest_mem,
+                &alloc_table,
+            )?;
+
+            let tex = resources.texture2d(tex_handle)?;
+            assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(
+                tex.desc.upload_transform,
+                TextureUploadTransform::B5G6R5ToRgba8
+            );
+
+            let pixels = common::wgpu::read_texture_rgba8(
+                resources.device(),
+                resources.queue(),
+                &tex.texture,
+                width,
+                height,
+            )
+            .await?;
+            assert_eq!(
+                pixels,
+                vec![
+                    255, 0, 0, 255, // red
+                    0, 255, 0, 255, // green
+                    0, 0, 255, 255, // blue
+                    255, 255, 255, 255, // white
+                ]
+            );
+        }
+
+        // ---- B5G5R5A1Unorm (guest-backed) ----
+        {
+            let tex_handle = 21;
+            let width = 2u32;
+            let height = 2u32;
+            let row_pitch_bytes = 8u32; // 4 bytes pixels + 4 bytes padding
+
+            resources.create_texture2d(
+                tex_handle,
+                Texture2dCreateDesc {
+                    usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: AerogpuFormat::B5G5R5A1Unorm as u32,
+                    width,
+                    height,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes,
+                    backing_alloc_id: 2,
+                    backing_offset_bytes: 0,
+                },
+            )?;
+
+            let b5: [u8; 16] = [
+                // row0: red(a=1), green(a=0)
+                0x00, 0xFC, 0xE0, 0x03, // pixels
+                0x11, 0x22, 0x33, 0x44, // padding
+                // row1: blue(a=1), white(a=0)
+                0x1F, 0x80, 0xFF, 0x7F, // pixels
+                0x55, 0x66, 0x77, 0x88, // padding
+            ];
+            guest_mem
+                .write(0x100, &b5)
+                .context("write guest memory for B5G5R5A1 texture")?;
+
+            resources.ensure_texture_uploaded(
+                tex_handle,
+                DirtyRange {
+                    offset_bytes: 0,
+                    size_bytes: b5.len() as u64,
+                },
+                &mut guest_mem,
+                &alloc_table,
+            )?;
+
+            let tex = resources.texture2d(tex_handle)?;
+            assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(
+                tex.desc.upload_transform,
+                TextureUploadTransform::B5G5R5A1ToRgba8
+            );
+
+            let pixels = common::wgpu::read_texture_rgba8(
+                resources.device(),
+                resources.queue(),
+                &tex.texture,
+                width,
+                height,
+            )
+            .await?;
+            assert_eq!(
+                pixels,
+                vec![
+                    255, 0, 0, 255, // red, a=1
+                    0, 255, 0, 0, // green, a=0
+                    0, 0, 255, 255, // blue, a=1
+                    255, 255, 255, 0, // white, a=0
+                ]
+            );
         }
 
         Ok(())
