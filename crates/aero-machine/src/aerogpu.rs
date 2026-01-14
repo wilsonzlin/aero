@@ -1105,9 +1105,6 @@ impl AeroGpuMmioDevice {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
-                if new_enable && !self.scanout0_enable {
-                    self.wddm_scanout_active = true;
-                }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {

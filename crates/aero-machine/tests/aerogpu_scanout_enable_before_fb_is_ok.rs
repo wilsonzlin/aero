@@ -52,19 +52,6 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
 
-    // WDDM scanout reads behave like device-initiated DMA; enable PCI Bus Mastering so the
-    // host-side display path can legally read the scanout buffer.
-    {
-        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        let command = pci_cfg
-            .bus_mut()
-            .read_config(profile::AEROGPU.bdf, 0x04, 2) as u16;
-        pci_cfg
-            .bus_mut()
-            .write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
-    }
-
     let w = 2u32;
     let h = 2u32;
     let pitch = w * 4;
