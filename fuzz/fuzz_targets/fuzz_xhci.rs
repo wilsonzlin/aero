@@ -27,9 +27,13 @@ const ERST_BASE: u64 = 0x6000;
 const EP0_TR_BASE: u64 = 0x7000;
 const EP1_TR_BASE: u64 = 0x8000;
 const EP1_BUF_BASE: u64 = 0x9000;
+const EP0_BUF_BASE: u64 = 0xa000;
 
 const ROUTE_KEYBOARD: u32 = 0x1;
 const ROUTE_MOUSE: u32 = 0x2;
+
+// xHCI transfer TRB control bits.
+const TRB_CTRL_IDT: u32 = 1 << 6;
 
 /// Bounded guest-physical memory for xHCI ring fuzzing.
 ///
@@ -290,6 +294,7 @@ enum CommandRingSeed {
     AddressDeviceAndEvaluateContextMouse,
     ConfigureEndpointEp1In,
     EndpointCommandsEp1In,
+    EndpointCommandsEp0,
 }
 
 fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: CommandRingSeed) {
@@ -424,10 +429,107 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
                 bus.write_trb(CMD_RING_BASE + 3 * TRB_LEN as u64, stop);
             }
         }
+        CommandRingSeed::EndpointCommandsEp0 => {
+            // Stop/Reset/SetTRDP for EP0 (slot 1, endpoint_id=1). This helps fuzzing recover from
+            // halted/stopped control endpoint state and exercises endpoint-management commands.
+            const SLOT_ID: u8 = 1;
+            const EP_ID: u8 = 1;
+            {
+                let mut trb0 = Trb::new(0, 0, 0);
+                trb0.set_trb_type(TrbType::StopEndpointCommand);
+                trb0.set_slot_id(SLOT_ID);
+                trb0.set_endpoint_id(EP_ID);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut trb1 = Trb::new(0, 0, 0);
+                trb1.set_trb_type(TrbType::ResetEndpointCommand);
+                trb1.set_slot_id(SLOT_ID);
+                trb1.set_endpoint_id(EP_ID);
+                trb1.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, trb1);
+            }
+            {
+                let mut trb2 = Trb::new(EP0_TR_BASE | 1, 0, 0);
+                trb2.set_trb_type(TrbType::SetTrDequeuePointerCommand);
+                trb2.set_slot_id(SLOT_ID);
+                trb2.set_endpoint_id(EP_ID);
+                trb2.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, trb2);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + 3 * TRB_LEN as u64, stop);
+            }
+        }
     }
     xhci.mmio_write(regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
     xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
     xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+}
+
+fn seed_ep0_control_td(
+    bus: &mut FuzzBus,
+    trb_ptr: u64,
+    cycle: bool,
+    setup_bytes: [u8; 8],
+    data: Option<(bool /*dir_in*/, bool /*idt*/, &[u8])>,
+) {
+    let mut offset = 0u64;
+
+    // Setup Stage.
+    let setup_param = u64::from_le_bytes(setup_bytes);
+    let mut setup = Trb::new(setup_param, 0, 0);
+    setup.set_trb_type(TrbType::SetupStage);
+    setup.set_cycle(cycle);
+    bus.write_trb(trb_ptr + offset, setup);
+    offset = offset.saturating_add(TRB_LEN as u64);
+
+    // Optional Data Stage.
+    let mut status_dir_in = (setup_bytes[0] & 0x80) == 0;
+    if let Some((dir_in, idt, payload)) = data {
+        let mut len = payload.len().min(256);
+        if idt {
+            len = len.min(8);
+        }
+        let len_u32 = (len as u32).min(Trb::STATUS_TRANSFER_LEN_MASK);
+
+        let mut data_trb = Trb::new(EP0_BUF_BASE, len_u32, 0);
+        data_trb.set_trb_type(TrbType::DataStage);
+        data_trb.set_cycle(cycle);
+        data_trb.set_dir_in(dir_in);
+        if idt {
+            data_trb.control |= TRB_CTRL_IDT;
+            // When IDT is set, the payload lives in the TRB parameter field.
+            let mut imm = [0u8; 8];
+            imm[..len.min(8)].copy_from_slice(&payload[..len.min(8)]);
+            data_trb.parameter = u64::from_le_bytes(imm);
+        } else {
+            bus.write_physical(EP0_BUF_BASE, &payload[..len]);
+        }
+        bus.write_trb(trb_ptr + offset, data_trb);
+        offset = offset.saturating_add(TRB_LEN as u64);
+        // Status stage direction is opposite of the data stage direction.
+        status_dir_in = !dir_in;
+    }
+
+    // Status Stage (always IOC so we post an event).
+    let mut status = Trb::new(0, 0, 0);
+    status.set_trb_type(TrbType::StatusStage);
+    status.set_dir_in(status_dir_in);
+    status.control |= Trb::CONTROL_IOC_BIT;
+    status.set_cycle(cycle);
+    bus.write_trb(trb_ptr + offset, status);
+    offset = offset.saturating_add(TRB_LEN as u64);
+
+    // Sentinel (cycle mismatch => ring empty).
+    let mut stop = Trb::new(0, 0, 0);
+    stop.set_trb_type(TrbType::NoOp);
+    stop.set_cycle(!cycle);
+    bus.write_trb(trb_ptr + offset, stop);
 }
 
 fn seed_ep1_in_td(bus: &mut FuzzBus, trb_ptr: u64, cycle: bool, len: u32) {
@@ -535,7 +637,7 @@ fuzz_target!(|data: &[u8]| {
 
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
-        match tag % 10 {
+        match tag % 11 {
             0 | 1 | 2 => {
                 let offset = biased_offset(&mut u, port_count);
                 let size = decode_size(tag >> 3);
@@ -555,12 +657,13 @@ fuzz_target!(|data: &[u8]| {
             7 => {
                 // Rearm the command ring back to a known, small sequence and ring DB0.
                 let mode: u8 = u.arbitrary().unwrap_or(0);
-                let seed = match mode % 5 {
+                let seed = match mode % 6 {
                     0 => CommandRingSeed::EnableSlot,
                     1 => CommandRingSeed::AddressDeviceAndEvaluateContext,
                     2 => CommandRingSeed::AddressDeviceAndEvaluateContextMouse,
                     3 => CommandRingSeed::ConfigureEndpointEp1In,
-                    _ => CommandRingSeed::EndpointCommandsEp1In,
+                    4 => CommandRingSeed::EndpointCommandsEp1In,
+                    _ => CommandRingSeed::EndpointCommandsEp0,
                 };
                 rearm_command_ring(&mut bus, &mut xhci, seed);
                 xhci.tick_1ms(&mut bus);
@@ -609,6 +712,26 @@ fuzz_target!(|data: &[u8]| {
                         xhci.mmio_write(db1, 4, 3);
                         xhci.tick_1ms(&mut bus);
                     }
+                }
+            }
+            10 => {
+                // Rearm EP0 with a randomized control TD (Setup + optional Data + Status), then
+                // ring the endpoint doorbell. This exercises the xHCI control-transfer engine and
+                // the `AttachedUsbDevice` control state machine.
+                if let Some(ring) = xhci
+                    .slot_state(1)
+                    .and_then(|slot| slot.transfer_ring(1))
+                {
+                    let setup_bytes: [u8; 8] = u.arbitrary().unwrap_or([0; 8]);
+                    let include_data: bool = u.arbitrary().unwrap_or(false);
+                    let dir_in = (setup_bytes[0] & 0x80) != 0;
+                    let idt: bool = u.arbitrary().unwrap_or(false);
+                    let len: usize = u.int_in_range(0usize..=64).unwrap_or(0);
+                    let payload = u.bytes(len).unwrap_or(&[]);
+                    let data = include_data.then_some((dir_in, idt, payload));
+                    seed_ep0_control_td(&mut bus, ring.dequeue_ptr(), ring.cycle_state(), setup_bytes, data);
+                    xhci.mmio_write(db1, 4, 1);
+                    xhci.tick_1ms(&mut bus);
                 }
             }
             _ => {}
