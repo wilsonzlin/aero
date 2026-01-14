@@ -843,6 +843,17 @@ impl Mmu {
                 }
             }
 
+            // Fast path for reads: the only possible permission failure is a
+            // user-mode read of a supervisor-only page.
+            if access == AccessType::Read {
+                if is_user && !entry.user {
+                    let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                    self.cr2 = pf.addr;
+                    return Err(TranslateFault::PageFault(pf));
+                }
+                return Ok(entry.translate(vaddr));
+            }
+
             match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
                 Ok(()) => {
                     let paddr = entry.translate(vaddr);
@@ -960,6 +971,16 @@ impl Mmu {
                 } else {
                     self.stats.dtlb_hits = self.stats.dtlb_hits.wrapping_add(1);
                 }
+            }
+
+            // Fast path for reads: the only possible permission failure is a
+            // user-mode read of a supervisor-only page.
+            if access == AccessType::Read {
+                if is_user && !entry.user {
+                    let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                    return Err(TranslateFault::PageFault(pf));
+                }
+                return Ok(entry.translate(vaddr));
             }
 
             match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
