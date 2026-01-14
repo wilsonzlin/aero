@@ -1370,8 +1370,12 @@ export interface WasmApi {
         /**
          * Complete (or fail) a pending `GET_REPORT (Feature)` request.
          *
-         * Newer builds accept an explicit success flag and return whether the completion was
-         * accepted by the guest-visible UHCI model.
+         * - When `ok=true`, `data` is returned to the guest (empty payload when omitted).
+         * - When `ok=false`, the request is failed and the guest sees a timeout-style error.
+         *
+         * Returns whether the completion was accepted by the guest-visible UHCI model.
+         *
+         * Optional for older WASM builds.
          */
         webhid_complete_feature_report_request?(
             deviceId: number,
@@ -1381,7 +1385,9 @@ export interface WasmApi {
             data?: Uint8Array,
         ): boolean;
         /**
-         * Legacy completion API (pre `webhid_complete_feature_report_request`) used by older WASM builds.
+         * Legacy completion API used by older WASM builds (pre `webhid_complete_feature_report_request`).
+         *
+         * Optional.
          */
         webhid_push_feature_report_result?(
             deviceId: number,

@@ -19,7 +19,7 @@ export type HidAttachMessage = {
   /**
    * @deprecated Prefer {@link HidAttachMessage.guestPath}.
    *
-   * Optional hint for which guest UHCI root port this device should be attached to.
+   * Optional hint for which guest root port this device should be attached to.
    *
    * This is currently only used for forward-compatible guest USB wiring; the
    * passthrough bridge itself is keyed by `deviceId`.

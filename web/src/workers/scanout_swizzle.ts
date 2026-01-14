@@ -26,11 +26,11 @@ export const swizzleBgraToRgba32 = (v: number): number =>
 
 export type ConvertScanoutOptions = {
   /** Source pixels as a byte view (may be unaligned). */
-  src: Uint8Array;
+  src: Uint8Array<ArrayBufferLike>;
   /** Source stride in bytes. */
   srcStrideBytes: number;
   /** Destination pixel buffer (RGBA8). */
-  dst: Uint8Array;
+  dst: Uint8Array<ArrayBufferLike>;
   /** Destination stride in bytes. */
   dstStrideBytes: number;
   width: number;

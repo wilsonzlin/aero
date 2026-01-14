@@ -591,10 +591,10 @@ Recommended guardrails:
   - Worker-side WebUSB passthrough runtime: `web/src/usb/webusb_passthrough_runtime.ts`
   - Guest-visible UHCI PCI device (production): `web/src/io/devices/uhci.ts`
   - (Dev/harness) Standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
-  - Guest USB attachment path schema (UHCI root port + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
+  - Guest USB attachment path schema (root port index + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
   - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
-  - I/O worker wiring point (guest-visible UHCI controller + USB topology + passthrough runtimes):
+  - I/O worker wiring point (guest-visible USB controllers + USB topology + passthrough runtimes):
     `web/src/workers/io.worker.ts`
 
 ## Related docs
