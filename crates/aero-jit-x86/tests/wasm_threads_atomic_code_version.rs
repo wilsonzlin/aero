@@ -34,17 +34,14 @@ where
 {
     let mut count = 0usize;
     for payload in Parser::new(0).parse_all(wasm) {
-        match payload.expect("parse wasm") {
-            Payload::CodeSectionEntry(body) => {
-                let mut ops = body.get_operators_reader().expect("get operators reader");
-                while !ops.eof() {
-                    let op = ops.read().expect("read operator");
-                    if f(&op) {
-                        count += 1;
-                    }
+        if let Payload::CodeSectionEntry(body) = payload.expect("parse wasm") {
+            let mut ops = body.get_operators_reader().expect("get operators reader");
+            while !ops.eof() {
+                let op = ops.read().expect("read operator");
+                if f(&op) {
+                    count += 1;
                 }
             }
-            _ => {}
         }
     }
     count
