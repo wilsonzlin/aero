@@ -11,6 +11,7 @@ pub(crate) const DEVICE_KIND_I8042: &str = "input.i8042";
 pub(crate) const DEVICE_KIND_VIRTIO_INPUT: &str = "input.virtio_input";
 pub(crate) const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
 pub(crate) const DEVICE_KIND_AUDIO_VIRTIO_SND: &str = "audio.virtio_snd";
+pub(crate) const DEVICE_KIND_GPU_AEROGPU: &str = "gpu.aerogpu";
 pub(crate) const DEVICE_KIND_NET_E1000: &str = "net.e1000";
 pub(crate) const DEVICE_KIND_NET_VIRTIO_NET: &str = "net.virtio_net";
 pub(crate) const DEVICE_KIND_NET_STACK: &str = "net.stack";
@@ -31,6 +32,9 @@ pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     }
     if kind == DEVICE_KIND_AUDIO_VIRTIO_SND {
         return Some(DeviceId::VIRTIO_SND);
+    }
+    if kind == DEVICE_KIND_GPU_AEROGPU {
+        return Some(DeviceId::AEROGPU);
     }
     if kind == DEVICE_KIND_NET_E1000 {
         return Some(DeviceId::E1000);
@@ -71,6 +75,9 @@ pub(crate) fn kind_from_device_id(id: DeviceId) -> String {
     if id == DeviceId::VIRTIO_SND {
         return DEVICE_KIND_AUDIO_VIRTIO_SND.to_string();
     }
+    if id == DeviceId::AEROGPU {
+        return DEVICE_KIND_GPU_AEROGPU.to_string();
+    }
     if id == DeviceId::E1000 {
         return DEVICE_KIND_NET_E1000.to_string();
     }
@@ -106,6 +113,7 @@ mod tests {
             parse_device_kind("audio.virtio_snd"),
             Some(DeviceId::VIRTIO_SND)
         );
+        assert_eq!(parse_device_kind("gpu.aerogpu"), Some(DeviceId::AEROGPU));
         assert_eq!(parse_device_kind("net.e1000"), Some(DeviceId::E1000));
         assert_eq!(
             parse_device_kind("net.virtio_net"),
@@ -147,6 +155,7 @@ mod tests {
             kind_from_device_id(DeviceId::VIRTIO_SND),
             "audio.virtio_snd"
         );
+        assert_eq!(kind_from_device_id(DeviceId::AEROGPU), "gpu.aerogpu");
         assert_eq!(kind_from_device_id(DeviceId::E1000), "net.e1000");
         assert_eq!(kind_from_device_id(DeviceId::VIRTIO_NET), "net.virtio_net");
         assert_eq!(kind_from_device_id(DeviceId::NET_STACK), "net.stack");

@@ -141,6 +141,8 @@ impl DeviceId {
     /// Canonical full-system snapshots store both PCI functions under this single outer ID as a
     /// wrapper blob so snapshot restore can treat the multi-function topology atomically.
     pub const VIRTIO_INPUT: DeviceId = DeviceId(24);
+    /// Guest-visible AeroGPU device state.
+    pub const AEROGPU: DeviceId = DeviceId(25);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -168,6 +170,7 @@ impl DeviceId {
             DeviceId::VIRTIO_SND => Some("VIRTIO_SND"),
             DeviceId::VIRTIO_NET => Some("VIRTIO_NET"),
             DeviceId::VIRTIO_INPUT => Some("VIRTIO_INPUT"),
+            DeviceId::AEROGPU => Some("AEROGPU"),
             _ => None,
         }
     }

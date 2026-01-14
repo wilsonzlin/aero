@@ -240,6 +240,10 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `VIRTIO_SND` | `22` | `audio.virtio_snd` | virtio-snd (virtio-pci) audio device state |
 | `VIRTIO_NET` | `23` | `net.virtio_net` | virtio-net (virtio-pci) NIC transport state |
 | `VIRTIO_INPUT` | `24` | `input.virtio_input` | virtio-input (virtio-pci) multi-function device state (keyboard + mouse) |
+| `AEROGPU` | `25` | `gpu.aerogpu` | AeroGPU device state |
+
+Note: older runtimes that do not recognize `gpu.aerogpu` may still encode/decode this device as
+`device.25` (the generic fallback spelling). This is acceptable for forward compatibility.
 
 #### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
