@@ -472,7 +472,7 @@ impl DiskBackend for OpfsBackend {
 
 For **host-side tooling** (image conversion, chunk publishing, offline verification) and native
 tests, prefer a native `aero_storage::StorageBackend` implementation backed by the local
-filesystem (e.g. `aero_storage::FileBackend`).
+filesystem (e.g. `aero_storage::FileBackend` / `aero_storage::StdFileBackend`).
 
 This keeps the layering consistent with [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md):
 tools can reuse `aero-storage` disk formats (`DiskImage::open_auto`) and wrappers without
@@ -856,8 +856,8 @@ Useful tooling in this repo:
   - `aero_storage::StreamingDisk` (HTTP `Range` + persistent cache)
   - `aero_storage::ChunkedStreamingDisk` (chunked manifest + per-chunk `GET`, no `Range`)
 - Chunked disk publisher (no-`Range` delivery): [`tools/image-chunker/`](../tools/image-chunker/README.md)
-  - `publish --format <raw|qcow2|vhd|aerosparse|auto>`: publish the **logical disk byte stream** for common container formats, not just raw `.img` files.
-  - `verify`: validate uploaded `manifest.json` + `chunks/*.bin` end-to-end (schema, existence, sizes, optional per-chunk sha256).
+  - `publish --format <raw|qcow2|vhd|aerosparse|auto>` (alias: `aerospar`): publish the **logical disk byte stream** for common container formats, not just raw `.img` files.
+  - `verify`: validate uploaded `manifest.json` + `chunks/*.bin` end-to-end (schema, existence, sizes, optional per-chunk sha256). Supports S3-backed verification (`--bucket`) and direct HTTP verification (`--manifest-url`).
 
 ```rust
 pub struct DiskAccessLease {
