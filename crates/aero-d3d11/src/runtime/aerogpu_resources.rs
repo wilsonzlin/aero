@@ -858,74 +858,68 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
             let mut extended = (opcode_token & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
             while extended {
                 if operand_pos >= inst_end {
-                    return Ok(());
+                    break;
                 }
-                let Some(ext) = toks.get(operand_pos).copied() else {
-                    return Ok(());
-                };
+                let Some(ext) = toks.get(operand_pos).copied() else { break };
                 operand_pos += 1;
                 extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
             }
 
-            if operand_pos >= inst_end {
-                return Ok(());
-            }
-            let Some(operand_token) = toks.get(operand_pos).copied() else {
-                return Ok(());
-            };
-            operand_pos += 1;
-
-            let ty =
-                (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
-            if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
-                // Malformed stream operand; the decoder will surface a better error later.
-                return Ok(());
-            }
-
-            // Skip extended operand tokens (modifiers).
-            let mut operand_ext = (operand_token & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
-            while operand_ext {
-                if operand_pos >= inst_end {
-                    return Ok(());
-                }
-                let Some(ext) = toks.get(operand_pos).copied() else {
-                    return Ok(());
+            // Some toolchains omit the immediate operand entirely for stream 0.
+            // Treat the missing operand as `0` and keep scanning subsequent instructions.
+            if operand_pos < inst_end {
+                let operand_token = match toks.get(operand_pos).copied() {
+                    Some(v) => v,
+                    None => {
+                        i += len;
+                        continue;
+                    }
                 };
                 operand_pos += 1;
-                operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
-            }
 
-            // Immediate operands should have no indices, but if they do, bail out and let the real
-            // decoder handle it.
-            let index_dim = (operand_token >> sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT)
-                & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK;
-            if index_dim != sm4_opcode::OPERAND_INDEX_DIMENSION_0D {
-                return Ok(());
-            }
+                let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT)
+                    & sm4_opcode::OPERAND_TYPE_MASK;
+                if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
+                    // Malformed stream operand; the decoder will surface a better error later.
+                    i += len;
+                    continue;
+                }
 
-            let num_components = operand_token & sm4_opcode::OPERAND_NUM_COMPONENTS_MASK;
-            let stream = match num_components {
-                // Scalar immediate (1 DWORD payload).
-                1 => {
+                // Skip extended operand tokens (modifiers).
+                let mut operand_ext = (operand_token & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
+                while operand_ext {
                     if operand_pos >= inst_end {
-                        return Ok(());
+                        break;
                     }
-                    toks[operand_pos]
+                    let Some(ext) = toks.get(operand_pos).copied() else { break };
+                    operand_pos += 1;
+                    operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
                 }
-                // 4-component immediate (4 DWORD payload); `decode_stream_index` uses lane 0.
-                2 => {
-                    if operand_pos + 3 >= inst_end {
-                        return Ok(());
-                    }
-                    toks[operand_pos]
-                }
-                _ => return Ok(()),
-            };
 
-            if stream != 0 {
-                bail!(
-                    "CreateShaderDxbc: unsupported {op_name} stream index {stream} (only stream 0 is supported)"
-                );
+                // Immediate operands should have no indices, but if they do, bail out and let the
+                // real decoder handle it.
+                let index_dim = (operand_token >> sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT)
+                    & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK;
+                if index_dim != sm4_opcode::OPERAND_INDEX_DIMENSION_0D {
+                    i += len;
+                    continue;
+                }
+
+                let num_components = operand_token & sm4_opcode::OPERAND_NUM_COMPONENTS_MASK;
+                let stream = match num_components {
+                    // Scalar immediate (1 DWORD payload).
+                    1 => toks.get(operand_pos).copied(),
+                    // 4-component immediate (4 DWORD payload); `decode_stream_index` uses lane 0.
+                    2 => toks.get(operand_pos).copied(),
+                    _ => None,
+                };
+                if let Some(stream) = stream {
+                    if stream != 0 {
+                        bail!(
+                            "CreateShaderDxbc: unsupported {op_name} stream index {stream} (only stream 0 is supported)"
+                        );
+                    }
+                }
             }
         }
 
