@@ -589,10 +589,10 @@ maps to distinct bind groups:
 
 `AEROGPU_CMD_BIND_SHADERS` is extended by appending `gs/hs/ds` handles after the existing payload.
 
-Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. For
-forward-compat, the host may interpret `reserved0 != 0` as “a GS is bound” for older guests. When
-the extended layout is used, `reserved0` should be set to 0 and the appended `gs/hs/ds` handles are
-authoritative.
+Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. In the
+canonical ABI, this field remains **reserved** (must be 0, host ignores it). The extended layout
+adds `gs/hs/ds` as **trailing fields**; older guests that do not know about the extension simply
+cannot bind those stages.
 
 ```c
 // Existing prefix (ABI 1.0+):
@@ -613,8 +613,8 @@ struct aerogpu_cmd_bind_shaders {
 };
 ```
 
-**Host decoding rule:** if the extension fields are missing, treat `gs/hs/ds` as unbound and (for
-compat) optionally treat `reserved0` as `gs`.
+**Host decoding rule:** if the extension fields are missing, treat `gs/hs/ds` as unbound. Ignore
+`reserved0` (it remains reserved).
 
 #### 1.3) Primitive topology extensions: adjacency + patchlists
 
