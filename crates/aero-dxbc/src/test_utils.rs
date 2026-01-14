@@ -44,6 +44,22 @@ pub fn build_signature_chunk_v0(entries: &[SignatureEntryDesc<'_>]) -> Vec<u8> {
     build_signature_chunk_with_entry_size(entries, SIGNATURE_ENTRY_LEN_V0)
 }
 
+/// Builds a `*SGN`-style (v0) signature chunk payload (24-byte entries), inserting extra zero
+/// padding between the entry table and the semantic string table.
+///
+/// This is useful for crafting edge-case payloads (still self-consistent) that can confuse
+/// signature-layout heuristics.
+pub fn build_signature_chunk_v0_with_table_padding(
+    entries: &[SignatureEntryDesc<'_>],
+    table_padding_bytes: usize,
+) -> Vec<u8> {
+    build_signature_chunk_with_entry_size_and_table_padding(
+        entries,
+        SIGNATURE_ENTRY_LEN_V0,
+        table_padding_bytes,
+    )
+}
+
 /// Builds a `*SG1`-style (v1) DXBC signature chunk payload (32-byte entries).
 ///
 /// This is the extended entry layout used by `ISG1`/`OSG1`/`PSG1`.
@@ -70,6 +86,14 @@ fn build_signature_chunk_with_entry_size(
     entries: &[SignatureEntryDesc<'_>],
     entry_size: usize,
 ) -> Vec<u8> {
+    build_signature_chunk_with_entry_size_and_table_padding(entries, entry_size, 0)
+}
+
+fn build_signature_chunk_with_entry_size_and_table_padding(
+    entries: &[SignatureEntryDesc<'_>],
+    entry_size: usize,
+    table_padding_bytes: usize,
+) -> Vec<u8> {
     assert!(
         entry_size == SIGNATURE_ENTRY_LEN_V0 || entry_size == SIGNATURE_ENTRY_LEN_V1,
         "unsupported signature entry size {entry_size}"
@@ -80,7 +104,10 @@ fn build_signature_chunk_with_entry_size(
     out.extend_from_slice(&(SIGNATURE_HEADER_LEN as u32).to_le_bytes()); // param_offset
 
     let table_start = out.len();
-    out.resize(table_start + entries.len() * entry_size, 0);
+    out.resize(
+        table_start + entries.len() * entry_size + table_padding_bytes,
+        0,
+    );
 
     for (i, e) in entries.iter().enumerate() {
         let semantic_name_offset = out.len() as u32;

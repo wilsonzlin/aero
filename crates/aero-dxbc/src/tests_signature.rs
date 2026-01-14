@@ -146,32 +146,20 @@ fn build_signature_chunk_v0_one_entry_padded(stream: u8) -> Vec<u8> {
     // A v0 (24-byte) entry layout with extra padding between the entry table
     // and string table. This exercises that `DxbcFile::get_signature` prefers
     // the v0 layout for `*SGN` chunk IDs even if the v1 heuristic could match.
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let padding_len = 8usize;
-    let string_table_offset = (table_start + entry_size + padding_len) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, stream, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    bytes.resize(bytes.len() + padding_len, 0);
-    bytes.extend_from_slice(b"POSITION\0");
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0_with_table_padding(
+        &[dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: 0,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: u32::from(stream),
+            min_precision: 0,
+        }],
+        8,
+    )
 }
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
