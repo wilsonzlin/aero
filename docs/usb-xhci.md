@@ -190,7 +190,10 @@ used by tests and harnesses).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT + interrupter
     pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
-  - Topology-only slot binding (`Address Device`/`Configure Endpoint`) via Slot Context `RootHubPortNumber` + `RouteString`.
+  - Partial slot / Address Device plumbing used by tests/harnesses:
+    - resolves topology via Slot Context `RootHubPortNumber` + `RouteString`, and
+    - supports a limited Address Device command handler (Input Context parsing + EP0 `SET_ADDRESS` +
+      Slot/EP0 context mirroring).
   - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change
     Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
@@ -372,7 +375,6 @@ USB-related unit tests commonly live under:
 
 Rust xHCI-focused tests commonly live under:
 
-- `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_context_parse.rs`
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
