@@ -743,67 +743,75 @@ fn build_dsdt(cfg: &AcpiConfig) -> Vec<u8> {
 
 fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     // AML is emitted manually (minimal subset).
-    let mut out = Vec::new();
+    vec![
+        // Name (PICM, Zero)
+        aml_name_integer(*b"PICM", 0),
+        aml_imcr_region_and_field(),
+        // Method (_PIC, 1, NotSerialized)
+        // {
+        //   Store (Arg0, PICM)
+        //   Store (0x70, IMCS)
+        //   And (Arg0, One, IMCD)
+        // }
+        aml_method_pic(),
+        // Minimal sleep/wake control methods for Windows 7 compatibility.
+        // Method (_PTS, 1) { }
+        aml_method_pts(),
+        // Method (_WAK, 1) { Return (Package(){0,0}) }
+        aml_method_wak(),
+        aml_scope_sb(cfg),
+        aml_scope_pr(cfg),
+        // Sleep state types for Win7: advertise common PC encodings.
+        // Name (_S1_, Package () { 0x01, 0x01 })
+        // Name (_S3_, Package () { 0x03, 0x03 })
+        // Name (_S4_, Package () { 0x04, 0x04 })
+        // Name (_S5_, Package () { 0x05, 0x05 })
+        aml_s1(),
+        aml_s3(),
+        aml_s4(),
+        aml_s5(),
+    ]
+    .concat()
+}
 
-    // Name (PICM, Zero)
-    out.extend_from_slice(&aml_name_integer(*b"PICM", 0));
-    // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
-    out.extend_from_slice(&aml_op_region(
-        *b"IMCR", 0x01, // SystemIO
-        0x22, 0x02,
-    ));
-    // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
-    out.extend_from_slice(&aml_field(
-        *b"IMCR",
-        0x01, // ByteAcc + NoLock + Preserve
-        &[
-            (*b"IMCS", 8), // IMCR select port (0x22)
-            (*b"IMCD", 8), // IMCR data port (0x23)
-        ],
-    ));
-    // Method (_PIC, 1, NotSerialized)
-    // {
-    //   Store (Arg0, PICM)
-    //   Store (0x70, IMCS)
-    //   And (Arg0, One, IMCD)
-    // }
-    out.extend_from_slice(&aml_method_pic());
+fn aml_imcr_region_and_field() -> Vec<u8> {
+    vec![
+        // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
+        aml_op_region(
+            *b"IMCR", 0x01, // SystemIO
+            0x22, 0x02,
+        ),
+        // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
+        aml_field(
+            *b"IMCR",
+            0x01, // ByteAcc + NoLock + Preserve
+            &[
+                (*b"IMCS", 8), // IMCR select port (0x22)
+                (*b"IMCD", 8), // IMCR data port (0x23)
+            ],
+        ),
+    ]
+    .concat()
+}
 
-    // Minimal sleep/wake control methods for Windows 7 compatibility.
-    // Method (_PTS, 1) { }
-    out.extend_from_slice(&aml_method_pts());
-    // Method (_WAK, 1) { Return (Package(){0,0}) }
-    out.extend_from_slice(&aml_method_wak());
+fn aml_scope_sb(cfg: &AcpiConfig) -> Vec<u8> {
+    let sb_devices = vec![
+        aml_device_sys0(cfg),
+        aml_device_pwrb(),
+        aml_device_slpb(),
+        aml_device_pci0(cfg),
+        aml_device_hpet(cfg),
+        aml_device_rtc(),
+        aml_device_timr(),
+    ];
+    let sb = sb_devices.concat();
+    aml_scope(*b"_SB_", &sb)
+}
 
-    // Scope (_SB_) { ... }
-    let mut sb = Vec::new();
-    sb.extend_from_slice(&aml_device_sys0(cfg));
-    sb.extend_from_slice(&aml_device_pwrb());
-    sb.extend_from_slice(&aml_device_slpb());
-    sb.extend_from_slice(&aml_device_pci0(cfg));
-    sb.extend_from_slice(&aml_device_hpet(cfg));
-    sb.extend_from_slice(&aml_device_rtc());
-    sb.extend_from_slice(&aml_device_timr());
-    out.extend_from_slice(&aml_scope(*b"_SB_", &sb));
-
-    // Scope (_PR_) { Device (CPUx) }
-    let mut pr = Vec::new();
-    for cpu_id in 0..cfg.cpu_count {
-        pr.extend_from_slice(&aml_device_cpu(cpu_id));
-    }
-    out.extend_from_slice(&aml_scope(*b"_PR_", &pr));
-
-    // Sleep state types for Win7: advertise common PC encodings.
-    // Name (_S1_, Package () { 0x01, 0x01 })
-    // Name (_S3_, Package () { 0x03, 0x03 })
-    // Name (_S4_, Package () { 0x04, 0x04 })
-    // Name (_S5_, Package () { 0x05, 0x05 })
-    out.extend_from_slice(&aml_s1());
-    out.extend_from_slice(&aml_s3());
-    out.extend_from_slice(&aml_s4());
-    out.extend_from_slice(&aml_s5());
-
-    out
+fn aml_scope_pr(cfg: &AcpiConfig) -> Vec<u8> {
+    let cpu_devices: Vec<Vec<u8>> = (0..cfg.cpu_count).map(aml_device_cpu).collect();
+    let pr = cpu_devices.concat();
+    aml_scope(*b"_PR_", &pr)
 }
 
 fn aml_encode_pkg_length(len: usize) -> Vec<u8> {
