@@ -75,6 +75,17 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
             "rx_vq_error_flags=0x00000000|tx_vq_error_flags=0x00000001",
         )
 
+    def test_emits_extra_fields_sorted(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|host_features=0x1|irq_mode=msix|irq_message_count=3|z_key=1|a_key=2\n"
+        )
+        out = self._emit(tail)
+        # Extra fields are appended in sorted order after the stable base fields.
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|host_features=0x1|irq_mode=msix|irq_message_count=3|a_key=2|z_key=1",
+        )
+
     def test_emits_udp_checksum_fields(self) -> None:
         tail = (
             b"virtio-net-diag|INFO|host_features=0x1|guest_features=0x2|irq_mode=msix|irq_message_count=3|"

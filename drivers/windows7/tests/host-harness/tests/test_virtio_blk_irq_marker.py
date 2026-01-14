@@ -116,6 +116,18 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
             "msix_config_vector=0x0000|msix_queue_vector=0x0001",
         )
 
+    def test_sorts_extra_irq_and_msix_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
+            b"virtio-blk-miniport-irq|INFO|mode=msi|messages=2|irq_intr1=2|irq_intr0=1|msix_dpc1=3|msix_dpc0=4\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msi|irq_message_count=2|"
+            "irq_intr0=1|irq_intr1=2|msix_dpc0=4|msix_dpc1=3",
+        )
+
     def test_prefers_miniport_irq_diag_over_blk_irq_diag(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
