@@ -167,12 +167,13 @@ fn apply_mutations(mut bytes: Vec<u8>, truncate_seed: u32, mutations: &[(u32, u8
     }
 
     // Randomly truncate to exercise format detection + header parsing against truncated inputs.
-    let new_len = if bytes.is_empty() {
-        0
-    } else {
-        (truncate_seed as usize) % (bytes.len() + 1)
-    };
-    bytes.truncate(new_len);
+    //
+    // Also keep the full length occasionally so we exercise successful open + read paths for
+    // valid/near-valid images, not only the "truncated header/table" errors.
+    if !bytes.is_empty() && (truncate_seed & 0xF) != 0 {
+        let new_len = (truncate_seed as usize) % (bytes.len() + 1);
+        bytes.truncate(new_len);
+    }
     bytes
 }
 
