@@ -211,6 +211,10 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       // Update VRAM scanout contents without sending a tick. The screenshot request should still
       // force a scanout readback so it reflects the latest scanout state.
       writeBgrxPixel(0x66, 0x55, 0x44);
+      // Ensure the VRAM write is visible to the worker before we request a screenshot. JS shared
+      // memory writes are not inherently synchronized across threads, so perform an atomic store
+      // on the shared frame state to create a happens-before edge with the worker's Atomics.load().
+      Atomics.store(frameState, FRAME_SEQ_INDEX, Atomics.load(frameState, FRAME_SEQ_INDEX));
 
       const shot2 = await requestScreenshot(2);
       expect(shot2.width).toBe(1);
