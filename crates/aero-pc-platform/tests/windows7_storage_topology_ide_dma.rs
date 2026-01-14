@@ -140,6 +140,10 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
         Windows7StorageTopologyConfig { hdd, cdrom },
     );
 
+    // Observe IDE legacy IRQs via the PIC.
+    unmask_pic_irq(&mut pc, 14);
+    unmask_pic_irq(&mut pc, 15);
+
     // Optional Win7 topology slot: IDE primary master ATA disk (disk_id=2).
     let ide_capacity = 8 * SECTOR_SIZE as u64;
     let mut ide_disk = RawDisk::create(MemBackend::new(), ide_capacity).unwrap();
@@ -192,6 +196,8 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
 
     pc.io.write(bm_base, 1, 0x09); // start + direction=read (device -> memory)
     pump_ide_until_bm_irq(&mut pc, bm_base + 2);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(14));
 
     let bm_st = pc.io.read(bm_base + 2, 1) as u8;
     assert_eq!(
@@ -203,6 +209,15 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     let mut got = [0u8; SECTOR_SIZE];
     mem_read(&mut pc, ata_buf, &mut got);
     assert_eq!(got, expected_ata);
+
+    // ACK+EOI the interrupt so the PIC doesn't retain stale state.
+    if let Some(vector) = pic_pending_vector(&pc) {
+        pic_acknowledge_and_eoi(&mut pc, vector);
+    }
+    // Clear the device interrupt by reading Status, then propagate deassertion.
+    let _ = pc.io.read(pri_cmd + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_vector(&pc), None);
 
     // Stop + clear status bits to mimic typical driver behavior.
     pc.io.write(bm_base, 1, 0);
@@ -224,15 +239,31 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     let sec_cmd = SECONDARY_PORTS.cmd_base;
     pc.io.write(sec_cmd + 6, 1, 0xA0);
     atapi_clear_unit_attention(&mut pc, sec_cmd);
+    // Clear any pending IRQ from TEST UNIT READY / REQUEST SENSE before starting the DMA read.
+    pc.poll_pci_intx_lines();
+    if let Some(vector) = pic_pending_vector(&pc) {
+        pic_acknowledge_and_eoi(&mut pc, vector);
+    }
+    assert_eq!(pic_pending_vector(&pc), None);
 
     // READ(10) LBA=0 blocks=1 with DMA enabled (FEATURES bit0).
     let mut read10 = [0u8; 12];
     read10[0] = 0x28;
     read10[7..9].copy_from_slice(&1u16.to_be_bytes());
     atapi_send_packet(&mut pc, sec_cmd, 0x01, &read10, AtapiCdrom::SECTOR_SIZE as u16);
+    // The PACKET command phase can raise an interrupt requesting the 12-byte packet; our helper
+    // supplies it synchronously, so clear that interrupt before checking DMA completion.
+    let _ = pc.io.read(sec_cmd + 7, 1);
+    pc.poll_pci_intx_lines();
+    if let Some(vector) = pic_pending_vector(&pc) {
+        pic_acknowledge_and_eoi(&mut pc, vector);
+    }
+    assert_eq!(pic_pending_vector(&pc), None);
 
     pc.io.write(bm_base + 8, 1, 0x09); // start + direction=read
     pump_ide_until_bm_irq(&mut pc, bm_base + 8 + 2);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(15));
 
     let bm_st = pc.io.read(bm_base + 8 + 2, 1) as u8;
     assert_eq!(
@@ -244,4 +275,11 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     let mut got = [0u8; AtapiCdrom::SECTOR_SIZE];
     mem_read(&mut pc, atapi_buf, &mut got);
     assert_eq!(&got[..], expected_iso.as_slice());
+
+    if let Some(vector) = pic_pending_vector(&pc) {
+        pic_acknowledge_and_eoi(&mut pc, vector);
+    }
+    let _ = pc.io.read(sec_cmd + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_vector(&pc), None);
 }

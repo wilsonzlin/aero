@@ -1,21 +1,21 @@
 #![no_std]
 
-/// Canonical PCI INTx swizzle + PIRQ[A-D] -> GSI routing helpers.
-///
-/// Aero models PCI INTx routing using the conventional deterministic swizzle used by QEMU and
-/// PC-compatible firmware:
-///
-/// ```text
-/// pirq = (device + pin_index) & 3
-/// ```
-///
-/// where:
-/// - `device` is the PCI slot device number (0-31)
-/// - `pin_index` is 0..3 for INTA..INTD
-///
-/// The resulting PIRQ index (0..3 for A..D) is then mapped to a platform Global System Interrupt
-/// (GSI) via the caller-provided `pirq_to_gsi` table.
-
+//! Canonical PCI INTx swizzle + PIRQ[A-D] -> GSI routing helpers.
+//!
+//! Aero models PCI INTx routing using the conventional deterministic swizzle used by QEMU and
+//! PC-compatible firmware:
+//!
+//! ```text
+//! pirq = (device + pin_index) & 3
+//! ```
+//!
+//! where:
+//! - `device` is the PCI slot device number (0-31)
+//! - `pin_index` is 0..3 for INTA..INTD
+//!
+//! The resulting PIRQ index (0..3 for A..D) is then mapped to a platform Global System Interrupt
+//! (GSI) via the caller-provided `pirq_to_gsi` table.
+//!
 /// Computes the PIRQ index (0 = A, 1 = B, 2 = C, 3 = D) for a device/pin pair.
 #[inline]
 pub const fn pirq_index(device: u8, pin_index: u8) -> u8 {
@@ -81,4 +81,3 @@ mod tests {
         assert_eq!(irq_line_for_intx(map, 2, 0), 0xFF);
     }
 }
-
