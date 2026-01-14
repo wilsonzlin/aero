@@ -5739,6 +5739,11 @@ impl Machine {
         self.inner.inject_usb_hid_mouse_wheel(delta);
     }
 
+    /// Inject a horizontal mouse wheel delta into the synthetic USB HID mouse device (if enabled).
+    pub fn inject_usb_hid_mouse_hwheel(&mut self, delta: i32) {
+        self.inner.inject_usb_hid_mouse_hwheel(delta);
+    }
+
     /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
     /// enabled).
     ///

@@ -6974,6 +6974,16 @@ impl Machine {
         mouse.wheel(delta);
     }
 
+    /// Inject a horizontal mouse wheel delta into the synthetic USB HID mouse device (if present).
+    ///
+    /// `delta > 0` means wheel right / AC Pan.
+    pub fn inject_usb_hid_mouse_hwheel(&mut self, delta: i32) {
+        let Some(mouse) = &self.usb_hid_mouse else {
+            return;
+        };
+        mouse.hwheel(delta);
+    }
+
     /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
     /// present).
     ///
