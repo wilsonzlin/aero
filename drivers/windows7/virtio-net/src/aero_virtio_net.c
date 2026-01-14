@@ -280,8 +280,10 @@ static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _In
   // status between frames.
   NET_BUFFER_LIST_INFO(Nbl, TcpIpChecksumNetBufferListInfo) = NULL;
 
-  // Only trust checksum info when the device negotiated checksum support.
-  if ((Adapter->GuestFeatures & (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM)) == 0) {
+  // Only trust RX checksum metadata when the device negotiated guest checksum
+  // support (VIRTIO_NET_F_GUEST_CSUM). VIRTIO_NET_F_CSUM covers TX checksum
+  // offload only.
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_GUEST_CSUM) == 0) {
     return;
   }
   if (!Vhdr) {
