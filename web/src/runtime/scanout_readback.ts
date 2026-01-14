@@ -116,7 +116,8 @@ export function tryComputeScanoutRgba8ByteLength(
  *
  * Notes:
  * - `BGRX` / `RGBX` formats treat the unused `X` byte as fully opaque (`A=0xFF`) when converting to RGBA.
- * - sRGB variants are swizzled identically; only sampling differs at render time.
+ * - sRGB variants are swizzled identically; this helper does not perform any gamma conversion.
+ *   Callers that blend/present in linear space should decode sRGB→linear after swizzle.
  *
  * This is a pure helper intended for unit tests and screenshot/present paths.
  * It:
