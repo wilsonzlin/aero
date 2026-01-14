@@ -1197,6 +1197,37 @@ static void test_reset_emits_release_reports(void) {
   expect_report(&cap, 2, expect_mouse, sizeof(expect_mouse));
 }
 
+static void test_reset_without_emit_reports_does_not_emit(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_ALL);
+
+  /* Seed dirty state across all report types. */
+  send_key(&t, VIRTIO_INPUT_KEY_A, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 1);
+  send_rel(&t, VIRTIO_INPUT_REL_X, 5);
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 10);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 20);
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
+  assert(cap.count == 0);
+
+  hid_translate_reset(&t, false);
+  assert(cap.count == 0);
+
+  /*
+   * After reset, release events should be ignored (state already cleared), and
+   * a SYN_REPORT should not emit anything.
+   */
+  send_key(&t, VIRTIO_INPUT_KEY_A, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_VOLUMEUP, 0);
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 0);
+  send_syn(&t);
+  assert(cap.count == 0);
+}
+
 static void test_keyboard_only_enable(void) {
   struct captured_reports cap = {0};
   struct hid_translate t;
@@ -1256,6 +1287,23 @@ static void test_mouse_only_enable(void) {
   assert(cap.count == 1);
   uint8_t expect_release[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0, 0};
   expect_report(&cap, 0, expect_release, sizeof(expect_release));
+}
+
+static void test_tablet_abs_ignored_when_tablet_report_disabled(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Explicitly disable tablet output. */
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE | HID_TRANSLATE_REPORT_MASK_CONSUMER);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 10);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 20);
+  send_syn(&t);
+
+  assert(cap.count == 0);
 }
 
 static void test_tablet_basic_abs_reports(void) {
@@ -1622,8 +1670,10 @@ int main(void) {
   test_consumer_control_reports();
   test_consumer_control_disabled_does_not_emit();
   test_reset_emits_release_reports();
+  test_reset_without_emit_reports_does_not_emit();
   test_keyboard_only_enable();
   test_mouse_only_enable();
+  test_tablet_abs_ignored_when_tablet_report_disabled();
   test_tablet_basic_abs_reports();
   test_tablet_basic_abs_reports_le();
   test_tablet_clamp_min_max();
