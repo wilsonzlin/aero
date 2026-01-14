@@ -26,6 +26,11 @@ function isPowerOfTwo(n: number): boolean {
   return n > 0 && (n & (n - 1)) === 0;
 }
 
+function alignUpBigInt(value: bigint, alignment: bigint): bigint {
+  if (alignment <= 0n) return value;
+  return ((value + alignment - 1n) / alignment) * alignment;
+}
+
 async function callMaybeAsync(fn: (...args: unknown[]) => unknown, thisArg: unknown, args: unknown[]): Promise<void> {
   // Support both sync and async wasm-bindgen bindings.
   await Promise.resolve(fn.apply(thisArg, args));
@@ -81,6 +86,18 @@ async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<nu
     ) {
       return null;
     }
+
+    const tableOffset = dv.getBigUint64(32, true);
+    if (tableOffset !== 64n) return null;
+    const tableEntries = dv.getBigUint64(40, true);
+    const blockSizeBig = BigInt(blockSizeBytes);
+    const expectedTableEntries = (diskSizeBytes + blockSizeBig - 1n) / blockSizeBig;
+    if (tableEntries !== expectedTableEntries) return null;
+    const dataOffset = dv.getBigUint64(48, true);
+    const expectedDataOffset = alignUpBigInt(64n + tableEntries * 8n, blockSizeBig);
+    if (dataOffset !== expectedDataOffset) return null;
+    const allocatedBlocks = dv.getBigUint64(56, true);
+    if (allocatedBlocks > tableEntries) return null;
 
     return blockSizeBytes;
   } catch {
