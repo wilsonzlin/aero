@@ -26,6 +26,9 @@ The canonical machine supports **two mutually-exclusive** display configurations
   - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer for legacy VGA/VBE boot display
     compatibility, with permissive legacy VGA decode (VGA port I/O + VRAM-backed
     `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
+    - Note: in `wasm32` builds, the host-side BAR1 backing allocation is capped at 32MiB to fit
+      browser heap constraints. The guest-visible PCI BAR still reports the full VRAM aperture size;
+      reads return zero and writes are ignored beyond the backing allocation.
   - **WDDM memory model:** the in-tree Win7 AeroGPU driver treats the adapter as
     system-memory-backed (no dedicated VRAM segment). BAR1 exists for VGA/VBE compatibility and is
     outside the WDDM ABI (see `docs/graphics/win7-wddm11-aerogpu-driver.md`).

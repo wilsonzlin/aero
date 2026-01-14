@@ -6945,9 +6945,11 @@ impl Machine {
 
     /// Returns the AeroGPU VRAM BAR base (BAR1) if present in the active PCI profile.
     ///
-    /// Note: BAR1 is not currently used by the `aero-machine` AeroGPU stub, but exposing it allows
-    /// integration tests and runtimes to discover the configured VRAM aperture once the profile is
-    /// extended.
+    /// This consults the machine's canonical PCI config space (the same one exposed to the guest)
+    /// and therefore reflects BIOS POST / resource allocation.
+    ///
+    /// BAR1 is backed by the machine's VRAM buffer and is used for legacy VGA/VBE compatibility
+    /// (including the BIOS VBE linear framebuffer at `BAR1_BASE + VBE_LFB_OFFSET`).
     pub fn aerogpu_vram_bar_base(&self) -> Option<u64> {
         let bdf = self.aerogpu()?;
         let base = self.pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)?;
