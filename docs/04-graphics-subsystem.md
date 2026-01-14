@@ -26,7 +26,7 @@ The canonical machine provides a legacy boot display using a **VGA + Bochs VBE (
 Canonical machine GPU device modes (today):  
 
 - Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice` + a transitional Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`** (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
-- AeroGPU stub device (`enable_aerogpu=true`, `enable_vga=false`): exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`), wires BAR1-backed VRAM and permissive legacy VGA decode, and provides a minimal BAR0 MMIO + ring/fence transport (no full command execution yet). The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today.
+- AeroGPU stub device (`enable_aerogpu=true`, `enable_vga=false`): exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`), wires BAR1-backed VRAM and VRAM-backed legacy VGA/VBE decode, and provides a minimal BAR0 MMIO + ring/fence transport (no full command execution yet). The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today.
 
 ### 2) Browser presentation: shared-memory framebuffer → GPU worker → canvas
 
