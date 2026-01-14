@@ -4,34 +4,52 @@ use aero_usb::hid::report_descriptor::parse_report_descriptor;
 use aero_usb::hid::webhid::{synthesize_report_descriptor, HidCollectionInfo};
 use aero_usb::{SetupPacket, UsbInResult};
 
-fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
-    let json = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
-    ));
+fn parse_fixture_collections(json: &str) -> Vec<HidCollectionInfo> {
     serde_json::from_str(json).expect("fixture JSON should deserialize")
 }
 
 #[test]
 fn webhid_fixture_json_roundtrips_and_synthesizes_descriptor() {
-    let collections = fixture_mouse_collections();
+    for (fixture_name, fixture_json) in [
+        (
+            "webhid_normalized_mouse.json",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
+            )),
+        ),
+        (
+            "webhid_normalized_keyboard.json",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/fixtures/hid/webhid_normalized_keyboard.json"
+            )),
+        ),
+        (
+            "webhid_normalized_gamepad.json",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/fixtures/hid/webhid_normalized_gamepad.json"
+            )),
+        ),
+    ] {
+        let collections = parse_fixture_collections(fixture_json);
 
-    // Lock down the JSON wire contract: serde -> JSON must roundtrip without dropping/renaming any
-    // fields. This should match the output of `web/src/hid/webhid_normalize.ts`.
-    let expected_json: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
-    )))
-    .expect("fixture JSON should parse");
-    let actual_json = serde_json::to_value(&collections).expect("fixture should serialize");
-    assert_eq!(actual_json, expected_json);
+        // Lock down the JSON wire contract: serde -> JSON must roundtrip without dropping/renaming any
+        // fields. This should match the output of `web/src/hid/webhid_normalize.ts`.
+        let expected_json: serde_json::Value =
+            serde_json::from_str(fixture_json).expect("fixture JSON should parse");
+        let actual_json = serde_json::to_value(&collections).expect("fixture should serialize");
+        assert_eq!(actual_json, expected_json, "fixture roundtrip mismatch: {fixture_name}");
 
-    let desc = synthesize_report_descriptor(&collections)
-        .expect("report descriptor synthesis should succeed");
-    assert!(!desc.is_empty(), "expected a non-empty report descriptor");
+        let desc = synthesize_report_descriptor(&collections)
+            .unwrap_or_else(|err| panic!("report descriptor synthesis should succeed ({fixture_name}): {err}"));
+        assert!(!desc.is_empty(), "expected a non-empty report descriptor: {fixture_name}");
 
-    // The synthesized bytes must also be parseable by our HID descriptor parser.
-    parse_report_descriptor(&desc).expect("synthesized report descriptor should parse");
+        // The synthesized bytes must also be parseable by our HID descriptor parser.
+        parse_report_descriptor(&desc)
+            .unwrap_or_else(|err| panic!("synthesized report descriptor should parse ({fixture_name}): {err}"));
+    }
 }
 
 fn sample_report_descriptor_output_with_id() -> Vec<u8> {
