@@ -273,6 +273,19 @@ Once the system boots with virtio-snd hardware present:
  2. Confirm the device’s Hardware IDs match what the injected INF declares (`aero_virtio_snd.inf` vs `aero-virtio-snd-legacy.inf`) (Device Manager → Details → **Hardware Ids**).
 3. Confirm signature policy didn’t block installation/loading (next section).
 
+## Bring-up toggles (registry)
+
+The virtio-snd INFs create per-device bring-up toggles with safe defaults (`0`) under the device instance registry key:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
+  - `1`: force the silent null backend and allow `START_DEVICE` to succeed even when virtio transport bring-up fails
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
+  - `1`: allow polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx)
+
+Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
+
+After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
+
 ---
 
 ## Driver signing / test-signing warnings
