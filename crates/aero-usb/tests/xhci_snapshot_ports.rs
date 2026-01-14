@@ -23,7 +23,9 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 }
 
@@ -46,6 +48,27 @@ impl MemoryBus for TestMem {
         }
         self.data[start..end].copy_from_slice(buf);
     }
+}
+
+fn make_tick_time_snapshot() -> Vec<u8> {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMem::new(0x4000);
+
+    // Point CRCR at a known address and seed a dword there so `tick_1ms_with_dma` updates the
+    // controller's internal DMA probe state.
+    let crcr_ptr = 0x1000u64;
+    mem.write_u32(crcr_ptr, 0xaabb_ccdd);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    // Advance time and run the tick-driven DMA probe.
+    for _ in 0..3 {
+        ctrl.tick_1ms_with_dma(&mut mem);
+    }
+
+    ctrl.save_state()
 }
 
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
@@ -260,24 +283,7 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
 
 #[test]
 fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
-    let mut ctrl = XhciController::new();
-    let mut mem = TestMem::new(0x4000);
-
-    // Point CRCR at a known address and seed a dword there so `tick_1ms_with_dma` updates the
-    // controller's internal DMA probe state.
-    let crcr_ptr = 0x1000u64;
-    mem.write_u32(crcr_ptr, 0xaabb_ccdd);
-
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-
-    // Advance time and run the tick-driven DMA probe.
-    for _ in 0..3 {
-        ctrl.tick_1ms_with_dma(&mut mem);
-    }
-
-    let bytes = ctrl.save_state();
+    let bytes = make_tick_time_snapshot();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
 
     // Snapshot v0.8 stores the 1ms tick counter + last tick DMA dword.
@@ -295,25 +301,8 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
 
 #[test]
 fn xhci_snapshot_loads_legacy_time_and_tick_tag_mapping() {
-    let mut ctrl = XhciController::new();
-    let mut mem = TestMem::new(0x4000);
-
-    // Point CRCR at a known address and seed a dword there so `tick_1ms_with_dma` updates the
-    // controller's internal DMA probe state.
-    let crcr_ptr = 0x1000u64;
-    mem.write_u32(crcr_ptr, 0xaabb_ccdd);
-
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-
-    // Advance time and run the tick-driven DMA probe.
-    for _ in 0..3 {
-        ctrl.tick_1ms_with_dma(&mut mem);
-    }
-
-    let bytes = ctrl.save_state();
-    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+    let bytes = make_tick_time_snapshot();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
 
     // Regression test for an early xHCI snapshot v0.7 bug where `last_tick_dma_dword` was stored
     // under the tag now used for `time_ms` and the `time_ms` field was missing due to a tag
@@ -335,10 +324,47 @@ fn xhci_snapshot_loads_legacy_time_and_tick_tag_mapping() {
         .load_state(&legacy_bytes)
         .expect("load legacy time/tick snapshot");
 
-    let bytes2 = restored.save_state();
-    let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
-    assert_eq!(r2.u64(27).unwrap().unwrap(), 0);
-    assert_eq!(r2.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
+    let restored_bytes = restored.save_state();
+    let restored_r =
+        SnapshotReader::parse(&restored_bytes, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(restored_r.u64(27).unwrap().unwrap(), 0);
+    assert_eq!(restored_r.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
+}
+
+#[test]
+fn xhci_snapshot_loads_legacy_time_ms_overwriting_ep0_td_full() {
+    let bytes = make_tick_time_snapshot();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
+
+    // Regression test for an early xHCI snapshot v0.7 bug where `time_ms` overwrote the
+    // `TAG_EP0_CONTROL_TD_FULL` field (tag 26). In that case:
+    // - tag 26 contains `time_ms` (u64)
+    // - tag 27 contains `last_tick_dma_dword` (u32)
+    // - tag 28 is absent
+    let mut w = SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 7));
+    for (tag, field) in r.iter_fields() {
+        match tag {
+            // Drop EP0 TD-full; it was overwritten by `time_ms`.
+            26 => {}
+            // Move time_ms into the old collision tag.
+            27 => w.field_bytes(26, field.to_vec()),
+            // Move last_tick_dma_dword into the old tag.
+            28 => w.field_bytes(27, field.to_vec()),
+            other => w.field_bytes(other, field.to_vec()),
+        }
+    }
+    let legacy_bytes = w.finish();
+
+    let mut restored = XhciController::new();
+    restored
+        .load_state(&legacy_bytes)
+        .expect("load legacy collision snapshot");
+
+    let restored_bytes = restored.save_state();
+    let restored_r =
+        SnapshotReader::parse(&restored_bytes, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(restored_r.u64(27).unwrap().unwrap(), 3);
+    assert_eq!(restored_r.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
 }
 
 #[test]
