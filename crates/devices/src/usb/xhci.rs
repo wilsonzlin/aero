@@ -771,6 +771,10 @@ mod tests {
             counts: counts.clone(),
         }));
 
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x2000);
+
         let mut dev = XhciPciDevice::default();
         dev.set_dma_memory_bus(Some(bus));
         dev.config_mut().set_command(1 << 1); // MEM
@@ -782,12 +786,15 @@ mod tests {
 
         // BME disabled: RUN should not touch the DMA bus (NoDma adapter).
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        // DMA-on-RUN is executed by the controller tick; with BME clear this must not attempt DMA.
+        dev.tick_1ms(&mut mem);
         assert_eq!(counts.borrow().reads, 0);
 
         // Stop + enable bus mastering, then start again -> DMA should now be reachable.
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, 0);
         dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        dev.tick_1ms(&mut mem);
         assert!(
             counts.borrow().reads > 0,
             "controller should touch the DMA bus when BME is enabled"
@@ -808,6 +815,10 @@ mod tests {
 
         let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
 
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x2000);
+
         let mut dev = XhciPciDevice::default();
         dev.set_dma_memory_bus(Some(bus));
         dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
@@ -816,6 +827,7 @@ mod tests {
         MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1000);
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        dev.tick_1ms(&mut mem);
         assert!(dev.irq_level());
 
         // Disable INTx via PCI command bit 10.
@@ -838,6 +850,10 @@ mod tests {
 
         let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
 
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x2000);
+
         let mut dev = XhciPciDevice::default();
         dev.set_dma_memory_bus(Some(bus));
         dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
@@ -845,6 +861,7 @@ mod tests {
         MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1234);
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        dev.tick_1ms(&mut mem);
 
         // Snapshot the register values as observed through MMIO after the controller has applied
         // any architectural masking (e.g. CRCR alignment).
