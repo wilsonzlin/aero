@@ -898,6 +898,48 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Issues `drawIndirect` or `drawIndexedIndirect` depending on whether an index buffer was
       generated.
 
+**Passthrough VS strategy (concrete)**
+
+To avoid WebGPU vertex-attribute limits and to preserve D3D varying bit patterns, the passthrough
+VS does **not** use WebGPU vertex buffers/attributes. Instead, it reads the expansion output as a
+storage buffer:
+
+```wgsl
+// Example binding for the final vertex stream. This is whichever expansion stage is last:
+// - `tess_out_vertices` (no GS): `@binding(267)`
+// - `gs_out_vertices`   (with GS): `@binding(269)`
+//
+// Implementations may also choose to *always* bind the final vertex stream at one canonical binding
+// (e.g. 269) to simplify passthrough shader variants.
+@group(3) @binding(FINAL_VERTEX_BINDING) var<storage, read> final_vertices: array<ExpandedVertex>;
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  // plus `@location(N)` varyings matching the translated PS input signature.
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
+  let v = final_vertices[vi];
+  var out: VsOut;
+  out.pos = bitcast<vec4<f32>>(v.pos_bits);
+  // For each linked varying location N:
+  //   out.locN = bitcast<vec4<f32>>(v.varyings[N]);
+  return out;
+}
+```
+
+Notes:
+
+- For non-indexed draws (`drawIndirect`), `vertex_index` runs `0..vertex_count-1` and directly
+  indexes the packed list vertices.
+- For indexed draws (`drawIndexedIndirect`), the index buffer selects which `ExpandedVertex` is
+  used. The expansion path should always set `base_vertex = 0` in the indirect args so `vertex_index`
+  equals the raw index.
+- The pipeline layout for this render pass typically uses:
+  - `@group(1)` for PS resources (existing stage-scoped PS group), and
+  - `@group(3)` for the expansion output buffer (and any other internal bindings).
+
 #### 2.5) Render-pass splitting constraints
 
 WebGPU forbids running compute work inside an active render pass. The D3D11 command stream has no
