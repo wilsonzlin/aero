@@ -1191,7 +1191,9 @@ To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), se
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
 
 To print the computed QEMU argv (JSON + best-effort single-line command) without starting QEMU/HTTP/QMP, set the workflow
-input `dry_run=true`. This passes `--dry-run` to the Python harness and exits 0 after printing.
+input `dry_run=true`. This passes `--dry-run` to the Python harness and exits 0 after printing. In this mode, the
+workflow does not require the disk image path to exist (it prints a warning instead), which is useful when you just want
+to inspect the generated QEMU args.
 
 To force INTx-only mode (disable MSI-X by passing `vectors=0` on the virtio devices), set the workflow input
 `force_intx=true`. This passes `--force-intx` (alias: `--virtio-disable-msix`) to the Python harness. Note: some QEMU

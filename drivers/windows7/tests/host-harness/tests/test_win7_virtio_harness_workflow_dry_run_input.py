@@ -20,8 +20,11 @@ class Win7VirtioHarnessWorkflowDryRunInputTests(unittest.TestCase):
     def test_workflow_plumbs_dry_run(self) -> None:
         self.assertIn("dry_run:", self.text)
         self.assertIn('echo "  dry_run: \'${{ inputs.dry_run }}\'"', self.text)
-        self.assertIn('if [[ "${{ inputs.dry_run }}" == "true" ]]; then', self.text)
+        self.assertIn('dry_run="${{ inputs.dry_run }}"', self.text)
         self.assertIn("args+=(--dry-run)", self.text)
+        # When dry_run is enabled, the workflow should not fail fast if the disk image path is missing.
+        self.assertIn("WARNING: disk image path does not exist on the runner:", self.text)
+        self.assertIn('if [[ "${dry_run}" == "true" ]]; then', self.text)
 
 
 if __name__ == "__main__":
