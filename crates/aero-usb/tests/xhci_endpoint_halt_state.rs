@@ -5,10 +5,10 @@ use std::rc::Rc;
 
 use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct StallOnceThenDataIn {
@@ -65,8 +65,7 @@ fn stalled_endpoint_sets_halted_state_in_device_context_until_reset() {
     xhci.set_dcbaap(dcbaa);
     xhci.attach_device(0, Box::new(StallOnceThenDataIn::new()));
     while xhci.pop_pending_event().is_some() {}
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
     let slot_id = completion.slot_id;

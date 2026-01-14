@@ -3,12 +3,12 @@ use std::boxed::Box;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct InterruptInDevice;
@@ -126,8 +126,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoint_when_guest_context_says
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);

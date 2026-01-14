@@ -1,11 +1,11 @@
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 mod util;
-use util::TestMemory;
+use util::{xhci_set_run, TestMemory};
 
 #[derive(Default)]
 struct DummyDevice;
@@ -33,8 +33,7 @@ fn xhci_detach_at_path_clears_pending_endpoints() {
     let mut ctrl = XhciController::with_port_count(1);
 
     ctrl.set_dcbaap(0x1000);
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     let mut hub = UsbHubDevice::with_port_count(8);
     hub.attach(3, Box::new(DummyDevice));
     ctrl.attach_device(0, Box::new(hub));

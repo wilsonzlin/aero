@@ -3,10 +3,10 @@ mod util;
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::context::{EndpointContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
@@ -48,8 +48,7 @@ fn endpoint_commands_update_context_and_transfer_ring() {
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     // Enable Slot.
     {
         let mut trb = Trb::default();
@@ -190,8 +189,7 @@ fn stop_endpoint_disabled_endpoint_returns_endpoint_not_enabled_error() {
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     // Enable Slot.
     {
         let mut trb = Trb::default();
@@ -265,8 +263,7 @@ fn stop_endpoint_gates_transfer_execution_until_reset() {
     xhci.set_dcbaap(dcbaa);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
     let slot_id = completion.slot_id;

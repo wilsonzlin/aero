@@ -2,12 +2,12 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{MemoryBus, SetupPacket};
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 fn patch_slots_transfer_ring_ptr(
     slots_field: &[u8],
@@ -200,7 +200,7 @@ fn xhci_snapshot_drops_misaligned_transfer_ring_cursor() {
 
     // Execute a doorbell and tick. If the ring pointer were incorrectly masked instead of rejected,
     // the controller would DMA the device descriptor into `data_buf` and queue a Transfer Event.
-    restored.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci_set_run(&mut restored);
     restored.ring_doorbell(slot_id, 1);
     restored.tick(&mut mem);
 

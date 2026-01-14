@@ -2,14 +2,14 @@ use std::boxed::Box;
 
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{
     ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult,
 };
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct FixedControlInDevice;
@@ -128,8 +128,7 @@ fn xhci_does_not_execute_ep0_transfers_when_trdp_reserved_bits_set() {
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(FixedControlInDevice));
     while ctrl.pop_pending_event().is_some() {}
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);

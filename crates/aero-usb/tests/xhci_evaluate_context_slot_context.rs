@@ -1,12 +1,12 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::xhci::context::{EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, XhciController};
+use aero_usb::xhci::{XhciController};
 use aero_usb::MemoryBus;
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 fn write_stop_marker(mem: &mut TestMemory, addr: u64) {
     let mut trb = Trb::default();
@@ -33,8 +33,7 @@ fn evaluate_context_preserves_xhc_owned_slot_context_fields() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     // --- Enable Slot (TRB0) ---
     {
         let mut enable = Trb::default();

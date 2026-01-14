@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::transfer::{write_trb, Trb, TrbType};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 fn make_empty_normal_trb(cycle: bool) -> Trb {
     let mut dword3 = 0u32;
@@ -79,8 +79,7 @@ fn xhci_tick_round_robins_active_endpoints_to_avoid_starvation() {
     // Drop any Port Status Change events so they don't affect the test.
     while xhci.pop_pending_event().is_some() {}
 
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     let mut slot_ids = Vec::new();
     for hub_port in 1u8..=9 {
         let completion = xhci.enable_slot(&mut mem);

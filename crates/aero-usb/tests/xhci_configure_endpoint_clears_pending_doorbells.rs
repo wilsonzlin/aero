@@ -2,12 +2,12 @@ use std::boxed::Box;
 
 use aero_usb::xhci::context::{InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct InterruptInDevice;
@@ -146,8 +146,7 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -224,8 +223,7 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -290,8 +288,7 @@ fn xhci_configure_endpoint_preserves_slot_binding_when_output_slot_context_unini
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut ctrl);
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);

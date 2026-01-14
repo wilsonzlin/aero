@@ -1,12 +1,12 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
 mod util;
 
-use util::TestMemory;
+use util::{xhci_set_run, TestMemory};
 
 #[test]
 fn xhci_configure_endpoint_dev_ctx_ptr_overflow_does_not_panic_or_write_low_memory() {
@@ -23,8 +23,7 @@ fn xhci_configure_endpoint_dev_ctx_ptr_overflow_does_not_panic_or_write_low_memo
 
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
+    xhci_set_run(&mut xhci);
     let enable = xhci.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;
