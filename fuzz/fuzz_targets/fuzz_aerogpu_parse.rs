@@ -93,6 +93,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     let _ = cmd::resolve_stage(cmd::AerogpuShaderStage::Compute as u32, 1); // InvalidStageEx
     let _ = cmd::resolve_stage(cmd::AerogpuShaderStage::Compute as u32, 6); // UnknownStageEx
     let _ = cmd::resolve_stage(u32::MAX, 0); // UnknownShaderStage
+    // Also exercise the stage_ex helper paths that return "unknown" via `None`/`Unknown`.
+    let _ = cmd::decode_stage_ex(cmd::AerogpuShaderStage::Compute as u32, 6); // None (unknown stage_ex)
+    let _ = cmd::resolve_shader_stage_with_ex(cmd::AerogpuShaderStage::Compute as u32, 6); // Unknown stage_ex
+    let _ = cmd::resolve_shader_stage_with_ex(u32::MAX, 0); // Unknown legacy stage
 
     // Also exercise the canonical protocol-level command stream parser + typed packet decoders.
     //
@@ -1619,7 +1623,7 @@ fuzz_target!(|data: &[u8]| {
     let cmd_bad_len_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
         + cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES
         // BIND_SHADERS with a truncated "extended" payload: payload.len() > 16 but < 28.
-        // This should trigger `PayloadSizeMismatch` in the new extended decoder.
+        // This should decode as "no appended gs/hs/ds handles" without reading past bounds.
         + (cmd::AerogpuCmdBindShaders::SIZE_BYTES + 4)
         + cmd::AerogpuCmdUploadResource::SIZE_BYTES
         + cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES
