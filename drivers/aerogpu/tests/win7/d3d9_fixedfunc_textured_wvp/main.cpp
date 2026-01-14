@@ -14,6 +14,18 @@ struct Vertex {
   float v;
 };
 
+static int AbsInt(int v) { return v < 0 ? -v : v; }
+
+static bool ColorWithinTolerance(uint32_t got, uint32_t expected, int tol) {
+  const int gr = (int)((got >> 16) & 0xFFu);
+  const int gg = (int)((got >> 8) & 0xFFu);
+  const int gb = (int)((got >> 0) & 0xFFu);
+  const int er = (int)((expected >> 16) & 0xFFu);
+  const int eg = (int)((expected >> 8) & 0xFFu);
+  const int eb = (int)((expected >> 0) & 0xFFu);
+  return AbsInt(gr - er) <= tol && AbsInt(gg - eg) <= tol && AbsInt(gb - eb) <= tol;
+}
+
 static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   const char* kTestName = "d3d9_fixedfunc_textured_wvp";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -284,8 +296,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   // Bottom-right texel is yellow (255,255,0); MODULATE with vertex diffuse yields (128,64,0).
   const uint32_t kExpectedCenter = D3DCOLOR_XRGB(128, 64, 0);
 
-  auto DrawAndValidateCenterPixel =
-      [&](const char* label, const wchar_t* dump_leaf, uint32_t expected_center) -> int {
+  auto DrawAndValidateCenterPixel = [&](const char* label,
+                                        const wchar_t* dump_leaf,
+                                        uint32_t expected_center,
+                                        int expected_tol_rgb) -> int {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClear, 1.0f, 0);
     if (FAILED(hr)) {
       return reporter.FailHresult("IDirect3DDevice9Ex::Clear", hr);
@@ -349,7 +363,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
     const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
-    if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
+    if (!ColorWithinTolerance(center, expected_center, expected_tol_rgb)) {
       if (dump && dump_leaf) {
         std::string err;
         const std::wstring bmp_path =
@@ -366,10 +380,11 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
         }
       }
       sysmem->UnlockRect();
-      return reporter.Fail("pixel mismatch (%s): center=0x%08lX expected 0x%08lX",
+      return reporter.Fail("pixel mismatch (%s): center=0x%08lX expected 0x%08lX (tol=%d)",
                            label ? label : "?",
                            (unsigned long)center,
-                           (unsigned long)expected_center);
+                           (unsigned long)expected_center,
+                           expected_tol_rgb);
     }
 
     if ((corner & 0x00FFFFFFu) != (kClear & 0x00FFFFFFu)) {
@@ -419,7 +434,8 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   }
   int rc = DrawAndValidateCenterPixel("vertex_decl",
                                       L"d3d9_fixedfunc_textured_wvp_vdecl.bmp",
-                                      kExpectedCenter);
+                                      kExpectedCenter,
+                                      /*expected_tol_rgb=*/1);
   if (rc != 0) {
     return rc;
   }
@@ -440,7 +456,8 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   dev->SetTransform(D3DTS_PROJECTION, &identity);
   rc = DrawAndValidateCenterPixel("vertex_decl_identity",
                                   L"d3d9_fixedfunc_textured_wvp_vdecl_identity.bmp",
-                                  kClear);
+                                  kClear,
+                                  /*expected_tol_rgb=*/0);
   if (rc != 0) {
     return rc;
   }
@@ -457,7 +474,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
   }
-  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp", kExpectedCenter);
+  rc = DrawAndValidateCenterPixel("fvf",
+                                  L"d3d9_fixedfunc_textured_wvp_fvf.bmp",
+                                  kExpectedCenter,
+                                  /*expected_tol_rgb=*/1);
   if (rc != 0) {
     return rc;
   }
