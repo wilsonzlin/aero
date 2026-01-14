@@ -101,6 +101,9 @@ enum aerogpu_engine_id {
  * - The host must not write to guest backing memory for allocations marked
  *   AEROGPU_ALLOC_FLAG_READONLY. Any command that would cause guest-memory
  *   writeback to a READONLY allocation must be rejected.
+ * - On Windows 7 (WDDM 1.1), the KMD derives READONLY per submission from the
+ *   allocation list entry's write-access metadata (`WriteOperation` bit;
+ *   `DXGK_ALLOCATIONLIST::Flags.Value & 0x1`).
  *
  * Fence ordering:
  * - The host must only advance `completed_fence` for a submission after all
