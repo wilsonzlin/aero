@@ -10085,56 +10085,15 @@ impl AerogpuD3d11Executor {
                 anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
             })?;
 
+        // The persistent shader cache only caches DXBC -> WGSL translations for stages that the
+        // WebGPU pipeline can execute directly (VS/PS/CS). Geometry/tessellation stages are
+        // currently emulated via compute, and the executor needs access to the shader handle for
+        // GS/HS/DS state tracking.
+        //
+        // Reuse the non-persistent create path for these stages (it stores a placeholder compute
+        // module and retains the shader in `resources.shaders`).
         if matches!(stage, ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain) {
-            let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
-            let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
-            validate_sm5_gs_streams(&program)?;
-            let parsed_stage = match program.stage {
-                crate::ShaderStage::Vertex => ShaderStage::Vertex,
-                crate::ShaderStage::Pixel => ShaderStage::Pixel,
-                crate::ShaderStage::Compute => ShaderStage::Compute,
-                crate::ShaderStage::Geometry => ShaderStage::Geometry,
-                crate::ShaderStage::Hull => ShaderStage::Hull,
-                crate::ShaderStage::Domain => ShaderStage::Domain,
-                other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
-            };
-            if parsed_stage != stage {
-                bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
-            }
-
-            if stage == ShaderStage::Geometry {
-                let instance_count = sm5_gs_instance_count(&program).unwrap_or(1).max(1);
-                self.resources
-                    .gs_shaders
-                    .insert(shader_handle, GsShaderMetadata { instance_count });
-            }
-
-            let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
-            let entry_point = match stage {
-                ShaderStage::Geometry => "gs_main",
-                ShaderStage::Hull => "hs_main",
-                ShaderStage::Domain => "ds_main",
-                _ => unreachable!(),
-            };
-            let wgsl = format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n");
-            let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
-                &self.device,
-                map_pipeline_cache_stage(stage),
-                &wgsl,
-                Some("aerogpu_cmd shader"),
-            );
-            let shader = ShaderResource {
-                stage,
-                wgsl_hash: hash,
-                depth_clamp_wgsl_hash: None,
-                dxbc_hash_fnv1a64,
-                entry_point,
-                vs_input_signature: Vec::new(),
-                reflection: ShaderReflection::default(),
-                wgsl_source: wgsl,
-            };
-            self.resources.shaders.insert(shader_handle, shader);
-            return Ok(());
+            return self.exec_create_shader_dxbc(cmd_bytes);
         }
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
