@@ -1760,12 +1760,15 @@ def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str
 
     This is used by the host harness to request more MSI-X vectors from virtio-pci
     devices (when the running QEMU build exposes the `vectors` property).
+
+    `vectors=0` is also used to force INTx-only operation (disable MSI-X) when supported.
     """
 
     if vectors is None:
         return device_arg
-    if int(vectors) <= 0:
-        raise ValueError(f"vectors must be a positive integer (got {vectors})")
+    vectors_i = int(vectors)
+    if vectors_i < 0:
+        raise ValueError(f"vectors must be a non-negative integer (got {vectors})")
 
     # Avoid generating malformed args if callers accidentally include a trailing comma.
     arg = device_arg.rstrip()
@@ -1776,7 +1779,7 @@ def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str
     if ",vectors=" in ("," + arg):
         return arg
 
-    return f"{arg},vectors={int(vectors)}"
+    return f"{arg},vectors={vectors_i}"
 
 
 def _qemu_device_arg_apply_vectors(device_arg: str, vectors: Optional[int]) -> str:
@@ -1829,27 +1832,19 @@ def _qemu_device_arg_maybe_add_vectors(
     """
     Append `,vectors=<N>` to a `-device` arg only when the QEMU device supports it.
 
-    If unsupported, emit a warning and return the original arg unchanged. This keeps
-    the harness compatible with older QEMU builds that do not expose a `vectors`
-    property for a given device.
+    If unsupported, raise a clear error so users don't get an opaque QEMU startup
+    failure (or silently run without the requested vectors/INTx configuration).
     """
 
     if vectors is None:
         return device_arg
     if not _qemu_device_supports_property(qemu_system, device_name, "vectors"):
-        print(
-            f"WARNING: QEMU device '{device_name}' does not advertise a 'vectors' property; ignoring {flag_name}={vectors}",
-            file=sys.stderr,
+        raise RuntimeError(
+            f"QEMU device '{device_name}' does not expose the 'vectors' property, "
+            f"but the harness was configured to set virtio vectors via {flag_name}={vectors}. "
+            "Disable the flag or upgrade QEMU."
         )
-        return device_arg
-    try:
-        return _qemu_device_arg_add_vectors(device_arg, vectors)
-    except Exception as e:
-        print(
-            f"WARNING: failed to apply {flag_name}={vectors} to QEMU device '{device_name}': {e}",
-            file=sys.stderr,
-        )
-        return device_arg
+    return _qemu_device_arg_add_vectors(device_arg, vectors)
 
 
 def _virtio_snd_skip_failure_message(tail: bytes) -> str:
@@ -2102,6 +2097,34 @@ def _qemu_has_device(qemu_system: str, device_name: str) -> bool:
         return True
     except RuntimeError:
         return False
+
+
+_QEMU_DEVICE_VECTORS_RE = re.compile(r"(?m)^\s*vectors\b")
+
+
+def _assert_qemu_devices_support_vectors_property(
+    qemu_system: str, device_names: list[str], *, requested_by: str
+) -> None:
+    """
+    Fail fast with a clear error if the user requested `vectors=` tuning (including `vectors=0`)
+    but the running QEMU binary does not expose the `vectors` property for one or more devices.
+    """
+
+    missing: list[str] = []
+    for device_name in device_names:
+        help_text = _qemu_device_help_text(qemu_system, device_name)
+        if not _QEMU_DEVICE_VECTORS_RE.search(help_text):
+            missing.append(device_name)
+
+    if not missing:
+        return
+
+    missing_str = ", ".join(missing)
+    raise RuntimeError(
+        f"QEMU device(s) do not expose the 'vectors' property: {missing_str}. "
+        f"The harness was configured to set virtio 'vectors=' ({requested_by}), but this QEMU build does not support it. "
+        "Disable the flag or upgrade QEMU."
+    )
 
 
 def _assert_qemu_supports_aero_w7_virtio_contract_v1(
@@ -2837,6 +2860,9 @@ def main() -> int:
     if args.timeout_seconds <= 0:
         parser.error("--timeout-seconds must be a positive integer")
 
+    # Note: INTx-only mode (vectors=0) is handled separately via `_qemu_device_arg_disable_msix` and
+    # a dedicated preflight that verifies QEMU accepts `vectors=0` for the relevant devices.
+
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:
             parser.error("--with-snd-buffer-limits requires --with-virtio-snd/--enable-virtio-snd")
@@ -2916,6 +2942,56 @@ def main() -> int:
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
+
+    vectors_requested = any(
+        v is not None for v in (virtio_net_vectors, virtio_blk_vectors, virtio_input_vectors, virtio_snd_vectors)
+    )
+    if vectors_requested:
+        requested_by_parts: list[str] = []
+        if args.virtio_disable_msix:
+            requested_by_parts.append("--virtio-disable-msix")
+        if args.virtio_msix_vectors is not None:
+            requested_by_parts.append(f"--virtio-msix-vectors={int(args.virtio_msix_vectors)}")
+        if args.virtio_net_vectors is not None:
+            requested_by_parts.append(f"--virtio-net-vectors={int(args.virtio_net_vectors)}")
+        if args.virtio_blk_vectors is not None:
+            requested_by_parts.append(f"--virtio-blk-vectors={int(args.virtio_blk_vectors)}")
+        if args.virtio_input_vectors is not None:
+            requested_by_parts.append(f"--virtio-input-vectors={int(args.virtio_input_vectors)}")
+        if args.virtio_snd_vectors is not None:
+            requested_by_parts.append(f"--virtio-snd-vectors={int(args.virtio_snd_vectors)}")
+        requested_by = "/".join(requested_by_parts) if requested_by_parts else "--virtio-msix-vectors"
+
+        devices: list[str] = []
+        if virtio_net_vectors is not None:
+            devices.append("virtio-net-pci")
+        if virtio_blk_vectors is not None:
+            devices.append("virtio-blk-pci")
+        if virtio_input_vectors is not None:
+            if args.virtio_transitional:
+                if _qemu_has_device(args.qemu_system, "virtio-keyboard-pci"):
+                    devices.append("virtio-keyboard-pci")
+                if _qemu_has_device(args.qemu_system, "virtio-mouse-pci"):
+                    devices.append("virtio-mouse-pci")
+                if attach_virtio_tablet:
+                    devices.append("virtio-tablet-pci")
+            else:
+                devices += ["virtio-keyboard-pci", "virtio-mouse-pci"]
+                if attach_virtio_tablet:
+                    devices.append("virtio-tablet-pci")
+        if args.enable_virtio_snd and virtio_snd_vectors is not None:
+            devices.append(_detect_virtio_snd_device(args.qemu_system))
+
+        if devices:
+            try:
+                _assert_qemu_devices_support_vectors_property(
+                    args.qemu_system,
+                    devices,
+                    requested_by=requested_by,
+                )
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
 
     disk_image = Path(args.disk_image).resolve()
     if not disk_image.exists():
@@ -3371,6 +3447,7 @@ def main() -> int:
                     device_arg = _get_qemu_virtio_sound_device_arg(
                         args.qemu_system, disable_legacy=True, pci_revision=aero_pci_rev
                     )
+                    snd_device = _detect_virtio_snd_device(args.qemu_system)
                     snd_device = _detect_virtio_snd_device(args.qemu_system)
                     device_arg = _qemu_device_arg_maybe_add_vectors(
                         args.qemu_system,

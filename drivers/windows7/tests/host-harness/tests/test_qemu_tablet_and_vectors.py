@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
-import io
 import sys
 import unittest
 from pathlib import Path
@@ -62,18 +60,18 @@ class QemuTabletAndVectorsTests(unittest.TestCase):
             self.assertNotIn("vectors=5", arg2)
 
             h._qemu_device_supports_property = lambda *_args, **_kwargs: False
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr):
-                arg3 = h._qemu_device_arg_maybe_add_vectors(
+            with self.assertRaises(RuntimeError) as ctx:
+                h._qemu_device_arg_maybe_add_vectors(
                     "qemu-system-x86_64",
                     "virtio-net-pci",
                     "virtio-net-pci,netdev=net0",
                     vectors=5,
                     flag_name="--virtio-net-vectors",
                 )
-            self.assertNotIn("vectors=5", arg3)
-            self.assertIn("does not advertise a 'vectors' property", stderr.getvalue())
-            self.assertIn("ignoring --virtio-net-vectors=5", stderr.getvalue())
+            msg = str(ctx.exception)
+            self.assertIn("does not expose the 'vectors' property", msg)
+            self.assertIn("virtio-net-pci", msg)
+            self.assertIn("--virtio-net-vectors=5", msg)
         finally:
             h._qemu_device_supports_property = old_supports
 

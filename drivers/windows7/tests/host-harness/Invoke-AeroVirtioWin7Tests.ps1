@@ -44,9 +44,9 @@ param(
   # When set (> 0), the harness appends `,vectors=<N>` to the virtio-net/blk/input/snd
   # `-device` args that it creates.
   #
-  # This knob is best-effort: the harness probes whether each QEMU device advertises the
-  # `vectors` property (via `-device <name>,help`). If unsupported, it warns and runs
-  # without the override.
+  # The harness probes whether each QEMU device advertises the `vectors` property (via
+  # `-device <name>,help`). If unsupported, it fails fast with a clear error so users
+  # don't get an opaque QEMU startup failure.
   #
   # Typical values: 2, 4, 8. Windows may still allocate fewer MSI-X messages than
   # requested; the Aero drivers are expected to fall back to the number of vectors
@@ -57,7 +57,7 @@ param(
   # Optional per-device MSI-X vector overrides. When set (> 0), these override -VirtioMsixVectors for the
   # corresponding device class.
   #
-  # These knobs are best-effort: QEMU must support the `vectors` device property for the target device.
+  # Note: these require QEMU support for the `vectors` device property.
   [Parameter(Mandatory = $false)]
   [Alias("VirtioNetMsixVectors")]
   [int]$VirtioNetVectors = 0,
@@ -75,7 +75,8 @@ param(
   [int]$VirtioInputVectors = 0,
 
   # If set, disable MSI-X for virtio-pci devices created by the harness (virtio-net/blk/input/snd)
-  # so Windows 7 must use legacy INTx + ISR paths. This appends `,vectors=0` to each virtio `-device` arg.
+  # by appending `,vectors=0` to each virtio `-device` arg (INTx-only mode). This requires the QEMU
+  # virtio `vectors` device property.
   [Parameter(Mandatory = $false)]
   [switch]$VirtioDisableMsix,
 
@@ -382,21 +383,19 @@ function Resolve-AeroWin7QemuMsixVectors {
     [Parameter(Mandatory = $true)]
     [int]$Vectors,
     [Parameter(Mandatory = $true)]
-    [string]$ParamName
+    [string]$ParamName,
+
+    # If set, validate QEMU `vectors` property support even when Vectors=0 (used for -VirtioDisableMsix).
+    [Parameter(Mandatory = $false)]
+    [switch]$ForceCheck
   )
 
-  if ($Vectors -le 0) { return 0 }
-
   $helpText = $null
-  try {
-    $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $DeviceName
-  } catch {
-    Write-Warning "Failed to query QEMU device help for '$DeviceName' while applying $ParamName=$Vectors. Ignoring vectors override. $_"
-    return 0
-  }
+  if ($Vectors -le 0 -and (-not $ForceCheck)) { return 0 }
+
+  $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $DeviceName
   if ($helpText -notmatch "(?m)^\s*vectors\b") {
-    Write-Warning "QEMU device '$DeviceName' does not advertise a 'vectors' property; ignoring $ParamName=$Vectors"
-    return 0
+    throw "QEMU device '$DeviceName' does not advertise a 'vectors' property. $ParamName requires it. Disable the flag or upgrade QEMU."
   }
   return $Vectors
 }
@@ -1655,8 +1654,7 @@ function Get-AeroVirtioSoundDeviceArg {
     Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName $deviceName
   }
   if ($MsixVectors -gt 0 -and ($helpText -notmatch "(?m)^\s*vectors\b")) {
-    Write-Warning "QEMU device '$deviceName' does not advertise a 'vectors' property; ignoring $VectorsParamName=$MsixVectors"
-    $MsixVectors = 0
+    throw "QEMU device '$deviceName' does not advertise a 'vectors' property. $VectorsParamName=$MsixVectors requires it. Disable the flag or upgrade QEMU."
   }
 
   $arg = "$deviceName"
@@ -5009,6 +5007,16 @@ try {
   $virtioBlkVectorsFlag = $(if ($VirtioBlkVectors -gt 0) { "-VirtioBlkVectors" } else { "-VirtioMsixVectors" })
   $virtioSndVectorsFlag = $(if ($VirtioSndVectors -gt 0) { "-VirtioSndVectors" } else { "-VirtioMsixVectors" })
   $virtioInputVectorsFlag = $(if ($VirtioInputVectors -gt 0) { "-VirtioInputVectors" } else { "-VirtioMsixVectors" })
+  if ($VirtioDisableMsix) {
+    $requestedVirtioNetVectors = 0
+    $requestedVirtioBlkVectors = 0
+    $requestedVirtioSndVectors = 0
+    $requestedVirtioInputVectors = 0
+    $virtioNetVectorsFlag = "-VirtioDisableMsix"
+    $virtioBlkVectorsFlag = "-VirtioDisableMsix"
+    $virtioSndVectorsFlag = "-VirtioDisableMsix"
+    $virtioInputVectorsFlag = "-VirtioDisableMsix"
+  }
   $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
   $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
@@ -5055,7 +5063,7 @@ try {
     }
   }
   if ($VirtioTransitional) {
-    $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag
+    $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag -ForceCheck:$VirtioDisableMsix
     $nic = "virtio-net-pci,netdev=net0"
     if ($VirtioDisableMsix) {
       $nic += ",vectors=0"
@@ -5064,7 +5072,7 @@ try {
     }
 
     $virtioBlkArgs = @()
-    $blkVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci" -Vectors $requestedVirtioBlkVectors -ParamName $virtioBlkVectorsFlag
+    $blkVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci" -Vectors $requestedVirtioBlkVectors -ParamName $virtioBlkVectorsFlag -ForceCheck:$VirtioDisableMsix
     if ($VirtioDisableMsix -or $blkVectors -gt 0) {
       # Use an explicit virtio-blk-pci device so we can apply `vectors=` / `vectors=0`.
       $driveId = "drive0"
@@ -5120,7 +5128,7 @@ try {
 
     if ($haveVirtioKbd) {
       $kbdArg = "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)"
-      $kbdVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
+      $kbdVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
       if ($VirtioDisableMsix) {
         Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci"
         $kbdArg += ",vectors=0"
@@ -5133,7 +5141,7 @@ try {
     }
     if ($haveVirtioMouse) {
       $mouseArg = "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
-      $mouseVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
+      $mouseVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
       if ($VirtioDisableMsix) {
         Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci"
         $mouseArg += ",vectors=0"
@@ -5149,7 +5157,7 @@ try {
         throw "QEMU does not advertise virtio-tablet-pci but -WithVirtioTablet/-WithInputTabletEvents/-WithTabletEvents was enabled. Upgrade QEMU or omit tablet support."
       }
       $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
-      $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
+      $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
       if ($VirtioDisableMsix) {
         Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci"
         $tabletArg += ",vectors=0"
@@ -5218,13 +5226,13 @@ try {
     # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
     # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
     # drivers bind under QEMU.
-    $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag
-    $blkVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci" -Vectors $requestedVirtioBlkVectors -ParamName $virtioBlkVectorsFlag
-    $kbdVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
-    $mouseVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
+    $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag -ForceCheck:$VirtioDisableMsix
+    $blkVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci" -Vectors $requestedVirtioBlkVectors -ParamName $virtioBlkVectorsFlag -ForceCheck:$VirtioDisableMsix
+    $kbdVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
+    $mouseVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
     $tabletVectors = 0
     if ($needVirtioTablet) {
-      $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
+      $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
     }
 
     $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $netVectors -DisableMsix:$VirtioDisableMsix
