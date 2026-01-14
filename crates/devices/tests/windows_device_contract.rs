@@ -134,6 +134,30 @@ fn inf_installs_service(contents: &str, expected_service: &str) -> bool {
     })
 }
 
+fn inf_body_from_first_section(contents: &str) -> &str {
+    // Return the "functional" region of an INF: from the first section header
+    // (typically `[Version]`) onward. The virtio-input filename alias policy only
+    // allows the leading banner/comment block to differ.
+    let mut offset = 0;
+    for line in contents.split_inclusive('\n') {
+        let trimmed = line.trim_start_matches(|c: char| matches!(c, '\0' | ' ' | '\t' | '\r' | '\n'));
+        if trimmed.is_empty() {
+            offset += line.len();
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            return &contents[offset..];
+        }
+        if trimmed.starts_with(';') {
+            offset += line.len();
+            continue;
+        }
+        // Unexpected functional content before a section header; treat it as
+        // functional to avoid masking drift.
+        return &contents[offset..];
+    }
+    panic!("INF did not contain a section header (e.g. [Version])");
+}
 fn inf_model_entry_for_hwid(
     contents: &str,
     section_name: &str,
@@ -426,6 +450,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
+
+        // The strict generic fallback HWID (no SUBSYS) exists so that driver binding
+        // remains revision-gated even when subsystem IDs are absent/ignored. It must
+        // remain generic (not reusing the keyboard/mouse DeviceDesc).
         assert!(
             !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
             "{section}: fallback DeviceDesc token must be generic (not keyboard)"
@@ -506,22 +534,10 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     let inf_contents =
         std::fs::read_to_string(&alias_path).expect("read virtio-input alias INF from repository");
 
-    fn inf_from_version_onward(contents: &str) -> &str {
-        let mut offset = 0usize;
-        for line in contents.split_inclusive('\n') {
-            let trimmed = line.trim_end_matches(['\r', '\n']).trim();
-            if trimmed.eq_ignore_ascii_case("[Version]") {
-                return &contents[offset..];
-            }
-            offset += line.len();
-        }
-        panic!("INF missing [Version] section header");
-    }
-
     assert_eq!(
-        inf_from_version_onward(&inf_contents),
-        inf_from_version_onward(&canonical_contents),
-        "alias INF {} must match canonical INF {} from [Version] onward",
+        inf_body_from_first_section(&inf_contents),
+        inf_body_from_first_section(&canonical_contents),
+        "alias INF {} must match canonical INF {} from the first section header onward",
         alias_path.display(),
         canonical_path.display()
     );

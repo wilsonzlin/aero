@@ -45,7 +45,7 @@ The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the ke
 separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**). When binding via the generic
 fallback entry, Device Manager will show **Aero VirtIO Input Device**.
 
-Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than the generic fallback, so it wins).
+Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than the generic fallback, so it wins). If the tablet INF is not installed, the generic fallback entry can also bind to tablet devices (but will use the generic device name).
 
 The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
 for workflows/tools that still reference `virtio-input.inf`.

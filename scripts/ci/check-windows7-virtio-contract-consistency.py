@@ -302,9 +302,9 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
     """
     Compare the canonical INF against its legacy filename alias.
 
-    Policy: the alias INF is a *filename alias only*. From the first section
-    header (typically `[Version]`) onward it must remain byte-for-byte identical
-    to the canonical INF. Only the leading banner/comment block may differ.
+    Policy: the alias INF is a filename alias only. From the first section header
+    (typically `[Version]`) onward, it must be byte-for-byte identical to the
+    canonical INF. Only the leading banner/comment block may differ.
     """
 
     try:
@@ -346,7 +346,9 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         lineterm="",
     )
 
-    return f"{label}: INF alias drift detected (expected byte-identical from [Version] onward):\n" + "".join(diff)
+    return f"{label}: INF alias drift detected (expected byte-identical from the first section header onward):\n" + "".join(
+        diff
+    )
 
 
 def parse_contract_major_version(md: str) -> int:
@@ -4488,7 +4490,7 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows/tools that reference the
-        # legacy `virtio-input.inf` basename.
+        # legacy `virtio-input.inf` name.
         #
         # Policy: it is a filename-only alias. From the first section header (`[Version]`) onward,
         # it must remain byte-for-byte identical to the canonical INF (only the leading

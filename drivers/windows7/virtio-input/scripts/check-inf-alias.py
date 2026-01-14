@@ -20,6 +20,7 @@ Policy:
   - The CI guardrail `scripts/ci/check-windows7-virtio-contract-consistency.py`
     validates the virtio-input HWID/model-line policy (keyboard/mouse + strict
     fallback + no tablet entry).
+
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
 """

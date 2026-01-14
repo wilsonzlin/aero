@@ -21,7 +21,7 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 > Note: `inf/virtio-input.inf.disabled` is a **legacy filename alias** for compatibility with older tooling/workflows
 > that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 >
-> The alias INF is checked in disabled-by-default; rename it to `virtio-input.inf` to enable it.
+> The alias INF is checked in disabled-by-default; rename it to `virtio-input.inf` to enable it locally if needed.
 >
 > Policy:
 >
