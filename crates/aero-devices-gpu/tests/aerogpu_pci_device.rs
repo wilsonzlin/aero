@@ -1165,6 +1165,47 @@ fn snapshot_roundtrip_preserves_pending_fence_completion_until_dma_is_enabled() 
 }
 
 #[test]
+fn snapshot_roundtrip_preserves_vblank_irq_enable_pending_suppression() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = new_test_device(cfg.clone());
+
+    // Start vblank scheduling by enabling scanout and ticking once.
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
+    let t0 = 0u64;
+    dev.tick(&mut mem, t0);
+
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be enabled");
+
+    // Enable vblank IRQ delivery but do *not* tick immediately. The PCI wrapper defers catch-up to
+    // the next `tick`, using `vblank_irq_enable_pending` to ensure old vblank edges do not latch
+    // an interrupt immediately on enable.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK as u64);
+
+    let snap = dev.save_state();
+
+    let mut restored = new_test_device(cfg);
+    restored.load_state(&snap).unwrap();
+
+    // Simulate time advancing across several vblank edges without ticking. The first tick after
+    // restore should catch up counters but must not latch an IRQ while the enable is still pending.
+    let enable_time = t0 + period_ns * 3;
+    restored.tick(&mut mem, enable_time);
+    assert_eq!(restored.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(restored.regs.scanout0_vblank_seq > 0);
+    assert!(!restored.irq_level());
+
+    // The *next* vblank edge after the enable becomes effective should latch the IRQ bit.
+    restored.tick(&mut mem, enable_time + period_ns);
+    assert_ne!(restored.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(restored.irq_level());
+}
+
+#[test]
 fn snapshot_roundtrip_preserves_pending_scanout_and_cursor_fb_gpa_updates() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
