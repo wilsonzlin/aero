@@ -2,6 +2,7 @@ use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE,
     VIRTIO_NET, VIRTIO_SND,
 };
+use std::collections::BTreeMap;
 
 fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -179,6 +180,36 @@ fn inf_model_entry_for_hwid(
     None
 }
 
+fn inf_strings(contents: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut current_section = String::new();
+    for raw in contents.lines() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            current_section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        if !current_section.eq_ignore_ascii_case("Strings") {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let mut value = value.trim();
+        if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            value = &value[1..value.len() - 1];
+        }
+        if !key.is_empty() {
+            out.insert(key.to_ascii_lowercase(), value.to_string());
+        }
+    }
+    out
+}
+
 #[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
     let contract: serde_json::Value =
@@ -326,6 +357,33 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
         assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
+
+    let strings = inf_strings(&inf_contents);
+    let kbd_name = strings
+        .get("aerovirtiokeyboard.devicedesc")
+        .expect("missing AeroVirtioKeyboard.DeviceDesc in [Strings]");
+    let mouse_name = strings
+        .get("aerovirtiomouse.devicedesc")
+        .expect("missing AeroVirtioMouse.DeviceDesc in [Strings]");
+    let generic_name = strings
+        .get("aerovirtioinput.devicedesc")
+        .expect("missing AeroVirtioInput.DeviceDesc in [Strings]");
+
+    assert_ne!(
+        kbd_name.to_ascii_lowercase(),
+        mouse_name.to_ascii_lowercase(),
+        "keyboard and mouse DeviceDesc strings must be distinct"
+    );
+    assert_ne!(
+        generic_name.to_ascii_lowercase(),
+        kbd_name.to_ascii_lowercase(),
+        "generic fallback DeviceDesc string must not equal keyboard DeviceDesc string"
+    );
+    assert_ne!(
+        generic_name.to_ascii_lowercase(),
+        mouse_name.to_ascii_lowercase(),
+        "generic fallback DeviceDesc string must not equal mouse DeviceDesc string"
+    );
 }
 
 #[test]
