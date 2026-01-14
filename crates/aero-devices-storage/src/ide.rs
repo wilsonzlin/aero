@@ -168,6 +168,34 @@ impl IdeChannel {
         self.drives[slot] = Some(drive);
     }
 
+    fn selected_drive_present(&self) -> bool {
+        self.drives
+            .get(self.selected)
+            .map(|d| d.is_some())
+            .unwrap_or(false)
+    }
+
+    fn read_drive_address(&self) -> u8 {
+        // ATA "Drive Address" register (control block offset + 1).
+        //
+        // This register is primarily used for legacy IDE probing. When the selected drive is
+        // absent, the data bus is undriven and reads float high (0xFF). When a drive is present,
+        // return a stable value that changes with master/slave selection.
+        if !self.selected_drive_present() {
+            return 0xFF;
+        }
+
+        // Bits 0..=3 mirror the head-select, and bits 4..=5 mirror the active-low drive-select
+        // lines. Bits 6..=7 are typically high.
+        let head = self.drive_head & 0x0F;
+        let (n_ds0, n_ds1) = match self.selected {
+            0 => (0u8, 1u8), // master
+            1 => (1u8, 0u8), // slave
+            _ => (1u8, 1u8),
+        };
+        0xC0 | head | (n_ds1 << 4) | (n_ds0 << 5)
+    }
+
     fn drive_mut(&mut self) -> Option<&mut AtaDrive> {
         self.drives[self.selected].as_mut()
     }
