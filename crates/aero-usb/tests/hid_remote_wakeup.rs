@@ -676,7 +676,6 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_usb2_port_mux_and_exter
         0,
         "unexpected Resume Detect even though hub remote wake is disabled"
     );
-
     let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
     assert_eq!(
         usbsts & USBSTS_RESUMEDETECT,
