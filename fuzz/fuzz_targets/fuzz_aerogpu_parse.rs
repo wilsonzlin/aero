@@ -98,6 +98,8 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
                 let _ = cmd::decode_stage_ex(a0, reserved0);
                 let _ = cmd::decode_stage_ex(a1, reserved0);
+                let _ = cmd::resolve_shader_stage_with_ex(a0, reserved0);
+                let _ = cmd::resolve_shader_stage_with_ex(a1, reserved0);
             }
             match pkt.opcode {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
@@ -173,6 +175,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes)
                     {
                         let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
@@ -196,12 +199,17 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
                         let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
                         let _ = cmd::decode_stage_ex(shader_stage, reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(shader_stage, reserved0);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetSamplers) => {
                     if let Ok((cmd_samplers, _handles)) = pkt.decode_set_samplers_payload_le() {
                         let _ =
                             cmd::decode_stage_ex(cmd_samplers.shader_stage, cmd_samplers.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(
+                            cmd_samplers.shader_stage,
+                            cmd_samplers.reserved0,
+                        );
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetConstantBuffers) => {
@@ -218,6 +226,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         if let Some(stage_ex) = stage_ex {
                             let _ = cmd::encode_stage_ex(stage_ex);
                         }
+                        let _ = cmd::resolve_shader_stage_with_ex(
+                            cmd_hdr.shader_stage,
+                            cmd_hdr.reserved0,
+                        );
                         // Touch a couple binding fields to exercise packed/unaligned field reads.
                         for binding in bindings.iter().take(4) {
                             let _ = (binding.buffer, binding.offset_bytes, binding.size_bytes);
@@ -229,6 +241,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         pkt.decode_set_shader_resource_buffers_payload_le()
                     {
                         let _ = cmd::decode_stage_ex(cmd_srv.shader_stage, cmd_srv.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(
+                            cmd_srv.shader_stage,
+                            cmd_srv.reserved0,
+                        );
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers) => {
@@ -236,6 +252,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         pkt.decode_set_unordered_access_buffers_payload_le()
                     {
                         let _ = cmd::decode_stage_ex(cmd_uav.shader_stage, cmd_uav.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(
+                            cmd_uav.shader_stage,
+                            cmd_uav.reserved0,
+                        );
                     }
                 }
                 _ => {}
@@ -1775,7 +1795,7 @@ fuzz_target!(|data: &[u8]| {
         &[stage_ex_sampler_handle],
     );
     w.set_constant_buffers_ex(
-        cmd::AerogpuShaderStageEx::Compute,
+        cmd::AerogpuShaderStageEx::Hull,
         /*start_slot=*/ 0,
         &stage_ex_cb_binding,
     );
@@ -1808,6 +1828,34 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_stage_ex_bind_shaders_ex = w.finish();
     fuzz_cmd_stream(&cmd_proc_stage_ex_bind_shaders_ex);
     fuzz_command_processor(&cmd_proc_stage_ex_bind_shaders_ex, None);
+
+    // Additional deterministic BIND_SHADERS layouts:
+    //
+    // - Legacy GS-in-reserved0 encoding (24-byte packet).
+    // - Extended payload with unknown trailing bytes (forward-compat: must be ignored).
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_with_gs(/*vs=*/ 10, /*gs=*/ 999, /*ps=*/ 11, /*cs=*/ 12);
+    let cmd_bind_shaders_legacy_gs = w.finish();
+    fuzz_cmd_stream(&cmd_bind_shaders_legacy_gs);
+    fuzz_command_processor(&cmd_bind_shaders_legacy_gs, None);
+
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex(/*vs=*/ 10, /*ps=*/ 11, /*cs=*/ 12, /*gs=*/ 100, /*hs=*/ 101, /*ds=*/ 102);
+    let mut cmd_bind_shaders_ex_trailing = w.finish();
+    // Increase the packet size and append an extra u32 to simulate a newer guest extending the
+    // packet beyond what the current decoder understands.
+    let pkt_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    let new_pkt_size = (cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12 + 4) as u32;
+    if let Some(size_bytes) = cmd_bind_shaders_ex_trailing.get_mut(pkt_off + 4..pkt_off + 8) {
+        size_bytes.copy_from_slice(&new_pkt_size.to_le_bytes());
+    }
+    cmd_bind_shaders_ex_trailing.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+    let new_stream_size = cmd_bind_shaders_ex_trailing.len() as u32;
+    if let Some(size_bytes) = cmd_bind_shaders_ex_trailing.get_mut(8..12) {
+        size_bytes.copy_from_slice(&new_stream_size.to_le_bytes());
+    }
+    fuzz_cmd_stream(&cmd_bind_shaders_ex_trailing);
+    fuzz_command_processor(&cmd_bind_shaders_ex_trailing, None);
 
     // CommandProcessor edge-case: destroy the original shared surface handle while imported aliases
     // keep the underlying resource alive, then issue a dirty-range for the destroyed handle.
