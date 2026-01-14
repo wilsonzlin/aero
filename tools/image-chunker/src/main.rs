@@ -2887,6 +2887,9 @@ async fn compute_image_version_sha256(path: &Path, format: InputFormat) -> Resul
     tokio::task::spawn_blocking(move || {
         let mut disk = open_input_disk(&path, format)?;
         let total_size = disk.capacity_bytes();
+        if total_size == 0 {
+            bail!("virtual disk size must be > 0");
+        }
 
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 1024 * 1024];
@@ -3784,6 +3787,20 @@ mod tests {
         assert!(
             summary.contains("differencing") && summary.contains("parent"),
             "unexpected error: {summary}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_image_version_sha256_rejects_zero_size_disk() -> Result<()> {
+        let tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+
+        let err = compute_image_version_sha256(tmp.path(), InputFormat::Auto)
+            .await
+            .expect_err("expected hash failure");
+        assert!(
+            err.to_string().contains("virtual disk size must be > 0"),
+            "unexpected error: {err:?}"
         );
         Ok(())
     }
