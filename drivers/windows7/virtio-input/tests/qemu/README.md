@@ -352,6 +352,9 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --keyboard --led 0x1F
    ```
    This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
+   For the Aero contract v1 requirement that the device consumes/completes all virtio-input `statusq` buffers, also check the driver
+   counters (see below): `LedWritesSubmitted`, `StatusQSubmits`, and `StatusQCompletions` should advance and `StatusQCompletions` should
+   catch up to `StatusQSubmits` (outstanding count should not grow without bound).
 
 5. (Optional) send a keyboard LED output report via `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
    ```bat
@@ -376,10 +379,11 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
      For how to interpret the counters output (normal increments vs drops/overruns), see:
      - [`tools/hidtest/README.md` → Counters interpretation](../../tools/hidtest/README.md#counters-interpretation)
 
-     Quick interpretation (after you generate some input):
+      Quick interpretation (after you generate some input / LED writes):
 
-     - Normal: `VirtioEvents` and `IoctlHidReadReport` increase; `ReadReportPended` and `ReadReportCompleted` increase and stay close; depth gauges like `PendingRingDepth` stay low.
-     - Bad: `PendingRingDrops` / `ReportRingDrops` / `VirtioEventDrops` increasing indicates dropped input; `ReportRingOverruns` / `VirtioEventOverruns` should remain `0` (non-zero indicates oversized events/reports).
+      - Normal: `VirtioEvents` and `IoctlHidReadReport` increase; `ReadReportPended` and `ReadReportCompleted` increase and stay close; depth gauges like `PendingRingDepth` stay low.
+      - Bad: `PendingRingDrops` / `ReportRingDrops` / `VirtioEventDrops` increasing indicates dropped input; `ReportRingOverruns` / `VirtioEventOverruns` should remain `0` (non-zero indicates oversized events/reports).
+      - LED/statusq (contract): after running `--keyboard --led ...`, `LedWritesSubmitted` / `StatusQSubmits` should increase and `StatusQCompletions` should eventually match `StatusQSubmits` (no wedge).
 
 8. (Optional) query driver state / interrupt mode diagnostics:
    ```bat
