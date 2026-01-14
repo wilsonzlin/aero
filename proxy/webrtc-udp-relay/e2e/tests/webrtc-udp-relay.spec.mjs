@@ -952,6 +952,143 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
   }
 });
 
+test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, token }) => {
+        const waitForOpen = (ws) =>
+          new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+        const waitForAnswer = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+            const onMessage = (event) => {
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                return;
+              }
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+              if (msg?.type !== "answer") return;
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              resolve(msg);
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+        const waitForClose = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for error + close")), 10_000);
+            let errMsg;
+            let closed;
+            const maybeDone = () => {
+              if (!closed) return;
+              cleanup();
+              resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
+            };
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                return;
+              }
+              if (msg?.type === "error") {
+                errMsg = msg;
+              }
+            };
+            const onClose = (event) => {
+              closed = event;
+              maybeDone();
+            };
+            const cleanup = () => {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              ws.removeEventListener("close", onClose);
+            };
+            ws.addEventListener("message", onMessage);
+            ws.addEventListener("close", onClose);
+          });
+
+        const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then((r) => r.json());
+        const iceServers = iceResp.iceServers ?? [];
+
+        const ws1 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await waitForOpen(ws1);
+        ws1.send(JSON.stringify({ type: "auth", token }));
+
+        const pc = new RTCPeerConnection({ iceServers });
+        pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        ws1.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+        await waitForAnswer(ws1);
+
+        const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        const ws2ClosePromise = waitForClose(ws2);
+        await waitForOpen(ws2);
+        ws2.send(JSON.stringify({ type: "auth", token }));
+        // A valid SDP isn't required because the relay rejects on quota allocation
+        // before setting the remote description. Keep this deterministic and fast.
+        ws2.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "v=0" } }));
+        const ws2Res = await ws2ClosePromise;
+
+        ws1.close();
+        pc.close();
+        return ws2Res;
+      },
+      { relayPort: relay.port, token },
+    );
+
+    expect(res.errMsg?.type).toBe("error");
+    expect(res.errMsg?.code).toBe("session_already_active");
+    expect(res.closeCode).toBe(1008);
+    expect(res.closeReason).toBe("session_already_active");
+  } finally {
+    await Promise.all([web.close(), relay.kill()]);
+  }
+});
+
 test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
