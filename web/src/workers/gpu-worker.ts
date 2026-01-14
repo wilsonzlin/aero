@@ -1219,9 +1219,10 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
 
   const fmt = snap.format >>> 0;
-  // The scanout consumer treats BGRA and BGRX as compatible (alpha is ignored).
-  // Force alpha=255 so presenters (which may render with blending enabled) do not show
-  // random transparency from uninitialized X/A bytes.
+  // Supported scanout formats:
+  // - BGRX: force alpha=255 so presenters (which may render with blending enabled) do not show
+  //         random transparency from uninitialized X bytes.
+  // - BGRA: preserve alpha (required for correctness + matches `scanout_swizzle.ts` behavior).
   if (
     fmt !== SCANOUT_FORMAT_B8G8R8X8 &&
     fmt !== SCANOUT_FORMAT_B8G8R8A8 &&
@@ -1239,6 +1240,9 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
     });
     return null;
   }
+
+  const swizzleKind: ScanoutSwizzleKind =
+    fmt === SCANOUT_FORMAT_B8G8R8A8 || fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB ? "bgra" : "bgrx";
 
   const width = snap.width >>> 0;
   const height = snap.height >>> 0;
@@ -1388,16 +1392,24 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
     const baseIndex = srcOffset >>> 2;
     const pitchWords = pitchBytes >>> 2;
     let dstRowBase = 0;
+    const preserveAlpha = swizzleKind === "bgra";
     for (let y = 0; y < height; y += 1) {
       const srcRowBase = baseIndex + y * pitchWords;
       for (let x = 0; x < width; x += 1) {
         const v = src32[srcRowBase + x]!;
-        // v = 0xXXRRGGBB (BGRX little-endian). Convert to 0xAABBGGRR (RGBA little-endian bytes).
-        dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+        if (preserveAlpha) {
+          // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
+          dst32[dstRowBase + x] =
+            ((v & 0xff000000) | ((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16)) >>> 0;
+        } else {
+          // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
+          dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+        }
       }
       dstRowBase += width;
     }
   } else {
+    const preserveAlpha = swizzleKind === "bgra";
     for (let y = 0; y < height; y += 1) {
       const srcRowStart = srcOffset + y * pitchBytes;
       const dstRowStart = y * rowBytes;
@@ -1405,10 +1417,11 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
         const b = src[srcRowStart + x]!;
         const g = src[srcRowStart + x + 1]!;
         const r = src[srcRowStart + x + 2]!;
+        const a = preserveAlpha ? src[srcRowStart + x + 3]! : 255;
         out[dstRowStart + x + 0] = r;
         out[dstRowStart + x + 1] = g;
         out[dstRowStart + x + 2] = b;
-        out[dstRowStart + x + 3] = 255;
+        out[dstRowStart + x + 3] = a;
       }
     }
   }
