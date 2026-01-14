@@ -6535,10 +6535,42 @@ impl Machine {
 
             match disk_id {
                 aero_machine::Machine::DISK_ID_PRIMARY_HDD => {
-                    let base_backend =
-                        aero_opfs::OpfsByteStorage::open(&base_image, false)
-                            .await
-                            .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
+                    let base_backend = match aero_opfs::OpfsByteStorage::open(&base_image, false)
+                        .await
+                    {
+                        Ok(backend) => backend,
+                        Err(aero_opfs::DiskError::InUse) => {
+                            // OPFS sync access handles are exclusive per file. When snapshot
+                            // restore is performed on an existing machine instance, the machine's
+                            // canonical shared disk backend may still hold an open handle for the
+                            // primary HDD base/overlay. In that case, re-opening from OPFS will
+                            // fail with `InUse`, but the bytes are already available; we only need
+                            // to re-attach the `AtaDrive` to AHCI (snapshot restore clears it).
+                            //
+                            // Only treat this as "already open" when the machine has a non-trivial
+                            // shared disk backend attached (not the default 512-byte empty disk);
+                            // otherwise propagate the `InUse` error so callers know another
+                            // context is holding the file.
+                            let shared_disk = self.inner.shared_disk();
+                            if aero_storage::VirtualDisk::capacity_bytes(&shared_disk)
+                                > aero_storage::SECTOR_SIZE as u64
+                            {
+                                self.inner.attach_shared_disk_to_ahci_port0().map_err(|e| {
+                                    js_error(format!(
+                                        "reattach_restored_disks_from_opfs: disk_id=0 base_image={base_image:?} already open; failed to reattach shared disk to AHCI: {e}"
+                                    ))
+                                })?;
+                                continue;
+                            }
+                            return Err(opfs_error(
+                                disk_id,
+                                "base_image",
+                                &base_image,
+                                aero_opfs::DiskError::InUse,
+                            ));
+                        }
+                        Err(e) => return Err(opfs_error(disk_id, "base_image", &base_image, e)),
+                    };
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
                         js_error(format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=0 base_image={base_image:?}: {e}"
@@ -7461,6 +7493,77 @@ mod reattach_restored_disks_from_opfs_tests {
             .expect("reattach should succeed when referenced OPFS base disk exists");
 
         // Ensure the shared disk backend now reflects the reattached disk bytes.
+        let mut disk = m.inner.shared_disk();
+        assert_eq!(disk.capacity_bytes(), disk_size);
+        let mut buf = [0u8; 4];
+        disk.read_at(0, &mut buf)
+            .expect("read from reattached shared disk should succeed");
+        assert_eq!(buf, [0xA5, 0x5A, 0x01, 0x02]);
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn reattach_restored_primary_hdd_is_ok_when_disk_already_open() {
+        // Creating OPFS sync access handles is worker-only and not universally available in all
+        // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
+        let base0 = unique_path("reattach-base0-already-open", "img");
+        let disk_size = 4096u64;
+        match create_raw_file(&base0, disk_size).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({base0:?}) failed: {e:?}"),
+        }
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Attach the base disk directly so the machine holds an open sync access handle.
+        let base_backend = match OpfsByteStorage::open(&base0, false).await {
+            Ok(backend) => backend,
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("OpfsByteStorage::open({base0:?}) failed: {e:?}"),
+        };
+        let base_disk = aero_storage::DiskImage::open_auto(base_backend)
+            .expect("DiskImage::open_auto(raw base) should succeed");
+        m.inner
+            .set_disk_backend(Box::new(base_disk))
+            .expect("set_disk_backend should succeed");
+        m.inner.set_ahci_port0_disk_overlay_ref(base0.clone(), "");
+
+        let ahci = m.inner.ahci().expect("browser_defaults enables AHCI");
+        assert!(
+            ahci.borrow().drive_attached(0),
+            "expected AHCI port0 to have a drive attached before snapshot"
+        );
+
+        // Snapshot + restore on the same machine instance should clear the AHCI `AtaDrive` while
+        // keeping the underlying shared disk backend alive (the snapshot does not serialize the
+        // OPFS handle).
+        let snap = m
+            .inner
+            .take_snapshot_full()
+            .expect("take_snapshot_full should succeed");
+        m.inner
+            .restore_snapshot_bytes(&snap)
+            .expect("restore_snapshot_bytes should succeed");
+
+        assert!(
+            !ahci.borrow().drive_attached(0),
+            "expected snapshot restore to clear the AHCI drive backend"
+        );
+
+        // Reattach must not try to reopen the already-open base image (OPFS handles are exclusive);
+        // it should instead reattach the existing shared disk to AHCI.
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should succeed when base image is already open");
+
+        assert!(
+            ahci.borrow().drive_attached(0),
+            "expected AHCI port0 drive to be reattached after helper call"
+        );
+
+        // Sanity check that the shared disk still reflects the on-disk contents.
         let mut disk = m.inner.shared_disk();
         assert_eq!(disk.capacity_bytes(), disk_size);
         let mut buf = [0u8; 4];

@@ -110,6 +110,11 @@ impl AhciPciDevice {
         self.controller.detach_drive(port);
     }
 
+    /// Returns whether a drive backend is currently attached to the given AHCI port.
+    pub fn drive_attached(&self, port: usize) -> bool {
+        self.controller.drive_attached(port)
+    }
+
     /// Reset the device back to its power-on state while preserving attached drives.
     ///
     /// This is intended for machine/platform reset flows where host-provided disk backends should

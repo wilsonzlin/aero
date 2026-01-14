@@ -6472,7 +6472,14 @@ impl Machine {
             return Ok(());
         };
         if self.ahci_port0_auto_attach_shared_disk {
-            return Ok(());
+            // Auto-attach is already enabled; treat this as an idempotent "ensure attached" helper.
+            //
+            // Snapshot restore clears transient host-side backends (AHCI `AtaDrive`), but this flag
+            // is host configuration state and remains true. In that case, port 0 may currently have
+            // no drive and we must re-attach.
+            if ahci.borrow().drive_attached(0) {
+                return Ok(());
+            }
         }
 
         let drive = AtaDrive::new(Box::new(self.disk.clone()))?;

@@ -260,6 +260,17 @@ impl AhciController {
         self.ports[port].clear_drive();
     }
 
+    /// Returns whether the given port currently has an attached [`AtaDrive`] backend.
+    ///
+    /// This is intended for platform integrations that need to re-attach host-side backends after
+    /// snapshot restore: the AHCI snapshot format captures guest-visible register state but
+    /// intentionally clears transient host disk handles (see [`AhciController::restore_state`]).
+    pub fn drive_attached(&self, port: usize) -> bool {
+        self.ports
+            .get(port)
+            .is_some_and(|port| port.drive.is_some())
+    }
+
     fn ports_implemented(&self) -> u32 {
         // AHCI PI (Ports Implemented) is a hardware strap indicating which ports exist in the HBA.
         // It should not depend on whether a drive is currently attached.
