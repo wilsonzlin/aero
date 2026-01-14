@@ -1892,6 +1892,237 @@ fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w32() {
+    // Like `tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space`, but exercise the
+    // W32 split/recombine logic across the u64 boundary.
+    //
+    // For a W32 cross-page load, the last 3 bytes of a page cross into the next page. Use
+    // addresses that wrap into vaddr=0 (vpn 0) so the "next page" is not adjacent in virtual
+    // address space.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let mut ram = vec![0u8; 0x2000];
+    // High page bytes (phys page 1): offsets 0xFFD..0xFFF.
+    ram[0x1FFD..0x2000].copy_from_slice(&[1, 2, 3]);
+    // Wrapped-to-zero page bytes (phys page 0): offsets 0..2.
+    ram[0..3].copy_from_slice(&[4, 5, 6]);
+
+    for (addr, expected) in [
+        (u64::MAX - 2, 0x0403_0201u64),
+        (u64::MAX - 1, 0x0504_0302u64),
+        (u64::MAX, 0x0605_0403u64),
+    ] {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.load(Width::W32, a0);
+        b.write_reg(
+            GuestReg::Gpr {
+                reg: Gpr::Rax,
+                width: Width::W32,
+                high8: false,
+            },
+            v0,
+        );
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+            &block,
+            cpu,
+            ram.clone(),
+            u64::MAX,
+            &[(addr, hi_page_data), (0, lo_page_data)],
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(
+            got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+            expected,
+            "addr={addr:#x}"
+        );
+
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmu_translate_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w32() {
+    // Like `tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space`, but for a W32
+    // store. Exercise all crossing offsets (shift_bytes 1..=3).
+    let hi_vpn = u64::MAX >> PAGE_SHIFT;
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let value: u32 = 0x0403_0201;
+    let bytes = value.to_le_bytes();
+
+    for addr in [u64::MAX - 2, u64::MAX - 1, u64::MAX] {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.const_int(Width::W32, value as u64);
+        b.store(Width::W32, a0, v0);
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let ram = vec![0xccu8; 0x2000];
+        let mut expected_ram = ram.clone();
+
+        // Compute expected physical byte locations based on the prefilled mapping.
+        for (i, b) in bytes.iter().enumerate() {
+            let v = addr.wrapping_add(i as u64);
+            let vpn = v >> PAGE_SHIFT;
+            let phys_base = if vpn == hi_vpn { 0x1000 } else { 0 };
+            let phys = (phys_base + (v & 0xFFF)) as usize;
+            expected_ram[phys] = *b;
+        }
+
+        let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+            &block,
+            cpu,
+            ram,
+            u64::MAX,
+            &[(addr, hi_page_data), (0, lo_page_data)],
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_ram, expected_ram, "addr={addr:#x}");
+
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmu_translate_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w16() {
+    // W16 cross-page load at the very end of the u64 address space (wraps to vaddr 0).
+    let addr = u64::MAX;
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[0x1FFF] = 0x34; // byte0 at vaddr=u64::MAX
+    ram[0] = 0x12; // byte1 at vaddr=0
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W16, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        u64::MAX,
+        &[(addr, hi_page_data), (0, lo_page_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xffff, 0x1234);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w16() {
+    // W16 cross-page store at the very end of the u64 address space (wraps to vaddr 0).
+    let addr = u64::MAX;
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, 0xBEEFu64);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0xccu8; 0x2000];
+    let mut expected_ram = ram.clone();
+    expected_ram[0x1FFF] = 0xef;
+    expected_ram[0] = 0xbe;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        u64::MAX,
+        &[(addr, hi_page_data), (0, lo_page_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram, expected_ram);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_mmio_exit_on_first_page_skips_second_page_translate() {
     // Use u64 wrap-around so the access crosses from a high, non-RAM page into vaddr=0, which is
     // RAM. The MMIO exit should trigger on the first page and should not translate the wrapped
