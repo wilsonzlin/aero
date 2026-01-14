@@ -34,7 +34,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_STORAGE, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuErrorCode, AerogpuFormat,
@@ -4322,6 +4323,11 @@ fn rust_layout_matches_c_headers() {
         &mut cmd_consts_seen,
         "AEROGPU_MAX_RENDER_TARGETS",
         AEROGPU_MAX_RENDER_TARGETS as u64,
+    );
+    check_const(
+        &mut cmd_consts_seen,
+        "AEROGPU_STAGE_EX_MIN_ABI_MINOR",
+        AEROGPU_STAGE_EX_MIN_ABI_MINOR as u64,
     );
     check_const(
         &mut cmd_consts_seen,

@@ -784,6 +784,15 @@ export const executeAerogpuCmdStream = (
     const cmdSizeBytes = packet.hdr.sizeBytes;
 
     switch (opcode) {
+      case AerogpuCmdOpcode.Nop: {
+        // No-op packet (explicitly accepted for forward-compat).
+        break;
+      }
+      case AerogpuCmdOpcode.DebugMarker: {
+        // Debug-only packet: payload is a UTF-8 marker string. The CPU executor ignores it, but
+        // still accepts it so command streams produced by debug builds remain valid.
+        break;
+      }
       case AEROGPU_CMD_CREATE_BUFFER: {
         if (cmdSizeBytes < AEROGPU_CMD_CREATE_BUFFER_SIZE) {
           throw new Error(`aerogpu: CREATE_BUFFER packet too small (size_bytes=${cmdSizeBytes})`);
