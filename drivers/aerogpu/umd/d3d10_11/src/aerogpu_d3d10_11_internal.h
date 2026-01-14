@@ -61,6 +61,22 @@ constexpr uint32_t kD3DSampleMaskAll = 0xFFFFFFFFu; // D3D11_DEFAULT_SAMPLE_MASK
 constexpr uint32_t kD3DColorWriteMaskAll = 0xFu; // D3D11_COLOR_WRITE_ENABLE_ALL
 constexpr uint8_t kD3DStencilMaskAll = 0xFFu; // default StencilReadMask/StencilWriteMask
 
+// DXBC shader version token helper used by some DDI caps queries.
+//
+// The Windows D3D10/11 DDIs expose shader model support via a packed version
+// token format:
+//   (program_type << 16) | (major << 4) | minor
+//
+// Program type values are stable across shader models (see d3dcommon.h).
+constexpr uint32_t kD3DDxbcProgramTypePixel = 0;
+constexpr uint32_t kD3DDxbcProgramTypeVertex = 1;
+constexpr uint32_t kD3DDxbcProgramTypeGeometry = 2;
+constexpr uint32_t kD3DDxbcProgramTypeCompute = 5;
+
+constexpr uint32_t DxbcShaderVersionToken(uint32_t program_type, uint32_t major, uint32_t minor) {
+  return (program_type << 16) | (major << 4) | minor;
+}
+
 // D3D10/D3D11 Map type subset (numeric values from d3d10.h/d3d11.h).
 constexpr uint32_t kD3DMapRead = 1;
 constexpr uint32_t kD3DMapWrite = 2;

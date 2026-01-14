@@ -2296,15 +2296,6 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       // Be careful about overrunning DataSize: only write fields that fit.
       zero_out();
 
-      constexpr auto ver_token = [](UINT program_type, UINT major, UINT minor) -> UINT {
-        return (program_type << 16) | (major << 4) | minor;
-      };
-
-      constexpr UINT kShaderTypePixel = 0;
-      constexpr UINT kShaderTypeVertex = 1;
-      constexpr UINT kShaderTypeGeometry = 2;
-      constexpr UINT kShaderTypeCompute = 5;
-
       auto write_u32 = [&](size_t offset, UINT value) {
         if (size < offset + sizeof(UINT)) {
           return;
@@ -2312,10 +2303,10 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
         *reinterpret_cast<UINT*>(reinterpret_cast<uint8_t*>(data) + offset) = value;
       };
 
-      write_u32(0, ver_token(kShaderTypePixel, 4, 0));
-      write_u32(sizeof(UINT), ver_token(kShaderTypeVertex, 4, 0));
-      write_u32(sizeof(UINT) * 2, ver_token(kShaderTypeGeometry, 4, 0));
-      write_u32(sizeof(UINT) * 5, ver_token(kShaderTypeCompute, 4, 0));
+      write_u32(0, DxbcShaderVersionToken(kD3DDxbcProgramTypePixel, 4, 0));
+      write_u32(sizeof(UINT), DxbcShaderVersionToken(kD3DDxbcProgramTypeVertex, 4, 0));
+      write_u32(sizeof(UINT) * 2, DxbcShaderVersionToken(kD3DDxbcProgramTypeGeometry, 4, 0));
+      write_u32(sizeof(UINT) * 5, DxbcShaderVersionToken(kD3DDxbcProgramTypeCompute, 4, 0));
       return S_OK;
     }
 
