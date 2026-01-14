@@ -1981,12 +1981,38 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
         "BMIDE status should have IRQ+ERR set and ACTIVE clear"
     );
     assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Even though the PRD table is malformed, the DMA engine should still have written the full
+    // sector before detecting the missing EOT bit.
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    // ATA status/error should reflect an aborted command.
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x40, 0, "DRDY should be set");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Reading Status acknowledges and clears the pending interrupt.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // BMIDE status bits persist until RW1C cleared by the guest.
+    let bm_st_after = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st_after & 0x07, 0x06);
 }
 
 #[test]
 fn ata_dma_prd_too_short_sets_error_status() {
     let capacity = 4 * SECTOR_SIZE as u64;
-    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let sector0: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
+        .collect();
+    disk.write_sectors(0, &sector0).unwrap();
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
     ide.borrow_mut()
@@ -2009,6 +2035,9 @@ fn ata_dma_prd_too_short_sets_error_status() {
     mem.write_u16(prd_addr + 6, 0x8000);
     ioports.write(bm_base + 4, 4, prd_addr as u32);
 
+    // Seed the destination buffer so we can verify partial-transfer semantics.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
     // READ DMA for LBA 0, 1 sector.
     ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
     ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
@@ -2028,6 +2057,24 @@ fn ata_dma_prd_too_short_sets_error_status() {
         "BMIDE status should have IRQ+ERR set and ACTIVE clear"
     );
     assert!(ide.borrow().controller.primary_irq_pending());
+
+    // ATA status/error should reflect an aborted command.
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x40, 0, "DRDY should be set");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Partial transfer: first PRD segment written, remainder untouched.
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(&out[..256], &sector0[..256]);
+    assert!(out[256..].iter().all(|&b| b == 0xFF));
+
+    // Reading Status acknowledges and clears the pending interrupt.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
 }
 
 #[test]
@@ -2060,6 +2107,9 @@ fn ata_dma_direction_mismatch_sets_error_status() {
     mem.write_u16(prd_addr + 6, 0x8000);
     ioports.write(bm_base + 4, 4, prd_addr as u32);
 
+    // Seed the destination buffer; a direction mismatch should prevent any DMA writes.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
     // READ DMA for LBA 0, 1 sector (device -> memory request).
     ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
     ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
@@ -2079,6 +2129,23 @@ fn ata_dma_direction_mismatch_sets_error_status() {
         "BMIDE status should have IRQ+ERR set and ACTIVE clear"
     );
     assert!(ide.borrow().controller.primary_irq_pending());
+
+    // ATA status/error should reflect an aborted command.
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x40, 0, "DRDY should be set");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Direction mismatch should prevent any DMA writes.
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+
+    // Reading Status acknowledges and clears the pending interrupt.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
 }
 
 #[test]
