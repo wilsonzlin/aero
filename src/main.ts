@@ -1140,6 +1140,7 @@ function renderAudioPanel(): HTMLElement {
 
       const workerConfig: AeroConfig = {
         guestMemoryMiB: 64,
+        vramMiB: 16,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1548,6 +1549,7 @@ function renderAudioPanel(): HTMLElement {
 
       const workerConfig: AeroConfig = {
         guestMemoryMiB: 64,
+        vramMiB: 16,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1720,6 +1722,7 @@ function renderAudioPanel(): HTMLElement {
 
       const workerConfig: AeroConfig = {
         guestMemoryMiB: 64,
+        vramMiB: 16,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1852,6 +1855,7 @@ function renderAudioPanel(): HTMLElement {
 
         const workerConfig: AeroConfig = {
           guestMemoryMiB: 64,
+          vramMiB: 16,
           enableWorkers: true,
           enableWebGPU: false,
           proxyUrl: null,
