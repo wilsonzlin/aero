@@ -149,6 +149,67 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("initializes input diagnostics status fields on init (clears stale values)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    // Simulate a previous runtime writing these fields into shared status memory.
+    Atomics.store(status, StatusIndex.IoInputKeyboardBackend, 1); // usb
+    Atomics.store(status, StatusIndex.IoInputMouseBackend, 2); // virtio
+    Atomics.store(status, StatusIndex.IoInputVirtioKeyboardDriverOk, 1);
+    Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, 1);
+    Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, 1);
+    Atomics.store(status, StatusIndex.IoInputUsbMouseOk, 1);
+    Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, 7);
+    Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, 5);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyUs, 123);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyEwmaUs, 456);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyMaxUs, 789);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyAvgUs, 111);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyEwmaUs, 222);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 333);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputMouseBackend)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputUsbMouseOk)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchSendLatencyUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchSendLatencyEwmaUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchSendLatencyMaxUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputEventLatencyAvgUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputEventLatencyEwmaUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputEventLatencyMaxUs)).toBe(0);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

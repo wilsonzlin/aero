@@ -225,6 +225,47 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
   }
 }
 
+function initInputDiagnosticsTelemetry(): void {
+  // The legacy IO worker publishes "current input backend + held state" telemetry into the shared
+  // status SAB for the input diagnostics panel. In `vmRuntime="machine"` mode, the IO worker runs
+  // in host-only stub mode, so the machine CPU worker must initialize these fields.
+  //
+  // Note: these are best-effort debug fields only; the emulator must keep running even if Atomics
+  // stores fail for any reason.
+  pressedKeyboardHidUsages.fill(0);
+  pressedKeyboardHidUsageCount = 0;
+  mouseButtonsMask = 0;
+
+  ioInputLatencyMaxWindowStartMs = 0;
+  ioInputBatchSendLatencyEwmaUs = 0;
+  ioInputBatchSendLatencyMaxUs = 0;
+  ioInputEventLatencyEwmaUs = 0;
+  ioInputEventLatencyMaxUs = 0;
+
+  const st = status;
+  if (!st) return;
+  try {
+    // 0 = ps2 (see `web/src/input/input_backend_status.ts`).
+    Atomics.store(st, StatusIndex.IoInputKeyboardBackend, 0);
+    Atomics.store(st, StatusIndex.IoInputMouseBackend, 0);
+    Atomics.store(st, StatusIndex.IoInputVirtioKeyboardDriverOk, 0);
+    Atomics.store(st, StatusIndex.IoInputVirtioMouseDriverOk, 0);
+    Atomics.store(st, StatusIndex.IoInputUsbKeyboardOk, 0);
+    Atomics.store(st, StatusIndex.IoInputUsbMouseOk, 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, 0);
+    Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, 0);
+
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyUs, 0);
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyEwmaUs, 0);
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyMaxUs, 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyAvgUs, 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyEwmaUs, 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyMaxUs, 0);
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
 // End-to-end input latency telemetry (main thread capture -> CPU worker injection).
 //
 // Keep this in sync with the IO worker's input telemetry so debug HUDs (input diagnostics panel)
@@ -1284,6 +1325,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
     status = views.status;
     guestLayout = views.guestLayout;
     ioIpcSab = segments.ioIpc;
+    initInputDiagnosticsTelemetry();
 
     const regions = ringRegionsForWorker(role);
     commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
