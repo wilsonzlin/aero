@@ -363,13 +363,12 @@ def _test_head(
         except ValueError:
             raise TestFailure(f"invalid Content-Length {content_length!r}") from None
         _require(size > 0, f"Content-Length must be > 0, got {size}")
-        _require_cors(
-            resp,
-            origin,
-            expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
-        )
         etag = _header(resp, "ETag")
         last_modified = _header(resp, "Last-Modified")
+        # Require exposing the headers the browser client needs to read for probing.
+        # Note: `Last-Modified` is CORS-safelisted and does not need explicit exposure.
+        # `ETag` is not safelisted, but is treated as optional; it is checked separately when present.
+        _require_cors(resp, origin, expose={"accept-ranges", "content-length"})
         return (
             TestResult(
                 name=name,
@@ -535,7 +534,7 @@ def _test_get_range(
     _require_cors(
         resp,
         origin,
-        expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
+        expose={"accept-ranges", "content-range", "content-length"},
     )
     start, end, total = _parse_content_range(content_range)
     _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
@@ -632,7 +631,7 @@ def _test_get_unsatisfiable_range(
         _require_cors(
             resp,
             origin,
-            expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
+            expose={"accept-ranges", "content-range", "content-length"},
         )
 
         # Example: "bytes */12345"
@@ -1210,10 +1209,10 @@ def _test_get_etag_matches_head(
     timeout_s: float,
     max_body_bytes: int,
     head_etag: str | None,
-) -> TestResult:
+) -> tuple[TestResult, HttpResponse | None]:
     name = "GET: ETag matches HEAD ETag"
     if head_etag is None:
-        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)"), None
 
     try:
         headers: dict[str, str] = {
@@ -1241,9 +1240,9 @@ def _test_get_etag_matches_head(
         if _strip_weak_etag_prefix(get_etag) != _strip_weak_etag_prefix(head_etag):
             raise TestFailure(f"ETag mismatch: HEAD={head_etag!r} GET={get_etag!r}")
 
-        return TestResult(name=name, status="PASS")
+        return TestResult(name=name, status="PASS"), resp
     except TestFailure as e:
-        return TestResult(name=name, status="FAIL", details=str(e))
+        return TestResult(name=name, status="FAIL", details=str(e)), None
 
 def _test_if_range_mismatch(
     *,
@@ -2624,14 +2623,20 @@ def main(argv: Sequence[str]) -> int:
     last_modified = head_info.last_modified if head_info is not None else None
 
     results.append(_test_etag_strength(etag))
+    get_etag_result, get_etag_resp = _test_get_etag_matches_head(
+        base_url=base_url,
+        origin=origin,
+        authorization=authorization,
+        timeout_s=timeout_s,
+        max_body_bytes=max_body_bytes,
+        head_etag=etag,
+    )
+    results.append(get_etag_result)
     results.append(
-        _test_get_etag_matches_head(
-            base_url=base_url,
+        _test_cors_expose_etag_if_present(
+            name="GET: CORS exposes ETag when present",
+            resp=get_etag_resp,
             origin=origin,
-            authorization=authorization,
-            timeout_s=timeout_s,
-            max_body_bytes=max_body_bytes,
-            head_etag=etag,
         )
     )
     results.append(
