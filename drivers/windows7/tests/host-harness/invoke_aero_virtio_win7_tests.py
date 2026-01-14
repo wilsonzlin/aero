@@ -2559,15 +2559,16 @@ def _virtio_input_leds_required_failure_message(
             if reason:
                 return (
                     f"FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ({reason}) "
-                    "but --with-input-leds was enabled (provision the guest with --test-input-leds)"
+                    "but --with-input-leds was enabled (provision the guest with --test-input-leds; "
+                    "newer guest selftests also accept --test-input-led)"
                 )
         return (
             "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped but --with-input-leds was enabled "
-            "(provision the guest with --test-input-leds)"
+            "(provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
         )
     return (
         "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds PASS marker while --with-input-leds was enabled "
-        "(guest selftest too old or missing --test-input-leds)"
+        "(guest selftest too old or missing --test-input-leds/--test-input-led)"
     )
 
 
@@ -3093,7 +3094,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Require the guest virtio-input-leds selftest marker to PASS. This validates the virtio-input statusq output path "
             "end-to-end (user-mode HID output report write -> KMDF HID minidriver -> virtqueue). "
-            "This requires a guest image provisioned with --test-input-leds (or env var)."
+            "This requires a guest image provisioned with --test-input-leds (or env var). "
+            "Newer guest selftests also accept --test-input-led and emit the legacy marker for compatibility."
         ),
     )
     parser.add_argument(

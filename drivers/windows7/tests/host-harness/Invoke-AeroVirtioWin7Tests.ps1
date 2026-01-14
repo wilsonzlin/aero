@@ -137,6 +137,7 @@ param(
   #
   # Note: The guest image must be provisioned with `--test-input-leds` (or env var equivalent) so the guest selftest
   # runs the LED write test and emits the marker.
+  # Newer guest selftests also accept `--test-input-led` and emit the legacy marker for compatibility.
   [Parameter(Mandatory = $false)]
   [Alias("WithVirtioInputLeds", "EnableVirtioInputLeds", "RequireVirtioInputLeds")]
   [switch]$WithInputLeds,
@@ -7235,7 +7236,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_LEDS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds marker (PASS/FAIL/SKIP) after virtio-input completed while -WithInputLeds was enabled (guest selftest too old or missing --test-input-leds)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds marker (PASS/FAIL/SKIP) after virtio-input completed while -WithInputLeds was enabled (guest selftest too old or missing --test-input-leds/--test-input-led)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7263,7 +7264,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_LEDS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds was enabled (provision the guest with --test-input-leds)"
+      Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
