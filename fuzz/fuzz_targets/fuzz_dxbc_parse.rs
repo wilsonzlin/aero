@@ -283,10 +283,16 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     let cb_desc_len = 24usize;
     let var_desc_len = 24usize;
     let type_desc_len = 16usize;
+    let member_desc_len = 8usize;
     let resource_desc_len = 32usize;
 
     let cb_name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
     let var_name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+
+    // Optionally include a single struct member so the parser exercises type recursion and member
+    // table decoding.
+    let include_member = u.arbitrary::<u8>().unwrap_or(0) & 1 != 0;
+    let member_name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
 
     let include_creator = u.arbitrary::<u8>().unwrap_or(0) & 1 != 0;
     let creator_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
@@ -294,10 +300,18 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     let cb_off = header_len;
     let var_off = cb_off + cb_desc_len;
     let type_off = var_off + var_desc_len;
-    let resource_off = type_off + type_desc_len;
+    let member_off = type_off + type_desc_len;
+    let type_member_off = member_off + if include_member { member_desc_len } else { 0 };
+    let resource_off = type_member_off + if include_member { type_desc_len } else { 0 };
     let cb_name_off = resource_off + resource_desc_len;
     let var_name_off = cb_name_off + cb_name_len + 1;
-    let creator_off = var_name_off + var_name_len + 1;
+    let member_name_off = var_name_off + var_name_len + 1;
+    let creator_off = member_name_off
+        + if include_member {
+            member_name_len + 1
+        } else {
+            0
+        };
 
     let total_len = if include_creator {
         creator_off + creator_len + 1
@@ -356,8 +370,34 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     out[type_off + 4..type_off + 6].copy_from_slice(&rows.to_le_bytes());
     out[type_off + 6..type_off + 8].copy_from_slice(&cols.to_le_bytes());
     out[type_off + 8..type_off + 10].copy_from_slice(&elements.to_le_bytes());
-    out[type_off + 10..type_off + 12].copy_from_slice(&0u16.to_le_bytes()); // member_count
-    out[type_off + 12..type_off + 16].copy_from_slice(&0u32.to_le_bytes()); // member_offset
+    out[type_off + 10..type_off + 12].copy_from_slice(&u16::from(include_member).to_le_bytes()); // member_count
+    let member_offset = if include_member {
+        member_off as u32
+    } else {
+        0u32
+    };
+    out[type_off + 12..type_off + 16].copy_from_slice(&member_offset.to_le_bytes());
+
+    if include_member {
+        // Member table entry: name_offset + type_offset.
+        out[member_off..member_off + 4].copy_from_slice(&(member_name_off as u32).to_le_bytes());
+        out[member_off + 4..member_off + 8]
+            .copy_from_slice(&(type_member_off as u32).to_le_bytes());
+
+        // Secondary type desc (no further nesting).
+        let class2 = u.arbitrary::<u16>().unwrap_or(0);
+        let ty2 = u.arbitrary::<u16>().unwrap_or(0);
+        let rows2 = u16::from(u.arbitrary::<u8>().unwrap_or(1) % 4) + 1;
+        let cols2 = u16::from(u.arbitrary::<u8>().unwrap_or(1) % 4) + 1;
+        let elements2 = u16::from(u.arbitrary::<u8>().unwrap_or(0) % 4);
+        out[type_member_off..type_member_off + 2].copy_from_slice(&class2.to_le_bytes());
+        out[type_member_off + 2..type_member_off + 4].copy_from_slice(&ty2.to_le_bytes());
+        out[type_member_off + 4..type_member_off + 6].copy_from_slice(&rows2.to_le_bytes());
+        out[type_member_off + 6..type_member_off + 8].copy_from_slice(&cols2.to_le_bytes());
+        out[type_member_off + 8..type_member_off + 10].copy_from_slice(&elements2.to_le_bytes());
+        out[type_member_off + 10..type_member_off + 12].copy_from_slice(&0u16.to_le_bytes());
+        out[type_member_off + 12..type_member_off + 16].copy_from_slice(&0u32.to_le_bytes());
+    }
 
     // Single resource binding entry.
     //
@@ -387,6 +427,14 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
         out[var_name_off + i] = b'a' + (b % 26);
     }
     out[var_name_off + var_name_len] = 0;
+
+    if include_member {
+        for i in 0..member_name_len {
+            let b = u.arbitrary::<u8>().unwrap_or(0);
+            out[member_name_off + i] = b'A' + (b % 26);
+        }
+        out[member_name_off + member_name_len] = 0;
+    }
 
     if include_creator {
         for i in 0..creator_len {
