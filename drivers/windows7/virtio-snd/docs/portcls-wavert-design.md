@@ -106,6 +106,11 @@ The `virtio-snd` device provides:
         - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
         - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
       - Allows starting in polling-only mode (reduced interrupt-driven behavior).
+    - Optional bring-up: if virtio transport bring-up fails and you still want to exercise the PortCls/WaveRT surface, you can force the silent null backend:
+      - Set `ForceNullBackend=1` under:
+        - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
+        - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
+      - This allows `START_DEVICE` to succeed even when virtio transport initialization fails, but results in silent playback/capture.
   - Queues: `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`
   - Streams: stream 0 output (stereo) and stream 1 input (mono); contract v1 requires an S16_LE/48 kHz baseline, but devices may advertise additional formats/rates via `PCM_INFO`
 
