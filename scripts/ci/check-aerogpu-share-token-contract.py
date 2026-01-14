@@ -151,15 +151,28 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
     brace_start, body = span
     base_line = text[:brace_start].count("\n") + 1
 
+    # Accept a few common spellings (Adapter vs adapter) and spinlock acquire/release APIs.
+    re_lock_release = re.compile(
+        r"\bKeReleaseSpinLock(?:FromDpcLevel)?\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
+    )
+    re_lock_acquire = re.compile(
+        r"\bKeAcquireSpinLock(?:AtDpcLevel)?\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
+    )
+    # Less common, but still acceptable.
+    re_lock_acquire_raise = re.compile(
+        r"\bKeAcquireSpinLockRaiseToDpc\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
+    )
+
     # This helper is named "*Locked" and is expected to be entered with the lock
     # held by the caller.
     lock_held = True
     for idx, raw_line in enumerate(body.splitlines(), start=0):
         file_line = base_line + idx
         line = raw_line.strip()
-        if "KeReleaseSpinLock(&Adapter->AllocationsLock" in line:
+
+        if re_lock_release.search(line):
             lock_held = False
-        elif "KeAcquireSpinLock(&Adapter->AllocationsLock" in line:
+        elif re_lock_acquire.search(line) or re_lock_acquire_raise.search(line):
             lock_held = True
 
         if "ExAllocatePoolWithTag(" in line and lock_held:
