@@ -10514,6 +10514,39 @@ mod tests {
     }
 
     #[test]
+    fn usb_snapshot_container_decodes_legacy_uhci_and_ehci_payload_and_defaults_xhci_fields() {
+        let expected_uhci = vec![0x12, 0x34, 0x56];
+        let expected_uhci_remainder = 42u64;
+        let expected_ehci = vec![0x99, 0x88];
+        let expected_ehci_remainder = 7u64;
+
+        // `USBC` v1.1 added optional EHCI fields. Ensure the v1.2 decoder continues accepting it
+        // and defaults xHCI to empty/none.
+        let mut w = SnapshotWriter::new(*b"USBC", SnapshotVersion::new(1, 1));
+        w.field_u64(
+            MachineUsbSnapshot::TAG_UHCI_NS_REMAINDER,
+            expected_uhci_remainder,
+        );
+        w.field_bytes(MachineUsbSnapshot::TAG_UHCI_STATE, expected_uhci.clone());
+        w.field_u64(
+            MachineUsbSnapshot::TAG_EHCI_NS_REMAINDER,
+            expected_ehci_remainder,
+        );
+        w.field_bytes(MachineUsbSnapshot::TAG_EHCI_STATE, expected_ehci.clone());
+        let bytes = w.finish();
+
+        let mut decoded = MachineUsbSnapshot::default();
+        decoded.load_state(&bytes).expect("load legacy USBC v1.1");
+
+        assert_eq!(decoded.uhci.as_deref(), Some(expected_uhci.as_slice()));
+        assert_eq!(decoded.uhci_ns_remainder, expected_uhci_remainder);
+        assert_eq!(decoded.ehci.as_deref(), Some(expected_ehci.as_slice()));
+        assert_eq!(decoded.ehci_ns_remainder, expected_ehci_remainder);
+        assert_eq!(decoded.xhci, None);
+        assert_eq!(decoded.xhci_ns_remainder, 0);
+    }
+
+    #[test]
     fn usb_snapshot_container_roundtrips_uhci_and_ehci_state() {
         let snapshot = MachineUsbSnapshot {
             uhci: Some(vec![1, 2, 3]),

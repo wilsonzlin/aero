@@ -318,7 +318,7 @@ Snapshot policy (multiple controllers):
       - xHCI: `XHCI` for the core controller (`aero_usb::xhci::XhciController`), `XHCB` for the WASM
         bridge (`aero_wasm::XhciControllerBridge`), and `XHCP` for the native PCI wrapper
         (`aero_devices::usb::xhci::XhciPciDevice`).
-    - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
+    - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests one or more controller blobs (UHCI + optional EHCI + optional xHCI) plus per-controller host-managed timing accumulator state used for deterministic 1ms ticking.
   - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
 
 Note (current browser runtime wiring):
