@@ -4227,7 +4227,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
+    // Test-only helper used by Playwright smoke tests to program AeroGPU cursor MMIO state without
+    // requiring an in-guest driver. Gated behind DEV so production bundles don't expose this hook.
+    if (import.meta.env.DEV && (data as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
       const msg = data as Partial<AerogpuCursorTestProgramMessage>;
       const dev = aerogpuDevice;
       if (!dev) return;
