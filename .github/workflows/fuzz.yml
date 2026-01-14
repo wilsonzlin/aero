@@ -66,6 +66,9 @@ jobs:
       - name: fuzz_d3d9_sm3_wgsl (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_d3d9_sm3_wgsl -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 
+      - name: fuzz_d3d9_shader_parse (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_d3d9_shader_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_shader_parse.dict
+
       - name: fuzz_aerosparse_open (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aerosparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
 

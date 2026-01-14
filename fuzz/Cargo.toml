@@ -55,6 +55,7 @@ ci-smoke = [
     "aerogpu-trace",
     "d3d11",
     "d3d9",
+    "d3d9-shader",
 ]
 
 [dependencies]
