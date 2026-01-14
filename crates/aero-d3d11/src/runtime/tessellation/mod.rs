@@ -296,7 +296,8 @@ impl TessellationRuntime {
         {
             16
         } else {
-            0
+            // The layout pass always writes at least the `DebugOut.flag` field.
+            4
         };
         let total_scratch_bytes =
             compute_worst_case_scratch_usage_bytes(device, &sizes, debug_counters_bytes)

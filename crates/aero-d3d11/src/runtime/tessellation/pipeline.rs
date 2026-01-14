@@ -306,7 +306,6 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             layout: &empty_bgl,
             entries: &[],
         });
-
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
             &empty_bgl,
@@ -477,7 +476,6 @@ impl LayoutPassPipeline {
             layout: &empty_bgl,
             entries: &[],
         });
-
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
             &empty_bgl,
@@ -763,7 +761,6 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             layout: &empty_bgl,
             entries: &[],
         });
-
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
             &empty_bgl,
