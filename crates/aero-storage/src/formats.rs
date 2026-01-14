@@ -1,4 +1,4 @@
-use crate::{AeroSparseDisk, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk};
+use crate::{AeroSparseDisk, DiskError, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk};
 
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";
@@ -245,6 +245,27 @@ impl<B: StorageBackend> DiskImage<B> {
             DiskFormat::AeroSparse => Ok(Self::AeroSparse(AeroSparseDisk::open(backend)?)),
             DiskFormat::Qcow2 => Ok(Self::Qcow2(Qcow2Disk::open(backend)?)),
             DiskFormat::Vhd => Ok(Self::Vhd(Box::new(VhdDisk::open(backend)?))),
+        }
+    }
+
+    /// Open a disk image that requires an explicit parent/base disk (e.g. QCOW2 backing files or
+    /// VHD differencing disks).
+    ///
+    /// This is a convenience wrapper; callers can also open the underlying format directly (e.g.
+    /// [`Qcow2Disk::open_with_parent`] / [`VhdDisk::open_with_parent`]).
+    pub fn open_with_parent(
+        format: DiskFormat,
+        backend: B,
+        parent: Box<dyn crate::VirtualDisk + Send>,
+    ) -> Result<Self> {
+        match format {
+            DiskFormat::Qcow2 => Ok(Self::Qcow2(Qcow2Disk::open_with_parent(backend, parent)?)),
+            DiskFormat::Vhd => Ok(Self::Vhd(Box::new(VhdDisk::open_with_parent(
+                backend, parent,
+            )?))),
+            _ => Err(DiskError::InvalidConfig(
+                "parent disk is only supported for qcow2/vhd images",
+            )),
         }
     }
 

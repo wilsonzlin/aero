@@ -1,4 +1,7 @@
-use aero_storage::{MemBackend, RawDisk, StorageBackend as _, VhdDisk, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{
+    DiskFormat, DiskImage, MemBackend, RawDisk, StorageBackend as _, VhdDisk, VirtualDisk,
+    SECTOR_SIZE,
+};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -200,3 +203,22 @@ fn vhd_differencing_full_block_write_does_not_read_parent() {
     assert_eq!(&back, &data[..back.len()]);
 }
 
+#[test]
+fn disk_image_open_with_parent_supports_vhd_differencing() {
+    let virtual_size = 16 * 1024u64;
+    let block_size = 4 * 1024u32;
+
+    let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
+    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    base.write_at(0, &pattern).unwrap();
+
+    let backend = make_vhd_differencing_empty(virtual_size, block_size);
+    let mut disk =
+        DiskImage::open_with_parent(DiskFormat::Vhd, backend, Box::new(base)).unwrap();
+
+    // Read across a VHD block boundary to ensure parent fallback works through `DiskImage`.
+    let start = (block_size as usize) - 100;
+    let mut buf = vec![0u8; 300];
+    disk.read_at(start as u64, &mut buf).unwrap();
+    assert_eq!(&buf, &pattern[start..start + buf.len()]);
+}
