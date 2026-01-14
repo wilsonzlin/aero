@@ -4684,44 +4684,20 @@ fn emit_instructions(
         };
         // Helper for SM4/SM5 compare-based control-flow (`ifc`/`breakc`/`continuec`).
         //
-        // DXBC registers are untyped 32-bit lanes. We interpret the non-`*_U` forms as `f32`
-        // comparisons and the `*_U` forms as unsigned integer comparisons over the raw lane bits.
+        // DXBC registers are untyped 32-bit lanes, but these instructions perform scalar
+        // floating-point comparisons by default. The `*_U` variants follow the D3D10/11 tokenized
+        // program format and are **unordered** float compares (true when either operand is NaN).
         let emit_cmp = |op: Sm4CmpOp,
                         a: &crate::sm4_ir::SrcOperand,
                         b: &crate::sm4_ir::SrcOperand,
                         opcode: &'static str|
          -> Result<String, ShaderTranslateError> {
-            let unsigned = matches!(
-                op,
-                Sm4CmpOp::EqU
-                    | Sm4CmpOp::NeU
-                    | Sm4CmpOp::LtU
-                    | Sm4CmpOp::GeU
-                    | Sm4CmpOp::LeU
-                    | Sm4CmpOp::GtU
-            );
-            let a_expr = if unsigned {
-                emit_src_vec4_u32(a, inst_index, opcode, ctx)?
-            } else {
-                emit_src_vec4(a, inst_index, opcode, ctx)?
-            };
-            let b_expr = if unsigned {
-                emit_src_vec4_u32(b, inst_index, opcode, ctx)?
-            } else {
-                emit_src_vec4(b, inst_index, opcode, ctx)?
-            };
+            let a_expr = emit_src_vec4(a, inst_index, opcode, ctx)?;
+            let b_expr = emit_src_vec4(b, inst_index, opcode, ctx)?;
 
             let a_scalar = format!("({a_expr}).x");
             let b_scalar = format!("({b_expr}).x");
-            let cmp = match op {
-                Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
-                Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
-                Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
-                Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
-                Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
-                Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
-            };
-            Ok(format!("({a_scalar}) {cmp} ({b_scalar})"))
+            Ok(emit_sm4_cmp_op_scalar_bool(op, &a_scalar, &b_scalar))
         };
 
         match inst {
