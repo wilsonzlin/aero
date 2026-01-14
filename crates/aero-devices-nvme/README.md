@@ -50,6 +50,16 @@ Alternatively, use [`NvmeController::try_new_from_aero_storage`] /
 [`NvmePciDevice::try_new_from_aero_storage`] to construct a controller/device directly from an
 `aero-storage` disk.
 
+## Reverse adapter: using an NVMe backend as an `aero-storage` disk
+
+In rare cases, you may already have an NVMe [`DiskBackend`] implementation (e.g. a platform-specific
+backend or a test stub), but want to layer `aero-storage` disk wrappers (cache/sparse/overlay/etc)
+on top of it.
+
+Use [`aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`] to adapt an NVMe backend into an
+[`aero_storage::VirtualDisk`]. Note that NVMe backends are sector-addressed; this adapter only
+supports *sector-aligned* byte offsets and lengths.
+
 ## Interrupts
 
 - Legacy INTx signalling is modelled via `NvmeController::intx_level`.
