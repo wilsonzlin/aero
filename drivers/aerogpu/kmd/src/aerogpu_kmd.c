@@ -3982,7 +3982,6 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->RingLock);
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
-    KeInitializeSpinLock(&adapter->ContigPool.Lock);
     InitializeListHead(&adapter->PendingSubmissions);
     InitializeListHead(&adapter->PendingInternalSubmissions);
     ExInitializeNPagedLookasideList(&adapter->PendingInternalSubmissionLookaside,
