@@ -1591,6 +1591,9 @@ BOOLEAN AerovblkHwResetBus(_In_ PVOID deviceExtension, _In_ ULONG pathId) {
   UNREFERENCED_PARAMETER(pathId);
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+  if (devExt->Removed) {
+    return TRUE;
+  }
   return AerovblkDeviceBringUp(devExt, FALSE);
 }
 
