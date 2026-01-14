@@ -33,6 +33,7 @@ const ICC_CTX_FLAG_SLOT: u32 = 1 << 0;
 const ICC_CTX_FLAG_EP0: u32 = 1 << 1;
 
 const EP_STATE_RUNNING: u32 = 1;
+const EP_STATE_HALTED: u32 = 2;
 const EP_STATE_STOPPED: u32 = 3;
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
@@ -100,6 +101,8 @@ impl EventRing {
 struct EndpointState {
     dequeue_ptr: u64,
     cycle: bool,
+    stopped: bool,
+    halted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -542,6 +545,8 @@ impl CommandRingProcessor {
                     Some(EndpointState {
                         dequeue_ptr: ptr,
                         cycle,
+                        stopped: false,
+                        halted: false,
                     }),
                 ));
             }
@@ -662,8 +667,31 @@ impl CommandRingProcessor {
         };
 
         let mut ctx = EndpointContext::read_from(mem, ep_ctx);
+        let prev_state = ctx.endpoint_state() as u32;
         ctx.set_endpoint_state(EP_STATE_STOPPED as u8);
         ctx.write_to(mem, ep_ctx);
+
+        // Keep internal endpoint state in sync with guest context. Stop Endpoint updates endpoint
+        // run-state but does not change the transfer ring dequeue pointer.
+        if let Some(slot) = self.internal_slot_mut(slot_id) {
+            if let Some(entry) = slot.endpoints.get_mut(endpoint_id as usize) {
+                match entry {
+                    Some(ep) => {
+                        ep.stopped = true;
+                    }
+                    None => {
+                        *entry = Some(EndpointState {
+                            dequeue_ptr: ctx.tr_dequeue_pointer(),
+                            cycle: ctx.dcs(),
+                            stopped: true,
+                            // Stop Endpoint should not clear a previously halted endpoint (MVP:
+                            // preserve if we can infer it from the previous guest state).
+                            halted: prev_state == EP_STATE_HALTED,
+                        });
+                    }
+                }
+            }
+        }
         CompletionCode::Success
     }
 
@@ -679,6 +707,27 @@ impl CommandRingProcessor {
         // MVP: clear halted/stopped and allow transfers again.
         ctx.set_endpoint_state(EP_STATE_RUNNING as u8);
         ctx.write_to(mem, ep_ctx);
+
+        // Reset Endpoint clears stopped/halted state but does not modify the transfer ring dequeue
+        // pointer.
+        if let Some(slot) = self.internal_slot_mut(slot_id) {
+            if let Some(entry) = slot.endpoints.get_mut(endpoint_id as usize) {
+                match entry {
+                    Some(ep) => {
+                        ep.stopped = false;
+                        ep.halted = false;
+                    }
+                    None => {
+                        *entry = Some(EndpointState {
+                            dequeue_ptr: ctx.tr_dequeue_pointer(),
+                            cycle: ctx.dcs(),
+                            stopped: false,
+                            halted: false,
+                        });
+                    }
+                }
+            }
+        }
         CompletionCode::Success
     }
 
@@ -704,12 +753,40 @@ impl CommandRingProcessor {
         }
         let dcs = dcs != 0;
         let mut ctx = EndpointContext::read_from(mem, ep_ctx);
+        let endpoint_state = ctx.endpoint_state() as u32;
         ctx.set_tr_dequeue_pointer(ptr, dcs);
         ctx.write_to(mem, ep_ctx);
 
         // MVP: preserve existing endpoint state (typically Stopped) and only update the dequeue
         // pointer + DCS.
+        if let Some(slot) = self.internal_slot_mut(slot_id) {
+            if let Some(entry) = slot.endpoints.get_mut(endpoint_id as usize) {
+                match entry {
+                    Some(ep) => {
+                        ep.dequeue_ptr = ptr;
+                        ep.cycle = dcs;
+                    }
+                    None => {
+                        *entry = Some(EndpointState {
+                            dequeue_ptr: ptr,
+                            cycle: dcs,
+                            stopped: endpoint_state == EP_STATE_STOPPED,
+                            halted: endpoint_state == EP_STATE_HALTED,
+                        });
+                    }
+                }
+            }
+        }
         CompletionCode::Success
+    }
+
+    fn internal_slot_mut(&mut self, slot_id: u8) -> Option<&mut SlotState> {
+        if slot_id == 0 || slot_id > self.max_slots {
+            return None;
+        }
+        let idx = usize::from(slot_id);
+        let slot = self.slots.get_mut(idx)?;
+        Some(slot.get_or_insert_with(SlotState::new))
     }
 
     fn handle_evaluate_context(&mut self, mem: &mut dyn MemoryBus, cmd: Trb) -> CompletionCode {
@@ -931,5 +1008,165 @@ impl CommandRingProcessor {
         }
         mem.write_physical(addr, &value.to_le_bytes());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestMem {
+        data: Vec<u8>,
+    }
+
+    impl TestMem {
+        fn new(size: usize) -> Self {
+            Self { data: vec![0; size] }
+        }
+    }
+
+    impl MemoryBus for TestMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                buf.fill(0);
+                return;
+            }
+            buf.copy_from_slice(&self.data[start..end]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                return;
+            }
+            self.data[start..end].copy_from_slice(buf);
+        }
+    }
+
+    #[test]
+    fn endpoint_commands_update_internal_endpoint_state() {
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let cmd_ring = 0x4000u64;
+        let event_ring = 0x5000u64;
+
+        let max_slots = 8;
+        let slot_id = 1u8;
+        let endpoint_id = 2u8; // EP1 OUT (DCI=2)
+        let ep_ctx = dev_ctx + u64::from(endpoint_id) * CONTEXT_SIZE;
+
+        // Seed endpoint context state + dequeue pointer (DCS=1).
+        mem.write_u32(ep_ctx + 0, EP_STATE_RUNNING);
+        mem.write_u32(ep_ctx + 8, 0x1110 | 1);
+        mem.write_u32(ep_ctx + 12, 0);
+
+        // Command ring:
+        //  - TRB0: Enable Slot
+        //  - TRB1: Stop Endpoint
+        //  - TRB2: Set TR Dequeue Pointer (0x6000, DCS=0)
+        //  - TRB3: Reset Endpoint
+        {
+            let mut trb0 = Trb::new(0, 0, 0);
+            trb0.set_trb_type(TrbType::EnableSlotCommand);
+            trb0.set_cycle(true);
+            trb0.write_to(&mut mem, cmd_ring);
+        }
+        {
+            let mut trb1 = Trb::new(0, 0, 0);
+            trb1.set_trb_type(TrbType::StopEndpointCommand);
+            trb1.set_cycle(true);
+            trb1.set_slot_id(slot_id);
+            trb1.set_endpoint_id(endpoint_id);
+            trb1.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
+        }
+
+        let new_trdp = 0x6000u64;
+        {
+            let mut trb2 = Trb::new(new_trdp, 0, 0);
+            trb2.set_trb_type(TrbType::SetTrDequeuePointerCommand);
+            trb2.set_cycle(true);
+            trb2.set_slot_id(slot_id);
+            trb2.set_endpoint_id(endpoint_id);
+            trb2.write_to(&mut mem, cmd_ring + 2 * TRB_LEN as u64);
+        }
+        {
+            let mut trb3 = Trb::new(0, 0, 0);
+            trb3.set_trb_type(TrbType::ResetEndpointCommand);
+            trb3.set_cycle(true);
+            trb3.set_slot_id(slot_id);
+            trb3.set_endpoint_id(endpoint_id);
+            trb3.write_to(&mut mem, cmd_ring + 3 * TRB_LEN as u64);
+        }
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            max_slots,
+            dcbaa,
+            CommandRing {
+                dequeue_ptr: cmd_ring,
+                cycle_state: true,
+            },
+            EventRing::new(event_ring, 16),
+        );
+
+        // Process Enable Slot so the processor allocates slot state. Enable Slot clears DCBAA[1] to
+        // 0, so install the device context pointer after it completes.
+        processor.process(&mut mem, 1);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Stop Endpoint should update guest memory and set the internal "stopped" flag.
+        processor.process(&mut mem, 1);
+        assert_eq!(mem.read_u32(ep_ctx + 0) & 0x7, EP_STATE_STOPPED);
+
+        let slot = processor.slots[usize::from(slot_id)]
+            .as_ref()
+            .expect("slot state should exist after Enable Slot");
+        let ep = slot.endpoints[usize::from(endpoint_id)]
+            .as_ref()
+            .expect("endpoint state should have been created by Stop Endpoint");
+        assert_eq!(ep.dequeue_ptr, 0x1110);
+        assert!(ep.cycle);
+        assert!(ep.stopped);
+        assert!(!ep.halted);
+
+        // Simulate a transfer-ring error halting the endpoint; Set TR Dequeue Pointer must not
+        // clear stopped/halted flags.
+        processor.slots[usize::from(slot_id)]
+            .as_mut()
+            .unwrap()
+            .endpoints[usize::from(endpoint_id)]
+            .as_mut()
+            .unwrap()
+            .halted = true;
+
+        processor.process(&mut mem, 1);
+
+        let ctx = EndpointContext::read_from(&mut mem, ep_ctx);
+        assert_eq!(ctx.tr_dequeue_pointer(), new_trdp);
+        assert!(!ctx.dcs());
+
+        let slot = processor.slots[usize::from(slot_id)].as_ref().unwrap();
+        let ep = slot.endpoints[usize::from(endpoint_id)].as_ref().unwrap();
+        assert_eq!(ep.dequeue_ptr, new_trdp);
+        assert!(!ep.cycle);
+        assert!(ep.stopped);
+        assert!(ep.halted);
+
+        // Reset Endpoint clears stopped/halted state but preserves the ring cursor.
+        processor.process(&mut mem, 1);
+        assert_eq!(mem.read_u32(ep_ctx + 0) & 0x7, EP_STATE_RUNNING);
+
+        let slot = processor.slots[usize::from(slot_id)].as_ref().unwrap();
+        let ep = slot.endpoints[usize::from(endpoint_id)].as_ref().unwrap();
+        assert_eq!(ep.dequeue_ptr, new_trdp);
+        assert!(!ep.cycle);
+        assert!(!ep.stopped);
+        assert!(!ep.halted);
     }
 }
