@@ -1267,6 +1267,40 @@ fn drain_pending_submissions_returns_completed_fences_as_well() {
 }
 
 #[test]
+fn snapshot_restore_clears_torn_scanout_fb_gpa_update_tracking() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let mut dev = new_test_device(cfg.clone());
+
+    let committed_fb_gpa = 0x1111_2222_3333_4444u64;
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, committed_fb_gpa & 0xffff_ffff);
+    dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, committed_fb_gpa >> 32);
+
+    // Start a torn update: write LO without a subsequent HI write.
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, 0xDEAD_BEEF);
+    assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32, 0xDEAD_BEEF);
+
+    let snap = dev.save_state();
+    dev.load_state(&snap).unwrap();
+
+    // Restoring snapshot state should clear the torn-update tracking state so MMIO reads reflect
+    // the committed snapshot value, not the stale LO dword from before restore.
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32,
+        committed_fb_gpa as u32
+    );
+
+    // Sanity: HI reads should always match the committed snapshot value.
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_HI, 4) as u32,
+        (committed_fb_gpa >> 32) as u32
+    );
+}
+
+#[test]
 fn snapshot_restore_rejects_executor_state_with_too_many_pending_fences() {
     // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
     const TAG_REGS: u16 = 1;

@@ -1084,6 +1084,13 @@ impl IoSnapshot for AeroGpuPciDevice {
         // across restore calls.
         self.executor.reset();
         self.executor.last_submissions.clear();
+        self.pending_fence_completions.clear();
+        // Snapshot state records committed 64-bit GPAs; clear any torn-update tracking so stale LO
+        // writes from a previous execution do not affect MMIO reads or future HI write commits.
+        self.scanout0_fb_gpa_pending_lo = 0;
+        self.scanout0_fb_gpa_lo_pending = false;
+        self.cursor_fb_gpa_pending_lo = 0;
+        self.cursor_fb_gpa_lo_pending = false;
 
         // Executor state is optional for forward/backward compatibility; missing means "reset".
         if let Some(exec_bytes) = r.bytes(TAG_EXECUTOR) {
