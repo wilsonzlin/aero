@@ -14,4 +14,3 @@ fn aerogpu_format_from_u32_decodes_known_values() {
     );
     assert_eq!(AerogpuFormat::from_u32(0xDEAD_BEEF), None);
 }
-

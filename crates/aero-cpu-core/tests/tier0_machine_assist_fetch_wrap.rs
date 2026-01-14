@@ -28,4 +28,3 @@ fn tier0_machine_assist_fetch_wraps_across_16bit_ip_boundary() {
 
     assert_eq!(machine.bus.debugcon(), b"X");
 }
-
