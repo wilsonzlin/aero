@@ -607,7 +607,7 @@ bool TestSrvBindingUnbindsOnlyAliasedRtv() {
   return true;
 }
 
-bool TestSetRenderTargetsUnbindsAliasedPsSrvForMrt() {
+bool TestSetRenderTargetsUnbindsAliasedSrvsForMrt() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
     return false;
@@ -631,8 +631,10 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForMrt() {
     return false;
   }
 
-  // Bind the aliased SRV first.
+  // Bind the aliased SRV first (both VS and PS). Binding the resource as an
+  // output later must evict SRVs across all stages.
   D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv1.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
   dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
   if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources bind SRV)")) {
     return false;
@@ -665,13 +667,23 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForMrt() {
     return false;
   }
 
-  const CmdLoc tex_loc =
-      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
-  if (!Check(tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after SetRenderTargets")) {
+  const CmdLoc vs_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after SetRenderTargets")) {
     return false;
   }
-  const auto* set_tex = reinterpret_cast<const aerogpu_cmd_set_texture*>(tex_loc.hdr);
-  if (!Check(set_tex->texture == 0, "PS SRV slot 0 unbound before MRT bind")) {
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_loc.hdr);
+  if (!Check(set_vs->texture == 0, "VS SRV slot 0 unbound before MRT bind")) {
+    return false;
+  }
+
+  const CmdLoc ps_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after SetRenderTargets")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_loc.hdr);
+  if (!Check(set_ps->texture == 0, "PS SRV slot 0 unbound before MRT bind")) {
     return false;
   }
 
@@ -701,7 +713,7 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForMrt() {
   return true;
 }
 
-bool TestSetRenderTargetsUnbindsAliasedPsSrvForDsv() {
+bool TestSetRenderTargetsUnbindsAliasedSrvsForDsv() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
     return false;
@@ -726,8 +738,10 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForDsv() {
     return false;
   }
 
-  // Bind the aliased SRV first.
+  // Bind the aliased SRV first (both VS and PS). Binding the resource as a DSV
+  // later must evict SRVs across all stages.
   D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
   dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
   if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources bind depth SRV)")) {
     return false;
@@ -758,13 +772,23 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForDsv() {
     return false;
   }
 
-  const CmdLoc tex_loc =
-      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
-  if (!Check(tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after SetRenderTargets DSV")) {
+  const CmdLoc vs_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after SetRenderTargets DSV")) {
     return false;
   }
-  const auto* set_tex = reinterpret_cast<const aerogpu_cmd_set_texture*>(tex_loc.hdr);
-  if (!Check(set_tex->texture == 0, "PS SRV slot 0 unbound before DSV bind")) {
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_loc.hdr);
+  if (!Check(set_vs->texture == 0, "VS SRV slot 0 unbound before DSV bind")) {
+    return false;
+  }
+
+  const CmdLoc ps_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after SetRenderTargets DSV")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_loc.hdr);
+  if (!Check(set_ps->texture == 0, "PS SRV slot 0 unbound before DSV bind")) {
     return false;
   }
 
@@ -784,6 +808,95 @@ bool TestSetRenderTargetsUnbindsAliasedPsSrvForDsv() {
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hSrv);
   dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSrvBindingUnbindsOnlyAliasedRtvVs() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv0{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex0, &srv0)) {
+    return false;
+  }
+
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (2)")) {
+    return false;
+  }
+
+  // Binding a VS SRV that aliases RTV[0] must unbind RTV[0], but should preserve
+  // RTV[1] (null entries are encoded in SET_RENDER_TARGETS.colors[]).
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv0.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after VSSetShaderResources)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after VSSetShaderResources)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (RTV[1] preserved)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == 0, "SET_RENDER_TARGETS colors[0]==0 (aliased RTV[0] unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1]==RTV[1] (preserved)")) {
+    return false;
+  }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (trailing)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv0.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -887,16 +1000,101 @@ bool TestSrvBindingUnbindsAliasedDsv() {
   return true;
 }
 
+bool TestSrvBindingUnbindsAliasedDsvVs() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource depth{};
+  TestDsv dsv{};
+  TestSrv srv{};
+
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindDepthStencil | kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth)) {
+    return false;
+  }
+  if (!CreateDSV(&dev, &depth, &dsv)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &depth, &srv)) {
+    return false;
+  }
+
+  // Bind only DSV, no RTVs.
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*pViews=*/nullptr, dsv.hDsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets DSV-only)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets DSV-only)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 1, "captured CREATE_TEXTURE2D handles (1)")) {
+    return false;
+  }
+
+  // Binding a VS SRV that aliases the DSV must unbind the DSV.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after VSSetShaderResources alias DSV)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after VSSetShaderResources alias DSV)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources alias DSV)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (DSV-only unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil==0 (aliased DSV unbound)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (DSV-only unbound)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hSrv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
   bool ok = true;
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
   ok &= TestSetRenderTargetsPreservesNullEntries();
-  ok &= TestSetRenderTargetsUnbindsAliasedPsSrvForMrt();
-  ok &= TestSetRenderTargetsUnbindsAliasedPsSrvForDsv();
+  ok &= TestSetRenderTargetsUnbindsAliasedSrvsForMrt();
+  ok &= TestSetRenderTargetsUnbindsAliasedSrvsForDsv();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
+  ok &= TestSrvBindingUnbindsOnlyAliasedRtvVs();
   ok &= TestSrvBindingUnbindsAliasedDsv();
+  ok &= TestSrvBindingUnbindsAliasedDsvVs();
   if (!ok) {
     return 1;
   }
