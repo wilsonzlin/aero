@@ -557,12 +557,13 @@ jobs:
           net_irq_host_marker=""
           snd_irq_host_marker=""
           input_irq_host_marker=""
-          blk_recovery_host_marker=""
-          blk_counters_host_marker=""
-          if [[ -f "${serial_log}" ]]; then
-            config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
-            result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
-            blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+           blk_recovery_host_marker=""
+           blk_counters_host_marker=""
+           blk_reset_host_marker=""
+           if [[ -f "${serial_log}" ]]; then
+             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
+             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_offload_csum_marker="$(
@@ -594,12 +595,13 @@ jobs:
               net_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|' "${harness_log}" | tail -n 1 || true)"
               snd_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|' "${harness_log}" | tail -n 1 || true)"
               input_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|' "${harness_log}" | tail -n 1 || true)"
-              blk_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
-              blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
-              pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
-              blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
-              blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
-              blk_resize_host_marker="$(
+               blk_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
+               blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
+               blk_reset_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|' "${harness_log}" | tail -n 1 || true)"
+               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
+               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
+               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
+               blk_resize_host_marker="$(
                 grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|' "${harness_log}" \
                   | grep -vF '|REQUEST|' \
                   | grep -vF '|FAIL|reason=' \
@@ -664,12 +666,15 @@ jobs:
             if [[ -n "${blk_resize_marker}" ]]; then
               echo "- Guest virtio-blk-resize marker: ${blk_resize_marker}"
             fi
-            if [[ -n "${blk_reset_marker}" ]]; then
-              echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
-            fi
-            if [[ -n "${net_link_flap_marker}" ]]; then
-              echo "- Guest virtio-net-link-flap marker: ${net_link_flap_marker}"
-            fi
+             if [[ -n "${blk_reset_marker}" ]]; then
+               echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
+             fi
+             if [[ -n "${blk_reset_host_marker}" ]]; then
+               echo "- Host virtio-blk-reset marker: \`${blk_reset_host_marker}\`"
+             fi
+             if [[ -n "${net_link_flap_marker}" ]]; then
+               echo "- Guest virtio-net-link-flap marker: ${net_link_flap_marker}"
+             fi
             if [[ -n "${net_offload_csum_marker}" ]]; then
               echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
             fi
