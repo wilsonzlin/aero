@@ -199,6 +199,8 @@ Baseline requirements:
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
 - Prefer **MSI/MSI-X** when Windows assigns message interrupts (INF `Interrupt Management\\MessageSignaledInterruptProperties` opt-in) and virtio MSI-X vector programming succeeds (`common_cfg.msix_config`, `common_cfg.queue_msix_vector`), and use INTx when message interrupts are unavailable/cannot be connected.
   - If MSI-X is enabled but vector programming fails (read-back `VIRTIO_PCI_MSI_NO_VECTOR`), interrupts are suppressed on Aero contract devices; the driver must not rely on implicit INTx fallback.
+- If no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx), fail `START_DEVICE` by default.
+  - Optional bring-up: `AllowPollingOnly=1` allows starting in polling-only mode and relying on the WaveRT period timer DPC to poll/drain used rings (intended for early device-model bring-up and debugging).
 
 Behavior:
 
