@@ -1296,6 +1296,84 @@ fn tier2_shl_updates_sf_observed_by_js() {
 }
 
 #[test]
+fn tier2_shr8_updates_zf_observed_by_jz() {
+    // mov al, 1
+    // shr al, 1
+    // jz +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // 1 >> 1 = 0 => ZF=1 => JZ taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE8, // shr al, 1
+        0x74, 0x03, // jz +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr8_updates_pf_observed_by_jnp() {
+    // mov al, 3
+    // shr al, 1
+    // jnp +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // 3 >> 1 = 1 => PF=0 (odd parity) => JNP taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x03, // mov al, 3
+        0xD0, 0xE8, // shr al, 1
+        0x7B, 0x03, // jnp +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar8_updates_sf_observed_by_js() {
+    // mov al, 0x80
+    // sar al, 1
+    // js +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // 0x80 >>_arith 1 = 0xC0 => SF=1 => JS taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x80, // mov al, 0x80
+        0xD0, 0xF8, // sar al, 1
+        0x78, 0x03, // js +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shl16_updates_sf_observed_by_js() {
     // mov ax, 0x4000
     // shl ax, 1
