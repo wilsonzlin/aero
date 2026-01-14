@@ -90,7 +90,7 @@ fn cmd_writer_bind_shaders_ex_emits_append_only_extended_payload() {
     let opcode = hdr.opcode;
     let size_bytes = hdr.size_bytes;
     assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
-    assert_eq!(size_bytes, 36);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
 
     // Extension is append-only: `reserved0` stays 0 and `{gs,hs,ds}` are appended after the base struct.
     let reserved0 = u32::from_le_bytes(

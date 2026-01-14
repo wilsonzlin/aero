@@ -908,7 +908,7 @@ fuzz_target!(|data: &[u8]| {
     const SET_BLEND_STATE_LEGACY_SIZE_BYTES: usize = 28;
     const BIND_SHADERS_BASE_SIZE_BYTES: usize = cmd::AerogpuCmdBindShaders::SIZE_BYTES;
     // Variable-length `BIND_SHADERS` extension: base + optional gs/hs/ds handles (3 * u32).
-    const BIND_SHADERS_EXTENDED_SIZE_BYTES: usize = cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12;
+    const BIND_SHADERS_EXTENDED_SIZE_BYTES: usize = cmd::AerogpuCmdBindShaders::EX_SIZE_BYTES;
 
     const SYNTH_DXBC_BYTES: usize = 4;
     const SYNTH_UPLOAD_BYTES: usize = 4;
@@ -1921,7 +1921,7 @@ fuzz_target!(|data: &[u8]| {
     // Increase the packet size and append an extra u32 to simulate a newer guest extending the
     // packet beyond what the current decoder understands.
     let pkt_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
-    let new_pkt_size = (cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12 + 4) as u32;
+    let new_pkt_size = (cmd::AerogpuCmdBindShaders::EX_SIZE_BYTES + 4) as u32;
     if let Some(size_bytes) = cmd_bind_shaders_ex_trailing.get_mut(pkt_off + 4..pkt_off + 8) {
         size_bytes.copy_from_slice(&new_pkt_size.to_le_bytes());
     }

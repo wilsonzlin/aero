@@ -723,6 +723,11 @@ pub struct AerogpuCmdBindShaders {
 
 impl AerogpuCmdBindShaders {
     pub const SIZE_BYTES: usize = 24;
+    /// Extended BIND_SHADERS packet size (base struct + appended `{gs,hs,ds}` handles).
+    pub const EX_SIZE_BYTES: usize = Self::SIZE_BYTES + 3 * core::mem::size_of::<AerogpuHandle>();
+    /// Extended BIND_SHADERS payload size (excluding the 8-byte command header).
+    pub const EX_PAYLOAD_SIZE_BYTES: usize =
+        (Self::SIZE_BYTES - AerogpuCmdHdr::SIZE_BYTES) + 3 * core::mem::size_of::<AerogpuHandle>();
 
     /// Geometry shader handle (GS).
     ///
@@ -2181,7 +2186,7 @@ impl<'a> AerogpuCmdPacket<'a> {
         let cs = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
         let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
 
-        let ex = if self.payload.len() >= 28 {
+        let ex = if self.payload.len() >= AerogpuCmdBindShaders::EX_PAYLOAD_SIZE_BYTES {
             // Extended BIND_SHADERS appends `{gs, hs, ds}`.
             Some(BindShadersEx {
                 gs: u32::from_le_bytes(self.payload[16..20].try_into().unwrap()),

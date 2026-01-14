@@ -1,5 +1,5 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_bind_shaders_payload_le, AerogpuCmdOpcode, BindShadersEx,
+    decode_cmd_bind_shaders_payload_le, AerogpuCmdBindShaders, AerogpuCmdOpcode, BindShadersEx,
 };
 
 fn push_u32(buf: &mut Vec<u8>, v: u32) {
@@ -60,7 +60,7 @@ fn bind_shaders_decodes_extended_packet() {
 
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
     let size_bytes = cmd.hdr.size_bytes;
-    assert_eq!(size_bytes, 36);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
     assert_eq!(
         ex,
         Some(BindShadersEx {
@@ -90,7 +90,7 @@ fn bind_shaders_decodes_extended_packet_with_legacy_reserved0_mismatch() {
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
     let size_bytes = cmd.hdr.size_bytes;
     let reserved0 = cmd.reserved0;
-    assert_eq!(size_bytes, 36);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
     assert_eq!(reserved0, 0xAABB_CCDD);
     assert_eq!(
         ex,

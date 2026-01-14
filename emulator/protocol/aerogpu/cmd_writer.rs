@@ -567,8 +567,8 @@ impl AerogpuCmdWriter {
     ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
-        let base_struct_size = size_of::<AerogpuCmdBindShaders>();
-        let cmd_size_bytes = base_struct_size + 3 * size_of::<AerogpuHandle>();
+        let base_struct_size = AerogpuCmdBindShaders::SIZE_BYTES;
+        let cmd_size_bytes = AerogpuCmdBindShaders::EX_SIZE_BYTES;
 
         let base = self.append_raw(AerogpuCmdOpcode::BindShaders, cmd_size_bytes);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
