@@ -115,6 +115,7 @@ class HarnessArgAliasTests(unittest.TestCase):
             "--with-snd-buffer-limits",
             "--with-virtio-snd-buffer-limits",
             "--enable-snd-buffer-limits",
+            "--enable-virtio-snd-buffer-limits",
         ):
             with self.subTest(flag=flag):
                 args = self._parse(
