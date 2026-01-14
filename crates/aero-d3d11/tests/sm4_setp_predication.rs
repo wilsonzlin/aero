@@ -164,9 +164,24 @@ fn decodes_and_translates_setp_and_predicated_mov() {
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
     body.extend_from_slice(&imm0);
 
-    // (+p0.x) mov o0, l(1, 1, 1, 1)
+    // (+p0.x) setp p1.x, v0.x, l(1.0), gt
+    let dst_p1x = reg_dst(OPERAND_TYPE_PREDICATE, 1, WriteMask::X);
+    let src_one = imm32_scalar(1.0f32.to_bits());
+    let pred_p0x = pred_operand(0, 0);
+    let pred_setp_len = 1
+        + pred_p0x.len() as u32
+        + dst_p1x.len() as u32
+        + src_v0x.len() as u32
+        + src_one.len() as u32;
+    body.push(opcode_token_setp(pred_setp_len, 5));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&dst_p1x);
+    body.extend_from_slice(&src_v0x);
+    body.extend_from_slice(&src_one);
+
+    // (+p1.x) mov o0, l(1, 1, 1, 1)
     let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
-    let pred = pred_operand(0, 0);
+    let pred = pred_operand(1, 0);
     body.push(opcode_token(
         OPCODE_MOV,
         1 + pred.len() as u32 + 2 + imm1.len() as u32,
@@ -198,6 +213,7 @@ fn decodes_and_translates_setp_and_predicated_mov() {
 
     assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(module.instructions[2], Sm4Inst::Predicated { .. }));
+    assert!(matches!(module.instructions[3], Sm4Inst::Predicated { .. }));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -209,8 +225,18 @@ fn decodes_and_translates_setp_and_predicated_mov() {
         translated.wgsl
     );
     assert!(
+        translated.wgsl.contains("var p1: vec4<bool>"),
+        "expected predicate register decl in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
         translated.wgsl.contains("if (p0.x) {"),
-        "expected predicated mov to translate to if(p0.x):\n{}",
+        "expected predicated setp to translate to if(p0.x):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("if (p1.x) {"),
+        "expected predicated mov to translate to if(p1.x):\n{}",
         translated.wgsl
     );
 }
