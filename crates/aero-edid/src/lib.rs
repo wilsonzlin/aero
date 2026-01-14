@@ -28,11 +28,21 @@ impl Timing {
     fn is_plausible(self) -> bool {
         // EDID Detailed Timing Descriptors store active pixel counts as 12-bit
         // values, and pixel clock as a 16-bit value in 10kHz units.
+        //
+        // We treat timings that cannot possibly be represented in a single base
+        // EDID Detailed Timing Descriptor as implausible (e.g. extremely high
+        // resolutions or refresh rates that would require a pixel clock above
+        // 655.35MHz).
         self.width != 0
             && self.height != 0
             && self.refresh_hz != 0
             && (self.width as u32) <= 0x0FFF
             && (self.height as u32) <= 0x0FFF
+            && {
+                let min_pixel_clock_hz =
+                    self.width as u64 * self.height as u64 * self.refresh_hz as u64;
+                min_pixel_clock_hz <= u16::MAX as u64 * 10_000
+            }
     }
 }
 
@@ -795,5 +805,20 @@ mod tests {
         let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
         let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
         assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    }
+
+    #[test]
+    fn unrepresentable_preferred_mode_falls_back_to_default() {
+        // Even with *zero* blanking, 4095×4095@60 would require > 655.35MHz, which cannot fit in
+        // an EDID 1.4 DTD pixel clock field (16-bit in 10kHz units). We should reject it rather
+        // than generating a clamped/incorrect DTD.
+        let edid = generate_edid(Timing::new(4095, 4095, 60));
+        assert_eq!(
+            &edid[54..72],
+            &[
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
+                0x0E, 0x11, 0x00, 0x00, 0x18
+            ]
+        );
     }
 }
