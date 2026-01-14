@@ -436,6 +436,31 @@ async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<nu
   }
 }
 
+async function tryReadOpfsFileSizeBytes(path: string): Promise<number | null> {
+  if (!path) return null;
+  // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
+  const storage = (globalThis as unknown as { navigator?: unknown }).navigator as { storage?: unknown } | undefined;
+  const getDirectory = (storage?.storage as { getDirectory?: unknown } | undefined)?.getDirectory;
+  if (typeof getDirectory !== "function") return null;
+
+  // Overlay refs are expected to be relative OPFS paths. Refuse to interpret `..` to avoid path traversal.
+  const parts = path.split("/").filter((p) => p && p !== ".");
+  if (parts.length === 0 || parts.some((p) => p === "..")) return null;
+
+  try {
+    let dir = (await (getDirectory as () => Promise<FileSystemDirectoryHandle>)()) as FileSystemDirectoryHandle;
+    for (const part of parts.slice(0, -1)) {
+      dir = await dir.getDirectoryHandle(part, { create: false });
+    }
+    const file = await dir.getFileHandle(parts[parts.length - 1]!, { create: false }).then((h) => h.getFile());
+    const size = file.size;
+    if (typeof size !== "number" || !Number.isFinite(size) || size < 0) return null;
+    return size;
+  } catch {
+    return null;
+  }
+}
+
 function detachMachineNetwork(): void {
   const m = machine;
   if (!m) return;
@@ -730,38 +755,121 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   if (msg.hdd) {
     const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
     if (plan.format === "aerospar") {
-      const openAndSetRef = (m as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown })
-        .set_disk_aerospar_opfs_open_and_set_overlay_ref;
-      const open = (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open;
-      if (typeof openAndSetRef === "function") {
-        try {
-          await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
-        }
-      } else if (typeof open === "function") {
-        try {
-          await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
-        }
-        // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
-        try {
-          const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
-          if (typeof setRef === "function") {
-            (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
+      // Prefer a copy-on-write overlay when available so machine runtime matches the legacy
+      // disk worker behaviour: imported base images remain unchanged and guest writes persist in a
+      // derived `*.overlay.aerospar` file.
+      const cowOpenAndSetRef = (m as unknown as { set_disk_cow_opfs_open_and_set_overlay_ref?: unknown })
+        .set_disk_cow_opfs_open_and_set_overlay_ref;
+      const cowOpen = (m as unknown as { set_disk_cow_opfs_open?: unknown }).set_disk_cow_opfs_open;
+      const cowCreateAndSetRef = (m as unknown as { set_disk_cow_opfs_create_and_set_overlay_ref?: unknown })
+        .set_disk_cow_opfs_create_and_set_overlay_ref;
+      const cowCreate = (m as unknown as { set_disk_cow_opfs_create?: unknown }).set_disk_cow_opfs_create;
+
+      const canCowOpen = typeof cowOpenAndSetRef === "function" || typeof cowOpen === "function";
+      const canCowCreate = typeof cowCreateAndSetRef === "function" || typeof cowCreate === "function";
+
+      const cowPaths = diskMetaToOpfsCowPaths(msg.hdd);
+      if ((canCowOpen || canCowCreate) && cowPaths) {
+        const overlaySize = await tryReadOpfsFileSizeBytes(cowPaths.overlayPath);
+        const overlayHasHeader = typeof overlaySize === "number" && overlaySize >= AEROSPARSE_HEADER_SIZE_BYTES;
+
+        if (overlayHasHeader && canCowOpen) {
+          const fn = (typeof cowOpenAndSetRef === "function" ? cowOpenAndSetRef : cowOpen) as unknown;
+          try {
+            await maybeAwait((fn as (base: string, overlay: string) => unknown).call(m, cowPaths.basePath, cowPaths.overlayPath));
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `setBootDisks: failed to open COW overlay for aerospar HDD (disk_id=0) ` +
+                `base=${cowPaths.basePath} overlay=${cowPaths.overlayPath}: ${message}`,
+            );
           }
-        } catch {
-          // ignore
+
+          // Best-effort overlay ref: `set_disk_cow_opfs_open` may not record snapshot refs.
+          if (typeof cowOpenAndSetRef !== "function") {
+            try {
+              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              if (typeof setRef === "function") {
+                (setRef as (base: string, overlay: string) => void).call(m, cowPaths.basePath, cowPaths.overlayPath);
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          changed = true;
+        } else if (!overlayHasHeader && canCowCreate) {
+          const fn = (typeof cowCreateAndSetRef === "function" ? cowCreateAndSetRef : cowCreate) as unknown;
+          const blockSizeBytes =
+            cowPaths.overlayBlockSizeBytes ??
+            (await tryReadAerosparseBlockSizeBytesFromOpfs(cowPaths.overlayPath)) ??
+            DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
+          try {
+            await maybeAwait(
+              (fn as (base: string, overlay: string, blockSizeBytes: number) => unknown).call(
+                m,
+                cowPaths.basePath,
+                cowPaths.overlayPath,
+                blockSizeBytes,
+              ),
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `setBootDisks: failed to create COW overlay for aerospar HDD (disk_id=0) ` +
+                `base=${cowPaths.basePath} overlay=${cowPaths.overlayPath}: ${message}`,
+            );
+          }
+
+          if (typeof cowCreateAndSetRef !== "function") {
+            try {
+              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              if (typeof setRef === "function") {
+                (setRef as (base: string, overlay: string) => void).call(m, cowPaths.basePath, cowPaths.overlayPath);
+              }
+            } catch {
+              // ignore
+            }
+          }
+          changed = true;
         }
-      } else {
-        throw new Error(
-          `Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build (disk path=${plan.opfsPath}).`,
-        );
       }
-      changed = true;
+
+      if (!changed) {
+        // Fall back to attaching the aerosparse disk directly when COW overlay helpers are unavailable.
+        const openAndSetRef = (m as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown })
+          .set_disk_aerospar_opfs_open_and_set_overlay_ref;
+        const open = (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open;
+        if (typeof openAndSetRef === "function") {
+          try {
+            await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
+          }
+        } else if (typeof open === "function") {
+          try {
+            await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
+          }
+          // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
+          try {
+            const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+            if (typeof setRef === "function") {
+              (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
+            }
+          } catch {
+            // ignore
+          }
+        } else {
+          throw new Error(
+            `Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build (disk path=${plan.opfsPath}).`,
+          );
+        }
+        changed = true;
+      }
     } else {
       const cow = diskMetaToOpfsCowPaths(msg.hdd);
       if (!cow) {
