@@ -1363,6 +1363,29 @@ mod tests {
     }
 
     #[test]
+    fn comreset_without_drive_keeps_port_empty_and_no_irq() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 1);
+
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+
+        // COMRESET assert/deassert with no drive attached.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 1);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_TFD), 0);
+        assert!(!irq.level());
+
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_TFD), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS), 0);
+        assert!(!irq.level(), "no device => no DHRS IRQ on reset completion");
+    }
+
+    #[test]
     fn sctl_det_disable_offlines_and_reenables_port() {
         let (mut ctl, irq, _mem, drive) = setup_controller();
         ctl.attach_drive(0, drive);
