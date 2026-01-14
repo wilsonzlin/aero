@@ -12369,22 +12369,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_NOT_SUPPORTED;
         }
 
-        BOOLEAN vblankSupported = FALSE;
-        if (mmioSafe) {
-            const BOOLEAN haveFeaturesRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG));
-            const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
-            if (!haveFeaturesRegs || !haveVblankRegs) {
-                return STATUS_NOT_SUPPORTED;
-            }
-
-            const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                      ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-            vblankSupported = ((features & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
-        } else {
-            vblankSupported = ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
-        }
-
-        if (!vblankSupported) {
+        if (!adapter->SupportsVblank) {
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -12530,13 +12515,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 return STATUS_SUCCESS;
             }
 
-            cursorSupported = TRUE;
-            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
-                const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                           ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-                cursorSupported = (features & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
-            }
-
+            cursorSupported = ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) ? TRUE : FALSE;
             if (!cursorSupported) {
                 return STATUS_SUCCESS;
             }
