@@ -1097,21 +1097,15 @@ static HRESULT EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_byte
     return E_OUTOFMEMORY;
   }
 
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty) {
+  if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                       res->handle,
+                                       upload_offset,
+                                       upload_size,
+                                       [&](HRESULT hr) { SetError(dev, hr); })) {
     (void)unlock_allocation();
-    SetError(dev, E_OUTOFMEMORY);
     alloc_checkpoint.rollback();
     return E_OUTOFMEMORY;
   }
-  // Note: the host validates RESOURCE_DIRTY_RANGE against the protocol-visible
-  // required bytes (CREATE_TEXTURE2D layouts). Do not use the runtime's
-  // SlicePitch here, which can include extra padding and exceed the protocol
-  // size.
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = upload_size;
 
   // Only write after successfully recording the dirty-range command.
   if (row_copy_texture2d) {
@@ -1153,16 +1147,14 @@ static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_byt
     return;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                       res->handle,
+                                       offset_bytes,
+                                       size_bytes,
+                                       [&](HRESULT hr) { SetError(dev, hr); })) {
     alloc_checkpoint.rollback();
     return;
   }
-  cmd->resource_handle = res->handle;
-  cmd->reserved0 = 0;
-  cmd->offset_bytes = offset_bytes;
-  cmd->size_bytes = size_bytes;
 }
 
 static Device* DeviceFromHandle(D3D11DDI_HDEVICE hDevice);
@@ -2125,15 +2117,8 @@ static bool UnmapLocked(Device* dev, Resource* res) {
       const WddmAllocListCheckpoint alloc_checkpoint(dev);
       TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
       if (!dev->wddm_submit_allocation_list_oom) {
-        auto* dirty =
-            dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-        if (dirty) {
-          dirty->resource_handle = res->handle;
-          dirty->reserved0 = 0;
-          dirty->offset_bytes = res->mapped_offset;
-          dirty->size_bytes = res->mapped_size;
-          dirty_emitted_on_unmap = true;
-        }
+        dirty_emitted_on_unmap =
+            EmitResourceDirtyRangeCmdLocked(dev, res->handle, res->mapped_offset, res->mapped_size);
       }
       if (!dirty_emitted_on_unmap) {
         dirty_failed_on_unmap = true;
@@ -8977,19 +8962,15 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
     alloc_checkpoint.rollback();
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitClearCmdLocked(dev,
+                                             AEROGPU_CLEAR_COLOR,
+                                             rgba,
+                                             /*depth=*/1.0f,
+                                             /*stencil=*/0,
+                                             [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   SoftwareClearTexture2D(rt, rgba);
-  cmd->flags = AEROGPU_CLEAR_COLOR;
-  cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
-  cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
-  cmd->color_rgba_f32[2] = f32_bits(rgba[2]);
-  cmd->color_rgba_f32[3] = f32_bits(rgba[3]);
-  cmd->depth_f32 = f32_bits(1.0f);
-  cmd->stencil = 0;
 }
 
 void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9026,21 +9007,17 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
     alloc_checkpoint.rollback();
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitClearCmdLocked(dev,
+                                             aer_flags,
+                                             /*color_rgba_f32=*/nullptr,
+                                             depth,
+                                             stencil,
+                                             [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   if (flags & 0x1u) {
     SoftwareClearDepthTexture2D(ds, depth);
   }
-  cmd->flags = aer_flags;
-  cmd->color_rgba_f32[0] = 0;
-  cmd->color_rgba_f32[1] = 0;
-  cmd->color_rgba_f32[2] = 0;
-  cmd->color_rgba_f32[3] = 0;
-  cmd->depth_f32 = f32_bits(depth);
-  cmd->stencil = stencil;
 }
 
 static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, const uint32_t pattern_u32[4]) {
@@ -9223,8 +9200,11 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
     alloc_checkpoint.rollback();
     return;
   }
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty) {
+  if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                       res->handle,
+                                       upload_offset,
+                                       upload_size,
+                                       [&](HRESULT hr) { SetError(dev, hr); })) {
     D3DDDICB_UNLOCK unlock_args = {};
     unlock_args.hAllocation = lock_args.hAllocation;
     __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -9234,14 +9214,9 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
       unlock_args.SubResourceIndex = 0;
     }
     (void)unlock(&unlock_args);
-    SetError(dev, E_OUTOFMEMORY);
     alloc_checkpoint.rollback();
     return;
   }
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = upload_size;
 
   // Fill the guest allocation with the cleared bytes (plus any required
   // alignment prefix/suffix) after successfully appending the dirty-range
@@ -9342,16 +9317,15 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawCmdLocked(dev,
+                         VertexCount,
+                         /*instance_count=*/1,
+                         StartVertexLocation,
+                         /*first_instance=*/0,
+                         [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   SoftwareDrawTriangleList(dev, VertexCount, StartVertexLocation);
-  cmd->vertex_count = VertexCount;
-  cmd->instance_count = 1;
-  cmd->first_vertex = StartVertexLocation;
-  cmd->first_instance = 0;
 }
 
 void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9371,18 +9345,17 @@ void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawCmdLocked(dev,
+                         VertexCountPerInstance,
+                         InstanceCount,
+                         StartVertexLocation,
+                         StartInstanceLocation,
+                         [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawTriangleList(dev, VertexCountPerInstance, StartVertexLocation);
-  cmd->vertex_count = VertexCountPerInstance;
-  cmd->instance_count = InstanceCount;
-  cmd->first_vertex = StartVertexLocation;
-  cmd->first_instance = StartInstanceLocation;
 }
 
 void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
@@ -9398,17 +9371,16 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawIndexedCmdLocked(dev,
+                                IndexCount,
+                                /*instance_count=*/1,
+                                StartIndexLocation,
+                                BaseVertexLocation,
+                                /*first_instance=*/0,
+                                [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   SoftwareDrawIndexedTriangleList(dev, IndexCount, StartIndexLocation, BaseVertexLocation);
-  cmd->index_count = IndexCount;
-  cmd->instance_count = 1;
-  cmd->first_index = StartIndexLocation;
-  cmd->base_vertex = BaseVertexLocation;
-  cmd->first_instance = 0;
 }
 
 void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9429,19 +9401,18 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawIndexedCmdLocked(dev,
+                                IndexCountPerInstance,
+                                InstanceCount,
+                                StartIndexLocation,
+                                BaseVertexLocation,
+                                StartInstanceLocation,
+                                [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawIndexedTriangleList(dev, IndexCountPerInstance, StartIndexLocation, BaseVertexLocation);
-  cmd->index_count = IndexCountPerInstance;
-  cmd->instance_count = InstanceCount;
-  cmd->first_index = StartIndexLocation;
-  cmd->base_vertex = BaseVertexLocation;
-  cmd->first_instance = StartInstanceLocation;
 }
 
 void AEROGPU_APIENTRY DrawInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9492,18 +9463,17 @@ void AEROGPU_APIENTRY DrawInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawCmdLocked(dev,
+                         vertex_count_per_instance,
+                         instance_count,
+                         start_vertex,
+                         start_instance,
+                         [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawTriangleList(dev, vertex_count_per_instance, start_vertex);
-  cmd->vertex_count = vertex_count_per_instance;
-  cmd->instance_count = instance_count;
-  cmd->first_vertex = start_vertex;
-  cmd->first_instance = start_instance;
 }
 
 void AEROGPU_APIENTRY DrawIndexedInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9556,19 +9526,18 @@ void AEROGPU_APIENTRY DrawIndexedInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCt
   if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitDrawIndexedCmdLocked(dev,
+                                index_count_per_instance,
+                                instance_count,
+                                start_index,
+                                base_vertex,
+                                start_instance,
+                                [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawIndexedTriangleList(dev, index_count_per_instance, start_index, base_vertex);
-  cmd->index_count = index_count_per_instance;
-  cmd->instance_count = instance_count;
-  cmd->first_index = start_index;
-  cmd->base_vertex = base_vertex;
-  cmd->first_instance = start_instance;
 }
 
 void AEROGPU_APIENTRY Dispatch11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9587,15 +9556,12 @@ void AEROGPU_APIENTRY Dispatch11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!TrackComputeStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->group_count_x = ThreadGroupCountX;
-  cmd->group_count_y = ThreadGroupCountY;
-  cmd->group_count_z = ThreadGroupCountZ;
-  cmd->reserved0 = 0;
+  (void)EmitDispatchCmdLocked(dev,
+                              ThreadGroupCountX,
+                              ThreadGroupCountY,
+                              ThreadGroupCountZ,
+                              /*stage_ex=*/0,
+                              [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 void AEROGPU_APIENTRY DispatchIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9645,15 +9611,12 @@ void AEROGPU_APIENTRY DispatchIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!TrackComputeStateForSubmitOrRollbackLocked(dev)) {
     return;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->group_count_x = group_count_x;
-  cmd->group_count_y = group_count_y;
-  cmd->group_count_z = group_count_z;
-  cmd->reserved0 = 0;
+  (void)EmitDispatchCmdLocked(dev,
+                              group_count_x,
+                              group_count_y,
+                              group_count_z,
+                              /*stage_ex=*/0,
+                              [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9827,8 +9790,11 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
     alloc_checkpoint.rollback();
     return;
   }
-  auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty_cmd) {
+  if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                       dst->handle,
+                                       off,
+                                       sizeof(count),
+                                       [&](HRESULT hr) { SetError(dev, hr); })) {
     D3DDDICB_UNLOCK unlock_args = {};
     unlock_args.hAllocation = lock_args.hAllocation;
     __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -9838,14 +9804,9 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
       unlock_args.SubResourceIndex = 0;
     }
     (void)unlock(&unlock_args);
-    SetError(dev, E_OUTOFMEMORY);
     alloc_checkpoint.rollback();
     return;
   }
-  dirty_cmd->resource_handle = dst->handle;
-  dirty_cmd->reserved0 = 0;
-  dirty_cmd->offset_bytes = off;
-  dirty_cmd->size_bytes = sizeof(count);
 
   std::memcpy(static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(off), &count, sizeof(count));
   std::memcpy(dst->storage.data() + static_cast<size_t>(off), &count, sizeof(count));
@@ -10078,8 +10039,11 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           alloc_checkpoint.rollback();
           return;
         }
-        auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-        if (!dirty_cmd) {
+        if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                             dst->handle,
+                                             upload_offset,
+                                             upload_size,
+                                             [&](HRESULT hr) { SetError(dev, hr); })) {
           D3DDDICB_UNLOCK unlock_args = {};
           unlock_args.hAllocation = lock_args.hAllocation;
           __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -10089,14 +10053,9 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
             unlock_args.SubResourceIndex = 0;
           }
           (void)unlock(&unlock_args);
-          SetError(dev, E_OUTOFMEMORY);
           alloc_checkpoint.rollback();
           return;
         }
-        dirty_cmd->resource_handle = dst->handle;
-        dirty_cmd->reserved0 = 0;
-        dirty_cmd->offset_bytes = upload_offset;
-        dirty_cmd->size_bytes = upload_size;
 
         uint8_t* dst_bytes = static_cast<uint8_t*>(lock_args.pData);
         const size_t pre = static_cast<size_t>(dst_off - upload_offset);
@@ -10505,8 +10464,11 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
         continue;
       }
 
-      auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!dirty_cmd) {
+      if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                           dst->handle,
+                                           static_cast<uint64_t>(dst_off),
+                                           static_cast<uint64_t>(row_bytes),
+                                           [&](HRESULT hr) { SetError(dev, hr); })) {
         D3DDDICB_UNLOCK unlock_args = {};
         unlock_args.hAllocation = lock_args.hAllocation;
         __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -10516,13 +10478,8 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           unlock_args.SubResourceIndex = 0;
         }
         (void)unlock(&unlock_args);
-        SetError(dev, E_OUTOFMEMORY);
         return;
       }
-      dirty_cmd->resource_handle = dst->handle;
-      dirty_cmd->reserved0 = 0;
-      dirty_cmd->offset_bytes = static_cast<uint64_t>(dst_off);
-      dirty_cmd->size_bytes = static_cast<uint64_t>(row_bytes);
 
       std::memcpy(dst_wddm_bytes + dst_off, src->storage.data() + src_off, row_bytes);
       std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
@@ -11549,8 +11506,11 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       alloc_checkpoint.rollback();
       return;
     }
-    auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!dirty_cmd) {
+    if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                         res->handle,
+                                         dst_off,
+                                         bytes,
+                                         [&](HRESULT hr) { SetError(dev, hr); })) {
       D3DDDICB_UNLOCK unlock_args = {};
       unlock_args.hAllocation = lock_args.hAllocation;
       __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -11560,14 +11520,9 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
         unlock_args.SubResourceIndex = dst_subresource;
       }
       (void)unlock(&unlock_args);
-      SetError(dev, E_OUTOFMEMORY);
       alloc_checkpoint.rollback();
       return;
     }
-    dirty_cmd->resource_handle = res->handle;
-    dirty_cmd->reserved0 = 0;
-    dirty_cmd->offset_bytes = dst_off;
-    dirty_cmd->size_bytes = bytes;
 
     std::memcpy(static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_off),
                 pSysMem,
@@ -11854,8 +11809,12 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
         return;
       }
     }
-    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!dirty) {
+
+    if (!EmitResourceDirtyRangeCmdLocked(dev,
+                                         res->handle,
+                                         dirty_offset,
+                                         dirty_size,
+                                         [&](HRESULT hr) { SetError(dev, hr); })) {
       D3DDDICB_UNLOCK unlock_args = {};
       unlock_args.hAllocation = lock_args.hAllocation;
       __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
@@ -11865,14 +11824,9 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
         unlock_args.SubResourceIndex = 0;
       }
       (void)unlock(&unlock_args);
-      SetError(dev, E_OUTOFMEMORY);
       alloc_checkpoint.rollback();
       return;
     }
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = dirty_offset;
-    dirty->size_bytes = dirty_size;
 
     const uint32_t wddm_pitch = dst_sub_layout.row_pitch_bytes;
     uint8_t* wddm_base =
@@ -12001,10 +11955,7 @@ void AEROGPU_APIENTRY Flush11(D3D11DDI_HDEVICECONTEXT hCtx) {
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH)) {
-    cmd->reserved0 = 0;
-    cmd->reserved1 = 0;
-  }
+  (void)EmitFlushCmdLocked(dev);
   HRESULT hr = S_OK;
   submit_locked(dev, /*want_present=*/false, &hr);
   if (FAILED(hr)) {
@@ -12057,17 +12008,15 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
                          static_cast<unsigned>(src_handle));
 #endif
 
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
-    if (!cmd) {
-      rollback();
-      return E_OUTOFMEMORY;
-    }
-    cmd->scanout_id = 0;
     bool vsync = (pPresent->SyncInterval != 0);
     if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
       vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
     }
-    cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+    const uint32_t flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+    if (!EmitPresentCmdLocked(dev, /*scanout_id=*/0, flags)) {
+      rollback();
+      return E_OUTOFMEMORY;
+    }
 
     HRESULT hr = S_OK;
     submit_locked(dev, /*want_present=*/true, &hr);

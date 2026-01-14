@@ -1597,6 +1597,505 @@ bool TestSetDepthStencilStateHelperEncodesPacket() {
   return true;
 }
 
+bool TestClearHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitClearCmdLocked;
+  using aerogpu::d3d10_11::f32_bits;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  const float rgba[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+  const float depth = 0.125f;
+  const uint32_t stencil = 0x12;
+  const uint32_t flags = AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL;
+
+  const bool ok = EmitClearCmdLocked(&dev, flags, rgba, depth, stencil, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitClearCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitClearCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_clear),
+             "CLEAR packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_clear*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_CLEAR, "CLEAR opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "CLEAR hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->flags == flags, "CLEAR flags")) {
+    return false;
+  }
+  if (!Check(pkt->color_rgba_f32[0] == f32_bits(rgba[0]) &&
+                 pkt->color_rgba_f32[1] == f32_bits(rgba[1]) &&
+                 pkt->color_rgba_f32[2] == f32_bits(rgba[2]) &&
+                 pkt->color_rgba_f32[3] == f32_bits(rgba[3]),
+             "CLEAR color_rgba_f32")) {
+    return false;
+  }
+  if (!Check(pkt->depth_f32 == f32_bits(depth), "CLEAR depth_f32")) {
+    return false;
+  }
+  if (!Check(pkt->stencil == stencil, "CLEAR stencil")) {
+    return false;
+  }
+
+  // Validation error: color flag requires a non-null color pointer.
+  dev.cmd.reset();
+  errors.clear();
+  const bool ok2 = EmitClearCmdLocked(&dev,
+                                      AEROGPU_CLEAR_COLOR,
+                                      /*color_rgba_f32=*/nullptr,
+                                      /*depth=*/1.0f,
+                                      /*stencil=*/0,
+                                      [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitClearCmdLocked should fail for null color with CLEAR_COLOR")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "null color reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() == sizeof(aerogpu_cmd_stream_header), "validation failure does not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok3 = EmitClearCmdLocked(&tiny, AEROGPU_CLEAR_COLOR, rgba, /*depth=*/1.0f, /*stencil=*/0,
+                                      [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok3, "EmitClearCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+  if (!Check(tiny.cmd.size() == sizeof(aerogpu_cmd_stream_header), "OOM prevents packet emission")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestDrawHelpersEncodePackets() {
+  using aerogpu::d3d10_11::EmitDrawCmdLocked;
+  using aerogpu::d3d10_11::EmitDrawIndexedCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+
+  // DRAW.
+  {
+    errors.clear();
+    const bool ok = EmitDrawCmdLocked(&dev,
+                                     /*vertex_count=*/123,
+                                     /*instance_count=*/4,
+                                     /*first_vertex=*/5,
+                                     /*first_instance=*/6,
+                                     [&](HRESULT hr) { errors.push_back(hr); });
+    dev.cmd.finalize();
+    if (!Check(ok, "EmitDrawCmdLocked should succeed")) {
+      return false;
+    }
+    if (!Check(errors.empty(), "EmitDrawCmdLocked should not report errors")) {
+      return false;
+    }
+    if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_draw), "DRAW packet emitted")) {
+      return false;
+    }
+    const auto* pkt = reinterpret_cast<const aerogpu_cmd_draw*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+    if (!Check(pkt->hdr.opcode == AEROGPU_CMD_DRAW, "DRAW opcode")) {
+      return false;
+    }
+    if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "DRAW hdr.size_bytes")) {
+      return false;
+    }
+    if (!Check(pkt->vertex_count == 123, "DRAW vertex_count")) {
+      return false;
+    }
+    if (!Check(pkt->instance_count == 4, "DRAW instance_count")) {
+      return false;
+    }
+    if (!Check(pkt->first_vertex == 5, "DRAW first_vertex")) {
+      return false;
+    }
+    if (!Check(pkt->first_instance == 6, "DRAW first_instance")) {
+      return false;
+    }
+  }
+
+  // OOM: DRAW.
+  {
+    alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+    struct TinyDevice {
+      aerogpu::CmdWriter cmd;
+      TinyDevice(uint8_t* buf, size_t cap) {
+        cmd.set_span(buf, cap);
+      }
+    };
+    TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+    errors.clear();
+    const bool ok = EmitDrawCmdLocked(&tiny, 1, 1, 0, 0, [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(!ok, "EmitDrawCmdLocked should fail when cmd append fails")) {
+      return false;
+    }
+    if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "draw OOM reports E_OUTOFMEMORY")) {
+      return false;
+    }
+  }
+
+  // DRAW_INDEXED.
+  {
+    dev.cmd.reset();
+    errors.clear();
+    const bool ok = EmitDrawIndexedCmdLocked(&dev,
+                                            /*index_count=*/111,
+                                            /*instance_count=*/2,
+                                            /*first_index=*/3,
+                                            /*base_vertex=*/-4,
+                                            /*first_instance=*/5,
+                                            [&](HRESULT hr) { errors.push_back(hr); });
+    dev.cmd.finalize();
+    if (!Check(ok, "EmitDrawIndexedCmdLocked should succeed")) {
+      return false;
+    }
+    if (!Check(errors.empty(), "EmitDrawIndexedCmdLocked should not report errors")) {
+      return false;
+    }
+    if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_draw_indexed),
+               "DRAW_INDEXED packet emitted")) {
+      return false;
+    }
+    const auto* pkt =
+        reinterpret_cast<const aerogpu_cmd_draw_indexed*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+    if (!Check(pkt->hdr.opcode == AEROGPU_CMD_DRAW_INDEXED, "DRAW_INDEXED opcode")) {
+      return false;
+    }
+    if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "DRAW_INDEXED hdr.size_bytes")) {
+      return false;
+    }
+    if (!Check(pkt->index_count == 111, "DRAW_INDEXED index_count")) {
+      return false;
+    }
+    if (!Check(pkt->instance_count == 2, "DRAW_INDEXED instance_count")) {
+      return false;
+    }
+    if (!Check(pkt->first_index == 3, "DRAW_INDEXED first_index")) {
+      return false;
+    }
+    if (!Check(pkt->base_vertex == -4, "DRAW_INDEXED base_vertex")) {
+      return false;
+    }
+    if (!Check(pkt->first_instance == 5, "DRAW_INDEXED first_instance")) {
+      return false;
+    }
+  }
+
+  // OOM: DRAW_INDEXED.
+  {
+    alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+    struct TinyDevice {
+      aerogpu::CmdWriter cmd;
+      TinyDevice(uint8_t* buf, size_t cap) {
+        cmd.set_span(buf, cap);
+      }
+    };
+    TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+    errors.clear();
+    const bool ok = EmitDrawIndexedCmdLocked(&tiny, 1, 1, 0, 0, 0, [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(!ok, "EmitDrawIndexedCmdLocked should fail when cmd append fails")) {
+      return false;
+    }
+    if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "draw_indexed OOM reports E_OUTOFMEMORY")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestDispatchHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitDispatchCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+
+  const bool ok = EmitDispatchCmdLocked(&dev,
+                                       /*group_count_x=*/1,
+                                       /*group_count_y=*/2,
+                                       /*group_count_z=*/3,
+                                       /*stage_ex=*/AEROGPU_SHADER_STAGE_EX_DOMAIN,
+                                       [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+  if (!Check(ok, "EmitDispatchCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitDispatchCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_dispatch), "DISPATCH packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_dispatch*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_DISPATCH, "DISPATCH opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "DISPATCH hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->group_count_x == 1 && pkt->group_count_y == 2 && pkt->group_count_z == 3, "DISPATCH group counts")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == AEROGPU_SHADER_STAGE_EX_DOMAIN, "DISPATCH reserved0 encodes stage_ex")) {
+    return false;
+  }
+
+  // OOM path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitDispatchCmdLocked(&tiny, 1, 1, 1, 0, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitDispatchCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "dispatch OOM reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestPresentHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitPresentCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+
+  const bool ok = EmitPresentCmdLocked(&dev, /*scanout_id=*/2, AEROGPU_PRESENT_FLAG_VSYNC, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+  if (!Check(ok, "EmitPresentCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitPresentCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_present), "PRESENT packet emitted")) {
+    return false;
+  }
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_present*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_PRESENT, "PRESENT opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "PRESENT hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->scanout_id == 2, "PRESENT scanout_id")) {
+    return false;
+  }
+  if (!Check(pkt->flags == AEROGPU_PRESENT_FLAG_VSYNC, "PRESENT flags")) {
+    return false;
+  }
+
+  // OOM path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitPresentCmdLocked(&tiny, 0, 0, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitPresentCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "present OOM reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFlushHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitFlushCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  const bool ok = EmitFlushCmdLocked(&dev, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+  if (!Check(ok, "EmitFlushCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitFlushCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_flush), "FLUSH packet emitted")) {
+    return false;
+  }
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_flush*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_FLUSH, "FLUSH opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "FLUSH hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0 && pkt->reserved1 == 0, "FLUSH reserved fields cleared")) {
+    return false;
+  }
+
+  // OOM path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitFlushCmdLocked(&tiny, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitFlushCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "flush OOM reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestResourceDirtyRangeHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitResourceDirtyRangeCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+
+  const aerogpu_handle_t handle = 1234;
+  const uint64_t offset = 0x1122334455667788ull;
+  const uint64_t size = 0x99AABBCCDDEEFF00ull;
+  const bool ok = EmitResourceDirtyRangeCmdLocked(&dev, handle, offset, size, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+  if (!Check(ok, "EmitResourceDirtyRangeCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitResourceDirtyRangeCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_resource_dirty_range),
+             "RESOURCE_DIRTY_RANGE packet emitted")) {
+    return false;
+  }
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_RESOURCE_DIRTY_RANGE, "RESOURCE_DIRTY_RANGE opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "RESOURCE_DIRTY_RANGE hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->resource_handle == handle, "RESOURCE_DIRTY_RANGE resource_handle")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "RESOURCE_DIRTY_RANGE reserved0 cleared")) {
+    return false;
+  }
+  if (!Check(pkt->offset_bytes == offset, "RESOURCE_DIRTY_RANGE offset_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->size_bytes == size, "RESOURCE_DIRTY_RANGE size_bytes")) {
+    return false;
+  }
+
+  // OOM path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitResourceDirtyRangeCmdLocked(&tiny, handle, offset, size, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitResourceDirtyRangeCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "dirty_range OOM reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -10867,6 +11366,12 @@ int main() {
   ok &= TestSetRasterizerStateHelperEncodesPacket();
   ok &= TestSetBlendStateHelperEncodesPacket();
   ok &= TestSetDepthStencilStateHelperEncodesPacket();
+  ok &= TestClearHelperEncodesPacket();
+  ok &= TestDrawHelpersEncodePackets();
+  ok &= TestDispatchHelperEncodesPacket();
+  ok &= TestPresentHelperEncodesPacket();
+  ok &= TestFlushHelperEncodesPacket();
+  ok &= TestResourceDirtyRangeHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();

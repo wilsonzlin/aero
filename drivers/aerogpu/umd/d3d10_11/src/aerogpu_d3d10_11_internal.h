@@ -2908,6 +2908,239 @@ inline bool EmitSetDepthStencilStateCmdLocked(DeviceT* dev, const aerogpu_depth_
   return EmitSetDepthStencilStateCmdLocked(dev, state, EmitSetDepthStencilStateNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Drawing / submission helpers (CLEAR / DRAW / DRAW_INDEXED / DISPATCH / PRESENT / FLUSH)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitClearCmdLocked(DeviceT* dev,
+                               uint32_t flags,
+                               const float* color_rgba_f32,
+                               float depth,
+                               uint32_t stencil,
+                               SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if ((flags & AEROGPU_CLEAR_COLOR) != 0 && !color_rgba_f32) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->flags = flags;
+  cmd->color_rgba_f32[0] = color_rgba_f32 ? f32_bits(color_rgba_f32[0]) : 0;
+  cmd->color_rgba_f32[1] = color_rgba_f32 ? f32_bits(color_rgba_f32[1]) : 0;
+  cmd->color_rgba_f32[2] = color_rgba_f32 ? f32_bits(color_rgba_f32[2]) : 0;
+  cmd->color_rgba_f32[3] = color_rgba_f32 ? f32_bits(color_rgba_f32[3]) : 0;
+  cmd->depth_f32 = f32_bits(depth);
+  cmd->stencil = stencil;
+  return true;
+}
+
+struct EmitClearNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitClearCmdLocked(DeviceT* dev, uint32_t flags, const float* color_rgba_f32, float depth, uint32_t stencil) {
+  return EmitClearCmdLocked(dev, flags, color_rgba_f32, depth, stencil, EmitClearNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitDrawCmdLocked(DeviceT* dev,
+                              uint32_t vertex_count,
+                              uint32_t instance_count,
+                              uint32_t first_vertex,
+                              uint32_t first_instance,
+                              SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->vertex_count = vertex_count;
+  cmd->instance_count = instance_count;
+  cmd->first_vertex = first_vertex;
+  cmd->first_instance = first_instance;
+  return true;
+}
+
+struct EmitDrawNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitDrawCmdLocked(DeviceT* dev, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance) {
+  return EmitDrawCmdLocked(dev, vertex_count, instance_count, first_vertex, first_instance, EmitDrawNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitDrawIndexedCmdLocked(DeviceT* dev,
+                                     uint32_t index_count,
+                                     uint32_t instance_count,
+                                     uint32_t first_index,
+                                     int32_t base_vertex,
+                                     uint32_t first_instance,
+                                     SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->index_count = index_count;
+  cmd->instance_count = instance_count;
+  cmd->first_index = first_index;
+  cmd->base_vertex = base_vertex;
+  cmd->first_instance = first_instance;
+  return true;
+}
+
+struct EmitDrawIndexedNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitDrawIndexedCmdLocked(DeviceT* dev,
+                                     uint32_t index_count,
+                                     uint32_t instance_count,
+                                     uint32_t first_index,
+                                     int32_t base_vertex,
+                                     uint32_t first_instance) {
+  return EmitDrawIndexedCmdLocked(
+      dev, index_count, instance_count, first_index, base_vertex, first_instance, EmitDrawIndexedNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitDispatchCmdLocked(DeviceT* dev,
+                                  uint32_t group_count_x,
+                                  uint32_t group_count_y,
+                                  uint32_t group_count_z,
+                                  uint32_t stage_ex,
+                                  SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->group_count_x = group_count_x;
+  cmd->group_count_y = group_count_y;
+  cmd->group_count_z = group_count_z;
+  cmd->reserved0 = stage_ex;
+  return true;
+}
+
+struct EmitDispatchNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitDispatchCmdLocked(DeviceT* dev,
+                                  uint32_t group_count_x,
+                                  uint32_t group_count_y,
+                                  uint32_t group_count_z,
+                                  uint32_t stage_ex = 0) {
+  return EmitDispatchCmdLocked(dev,
+                               group_count_x,
+                               group_count_y,
+                               group_count_z,
+                               stage_ex,
+                               EmitDispatchNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitPresentCmdLocked(DeviceT* dev, uint32_t scanout_id, uint32_t flags, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->scanout_id = scanout_id;
+  cmd->flags = flags;
+  return true;
+}
+
+struct EmitPresentNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitPresentCmdLocked(DeviceT* dev, uint32_t scanout_id, uint32_t flags) {
+  return EmitPresentCmdLocked(dev, scanout_id, flags, EmitPresentNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitFlushCmdLocked(DeviceT* dev, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->reserved0 = 0;
+  cmd->reserved1 = 0;
+  return true;
+}
+
+struct EmitFlushNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitFlushCmdLocked(DeviceT* dev) {
+  return EmitFlushCmdLocked(dev, EmitFlushNoopSetError{});
+}
+
+// -------------------------------------------------------------------------------------------------
+// Resource update helpers (RESOURCE_DIRTY_RANGE)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitResourceDirtyRangeCmdLocked(DeviceT* dev,
+                                            aerogpu_handle_t resource_handle,
+                                            uint64_t offset_bytes,
+                                            uint64_t size_bytes,
+                                            SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->resource_handle = resource_handle;
+  cmd->reserved0 = 0;
+  cmd->offset_bytes = offset_bytes;
+  cmd->size_bytes = size_bytes;
+  return true;
+}
+
+struct EmitResourceDirtyRangeNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitResourceDirtyRangeCmdLocked(DeviceT* dev, aerogpu_handle_t resource_handle, uint64_t offset_bytes, uint64_t size_bytes) {
+  return EmitResourceDirtyRangeCmdLocked(
+      dev, resource_handle, offset_bytes, size_bytes, EmitResourceDirtyRangeNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
