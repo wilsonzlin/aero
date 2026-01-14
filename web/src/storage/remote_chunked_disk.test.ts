@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { MAX_REMOTE_CHUNK_COUNT, MAX_REMOTE_MANIFEST_JSON_BYTES, RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
+import {
+  MAX_REMOTE_CHUNK_COUNT,
+  MAX_REMOTE_CHUNK_INDEX_WIDTH,
+  MAX_REMOTE_MANIFEST_JSON_BYTES,
+  RemoteChunkedDisk,
+  type BinaryStore,
+} from "./remote_chunked_disk";
 import { clearIdb, OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
 import { remoteChunkedDeliveryType, RemoteCacheManager } from "./remote_cache_manager";
 
@@ -335,6 +341,42 @@ describe("RemoteChunkedDisk", () => {
         store: new TestMemoryStore(),
       }),
     ).rejects.toThrow(/chunkSize.*max/i);
+  });
+
+  it("rejects manifests with unreasonably large chunkIndexWidth", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: MAX_REMOTE_CHUNK_INDEX_WIDTH + 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+      }),
+    ).rejects.toThrow(/chunkIndexWidth.*max/i);
   });
 
   it("rejects manifests with Content-Length larger than MAX_REMOTE_MANIFEST_JSON_BYTES", async () => {

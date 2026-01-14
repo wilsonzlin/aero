@@ -34,6 +34,13 @@ export const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
  * unbounded allocations on malicious inputs.
  */
 export const MAX_REMOTE_CHUNK_COUNT = 500_000;
+/**
+ * Upper bound on chunk index width to avoid pathological string allocations when deriving chunk
+ * URLs (e.g. `String(i).padStart(width, "0")`).
+ *
+ * `tools/image-chunker` uses a fixed width of 8, but manifests are treated as untrusted input.
+ */
+export const MAX_REMOTE_CHUNK_INDEX_WIDTH = 32;
 // Defensive bound: avoid reading/parsing arbitrarily large manifest JSON blobs. This must be large
 // enough to support realistic chunk counts while still preventing runaway allocations from
 // malicious servers.
@@ -581,6 +588,9 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
     throw new Error(`chunkCount too large: max=${MAX_REMOTE_CHUNK_COUNT} got=${chunkCount}`);
   }
   if (chunkIndexWidth <= 0) throw new Error("chunkIndexWidth must be > 0");
+  if (chunkIndexWidth > MAX_REMOTE_CHUNK_INDEX_WIDTH) {
+    throw new Error(`chunkIndexWidth too large: max=${MAX_REMOTE_CHUNK_INDEX_WIDTH} got=${chunkIndexWidth}`);
+  }
 
   const expectedChunkCount = divCeil(totalSize, chunkSize);
   if (chunkCount !== expectedChunkCount) {

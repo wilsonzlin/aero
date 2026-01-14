@@ -46,6 +46,9 @@ const SECTOR_SIZE_BYTES: u64 = 512;
 const MAX_CHUNK_SIZE_BYTES: u64 = 64 * 1024 * 1024;
 // 500k chunks.
 const MAX_CHUNK_COUNT: u64 = 500_000;
+// 32 chars of zero padding is more than enough for any practical image size, while still bounding
+// attacker-controlled allocations when deriving chunk URLs from untrusted manifests.
+const MAX_CHUNK_INDEX_WIDTH: usize = 32;
 // 64 MiB.
 const MAX_MANIFEST_JSON_BYTES: usize = 64 * 1024 * 1024;
 
@@ -348,6 +351,11 @@ fn parse_manifest_v1(raw: ManifestV1Raw) -> Result<ChunkedDiskManifestV1, Chunke
     let chunk_index_width: usize = raw.chunk_index_width.try_into().map_err(|_| {
         ChunkedStreamingDiskError::Protocol("chunkIndexWidth does not fit in usize".to_string())
     })?;
+    if chunk_index_width > MAX_CHUNK_INDEX_WIDTH {
+        return Err(ChunkedStreamingDiskError::Protocol(format!(
+            "chunkIndexWidth too large: max={MAX_CHUNK_INDEX_WIDTH} got={chunk_index_width}"
+        )));
+    }
 
     let expected_count = raw.total_size.div_ceil(raw.chunk_size);
     if raw.chunk_count != expected_count {

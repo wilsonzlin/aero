@@ -1692,6 +1692,7 @@ def _parse_chunked_manifest_v1(raw: object) -> ChunkedDiskManifest:
     # matches what Aero will actually accept.
     max_chunk_size = 64 * 1024 * 1024  # 64 MiB
     max_chunk_count = 500_000
+    max_chunk_index_width = 32
     _require(
         chunk_size <= max_chunk_size,
         f"chunkSize too large: max={max_chunk_size} got={chunk_size}",
@@ -1699,6 +1700,10 @@ def _parse_chunked_manifest_v1(raw: object) -> ChunkedDiskManifest:
     _require(
         chunk_count <= max_chunk_count,
         f"chunkCount too large: max={max_chunk_count} got={chunk_count}",
+    )
+    _require(
+        chunk_index_width <= max_chunk_index_width,
+        f"chunkIndexWidth too large: max={max_chunk_index_width} got={chunk_index_width}",
     )
 
     expected_chunk_count = (total_size + chunk_size - 1) // chunk_size

@@ -127,6 +127,49 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn rejects_manifests_with_unreasonably_large_chunk_index_width() {
+    let total_size = 512usize;
+    let image: Vec<u8> = vec![0u8; total_size];
+    let chunk_size = 512u64;
+    let total_size_u64 = image.len() as u64;
+    let chunk_count = total_size_u64.div_ceil(chunk_size);
+
+    let manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "version": "bad-width",
+        "mimeType": "application/octet-stream",
+        "totalSize": total_size_u64,
+        "chunkSize": chunk_size,
+        "chunkCount": chunk_count,
+        "chunkIndexWidth": 33,
+    });
+    let manifest_body = serde_json::to_string(&manifest).unwrap();
+
+    let (url, _state, shutdown) =
+        start_chunked_server(image.clone(), chunk_size, manifest_body, None).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = ChunkedStreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.max_retries = 1;
+    config.options.max_concurrent_fetches = 1;
+
+    let err = match ChunkedStreamingDisk::open(config).await {
+        Ok(_) => panic!("expected ChunkedStreamingDisk::open to fail"),
+        Err(err) => err,
+    };
+    match err {
+        ChunkedStreamingDiskError::Protocol(msg) => {
+            assert!(msg.to_ascii_lowercase().contains("chunkindexwidth"));
+            assert!(msg.to_ascii_lowercase().contains("too large"));
+        }
+        other => panic!("expected Protocol error, got {other:?}"),
+    }
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn reads_span_boundaries_and_cache_reuses_across_runs() {
     // totalSize must be a multiple of 512.
     let total_size = 4608usize; // 9 * 512
