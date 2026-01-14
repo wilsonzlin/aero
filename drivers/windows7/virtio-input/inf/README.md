@@ -23,6 +23,8 @@ Optional legacy filename alias:
 - `virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`.
   Rename it back to `virtio-input.inf` to enable the alias.
 - The alias INF is checked in as `*.inf.disabled` to avoid shipping/installing **two** INFs that match the same HWIDs.
+- From the first section header (`[Version]`) onward, the alias INF is expected to remain **byte-for-byte identical** to
+  `aero_virtio_input.inf` (CI enforces this).
 
 ## Notes
 
