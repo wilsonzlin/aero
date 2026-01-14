@@ -5255,9 +5255,9 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
   dev->current_ps = ps;
 }
 
-static void EmitRasterizerStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuRasterizerState* rs) {
+static bool EmitRasterizerStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuRasterizerState* rs) {
   if (!dev) {
-    return;
+    return false;
   }
 
   aerogpu_rasterizer_state state{};
@@ -5274,14 +5274,19 @@ static void EmitRasterizerStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevi
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return;
+    return false;
   }
   cmd->state = state;
+  return true;
 }
 
-static void EmitBlendStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuBlendState* bs) {
+static bool EmitBlendStateLocked(AeroGpuDevice* dev,
+                                 D3D10DDI_HDEVICE hDevice,
+                                 const AeroGpuBlendState* bs,
+                                 const float blend_factor[4],
+                                 uint32_t sample_mask) {
   if (!dev) {
-    return;
+    return false;
   }
 
   aerogpu_blend_state state{};
@@ -5303,22 +5308,23 @@ static void EmitBlendStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, c
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return;
+    return false;
   }
   state.reserved0[0] = 0;
   state.reserved0[1] = 0;
   state.reserved0[2] = 0;
-  state.blend_constant_rgba_f32[0] = f32_bits(dev->current_blend_factor[0]);
-  state.blend_constant_rgba_f32[1] = f32_bits(dev->current_blend_factor[1]);
-  state.blend_constant_rgba_f32[2] = f32_bits(dev->current_blend_factor[2]);
-  state.blend_constant_rgba_f32[3] = f32_bits(dev->current_blend_factor[3]);
-  state.sample_mask = dev->current_sample_mask;
+  state.blend_constant_rgba_f32[0] = blend_factor ? f32_bits(blend_factor[0]) : f32_bits(1.0f);
+  state.blend_constant_rgba_f32[1] = blend_factor ? f32_bits(blend_factor[1]) : f32_bits(1.0f);
+  state.blend_constant_rgba_f32[2] = blend_factor ? f32_bits(blend_factor[2]) : f32_bits(1.0f);
+  state.blend_constant_rgba_f32[3] = blend_factor ? f32_bits(blend_factor[3]) : f32_bits(1.0f);
+  state.sample_mask = sample_mask;
   cmd->state = state;
+  return true;
 }
 
-static void EmitDepthStencilStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuDepthStencilState* dss) {
+static bool EmitDepthStencilStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuDepthStencilState* dss) {
   if (!dev) {
-    return;
+    return false;
   }
 
   aerogpu_depth_stencil_state state{};
@@ -5337,15 +5343,16 @@ static void EmitDepthStencilStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDe
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return;
+    return false;
   }
   cmd->state = state;
+  return true;
 }
 
 void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
-                                   D3D10DDI_HBLENDSTATE hState,
-                                   const float blend_factor[4],
-                                   UINT sample_mask) {
+                                    D3D10DDI_HBLENDSTATE hState,
+                                    const float blend_factor[4],
+                                    UINT sample_mask) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF_VERBOSE("SetBlendState");
   if (!hDevice.pDrvPrivate) {
@@ -5356,17 +5363,20 @@ void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_bs = hState.pDrvPrivate ? FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState) : nullptr;
+  AeroGpuBlendState* new_bs = hState.pDrvPrivate ? FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState) : nullptr;
+  float new_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   if (blend_factor) {
-    std::memcpy(dev->current_blend_factor, blend_factor, sizeof(dev->current_blend_factor));
-  } else {
-    dev->current_blend_factor[0] = 1.0f;
-    dev->current_blend_factor[1] = 1.0f;
-    dev->current_blend_factor[2] = 1.0f;
-    dev->current_blend_factor[3] = 1.0f;
+    std::memcpy(new_blend_factor, blend_factor, sizeof(new_blend_factor));
   }
-  dev->current_sample_mask = sample_mask;
-  EmitBlendStateLocked(dev, hDevice, dev->current_bs);
+  const uint32_t new_sample_mask = sample_mask;
+
+  if (!EmitBlendStateLocked(dev, hDevice, new_bs, new_blend_factor, new_sample_mask)) {
+    return;
+  }
+
+  dev->current_bs = new_bs;
+  std::memcpy(dev->current_blend_factor, new_blend_factor, sizeof(dev->current_blend_factor));
+  dev->current_sample_mask = new_sample_mask;
 }
 
 void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE hState) {
@@ -5380,8 +5390,12 @@ void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRAS
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_rs = hState.pDrvPrivate ? FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState) : nullptr;
-  EmitRasterizerStateLocked(dev, hDevice, dev->current_rs);
+  AeroGpuRasterizerState* new_rs =
+      hState.pDrvPrivate ? FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState) : nullptr;
+  if (!EmitRasterizerStateLocked(dev, hDevice, new_rs)) {
+    return;
+  }
+  dev->current_rs = new_rs;
 }
 
 void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HDEPTHSTENCILSTATE hState, UINT stencil_ref) {
@@ -5395,10 +5409,14 @@ void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HD
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_dss =
+  AeroGpuDepthStencilState* new_dss =
       hState.pDrvPrivate ? FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState) : nullptr;
-  dev->current_stencil_ref = stencil_ref;
-  EmitDepthStencilStateLocked(dev, hDevice, dev->current_dss);
+  const uint32_t new_stencil_ref = stencil_ref;
+  if (!EmitDepthStencilStateLocked(dev, hDevice, new_dss)) {
+    return;
+  }
+  dev->current_dss = new_dss;
+  dev->current_stencil_ref = new_stencil_ref;
 }
 
 void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t topology) {
