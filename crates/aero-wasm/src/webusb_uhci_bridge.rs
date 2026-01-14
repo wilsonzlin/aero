@@ -13,6 +13,7 @@ use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
 
 const WEBUSB_UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"WUHB";
 const WEBUSB_UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+const MAX_WEBUSB_UHCI_BRIDGE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 // UHCI register offsets (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
@@ -298,6 +299,14 @@ impl WebUsbUhciBridge {
     /// in-flight maps so the guest's UHCI TD retries will re-emit host actions instead of waiting
     /// forever for completions that will never arrive.
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_WEBUSB_UHCI_BRIDGE_SNAPSHOT_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "WebUSB UHCI bridge snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_WEBUSB_UHCI_BRIDGE_SNAPSHOT_BYTES
+            )));
+        }
+
         const TAG_CONTROLLER: u16 = 1;
         const TAG_EXTERNAL_HUB: u16 = 3;
         const TAG_WEBUSB_DEVICE: u16 = 4;

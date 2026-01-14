@@ -28,6 +28,7 @@ use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
 
 const EHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"EHCB";
 const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+const MAX_EHCI_BRIDGE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Reserve EHCI root port 1 for the WebUSB passthrough device.
 ///
@@ -379,6 +380,14 @@ impl EhciControllerBridge {
 
     /// Restore EHCI controller state from a snapshot blob produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_EHCI_BRIDGE_SNAPSHOT_BYTES {
+            return Err(js_error(format!(
+                "EHCI bridge snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_EHCI_BRIDGE_SNAPSHOT_BYTES
+            )));
+        }
+
         const TAG_CONTROLLER: u16 = 1;
 
         let r = SnapshotReader::parse(bytes, EHCI_BRIDGE_DEVICE_ID)

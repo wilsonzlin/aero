@@ -3,7 +3,9 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{SnapshotVersion, SnapshotWriter};
 use aero_usb::passthrough::UsbHostAction;
-use aero_wasm::{UhciControllerBridge, UhciRuntime, WEBUSB_ROOT_PORT, WebUsbUhciBridge};
+use aero_wasm::{
+    EhciControllerBridge, UhciControllerBridge, UhciRuntime, WEBUSB_ROOT_PORT, WebUsbUhciBridge,
+};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -750,4 +752,54 @@ fn webusb_uhci_bridge_advances_frnum_without_pci_bus_master_enable() {
 
     let frnum = bridge.io_read(REG_FRNUM, 2) & 0x7ff;
     assert_eq!(frnum, 5, "expected FRNUM to advance while RUN is set");
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_rejects_oversized_snapshot() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
+
+    let bytes = vec![0u8; 4 * 1024 * 1024 + 1];
+    let err = bridge
+        .load_state(&bytes)
+        .expect_err("expected oversized snapshot to be rejected");
+    let msg = js_error_message(&err);
+    assert!(
+        msg.contains("UHCI bridge snapshot too large"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn webusb_uhci_bridge_rejects_oversized_snapshot() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x1000);
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+
+    let bytes = vec![0u8; 4 * 1024 * 1024 + 1];
+    let err = bridge
+        .load_state(&bytes)
+        .expect_err("expected oversized snapshot to be rejected");
+    let msg = js_error_message(&err);
+    assert!(
+        msg.contains("WebUSB UHCI bridge snapshot too large"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn ehci_controller_bridge_rejects_oversized_snapshot() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
+    let mut bridge =
+        EhciControllerBridge::new(guest_base, guest_size).expect("EhciControllerBridge::new ok");
+
+    let bytes = vec![0u8; 4 * 1024 * 1024 + 1];
+    let err = bridge
+        .load_state(&bytes)
+        .expect_err("expected oversized snapshot to be rejected");
+    let msg = js_error_message(&err);
+    assert!(
+        msg.contains("EHCI bridge snapshot too large"),
+        "unexpected error message: {msg}"
+    );
 }

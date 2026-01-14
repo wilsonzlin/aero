@@ -21,6 +21,7 @@ use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
 
 const UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"UHCB";
 const UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+const MAX_UHCI_BRIDGE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 // UHCI register layout (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
@@ -397,6 +398,14 @@ impl UhciControllerBridge {
 
     /// Restore UHCI controller state from a snapshot blob produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_UHCI_BRIDGE_SNAPSHOT_BYTES {
+            return Err(js_error(format!(
+                "UHCI bridge snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_UHCI_BRIDGE_SNAPSHOT_BYTES
+            )));
+        }
+
         const TAG_CONTROLLER: u16 = 1;
         const TAG_WEBUSB_DEVICE: u16 = 3;
 
