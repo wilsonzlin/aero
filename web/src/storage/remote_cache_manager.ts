@@ -359,8 +359,17 @@ export class RemoteCacheManager {
     const dir = await this.getCacheDir(cacheKey, true);
     const handle = await dir.getFileHandle(META_FILE_NAME, { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
-    await writable.write(JSON.stringify(meta, null, 2));
-    await writable.close();
+    try {
+      await writable.write(JSON.stringify(meta, null, 2));
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort?.();
+      } catch {
+        // ignore abort failures
+      }
+      throw err;
+    }
   }
 
   async openCache(

@@ -4,6 +4,7 @@ import {
   type RemoteCacheDirectoryHandle,
   type RemoteCacheFile,
   type RemoteCacheFileHandle,
+  type RemoteCacheMetaV1,
   type RemoteCacheWritableFileStream,
   RemoteCacheManager,
   validateRemoteCacheMetaV1,
@@ -247,5 +248,71 @@ describe("RemoteCacheManager", () => {
       cachedRanges: [],
     };
     expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
+  it("aborts meta.json writes on error", async () => {
+    let aborted = false;
+
+    const writable: RemoteCacheWritableFileStream = {
+      async write() {
+        throw new Error("write failed");
+      },
+      async close() {
+        throw new Error("close should not be called");
+      },
+      async abort() {
+        aborted = true;
+      },
+    };
+
+    const fileHandle: RemoteCacheFileHandle = {
+      async getFile(): Promise<RemoteCacheFile> {
+        return new MemFile();
+      },
+      async createWritable(): Promise<RemoteCacheWritableFileStream> {
+        return writable;
+      },
+    };
+
+    const cacheDir: RemoteCacheDirectoryHandle = {
+      async getDirectoryHandle(): Promise<RemoteCacheDirectoryHandle> {
+        throw new MemNotFoundError("no nested dirs");
+      },
+      async getFileHandle(name: string): Promise<RemoteCacheFileHandle> {
+        if (name !== "meta.json") throw new Error(`unexpected file ${name}`);
+        return fileHandle;
+      },
+      async removeEntry(): Promise<void> {
+        // ignore
+      },
+    };
+
+    const rootDir: RemoteCacheDirectoryHandle = {
+      async getDirectoryHandle(): Promise<RemoteCacheDirectoryHandle> {
+        return cacheDir;
+      },
+      async getFileHandle(): Promise<RemoteCacheFileHandle> {
+        throw new Error("unexpected root file handle");
+      },
+      async removeEntry(): Promise<void> {
+        // ignore
+      },
+    };
+
+    const mgr = new RemoteCacheManager(rootDir, { now: () => 0 });
+    const meta: RemoteCacheMetaV1 = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      cachedRanges: [],
+    };
+
+    await expect(mgr.writeMeta("cache", meta)).rejects.toThrow("write failed");
+    expect(aborted).toBe(true);
   });
 });
