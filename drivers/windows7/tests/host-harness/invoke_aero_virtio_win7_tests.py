@@ -5198,7 +5198,11 @@ def main() -> int:
                 if attach_virtio_tablet:
                     devices.append("virtio-tablet-pci")
         if args.enable_virtio_snd and virtio_snd_vectors is not None:
-            devices.append(_detect_virtio_snd_device(args.qemu_system))
+            try:
+                devices.append(_detect_virtio_snd_device(args.qemu_system))
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
 
         if devices:
             try:
@@ -5271,11 +5275,16 @@ def main() -> int:
             if attach_virtio_tablet:
                 devices_to_check.append("virtio-tablet-pci")
         if args.enable_virtio_snd:
-            devices_to_check.append(_detect_virtio_snd_device(args.qemu_system))
+            try:
+                devices_to_check.append(_detect_virtio_snd_device(args.qemu_system))
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
 
         try:
             for dev in devices_to_check:
-                if not _qemu_device_supports_property(args.qemu_system, dev, "vectors"):
+                props = _qemu_device_property_names(args.qemu_system, dev)
+                if "vectors" not in props:
                     raise RuntimeError(
                         f"QEMU device '{dev}' does not advertise a 'vectors' property (needed for vectors=0)."
                     )
@@ -5287,6 +5296,14 @@ def main() -> int:
                 qemu_stderr_log.write_text(str(e) + "\n", encoding="utf-8", errors="replace")
             except Exception:
                 pass
+
+            # If QEMU itself could not be executed, surface that clearly instead of attributing it
+            # to `vectors=0` support.
+            msg = str(e)
+            if msg.startswith("qemu-system binary not found:") or msg.startswith("failed to run '"):
+                print(f"ERROR: {e}", file=sys.stderr)
+                print(f"  Wrote QEMU output to: {qemu_stderr_log}", file=sys.stderr)
+                return 2
             print(
                 "ERROR: --virtio-disable-msix requested, but this QEMU build rejected 'vectors=0' "
                 "(needed to disable MSI-X and force INTx). "
