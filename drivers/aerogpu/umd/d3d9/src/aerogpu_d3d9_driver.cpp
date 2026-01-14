@@ -5367,63 +5367,100 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   }
 #endif
 
-  if (use_src_storage) {
-    src_vertices = src_res->storage.data() + static_cast<size_t>(src_offset_u64);
-  } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-      const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                   dev->wddm_device,
-                                                   src_res->wddm_hAllocation,
-                                                   src_offset_u64,
-                                                   src_size_u64,
-                                                   kD3DLOCK_READONLY,
-                                                   &src_ptr,
-                                                   dev->wddm_context.hContext);
-      if (FAILED(lock_hr) || !src_ptr) {
-        return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
-      }
-      src_locked = true;
-      src_vertices = static_cast<const uint8_t*>(src_ptr);
-    } else
-#endif
-    {
+  const bool same_resource = (src_res == dst_res);
+  const bool needs_wddm_lock = (!use_src_storage || !use_dst_storage);
+  if (same_resource && needs_wddm_lock) {
+    // Avoid locking the same allocation twice: lock a single union range and
+    // derive pointers for src/dst from it.
+    if (src_res->wddm_hAllocation == 0 || dev->wddm_device == 0) {
       return trace.ret(E_INVALIDARG);
     }
-  }
 
-  if (use_dst_storage) {
-    dst_vertices = dst_res->storage.data() + static_cast<size_t>(dst_offset_u64);
-  } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (dst_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-      const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                   dev->wddm_device,
-                                                   dst_res->wddm_hAllocation,
-                                                   dst_offset_u64,
-                                                   dst_size_u64,
-                                                   /*lock_flags=*/0,
-                                                   &dst_ptr,
-                                                   dev->wddm_context.hContext);
-      if (FAILED(lock_hr) || !dst_ptr) {
-        if (src_locked) {
-          (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
-        }
-        return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
-      }
-      dst_locked = true;
-      dst_vertices = static_cast<uint8_t*>(dst_ptr);
-    } else
+    const uint64_t src_begin = src_offset_u64;
+    const uint64_t src_end = src_offset_u64 + src_size_u64;
+    const uint64_t dst_begin = dst_offset_u64;
+    const uint64_t dst_end = dst_offset_u64 + dst_size_u64;
+    const uint64_t lock_begin = std::min(src_begin, dst_begin);
+    const uint64_t lock_end = std::max(src_end, dst_end);
+    const uint64_t lock_size = lock_end - lock_begin;
+
+    const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                 dev->wddm_device,
+                                                 src_res->wddm_hAllocation,
+                                                 lock_begin,
+                                                 lock_size,
+                                                 /*lock_flags=*/0,
+                                                 &src_ptr,
+                                                 dev->wddm_context.hContext);
+    if (FAILED(lock_hr) || !src_ptr) {
+      return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
+    }
+    src_locked = true;
+    auto* base = static_cast<uint8_t*>(src_ptr);
+    src_vertices = base + static_cast<size_t>(src_begin - lock_begin);
+    dst_vertices = base + static_cast<size_t>(dst_begin - lock_begin);
+  } else
 #endif
-    {
-      if (use_src_storage == false) {
+  {
+    if (use_src_storage) {
+      src_vertices = src_res->storage.data() + static_cast<size_t>(src_offset_u64);
+    } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-        if (src_locked) {
-          (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
+      if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                     dev->wddm_device,
+                                                     src_res->wddm_hAllocation,
+                                                     src_offset_u64,
+                                                     src_size_u64,
+                                                     kD3DLOCK_READONLY,
+                                                     &src_ptr,
+                                                     dev->wddm_context.hContext);
+        if (FAILED(lock_hr) || !src_ptr) {
+          return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
         }
+        src_locked = true;
+        src_vertices = static_cast<const uint8_t*>(src_ptr);
+      } else
 #endif
+      {
+        return trace.ret(E_INVALIDARG);
       }
-      return trace.ret(E_INVALIDARG);
+    }
+
+    if (use_dst_storage) {
+      dst_vertices = dst_res->storage.data() + static_cast<size_t>(dst_offset_u64);
+    } else {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (dst_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                     dev->wddm_device,
+                                                     dst_res->wddm_hAllocation,
+                                                     dst_offset_u64,
+                                                     dst_size_u64,
+                                                     /*lock_flags=*/0,
+                                                     &dst_ptr,
+                                                     dev->wddm_context.hContext);
+        if (FAILED(lock_hr) || !dst_ptr) {
+          if (src_locked) {
+            (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
+          }
+          return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
+        }
+        dst_locked = true;
+        dst_vertices = static_cast<uint8_t*>(dst_ptr);
+      } else
+#endif
+      {
+        if (use_src_storage == false) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+          if (src_locked) {
+            (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
+          }
+#endif
+        }
+        return trace.ret(E_INVALIDARG);
+      }
     }
   }
 
