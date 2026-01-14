@@ -281,7 +281,7 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.iso
-            artifacts/aero-guest-tools.manifest.json
+            artifacts/*.manifest.json
             artifacts/manifest.json
             artifacts/*.cer
             artifacts/*.vhd
