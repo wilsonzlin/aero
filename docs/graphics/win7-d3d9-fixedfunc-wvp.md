@@ -16,6 +16,8 @@ When the D3D9 runtime is using the fixed-function fallback path with an untransf
 - Computes `WORLD0 * VIEW * PROJECTION` from cached `Device::transform_matrices[...]` and uploads it into a reserved VS
   constant register range via `ensure_fixedfunc_wvp_constants_locked()`.
   - Current constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`).
+  - The constants are intentionally placed in a high register range so they are unlikely to collide with app/user shader
+    constants when switching between fixed-function and programmable paths.
   - The matrix cache is row-major; the upload transposes to column vectors for the shader constant layout.
   - Uploads are lazy and gated by `Device::fixedfunc_matrix_dirty`.
 
