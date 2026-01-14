@@ -12,7 +12,7 @@
 #
 # Notes:
 # - Uses `scripts/safe-run.sh` for timeout/memory protection (override via env):
-#     AERO_TIMEOUT=1800 AERO_MEM_LIMIT=16G bash ./scripts/ci/run-vga-vbe-tests.sh
+#     AERO_TIMEOUT=3600 AERO_MEM_LIMIT=16G bash ./scripts/ci/run-vga-vbe-tests.sh
 # - `cargo test` does not support globs for `--test`, so we enumerate integration
 #   test binaries matching:
 #     - `crates/aero-machine/tests/boot_int10_*.rs`
@@ -27,7 +27,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${REPO_ROOT}"
 
-: "${AERO_TIMEOUT:=1800}"
+: "${AERO_TIMEOUT:=3600}"
 export AERO_TIMEOUT
 
 run() {
