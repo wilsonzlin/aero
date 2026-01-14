@@ -89,6 +89,7 @@ class ForceIntxTests(unittest.TestCase):
                     self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
                 ),
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 

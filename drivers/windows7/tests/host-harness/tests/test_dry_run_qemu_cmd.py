@@ -58,6 +58,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                     self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
                 ),
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
@@ -111,6 +112,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 mock.patch.object(self.harness, "_ReusableTcpServer") as mock_httpd,
                 mock.patch.object(self.harness, "_UdpEchoServer") as mock_udp,
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
@@ -155,13 +157,13 @@ class DryRunQemuCmdTests(unittest.TestCase):
                     self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
                 ),
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
             self.assertEqual(rc, 0)
             stdout = out.getvalue()
 
-            self.assertIn("qmp=enabled", stdout)
             self.assertIn("aero_virtio_net0", stdout)
 
             first_line = stdout.splitlines()[0]
@@ -203,6 +205,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                     self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
                 ),
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
@@ -252,6 +255,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 mock.patch.object(self.harness.subprocess, "run") as mock_run,
                 mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
@@ -291,6 +295,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 mock.patch.object(self.harness.subprocess, "run") as mock_run,
                 mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 
@@ -335,6 +340,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 if self.harness.os.name != "nt"
                 else contextlib.nullcontext(),
                 contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 rc = self.harness.main()
 

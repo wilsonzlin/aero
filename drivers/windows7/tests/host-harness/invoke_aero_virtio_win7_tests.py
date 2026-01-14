@@ -3692,16 +3692,19 @@ def main() -> int:
         print(json.dumps(qemu_args, separators=(",", ":")))
         # Second line: best-effort single-line command for copy/paste.
         print(_format_commandline_for_host(qemu_args))
-        print("")
-        print("DryRun: derived settings:")
-        mode = "transitional" if args.virtio_transitional else "contract-v1"
-        print(f"  mode={mode}")
-        if qmp_endpoint is None:
-            print("  qmp=disabled")
-        else:
-            print(f"  qmp=enabled ({qmp_endpoint.qemu_arg()})")
 
-        print(f"  virtio_disable_msix={virtio_disable_msix}")
+        # Any additional human-oriented diagnostics go to stderr so stdout remains easy to parse
+        # for tooling/CI (first line JSON, second line command).
+        print("", file=sys.stderr)
+        print("DryRun: derived settings:", file=sys.stderr)
+        mode = "transitional" if args.virtio_transitional else "contract-v1"
+        print(f"  mode={mode}", file=sys.stderr)
+        if qmp_endpoint is None:
+            print("  qmp=disabled", file=sys.stderr)
+        else:
+            print(f"  qmp=enabled ({qmp_endpoint.qemu_arg()})", file=sys.stderr)
+
+        print(f"  virtio_disable_msix={virtio_disable_msix}", file=sys.stderr)
 
         # Vector resolution is derived from the global/per-device flags. In dry-run mode we do not
         # probe QEMU to validate that the running build supports the `vectors` property, so the argv
@@ -3725,29 +3728,34 @@ def main() -> int:
                     _fmt_vectors("input", virtio_input_vectors, virtio_input_vectors_flag),
                     _fmt_vectors("snd", virtio_snd_vectors, virtio_snd_vectors_flag),
                 ]
-            )
+            ),
+            file=sys.stderr,
         )
 
         if args.enable_virtio_snd:
             # In non-dry-run mode, the harness probes QEMU to resolve whether the device is named
             # `virtio-sound-pci` or `virtio-snd-pci`. Dry-run mode skips subprocesses, so we log
             # the default name used by the dry-run argv builder.
-            print("  virtio_snd_device=virtio-sound-pci (dry-run default; QEMU probe skipped)")
-            print(f"  virtio_snd_audio_backend={args.virtio_snd_audio_backend}")
+            print(
+                "  virtio_snd_device=virtio-sound-pci (dry-run default; QEMU probe skipped)",
+                file=sys.stderr,
+            )
+            print(f"  virtio_snd_audio_backend={args.virtio_snd_audio_backend}", file=sys.stderr)
 
         if attach_virtio_tablet:
             note = ""
             if args.virtio_transitional:
                 note = " (transitional: actual attachment is conditional on QEMU support)"
-            print(f"  virtio_tablet=attached{note}")
+            print(f"  virtio_tablet=attached{note}", file=sys.stderr)
         else:
-            print("  virtio_tablet=not-attached")
+            print("  virtio_tablet=not-attached", file=sys.stderr)
 
         if qemu_extra:
-            print(f"  qemu_extra_args={qemu_extra!r}")
+            print(f"  qemu_extra_args={qemu_extra!r}", file=sys.stderr)
 
         print(
-            "DryRun: NOTE: QEMU feature probes are skipped; device aliases and vectors support are not validated."
+            "DryRun: NOTE: QEMU feature probes are skipped; device aliases and vectors support are not validated.",
+            file=sys.stderr,
         )
         return 0
 
