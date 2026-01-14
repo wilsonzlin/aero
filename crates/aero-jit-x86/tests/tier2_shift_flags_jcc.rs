@@ -1,6 +1,6 @@
 mod tier1_common;
 
-use aero_cpu_core::state::{RFLAGS_CF, RFLAGS_OF};
+use aero_cpu_core::state::{RFLAGS_CF, RFLAGS_OF, RFLAGS_PF, RFLAGS_SF, RFLAGS_ZF};
 use aero_jit_x86::tier2::interp::{run_function, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::ir::Function;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
@@ -139,6 +139,120 @@ fn tier2_shift_count_0_leaves_cf_unchanged() {
 
     assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shift_count_0_leaves_of_unchanged() {
+    // mov al, 1
+    // shl al, 0
+    // jo +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // x86 shifts with count==0 do not update any flags. Seed OF=1 and ensure `jo` is taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x00, // shl al, 0
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shift_count_0_leaves_zf_unchanged() {
+    // mov al, 1
+    // shl al, 0
+    // jz +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // x86 shifts with count==0 do not update any flags. Seed ZF=1 and ensure `jz` is taken (even
+    // though the shifted value is nonzero).
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x00, // shl al, 0
+        0x74, 0x03, // jz +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_ZF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shift_count_0_leaves_sf_unchanged() {
+    // mov al, 1
+    // shl al, 0
+    // js +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // x86 shifts with count==0 do not update any flags. Seed SF=1 and ensure `js` is taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x00, // shl al, 0
+        0x78, 0x03, // js +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_SF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shift_count_0_leaves_pf_unchanged() {
+    // mov al, 1
+    // shl al, 0
+    // jp +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // x86 shifts with count==0 do not update any flags. Seed PF=1 and ensure `jp` is taken (even
+    // though the shifted value would have odd parity and set PF=0 if recomputed).
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x00, // shl al, 0
+        0x7A, 0x03, // jp +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_PF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
 }
 
 #[test]
