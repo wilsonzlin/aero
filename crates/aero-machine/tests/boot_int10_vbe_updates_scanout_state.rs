@@ -232,8 +232,9 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
 
 #[test]
 fn boot_sector_int10_vbe_8bpp_mode_falls_back_to_legacy_text_scanout() {
-    // `ScanoutState` only supports the canonical 32bpp B8G8R8X8 scanout format. For palettized VBE
-    // modes (8bpp), the legacy VGA renderer path must be used instead.
+    // The shared scanout descriptor/presentation path only supports 32bpp packed-pixel scanout
+    // surfaces today. For palettized VBE modes (8bpp), the legacy VGA renderer path must be used
+    // instead.
     let boot = build_int10_vbe_set_mode_boot_sector_for_mode(0x105);
 
     let scanout_state = Arc::new(ScanoutState::new());
