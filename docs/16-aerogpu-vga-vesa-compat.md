@@ -423,6 +423,10 @@ Allocation and wiring:
 - The I/O worker maps this buffer as an MMIO region at `vramBasePaddr` so guest CPU reads/writes to
   BAR1 land in the VRAM SAB (see [`web/src/workers/io.worker.ts`](../web/src/workers/io.worker.ts),
   `DeviceManager.registerMmio(...)`).
+- The VRAM aperture reserves the front of the PCI/MMIO BAR allocation window. The I/O worker
+  configures the PCI BAR allocator base to start *after* VRAM (`pciMmioBase = vramBasePaddr +
+  vramSizeBytes`) so other MMIO BARs do not overlap the VRAM range (see
+  `DeviceManagerOptions.pciMmioBase` in [`web/src/io/device_manager.ts`](../web/src/io/device_manager.ts)).
 
 ### VRAM base paddr contract and why `base_paddr` can live in the PCI/MMIO hole
 
