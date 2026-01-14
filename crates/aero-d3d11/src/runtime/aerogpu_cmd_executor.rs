@@ -13973,13 +13973,11 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         .try_into()
         .map_err(|_| anyhow!("expanded draw: expanded_reg_count out of range"))?;
 
-    // WebGPU's baseline vertex attribute limit is 16. Expanded post-DS vertex buffers model each
-    // output register as one `vec4<f32>` attribute, so ensure we don't exceed that limit.
-    if expanded_reg_count_usize > crate::input_layout::MAX_WGPU_VERTEX_ATTRIBUTES as usize {
-        bail!(
-            "expanded draw: expanded_reg_count={expanded_reg_count} exceeds WebGPU vertex attribute limit ({})",
-            crate::input_layout::MAX_WGPU_VERTEX_ATTRIBUTES
-        );
+    // Expanded post-DS vertex buffers model each output register as one `vec4<f32>` attribute, so
+    // validate against the device's vertex attribute limit before attempting pipeline creation.
+    let max_vertex_attributes = device.limits().max_vertex_attributes as usize;
+    if expanded_reg_count_usize > max_vertex_attributes {
+        bail!("expanded draw: expanded_reg_count={expanded_reg_count} exceeds device vertex attribute limit ({max_vertex_attributes})");
     }
 
     // Pass through all non-position registers (1..reg_count-1).
