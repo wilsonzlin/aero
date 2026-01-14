@@ -445,6 +445,7 @@ mod tests {
         assert_eq!(mem.get_slice(0x200, 4).unwrap(), &[1, 2, 3, 4]);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn supports_large_phys_addrs_with_sparse_inner_without_allocating_gigabytes() {
