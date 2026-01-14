@@ -4,12 +4,12 @@ use crate::{
 
 use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
-/// Offset into `TestCase::memory` where the instruction bytes are placed.
+/// Offset into `TestCase::memory` where instruction bytes may be placed.
 ///
-/// The memory layout is:
-/// - `memory[0..]`: data region (compared against the reference backend for
-///   `template.mem_compare_len` bytes)
-/// - `memory[CODE_OFF..]`: code region (instruction bytes for Tier-0 fetch)
+/// The Tier-0 conformance backend fetches instruction bytes from a separate "code" region mapped
+/// at vaddr 0, but we still reserve a small `CODE_OFF` prefix in the testcase memory and keep
+/// memory operands inside it. This prevents data accesses from overlapping any embedded code bytes
+/// (used by the optional QEMU/real-mode harness).
 pub const CODE_OFF: usize = 32;
 
 pub(crate) const MAX_TEST_MEMORY_LEN: usize = 64 * 1024;
@@ -1530,7 +1530,9 @@ impl TestCase {
             r14: rng.next_u64(),
             r15: rng.next_u64(),
             rflags: FLAG_FIXED_1,
-            rip: mem_base.wrapping_add(CODE_OFF as u64),
+            // Conformance templates execute with RIP=0, and the Aero Tier-0 backend fetches from a
+            // separate "code" region at vaddr 0.
+            rip: 0,
         };
 
         #[cfg(feature = "qemu-reference")]
