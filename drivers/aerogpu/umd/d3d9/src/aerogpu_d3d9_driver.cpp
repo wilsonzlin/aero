@@ -5413,6 +5413,18 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
 
   // Cache the signature → shader mapping even if `desired_ps` came from the
   // bytecode-dedup search above (multiple signatures can alias the same Shader*).
+  //
+  // Keep the map bounded: `fixedfunc_stage0_ps_variants` is already capped (100),
+  // but a pathological app could cycle through a large number of stage-state
+  // signatures that all alias the same limited shader set. The map is a pure
+  // optimization, so evicting it is always safe (it only causes more token
+  // rebuilding on subsequent misses).
+  constexpr size_t kMaxStage0SignatureCacheEntries = 1024;
+  if (dev->fixedfunc_stage0_ps_variant_cache.size() >= kMaxStage0SignatureCacheEntries &&
+      dev->fixedfunc_stage0_ps_variant_cache.find(sig) == dev->fixedfunc_stage0_ps_variant_cache.end()) {
+    dev->fixedfunc_stage0_ps_variant_cache.clear();
+    dev->fixedfunc_stage0_ps_variant_cache.reserve(128);
+  }
   dev->fixedfunc_stage0_ps_variant_cache[sig] = desired_ps;
 
   if (*ps_slot == desired_ps) {
