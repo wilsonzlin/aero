@@ -79,7 +79,7 @@ Keyboard: PCI device 1af4:1052
   - `inf/aero_virtio_input.inf` (keyboard/mouse; canonical):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard; **Aero VirtIO Keyboard**)
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse; **Aero VirtIO Mouse**)
-    - Strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (**Aero VirtIO Input Device**)
+    - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no `SUBSYS` — **Aero VirtIO Input Device**)
   - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer; **Aero VirtIO Tablet Device**):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`
   - Optional legacy filename alias `inf/virtio-input.inf.disabled` (disabled by default; rename to `virtio-input.inf` to enable):
@@ -127,6 +127,14 @@ the generic device name).
 For compatibility with tooling that still expects `virtio-input.inf`, the repo also carries a legacy filename alias INF
 (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It is a filename-only alias: from the first section header
 (`[Version]`) onward it is expected to remain byte-for-byte identical to the canonical INF (banner/comments may differ; see
+`../scripts/check-inf-alias.py`). Enabling it does **not** change HWID matching behavior.
+so it wins over the generic fallback when both driver packages are installed. If the tablet INF is not installed (or the device does not
+expose the tablet subsystem ID), the generic fallback entry in `inf/aero_virtio_input.inf` can also bind to tablet devices (but will use
+the generic device name).
+
+For compatibility with tooling that still expects `virtio-input.inf`, the repo also carries a legacy filename alias INF
+(`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It is a filename-only alias: from the first section header
+(`[Version]`) onward it is expected to remain byte-for-byte identical to `inf/aero_virtio_input.inf` (banner/comments may differ; see
 `../scripts/check-inf-alias.py`). Enabling it does **not** change HWID matching behavior.
 Do not ship/install it alongside `aero_virtio_input.inf` (install only one of the two basenames at a time).
 

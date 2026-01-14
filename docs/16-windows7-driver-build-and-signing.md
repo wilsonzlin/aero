@@ -158,9 +158,8 @@ See also the examples under `drivers/_template/`:
 >
 > - Canonical INF: `inf/aero_virtio_input.inf`
 >   - Matches the subsystem-qualified keyboard/mouse contract v1 HWIDs (`SUBSYS_0010` / `SUBSYS_0011`, both `&REV_01`) for distinct
->     Device Manager names.
->   - Also includes a strict revision-gated generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
->     (Device Manager name: **Aero VirtIO Input Device**) for environments where subsystem IDs are not exposed/recognized.
+>     Device Manager names, and also includes a strict revision-gated generic fallback HWID (no `SUBSYS`):
+>     `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**).
 > - Optional legacy alias INF (disabled by default): `inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`
 >   - Exists only for compatibility with workflows/tools that still reference `virtio-input.inf`.
 >   - Policy: filename-only alias; from the first section header (`[Version]`) onward it must remain byte-for-byte identical to
@@ -168,12 +167,13 @@ See also the examples under `drivers/_template/`:
 >     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
 >   - Because it is identical, enabling the alias does **not** change HWID matching behavior.
 >
-> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that HWID is more specific than the generic
-> fallback, so it wins when both packages are installed. If the tablet INF is not installed (or the device does not expose the tablet
-> subsystem ID), the device may bind via the generic fallback and appear as **Aero VirtIO Input Device**.
+> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific than the generic
+> fallback, so it wins when both packages are installed and the tablet subsystem ID matches. If the tablet INF is not installed (or the
+> device does not expose the tablet subsystem ID), the device may bind via the generic fallback and appear as **Aero VirtIO Input Device**.
 >
-> Avoid shipping/installing both basenames at once: overlapping driver packages can cause confusing driver selection. Prefer explicit
-> `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
+> Avoid shipping/installing both basenames at once: the alias matches the **same** HWIDs as the canonical INF, so staging both can lead
+> to duplicate/overlapping packages and confusing driver selection. Prefer explicit `ci-package.json` `infFiles` allowlists so only one of
+> the two INF basenames is packaged.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json

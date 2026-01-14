@@ -247,7 +247,8 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
     in `aero_virtio_input.inf` and appear as **Aero VirtIO Input Device**.
 - Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable
   - Intended for compatibility with workflows/tools that still reference `virtio-input.inf`.
-  - Filename-only alias: from the first section header (`[Version]`) onward, it is expected to be byte-identical
+  - Filename-only alias: from the first section header (`[Version]`) onward, it is expected to be byte-identical to
+    `aero_virtio_input.inf`
     (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - Enabling the alias does **not** change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`).
   - Do **not** ship/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
