@@ -46,6 +46,131 @@ fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flag
 }
 
 #[test]
+fn inject_input_batch_routes_consumer_usage_to_virtio_keyboard_when_driver_ok() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let bar0 = bar0_base(&mut m, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+
+    // Enable PCI BAR0 MMIO decoding + bus mastering (virtio DMA).
+    let mut cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
+
+    let common = bar0;
+    let notify = bar0 + 0x1000;
+
+    // Feature negotiation (modern virtio-pci).
+    m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features (low/high dwords) and accept them as-is.
+    m.write_physical_u32(common, 0);
+    let f0 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 0);
+    m.write_physical_u32(common + 0x0c, f0);
+
+    m.write_physical_u32(common, 1);
+    let f1 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 1);
+    m.write_physical_u32(common + 0x0c, f1);
+
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    assert_ne!(
+        m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0,
+        "device should accept FEATURES_OK"
+    );
+
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+    assert!(m.virtio_input_keyboard_driver_ok());
+
+    // Configure virtqueue 0 (eventq).
+    let desc = 0x10000u64;
+    let avail = 0x11000u64;
+    let used = 0x12000u64;
+
+    m.write_physical_u16(common + 0x16, 0); // queue_select
+    m.write_physical_u64(common + 0x20, desc);
+    m.write_physical_u64(common + 0x28, avail);
+    m.write_physical_u64(common + 0x30, used);
+    m.write_physical_u16(common + 0x1c, 1); // queue_enable
+
+    // Post 2 event buffers so EV_KEY + EV_SYN can be delivered immediately.
+    let bufs = [0x13000u64, 0x13020u64];
+    for (i, &buf) in bufs.iter().enumerate() {
+        m.write_physical(buf, &[0u8; 8]);
+        write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
+    }
+
+    // avail ring: flags=0, idx=2, ring=[0,1].
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, bufs.len() as u16);
+    for (i, _buf) in bufs.iter().enumerate() {
+        m.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
+    }
+
+    // used ring: flags=0, idx=0.
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0 (virtio-pci modern notify region) and allow the device to cache the buffers.
+    m.write_physical_u16(notify, 0);
+    m.process_virtio_input();
+    assert_eq!(m.read_physical_u16(used + 2), 0);
+
+    // InputEventQueue wire format:
+    //   [count, batch_ts, type, event_ts, a, b, ...]
+    //
+    // Inject a Consumer Control (Usage Page 0x0C) Volume Up press (usage_id=0x00e9).
+    // The machine should route this through virtio-input when the guest driver is DRIVER_OK.
+    let words: [u32; 6] = [
+        1,
+        0,
+        7, // InputEventType.HidUsage16
+        0,
+        0x0001_000c, // (usage_page=0x000c) | ((pressed ? 1 : 0) << 16)
+        0x00e9,      // usage_id
+    ];
+    m.inject_input_batch(&words);
+
+    assert_eq!(m.read_physical_u16(used + 2), 2, "expected 2 used entries");
+
+    let expected: [(u16, u16, i32); 2] = [(EV_KEY, KEY_VOLUMEUP, 1), (EV_SYN, SYN_REPORT, 0)];
+    for (&buf, (ty, code, val)) in bufs.iter().zip(expected) {
+        let got = m.read_physical_bytes(buf, 8);
+        let type_ = u16::from_le_bytes([got[0], got[1]]);
+        let code_ = u16::from_le_bytes([got[2], got[3]]);
+        let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
+        assert_eq!((type_, code_, value_), (ty, code, val));
+    }
+}
+
+#[test]
 fn virtio_input_keyboard_init_then_host_injects_key_events() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,

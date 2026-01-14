@@ -9182,14 +9182,16 @@ impl Machine {
 
         fn hid_consumer_usage_to_linux_key(usage: u16) -> Option<u16> {
             use aero_virtio::devices::input::*;
+            // Keep this mapping aligned with the JS helper `hidConsumerUsageToLinuxKeyCode`
+            // (`web/src/io/devices/virtio_input.ts`).
             Some(match usage {
-                0x00E2 => KEY_MUTE,
-                0x00EA => KEY_VOLUMEDOWN,
-                0x00E9 => KEY_VOLUMEUP,
-                0x00CD => KEY_PLAYPAUSE,
-                0x00B5 => KEY_NEXTSONG,
-                0x00B6 => KEY_PREVIOUSSONG,
-                0x00B7 => KEY_STOPCD,
+                0x00e2 => KEY_MUTE,
+                0x00ea => KEY_VOLUMEDOWN,
+                0x00e9 => KEY_VOLUMEUP,
+                0x00cd => KEY_PLAYPAUSE,
+                0x00b5 => KEY_NEXTSONG,
+                0x00b6 => KEY_PREVIOUSSONG,
+                0x00b7 => KEY_STOPCD,
                 _ => return None,
             })
         }
@@ -9271,8 +9273,9 @@ impl Machine {
                     let pressed = ((a >> 16) & 1) != 0;
                     let usage_id = b & 0xffff;
 
-                    // Only Usage Page 0x0C ("Consumer") is supported by the canonical synthetic
-                    // consumer-control device today.
+                    // Consumer Control (0x0C) can be delivered either via:
+                    // - virtio-input keyboard (media keys subset, represented as Linux `KEY_*` codes), or
+                    // - a dedicated synthetic USB HID consumer-control device (supports full usage IDs).
                     if usage_page == 0x000c {
                         // Usage 0 means "no control"; ignore it. The synthetic consumer-control
                         // device only supports `1..=0x03FF`.
@@ -9369,7 +9372,7 @@ impl Machine {
                 TYPE_MOUSE_MOVE => {
                     let dx = a as i32;
                     let dy_ps2 = b as i32;
-                    let dy_down = dy_ps2.wrapping_neg();
+                    let dy_down = 0i32.saturating_sub(dy_ps2);
                     if use_ps2_mouse {
                         // Payload:
                         //   a = dx (signed 32-bit)
