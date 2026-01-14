@@ -36,20 +36,16 @@ Optional legacy filename alias / generic fallback:
 ### Static INF validation (`verify-inf.ps1`)
 
 `..\scripts\verify-inf.ps1` performs a lightweight, regex-based validation of
-`aero_virtio_input.inf` to ensure it continues to match Aero's packaging/contract
+virtio-input INFs in this directory to ensure they continue to match Aero's packaging/contract
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
 distinct keyboard vs mouse `DeviceDesc` strings, and MSI interrupt settings).
 
-The validator currently targets only the **keyboard/mouse** INF (`aero_virtio_input.inf`)
-and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and
-`[Aero.NTamd64]`:
+The validator understands both the canonical keyboard/mouse INF (`aero_virtio_input.inf`) and the optional legacy alias
+(`virtio-input.inf.disabled` / `virtio-input.inf`):
 
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-
-It also expects the canonical keyboard/mouse INF to be **SUBSYS-gated** and explicitly forbids the revision-gated generic
-fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`). The generic fallback mapping is available only via the opt-in legacy alias
-INF (`virtio-input.inf.disabled`, rename it to `virtio-input.inf` to enable it).
+- For `aero_virtio_input.inf`: requires the keyboard/mouse SUBSYS+REV HWIDs and forbids the generic fallback.
+- For `virtio-input.inf(.disabled)`: requires the keyboard/mouse HWIDs and the strict generic fallback HWID
+  (`PCI\VEN_1AF4&DEV_1052&REV_01`).
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.
