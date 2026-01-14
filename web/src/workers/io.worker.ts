@@ -185,6 +185,7 @@ import {
 } from "../usb/hid_descriptors";
 import {
   EXTERNAL_HUB_ROOT_PORT,
+  DEFAULT_EXTERNAL_HUB_PORT_COUNT,
   WEBUSB_GUEST_ROOT_PORT,
   UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
   UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
@@ -2017,6 +2018,10 @@ function maybeInitEhciDevice(): void {
 
     ehciControllerBridge = bridge;
     ehciDevice = dev;
+
+    // Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) may be attached behind EHCI in WASM builds
+    // that omit UHCI/xHCI. Attempt attachment now that the controller exists.
+    maybeInitSyntheticUsbHidDevices();
   } catch (err) {
     console.warn("[io.worker] Failed to initialize EHCI controller bridge", err);
     try {
@@ -2191,7 +2196,7 @@ function maybeInitSyntheticUsbHidDevices(): void {
 
   // Ensure a guest-visible USB controller is registered before attaching devices. This is required
   // because PCI hotplug isn't modeled yet.
-  if (!uhciDevice && !xhciDevice) return;
+  if (!uhciDevice && !ehciDevice && !xhciDevice) return;
 
   try {
     if (!syntheticUsbKeyboard) {
@@ -2300,7 +2305,32 @@ function maybeInitSyntheticUsbHidDevices(): void {
     return;
   }
 
-  // xHCI controller bridge path (WASM builds that omit UHCI): attach synthetic devices behind xHCI.
+  // EHCI controller bridge path (WASM builds that omit UHCI): attach synthetic devices behind EHCI.
+  //
+  // Note: This is best-effort; older WASM builds may not expose the topology helpers required to
+  // attach devices.
+  if (ehciControllerBridge) {
+    const bridge = ehciControllerBridge as unknown as {
+      attach_hub?: unknown;
+      attach_usb_hid_passthrough_device?: unknown;
+    };
+    if (typeof bridge.attach_hub === "function" && typeof bridge.attach_usb_hid_passthrough_device === "function") {
+      try {
+        // Ensure the external hub exists before attaching the fixed synthetic device ports.
+        bridge.attach_hub.call(bridge, EXTERNAL_HUB_ROOT_PORT, DEFAULT_EXTERNAL_HUB_PORT_COUNT);
+        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
+        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
+        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
+        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH, syntheticUsbConsumerControl);
+        syntheticUsbHidAttached = true;
+        return;
+      } catch (err) {
+        console.warn("[io.worker] Failed to attach synthetic USB HID devices to EHCI bridge", err);
+      }
+    }
+  }
+
+  // xHCI controller bridge path (WASM builds that omit UHCI/EHCI): attach synthetic devices behind xHCI.
   if (xhciControllerBridge) {
     xhciHidTopology.attachDevice(
       SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID,
