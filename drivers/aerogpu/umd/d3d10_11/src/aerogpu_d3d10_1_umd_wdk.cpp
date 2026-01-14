@@ -9979,8 +9979,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
     //
     // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
     // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
-    // hosts/tools can still observe a bound GS. If mirrored, it should match the appended `gs`
-    // handle.
+    // hosts/tools can still observe a bound GS. When present, the appended `{gs,hs,ds}` handles are
+    // authoritative; `reserved0` is only a legacy compatibility mirror. If mirrored, it should
+    // match the appended `gs` handle.
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
     pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
