@@ -1044,15 +1044,18 @@ impl IdeController {
                 let ok = match chan.devices[dev_idx].as_mut() {
                     Some(IdeDevice::Ata(dev)) => {
                         match features {
-                            0x02 => dev.set_write_cache_enabled(true),
-                            0x82 => dev.set_write_cache_enabled(false),
-                            0x03 => {
-                                // Set transfer mode - accept but ignore.
-                                let _ = sector_count;
+                            0x02 => {
+                                dev.set_write_cache_enabled(true);
+                                true
                             }
-                            _ => {}
+                            0x82 => {
+                                dev.set_write_cache_enabled(false);
+                                true
+                            }
+                            0x03 => dev.set_transfer_mode_select(sector_count).is_ok(),
+                            // Unknown SET FEATURES subcommands are treated as no-ops.
+                            _ => true,
                         }
-                        true
                     }
                     _ => false,
                 };
