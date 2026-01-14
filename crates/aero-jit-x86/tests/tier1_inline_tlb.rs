@@ -3381,6 +3381,74 @@ fn tier1_inline_tlb_mmio_exit_reports_faulting_rip() {
 }
 
 #[test]
+fn tier1_inline_tlb_mmio_store_exit_reports_faulting_rip() {
+    // x86_64:
+    //   mov eax, 0xF000
+    //   mov dword ptr [rax], 0x11223344   ; MMIO (ram_size is only 0x8000)
+    let entry_rip = 0x1000u64;
+    let code: [u8; 11] = [
+        0xB8, 0x00, 0xF0, 0x00, 0x00, // mov eax, 0xF000
+        0xC7, 0x00, 0x44, 0x33, 0x22, 0x11, // mov dword ptr [rax], 0x11223344
+    ];
+
+    let mut bus = SimpleBus::new(0x2000);
+    bus.load(entry_rip, &code);
+
+    let x86_block = discover_block_mode(
+        &bus,
+        entry_rip,
+        BlockLimits {
+            max_insts: 2,
+            max_bytes: 64,
+        },
+        64,
+    );
+    assert_eq!(x86_block.insts.len(), 2);
+
+    let second_rip = x86_block.insts[1].rip;
+    assert_eq!(second_rip, x86_block.insts[0].next_rip());
+
+    let block = translate_block(&x86_block);
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
+
+    // Keep backing RAM larger than `ram_size` so the test can detect any accidental direct RAM
+    // store into the MMIO region.
+    let mut ram = vec![0u8; 0x10000];
+    ram[0xF000..0xF004].copy_from_slice(&0xaabb_ccddu32.to_le_bytes());
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    assert_eq!(next_rip, second_rip);
+    assert_eq!(got_cpu.rip, second_rip);
+    // Ensure the first instruction's effects are preserved.
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xF000);
+    // Store must not touch the MMIO region.
+    assert_eq!(
+        &got_ram[0xF000..0xF004],
+        &0xaabb_ccddu32.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xF000);
+    assert_eq!(mmio.size, 4);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value, 0x1122_3344);
+    assert_eq!(mmio.rip, second_rip);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_mmio_exit_reports_faulting_rip() {
     // x86_64:
     //   mov eax, 0xFFF
@@ -3447,6 +3515,81 @@ fn tier1_inline_tlb_cross_page_mmio_exit_reports_faulting_rip() {
     assert_eq!(mmio.size, 4);
     assert!(!mmio.is_write);
     assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, second_rip);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_exit_reports_faulting_rip() {
+    // x86_64:
+    //   mov eax, 0xFFF
+    //   mov dword ptr [rax], 0x11223344   ; crosses into MMIO (ram_size is only 0x1000)
+    let entry_rip = 0x1000u64;
+    let code: [u8; 11] = [
+        0xB8, 0xFF, 0x0F, 0x00, 0x00, // mov eax, 0xFFF
+        0xC7, 0x00, 0x44, 0x33, 0x22, 0x11, // mov dword ptr [rax], 0x11223344
+    ];
+
+    let mut bus = SimpleBus::new(0x2000);
+    bus.load(entry_rip, &code);
+
+    let x86_block = discover_block_mode(
+        &bus,
+        entry_rip,
+        BlockLimits {
+            max_insts: 2,
+            max_bytes: 64,
+        },
+        64,
+    );
+    assert_eq!(x86_block.insts.len(), 2);
+
+    let second_rip = x86_block.insts[1].rip;
+    assert_eq!(second_rip, x86_block.insts[0].next_rip());
+
+    let block = translate_block(&x86_block);
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
+
+    // Only provide backing RAM for the first page; any attempt to store into the second page would
+    // trap if the MMIO exit check is wrong. Also seed the last byte so we can detect partial writes.
+    let mut ram = vec![0u8; 0x1000];
+    ram[0xFFF] = 0xaa;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram.clone(),
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, second_rip);
+    assert_eq!(got_cpu.rip, second_rip);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xFFF);
+    // Store must not write any bytes (even the first byte in page 0) before the MMIO exit.
+    assert_eq!(got_ram, ram);
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xFFF);
+    assert_eq!(mmio.size, 4);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value, 0x1122_3344);
     assert_eq!(mmio.rip, second_rip);
 }
 
