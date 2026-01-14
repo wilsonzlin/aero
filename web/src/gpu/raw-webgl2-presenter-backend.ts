@@ -1,9 +1,9 @@
 import blitVertSource from './shaders/blit.vert.glsl?raw';
 import blitFragSource from './shaders/blit.frag.glsl?raw';
-import type { Presenter, PresenterInitOptions, PresenterScaleMode, PresenterScreenshot } from './presenter';
+import type { Presenter, PresenterInitOptions, PresenterScreenshot } from './presenter';
 import { PresenterError } from './presenter';
+import { computeViewport } from './viewport';
 
-type Viewport = { x: number; y: number; w: number; h: number };
 type DirtyRect = { x: number; y: number; w: number; h: number };
 
 const DEFAULT_CLEAR_COLOR: [number, number, number, number] = [0, 0, 0, 1];
@@ -13,37 +13,6 @@ function srgbEncodeChannel(x: number): number {
   if (v <= 0.0031308) return v * 12.92;
   return 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055;
 }
-
-function computeViewport(
-  canvasWidthPx: number,
-  canvasHeightPx: number,
-  srcWidth: number,
-  srcHeight: number,
-  mode: PresenterScaleMode,
-): Viewport {
-  if (canvasWidthPx <= 0 || canvasHeightPx <= 0 || srcWidth <= 0 || srcHeight <= 0) {
-    return { x: 0, y: 0, w: 0, h: 0 };
-  }
-
-  if (mode === 'stretch') {
-    return { x: 0, y: 0, w: canvasWidthPx, h: canvasHeightPx };
-  }
-
-  const scaleFit = Math.min(canvasWidthPx / srcWidth, canvasHeightPx / srcHeight);
-  let scale = scaleFit;
-
-  if (mode === 'integer') {
-    const integerScale = Math.floor(scaleFit);
-    scale = integerScale >= 1 ? integerScale : scaleFit;
-  }
-
-  const w = Math.max(1, Math.floor(srcWidth * scale));
-  const h = Math.max(1, Math.floor(srcHeight * scale));
-  const x = Math.floor((canvasWidthPx - w) / 2);
-  const y = Math.floor((canvasHeightPx - h) / 2);
-  return { x, y, w, h };
-}
-
 function flipImageVertically(pixels: Uint8Array, width: number, height: number): Uint8Array {
   const rowBytes = width * 4;
   const out = new Uint8Array(pixels.length);
