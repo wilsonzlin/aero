@@ -3367,6 +3367,8 @@ mod tests {
                                 200 => "200 OK",
                                 401 => "401 Unauthorized",
                                 404 => "404 Not Found",
+                                408 => "408 Request Timeout",
+                                429 => "429 Too Many Requests",
                                 500 => "500 Internal Server Error",
                                 _ => "500 Internal Server Error",
                             };
@@ -3423,6 +3425,40 @@ mod tests {
                 .contains("too large"),
             "unexpected error chain: {}",
             error_chain_summary(&err)
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_with_retry_retries_on_429() -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                let n = requests.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    (429, Vec::new(), b"too many".to_vec())
+                } else {
+                    (200, Vec::new(), b"ok".to_vec())
+                }
+            })
+        };
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download with retry")?;
+        assert_eq!(bytes.as_slice(), b"ok");
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after HTTP 429"
         );
 
         let _ = shutdown_tx.send(());
@@ -3697,6 +3733,41 @@ mod tests {
         assert!(
             requests.load(Ordering::SeqCst) >= 2,
             "expected at least one retry after HTTP 500"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_optional_with_retry_retries_on_429() -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                let n = requests.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    (429, Vec::new(), b"too many".to_vec())
+                } else {
+                    (200, Vec::new(), b"ok".to_vec())
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/meta.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_optional_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download optional")?;
+        assert_eq!(bytes.as_deref(), Some(b"ok".as_ref()));
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after HTTP 429"
         );
 
         let _ = shutdown_tx.send(());
