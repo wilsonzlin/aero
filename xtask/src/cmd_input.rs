@@ -12,6 +12,7 @@ struct InputOpts {
     machine: bool,
     wasm: bool,
     rust_only: bool,
+    with_wasm: bool,
     pw_extra_args: Vec<String>,
 }
 
@@ -39,15 +40,16 @@ pub fn print_help() {
 Run the USB/input-focused test suite (Rust + web) with one command.
 
 Usage:
-  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [--with-wasm] [-- <extra playwright args>]
 
 Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked
   3. (optional: --machine) cargo test -p aero-machine --lib --locked
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
-  5. (unless --rust-only) npm -w web run test:unit -- src/input
-  6. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
+  5. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
+  6. (unless --rust-only) npm -w web run test:unit -- src/input
+  7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
@@ -55,6 +57,7 @@ Options:
   --machine             Also run `aero-machine` unit tests (covers snapshot + device integration).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
+  --with-wasm            Also run the `aero-wasm` input backend integration smoke test.
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
@@ -63,6 +66,8 @@ Examples:
   cargo xtask input --rust-only
   cargo xtask input --machine
   cargo xtask input --wasm --rust-only
+  cargo xtask input --with-wasm
+  cargo xtask input --rust-only --with-wasm
   cargo xtask input --e2e
   cargo xtask input --e2e -- --project=chromium
   cargo xtask input --e2e -- --project=chromium --workers=4
@@ -94,6 +99,22 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         cmd.current_dir(&repo_root)
             .args(["test", "-p", "aero-machine", "--lib", "--locked"]);
         runner.run_step("Rust: cargo test -p aero-machine --lib --locked", &mut cmd)?;
+    }
+
+    if opts.with_wasm {
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root).args([
+            "test",
+            "-p",
+            "aero-wasm",
+            "--test",
+            "machine_input_backends",
+            "--locked",
+        ]);
+        runner.run_step(
+            "Rust: cargo test -p aero-wasm --test machine_input_backends --locked",
+            &mut cmd,
+        )?;
     }
 
     let needs_node = opts.wasm || !opts.rust_only;
@@ -170,6 +191,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
             "--machine" => opts.machine = true,
             "--wasm" => opts.wasm = true,
             "--rust-only" => opts.rust_only = true,
+            "--with-wasm" => opts.with_wasm = true,
             "--" => {
                 opts.pw_extra_args = iter.collect();
                 break;
@@ -288,6 +310,14 @@ mod tests {
                 .contains("extra Playwright args after `--` require `--e2e`"),
             "unexpected error message: {err}"
         );
+    }
+
+    #[test]
+    fn parse_args_accepts_with_wasm() {
+        let opts = parse_args(vec!["--with-wasm".into()]).expect("parse_args").expect("opts");
+        assert!(opts.with_wasm);
+        assert!(!opts.rust_only);
+        assert!(!opts.e2e);
     }
 
     #[test]

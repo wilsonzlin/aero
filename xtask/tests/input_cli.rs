@@ -24,5 +24,6 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("--e2e"))
         .stdout(predicate::str::contains("--machine"))
         .stdout(predicate::str::contains("--wasm"))
+        .stdout(predicate::str::contains("--with-wasm"))
         .stdout(predicate::str::contains("--rust-only"));
 }
