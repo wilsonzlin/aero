@@ -132,13 +132,14 @@ typedef struct _VIRTIOSND_WAVERT_STREAM {
     ULONG PacketCount;
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
     /*
-     * Optional eventq-driven tick coalescing:
-     *  - Dx->PcmPeriodSeq[] increments on each PERIOD_ELAPSED event.
-     *  - When eventq is active, avoid double-processing the periodic WaveRT timer
-     *    ticks by observing the sequence + last-event timestamp.
+     * Optional tick coalescing:
+     *  - WaveRT maintains a periodic timer for contract-v1 compatibility.
+     *  - eventq PCM notifications can also queue this DPC as an additional wakeup.
+     *
+     * Keep a timestamp of the last processed tick so back-to-back DPCs don't
+     * advance PacketCount/registers twice for the same period.
      */
-    LONG LastPcmPeriodSeq;
-    BOOLEAN PcmEventsSeen;
+    ULONGLONG LastTickTime100ns;
 #endif
 
     ULONG PeriodBytes;
@@ -592,8 +593,7 @@ VirtIoSndWaveRtResetStopState(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     Stream->SubmittedRingPositionBytes = 0;
     Stream->PacketCount = 0;
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-    Stream->LastPcmPeriodSeq = 0;
-    Stream->PcmEventsSeen = FALSE;
+    Stream->LastTickTime100ns = 0;
 #endif
     oldEvent = Stream->NotificationEvent;
     Stream->NotificationEvent = NULL;
@@ -1103,35 +1103,30 @@ VirtIoSndWaveRtDpcRoutine(
 
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
     /*
-     * When the device emits eventq PERIOD_ELAPSED notifications, the INTx/MSI DPC
-     * can queue this WaveRT DPC directly. Keep the periodic timer as a fallback,
-     * but avoid double-processing timer ticks while events are flowing.
+     * Coalesce duplicate DPC wakeups:
+     *  - WaveRT maintains a periodic timer for contract-v1 compatibility.
+     *  - eventq PCM notifications can also queue this DPC (via the WaveRT eventq
+     *    callback) to reduce reliance on polling/timers when eventq is active.
      *
-     * Do NOT apply this optimization in polling-only mode (no interrupts),
-     * because the periodic timer is still the only scheduling mechanism.
+     * Both sources can queue this DPC near the same period boundary. Gate the
+     * DPC body so PacketCount and position updates advance at most once per
+     * period, even if we observe back-to-back queued DPCs.
      */
-    if (dx != NULL && (dx->Intx.InterruptObject != NULL || dx->MessageInterruptsActive)) {
-        const ULONG streamId = stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID;
-        const LONG seq = InterlockedCompareExchange(&dx->PcmPeriodSeq[streamId], 0, 0);
+    {
+        const ULONGLONG nowTick100ns = KeQueryInterruptTime();
+        ULONGLONG threshold100ns = stream->Period100ns;
 
-        if (seq != stream->LastPcmPeriodSeq) {
-            stream->LastPcmPeriodSeq = seq;
-            stream->PcmEventsSeen = TRUE;
-        } else if (stream->PcmEventsSeen) {
-            const ULONGLONG lastEvt100ns = (ULONGLONG)InterlockedCompareExchange64(&dx->PcmLastPeriodEventTime100ns[streamId], 0, 0);
-            const ULONGLONG nowEvt100ns = KeQueryInterruptTime();
-            ULONGLONG threshold100ns = stream->Period100ns;
-
-            if (threshold100ns != 0) {
-                threshold100ns *= 2;
-            }
-
-            if (lastEvt100ns != 0 && threshold100ns != 0 && nowEvt100ns >= lastEvt100ns &&
-                (nowEvt100ns - lastEvt100ns) < threshold100ns) {
-                KeReleaseSpinLock(&stream->Lock, oldIrql);
-                goto Exit;
-            }
+        if (threshold100ns != 0) {
+            threshold100ns = (threshold100ns * 3u) / 4u;
         }
+
+        if (stream->LastTickTime100ns != 0 && threshold100ns != 0 && nowTick100ns >= stream->LastTickTime100ns &&
+            (nowTick100ns - stream->LastTickTime100ns) < threshold100ns) {
+            KeReleaseSpinLock(&stream->Lock, oldIrql);
+            goto Exit;
+        }
+
+        stream->LastTickTime100ns = nowTick100ns;
     }
 #endif
 
@@ -3121,12 +3116,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
                 stream->State = KSSTATE_RUN;
-#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-                if (dx != NULL) {
-                    stream->LastPcmPeriodSeq = InterlockedCompareExchange(&dx->PcmPeriodSeq[VIRTIO_SND_CAPTURE_STREAM_ID], 0, 0);
-                    stream->PcmEventsSeen = FALSE;
-                }
-#endif
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
                 VirtIoSndWaveRtStartTimer(stream);
@@ -3742,12 +3731,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         KeAcquireSpinLock(&stream->Lock, &oldIrql);
         stream->SubmittedLinearPositionBytes = submittedLinearBytes;
         stream->SubmittedRingPositionBytes = submittedRingBytes;
-#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-        if (dx != NULL) {
-            stream->LastPcmPeriodSeq = InterlockedCompareExchange(&dx->PcmPeriodSeq[VIRTIO_SND_PLAYBACK_STREAM_ID], 0, 0);
-            stream->PcmEventsSeen = FALSE;
-        }
-#endif
         KeReleaseSpinLock(&stream->Lock, oldIrql);
 
         VirtIoSndWaveRtStartTimer(stream);
