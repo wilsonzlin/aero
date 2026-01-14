@@ -275,7 +275,7 @@ impl XhciControllerBridge {
         if dma_enabled {
             let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
-                self.ctrl.tick_1ms();
+                self.ctrl.tick_1ms(&mut mem);
                 self.ctrl.service_event_ring(&mut mem);
             }
         } else {
