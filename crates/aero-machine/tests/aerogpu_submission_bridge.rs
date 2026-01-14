@@ -200,6 +200,144 @@ fn aerogpu_submission_bridge_drains_and_requires_host_fence_completion() {
 }
 
 #[test]
+fn aerogpu_submission_bridge_queue_overflow_does_not_deadlock_fences() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 16 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        // Keep the machine minimal and deterministic for this unit test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.aerogpu_enable_submission_bridge();
+
+    // Canonical AeroGPU BDF (A3A0:0001).
+    let bdf = PciBdf::new(0, 0x07, 0);
+    let bar0 = u64::from(cfg_read(&mut m, bdf, 0x10, 4) & !0xFu32);
+    assert_ne!(bar0, 0);
+
+    // Enable PCI Bus Mastering so the device is allowed to DMA into guest memory.
+    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    command |= 1 << 2; // COMMAND.BME
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    let ring_gpa = 0x10000u64;
+    let fence_gpa = 0x20000u64;
+    let cmd_gpa = 0x30000u64;
+
+    m.write_physical(cmd_gpa, &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+    // The submission drain queue is capped at 256 entries. Submitting one more entry should drop
+    // the oldest submission, but must not deadlock guest fences (the dropped fence is
+    // auto-completed with an error so later fences can still progress once the host completes
+    // them).
+    let submission_count = 257u32;
+
+    // Ring header large enough for all submissions (entry_count must be power-of-two).
+    let entry_count = 512u32;
+    let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
+    m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
+    m.write_physical_u32(ring_gpa + 12, entry_count);
+    m.write_physical_u32(ring_gpa + 16, entry_stride_bytes);
+    m.write_physical_u32(ring_gpa + 20, 0); // flags
+    m.write_physical_u32(ring_gpa + 24, 0); // head
+    m.write_physical_u32(ring_gpa + 28, submission_count); // tail
+
+    for i in 0..submission_count {
+        let slot_gpa = ring_gpa
+            + ring::AerogpuRingHeader::SIZE_BYTES as u64
+            + u64::from(i) * u64::from(entry_stride_bytes);
+        let fence = u64::from(i + 1);
+
+        m.write_physical_u32(slot_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+        m.write_physical_u32(slot_gpa + 4, 0); // flags
+        m.write_physical_u32(slot_gpa + 8, 0); // context_id
+        m.write_physical_u32(slot_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+        m.write_physical_u64(slot_gpa + 16, cmd_gpa);
+        m.write_physical_u32(slot_gpa + 24, 4); // cmd_size_bytes
+        m.write_physical_u32(slot_gpa + 28, 0);
+        m.write_physical_u64(slot_gpa + 32, 0); // alloc_table_gpa
+        m.write_physical_u32(slot_gpa + 40, 0); // alloc_table_size_bytes
+        m.write_physical_u32(slot_gpa + 44, 0);
+        m.write_physical_u64(slot_gpa + 48, fence);
+        m.write_physical_u64(slot_gpa + 56, 0);
+    }
+
+    // Program BAR0 registers.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        ring_size_bytes,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
+        (fence_gpa >> 32) as u32,
+    );
+
+    // Doorbell: consume all submissions.
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+
+    assert_eq!(m.read_physical_u32(ring_gpa + 24), submission_count);
+
+    // Oldest submission dropped from the queue, but its fence must still be completed so later
+    // fences can advance once the host reports them.
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, 1);
+
+    let subs = m.aerogpu_drain_submissions();
+    assert_eq!(subs.len(), 256);
+    assert_eq!(subs[0].signal_fence, 2);
+    assert_eq!(subs[255].signal_fence, 257);
+
+    // Host completes all drained fences; completed_fence should advance through the end even
+    // though fence=1 was never drained.
+    for sub in subs {
+        m.aerogpu_complete_fence(sub.signal_fence);
+    }
+
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, 257);
+}
+
+#[test]
 fn aerogpu_submission_bridge_drains_cmd_streams_with_zero_fence() {
     let cfg = MachineConfig {
         ram_size_bytes: 16 * 1024 * 1024,
