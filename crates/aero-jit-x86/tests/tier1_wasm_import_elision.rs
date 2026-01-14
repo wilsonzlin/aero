@@ -100,3 +100,36 @@ fn tier1_block_with_load_imports_mem_read_helpers() {
         "expected Tier-1 block with a single load to define only the mem_read_u8 and block function types"
     );
 }
+
+#[test]
+fn tier1_block_with_store_imports_mem_write_helpers() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let src = b.const_int(Width::W8, 0x12);
+    b.store(Width::W8, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    let mut found_mem_write_u8 = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U8 {
+            found_mem_write_u8 = true;
+        }
+        // Sanity: a pure store block shouldn't need any read helpers.
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+    }
+
+    assert!(
+        found_mem_write_u8,
+        "expected Tier-1 block with a store to import env.mem_write_u8"
+    );
+
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected Tier-1 block with a single store to define only the mem_write_u8 and block function types"
+    );
+}
