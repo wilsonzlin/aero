@@ -2,7 +2,8 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::{
-    OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+    OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_MOV,
+    OPCODE_RET,
 };
 use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Inst, Sm4Program};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
@@ -150,10 +151,10 @@ fn build_vs_pos_only_dxbc() -> Vec<u8> {
     }]);
 
     let version_token = 0x0001_0040u32; // vs_4_0
-    let mov_token = 0x01u32 | (5u32 << 11);
+    let mov_token = OPCODE_MOV | (5u32 << OPCODE_LEN_SHIFT);
     let dst_o0 = 0x0010_f022u32;
     let src_v0 = 0x001e_4016u32;
-    let ret_token = 0x3eu32 | (1u32 << 11);
+    let ret_token = OPCODE_RET | (1u32 << OPCODE_LEN_SHIFT);
 
     let mut tokens = vec![
         version_token,
@@ -186,8 +187,8 @@ fn build_ps_solid_green_dxbc() -> Vec<u8> {
     }]);
 
     let version_token = 0x40u32; // ps_4_0
-    let mov_token = 0x01u32 | (8u32 << 11);
-    let ret_token = 0x3eu32 | (1u32 << 11);
+    let mov_token = OPCODE_MOV | (8u32 << OPCODE_LEN_SHIFT);
+    let ret_token = OPCODE_RET | (1u32 << OPCODE_LEN_SHIFT);
 
     let dst_o0 = 0x0010_f022u32;
     let imm_vec4 = 0x0000_f042u32;
