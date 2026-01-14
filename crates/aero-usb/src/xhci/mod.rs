@@ -1985,11 +1985,11 @@ impl XhciController {
             .dcbaap()
             .ok_or(CommandCompletionCode::ContextStateError)?;
         let dcbaa = Dcbaa::new(dcbaap);
-        let dev_ctx_ptr = dcbaa
+        let dev_ctx_raw = dcbaa
             .read_device_context_ptr(mem, slot_id)
-            .map_err(|_| CommandCompletionCode::ParameterError)?
-            & !0x3f;
-        if dev_ctx_ptr == 0 {
+            .map_err(|_| CommandCompletionCode::ParameterError)?;
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
             return Err(CommandCompletionCode::ContextStateError);
         }
         Ok(dev_ctx_ptr)
@@ -3150,8 +3150,16 @@ impl XhciController {
             }
         }
 
+        // Determine whether the guest has installed a Device Context pointer for this slot.
+        //
+        // Even if the pointer is malformed (misaligned), treat it as "present" so we do not fall
+        // back to controller-local ring cursors (which could otherwise cause DMA based on stale
+        // snapshot state).
+        let guest_ctx_present = self
+            .read_device_context_ptr_raw(mem, slot_id)
+            .is_some_and(|raw| raw != 0);
+
         let guest_endpoint_state = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id);
-        let guest_ctx_available = guest_endpoint_state.is_some();
         if let Some(state) = guest_endpoint_state {
             if !matches!(state, context::EndpointState::Running) {
                 return EndpointOutcome::idle();
@@ -3196,7 +3204,7 @@ impl XhciController {
                 slot_id,
                 endpoint_id,
                 ep_addr,
-                guest_ctx_available,
+                guest_ctx_present,
             );
 
             let before = exec
@@ -3751,7 +3759,7 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
         ep_addr: u8,
-        guest_ctx_available: bool,
+        guest_ctx_present: bool,
     ) {
         let (dequeue_ptr, cycle) =
             match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
@@ -3761,7 +3769,7 @@ impl XhciController {
                     // back to controller-local ring cursors. `read_endpoint_dequeue_from_context`
                     // returning `None` in this case implies the guest Endpoint Context is either
                     // malformed (missing TRDP) or describes an unsupported endpoint type.
-                    if guest_ctx_available {
+                    if guest_ctx_present {
                         return;
                     }
                     // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
@@ -3790,6 +3798,21 @@ impl XhciController {
         }
     }
 
+    fn read_device_context_ptr_raw(
+        &self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+    ) -> Option<u64> {
+        if slot_id == 0 {
+            return None;
+        }
+        if self.dcbaap == 0 {
+            return None;
+        }
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        dcbaa.read_device_context_ptr(mem, slot_id).ok()
+    }
+
     fn read_endpoint_dequeue_from_context(
         &self,
         mem: &mut dyn MemoryBus,
@@ -3805,9 +3828,9 @@ impl XhciController {
         if self.dcbaap == 0 {
             return None;
         }
-        let dcbaa = context::Dcbaa::new(self.dcbaap);
-        let dev_ctx_ptr = dcbaa.read_device_context_ptr(mem, slot_id).ok()? & !0x3f;
-        if dev_ctx_ptr == 0 {
+        let dev_ctx_raw = self.read_device_context_ptr_raw(mem, slot_id)?;
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
             return None;
         }
         let dev_ctx = context::DeviceContext32::new(dev_ctx_ptr);
@@ -3841,9 +3864,9 @@ impl XhciController {
         if self.dcbaap == 0 {
             return None;
         }
-        let dcbaa = context::Dcbaa::new(self.dcbaap);
-        let dev_ctx_ptr = dcbaa.read_device_context_ptr(mem, slot_id).ok()? & !0x3f;
-        if dev_ctx_ptr == 0 {
+        let dev_ctx_raw = self.read_device_context_ptr_raw(mem, slot_id)?;
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
             return None;
         }
         let dev_ctx = context::DeviceContext32::new(dev_ctx_ptr);
@@ -3868,12 +3891,11 @@ impl XhciController {
         if self.dcbaap == 0 {
             return;
         }
-        let dcbaa = context::Dcbaa::new(self.dcbaap);
-        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
+        let Some(dev_ctx_raw) = self.read_device_context_ptr_raw(mem, slot_id) else {
             return;
         };
-        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
-        if dev_ctx_ptr == 0 {
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
             return;
         }
 
@@ -3911,6 +3933,12 @@ impl XhciController {
             return false;
         }
 
+        let dev_ctx_raw = if self.dcbaap == 0 {
+            None
+        } else {
+            self.read_device_context_ptr_raw(mem, slot_id)
+        };
+
         // Always update the controller-local shadow Endpoint Context so doorbell gating and
         // snapshot/restore preserve the halted state even if the guest Device Context is absent.
         let slot_idx = usize::from(slot_id);
@@ -3919,15 +3947,11 @@ impl XhciController {
         };
         slot.endpoint_contexts[usize::from(endpoint_id - 1)].set_endpoint_state_enum(state);
 
-        if self.dcbaap == 0 {
-            return false;
-        }
-        let dcbaa = context::Dcbaa::new(self.dcbaap);
-        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
+        let Some(dev_ctx_raw) = dev_ctx_raw else {
             return false;
         };
-        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
-        if dev_ctx_ptr == 0 {
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
             return false;
         }
 
