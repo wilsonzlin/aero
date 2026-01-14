@@ -344,10 +344,16 @@ Scanout 0 registers (BAR0):
 
 - There is **no** separate `COMMIT` register/bit in the canonical A3A0 MMIO ABI. The Windows KMD
   stages `SCANOUT0_*` values and then writes `SCANOUT0_ENABLE`.
-- Treat the write to `SCANOUT0_ENABLE` as the **commit point**:
-  - Update `ScanoutState` when `SCANOUT0_ENABLE` transitions **0 → 1** (use the current values of
-    `SCANOUT0_FB_GPA_*`, `WIDTH`, `HEIGHT`, `PITCH_BYTES`, `FORMAT`).
-  - While `SCANOUT0_ENABLE == 1`, update `ScanoutState` on configuration changes (Task 420).
+- Treat the write to `SCANOUT0_ENABLE` as the **commit point**, but only claim/publish WDDM scanout
+  once the configuration is **valid**:
+  - `SCANOUT0_ENABLE` must be `1` and the programmed scanout config must be valid (non-zero
+    framebuffer GPA, non-zero width/height, supported pixel format, pitch large enough for the row
+    size, etc). If the config is invalid (e.g. `FB_GPA=0` during early init), do **not** publish a
+    WDDM scanout descriptor and do **not** steal legacy VGA/VBE presentation.
+  - Avoid publishing a torn 64-bit `SCANOUT0_FB_GPA`: drivers typically write LO then HI, so treat
+    the HI write as the commit point for the combined 64-bit address.
+  - While `SCANOUT0_ENABLE == 1` and a valid config has been claimed, update `ScanoutState` on
+    configuration changes (including flips via `SCANOUT0_FB_GPA_*` updates before PRESENT).
 - Presentation commands read the current scanout programming: `AEROGPU_CMD_PRESENT` uses the
   currently-programmed `SCANOUT0_*` registers, and drivers may update `SCANOUT0_FB_GPA_*` before
   PRESENT to implement flips (see
@@ -360,7 +366,9 @@ Scanout 0 registers (BAR0):
 
 ### When WDDM owns scanout
 
-When the AeroGPU WDDM driver is loaded, it programs the AeroGPU scanout registers (BAR0). As soon as the device observes `SCANOUT0_ENABLE` transition **0 → 1**, it updates `ScanoutState`:
+When the AeroGPU WDDM driver is loaded, it programs the AeroGPU scanout registers (BAR0). As soon
+as the device observes `SCANOUT0_ENABLE=1` with a **valid** scanout configuration (including a
+committed 64-bit framebuffer address), it updates `ScanoutState`:
 
 - `source = Wddm`
 - `base_paddr = value programmed by driver`
