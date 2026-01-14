@@ -8039,6 +8039,7 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
                              uint32_t indexFromTail,
                              uint32_t count,
                              const wchar_t *outPath,
+                             const wchar_t *allocOutPath,
                              bool force,
                              std::string *out) {
   if (!out) {
@@ -8113,6 +8114,60 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
     return 2;
   }
 
+  if (descCount == 0) {
+    // Match text-mode behavior: empty ring is not a failure.
+    JsonWriter w(out);
+    w.BeginObject();
+    w.Key("schema_version");
+    w.Uint32(1);
+    w.Key("command");
+    w.String("dump-last-cmd");
+    w.Key("ok");
+    w.Bool(true);
+    w.Key("ring");
+    w.BeginObject();
+    w.Key("ring_id");
+    w.Uint32(ringId);
+    w.Key("used_v2");
+    w.Bool(usedV2);
+    w.Key("format");
+    w.String(WideToUtf8(RingFormatToString(ringFormat)));
+    w.Key("ring_size_bytes");
+    w.Uint32(ringSizeBytes);
+    w.Key("head_u32_hex");
+    w.String(HexU32(head));
+    w.Key("tail_u32_hex");
+    w.String(HexU32(tail));
+    w.Key("desc_count");
+    w.Uint32(0);
+    w.EndObject();
+    w.Key("request");
+    w.BeginObject();
+    w.Key("index_from_tail");
+    w.Uint32(indexFromTail);
+    w.Key("count");
+    w.Uint32(count);
+    w.Key("count_actual");
+    w.Uint32(0);
+    w.Key("out_path");
+    w.String(WideToUtf8(outPath));
+    if (allocOutPath && allocOutPath[0]) {
+      w.Key("alloc_out_path");
+      w.String(WideToUtf8(allocOutPath));
+    }
+    w.Key("force");
+    w.Bool(force);
+    w.EndObject();
+    w.Key("dumps");
+    w.BeginArray();
+    w.EndArray();
+    w.Key("note");
+    w.String("Ring has no descriptors available");
+    w.EndObject();
+    out->push_back('\n');
+    return 0;
+  }
+
   if (indexFromTail >= descCount) {
     JsonWriteTopLevelError(out, "dump-last-cmd", f, "--index-from-tail out of range", STATUS_INVALID_PARAMETER);
     return 1;
@@ -8122,6 +8177,12 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
   const uint32_t remaining = descCount - indexFromTail;
   if (actualCount > remaining) {
     actualCount = remaining;
+  }
+
+  if (allocOutPath && allocOutPath[0] && actualCount > 1) {
+    JsonWriteTopLevelError(out, "dump-last-cmd", f, "--alloc-out is not supported with --count > 1",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
   }
 
   JsonWriter w(out);
@@ -8159,6 +8220,10 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
   w.Uint32(actualCount);
   w.Key("out_path");
   w.String(WideToUtf8(outPath));
+  if (allocOutPath && allocOutPath[0]) {
+    w.Key("alloc_out_path");
+    w.String(WideToUtf8(allocOutPath));
+  }
   w.Key("force");
   w.Bool(force);
   w.EndObject();
@@ -8379,10 +8444,12 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
     }
 
     std::string allocPathUtf8;
+    bool allocTablePresent = false;
     if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
       const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
       const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
       if (!(allocGpa == 0 && allocSizeBytes == 0)) {
+        allocTablePresent = true;
         if (allocGpa == 0 || allocSizeBytes == 0) {
           if (curOutPathOwned) {
             HeapFree(GetProcessHeap(), 0, curOutPathOwned);
@@ -8456,29 +8523,39 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
           return 2;
         }
 
-        wchar_t *allocPath = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
-        if (!allocPath) {
-          if (curOutPathOwned) {
-            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        const wchar_t *allocPath = NULL;
+        wchar_t *allocPathOwned = NULL;
+        if (allocOutPath && allocOutPath[0]) {
+          allocPath = allocOutPath;
+        } else {
+          allocPathOwned = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
+          if (!allocPathOwned) {
+            if (curOutPathOwned) {
+              HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+            }
+            w.EndArray();
+            w.Key("ok");
+            w.Bool(false);
+            w.Key("error");
+            w.BeginObject();
+            w.Key("message");
+            w.String("Out of memory building alloc table output path");
+            w.Key("status");
+            JsonWriteNtStatusError(w, f, STATUS_INSUFFICIENT_RESOURCES);
+            w.EndObject();
+            w.EndObject();
+            out->push_back('\n');
+            return 2;
           }
-          w.EndArray();
-          w.Key("ok");
-          w.Bool(false);
-          w.Key("error");
-          w.BeginObject();
-          w.Key("message");
-          w.String("Out of memory building alloc table output path");
-          w.Key("status");
-          JsonWriteNtStatusError(w, f, STATUS_INSUFFICIENT_RESOURCES);
-          w.EndObject();
-          w.EndObject();
-          out->push_back('\n');
-          return 2;
+          allocPath = allocPathOwned;
         }
+
         const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
         if (dumpAllocRc != 0) {
           allocPathUtf8 = WideToUtf8(allocPath);
-          HeapFree(GetProcessHeap(), 0, allocPath);
+          if (allocPathOwned) {
+            HeapFree(GetProcessHeap(), 0, allocPathOwned);
+          }
           if (curOutPathOwned) {
             HeapFree(GetProcessHeap(), 0, curOutPathOwned);
           }
@@ -8497,7 +8574,9 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
           return dumpAllocRc;
         }
         allocPathUtf8 = WideToUtf8(allocPath);
-        HeapFree(GetProcessHeap(), 0, allocPath);
+        if (allocPathOwned) {
+          HeapFree(GetProcessHeap(), 0, allocPathOwned);
+        }
       }
     }
 
@@ -8538,6 +8617,14 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
     if (!allocPathUtf8.empty()) {
       w.Key("alloc_table_path");
       w.String(allocPathUtf8);
+      w.Key("alloc_table_written");
+      w.Bool(true);
+    } else if (allocOutPath && allocOutPath[0]) {
+      // User explicitly requested a path; surface whether the alloc table existed.
+      w.Key("alloc_table_written");
+      w.Bool(false);
+      w.Key("alloc_table_present");
+      w.Bool(allocTablePresent);
     }
     w.EndObject();
     w.EndObject();
@@ -9913,12 +10000,13 @@ int wmain(int argc, wchar_t **argv) {
   }
 
   if (cmd == CMD_WATCH_FENCE || cmd == CMD_WATCH_RING) {
+    const char *jsonCmd = (cmd == CMD_WATCH_RING) ? "watch-ring" : "watch-fence";
     if (!watchSamplesSet) {
       fwprintf(stderr, L"%s requires --samples N\n", (cmd == CMD_WATCH_RING) ? L"--watch-ring" : L"--watch-fence");
       PrintUsage();
       if (g_json_output) {
         std::string json;
-        JsonWriteTopLevelError(&json, "watch-fence", NULL, "--watch-fence requires --samples N", STATUS_INVALID_PARAMETER);
+        JsonWriteTopLevelError(&json, jsonCmd, NULL, "--samples is required", STATUS_INVALID_PARAMETER);
         WriteJsonToDestination(json);
       }
       return 1;
@@ -9928,8 +10016,7 @@ int wmain(int argc, wchar_t **argv) {
       PrintUsage();
       if (g_json_output) {
         std::string json;
-        JsonWriteTopLevelError(&json, "watch-fence", NULL, "--watch-fence requires --interval-ms M",
-                               STATUS_INVALID_PARAMETER);
+        JsonWriteTopLevelError(&json, jsonCmd, NULL, "--interval-ms is required", STATUS_INVALID_PARAMETER);
         WriteJsonToDestination(json);
       }
       return 1;
@@ -10115,7 +10202,7 @@ int wmain(int argc, wchar_t **argv) {
       break;
     case CMD_DUMP_LAST_CMD:
       rc = DoDumpLastCmdJson(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdCount, dumpLastCmdOutPath,
-                             dumpLastCmdForce, &json);
+                             dumpLastCmdAllocOutPath, dumpLastCmdForce, &json);
       break;
     case CMD_READ_GPA:
       rc = DoReadGpaJson(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile, &json);
