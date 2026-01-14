@@ -1516,28 +1516,6 @@ impl PciDevice for E1000PciConfigDevice {
     }
 }
 
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct VirtioNetPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -4999,8 +4977,7 @@ impl Machine {
         }
 
         let tsc = self.cpu.state.msr.tsc;
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for cpu in ap_cpus.iter_mut() {
+        for cpu in self.ap_cpus.iter_mut() {
             cpu.time.set_tsc(tsc);
             cpu.state.msr.tsc = tsc;
         }
@@ -7515,13 +7492,7 @@ impl Machine {
         // Run each AP for a bounded number of instructions. This is intentionally a very simple
         // cooperative scheduler (BSP-driven) that is "good enough" for SMP bring-up tests like
         // INIT+SIPI.
-        //
-        // AP vCPUs are stored in a `RefCell<Vec<_>>` to share them with the per-vCPU LAPIC bus
-        // adapter; holding the borrow across CPU execution means AP code must not attempt to issue
-        // IPIs (which would re-borrow the same `RefCell`). This is acceptable for the current
-        // minimal SMP tests.
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
             if cpu.state.halted {
                 continue;
             }
@@ -7531,10 +7502,15 @@ impl Machine {
 
             // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
             let apic_id = (idx as u8).saturating_add(1);
+            // AP vCPUs live inside `self.ap_cpus`, so we can't hand `PerCpuSystemMemoryBus` a
+            // mutable view of the full AP slice while also holding `cpu: &mut CpuCore`. For now,
+            // AP execution is allowed to access its LAPIC MMIO page (via the platform interrupts
+            // object) but does not deliver IPIs that mutate other AP cores.
+            let mut empty_ap_cpus: [CpuCore; 0] = [];
             let phys = PerCpuSystemMemoryBus::new(
                 apic_id,
                 interrupts.clone(),
-                self.ap_cpus.clone(),
+                &mut empty_ap_cpus,
                 &mut self.mem,
             );
             let inner = aero_cpu_core::PagingBus::new_with_io(
@@ -8441,8 +8417,7 @@ impl snapshot::SnapshotSource for Machine {
             internal_state: Vec::new(),
         });
 
-        let ap_cpus = self.ap_cpus.borrow();
-        for (idx, cpu) in ap_cpus.iter().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter().enumerate() {
             cpus.push(snapshot::VcpuSnapshot {
                 apic_id: (idx + 1) as u32,
                 cpu: snapshot::cpu_state_from_cpu_core(cpu),
@@ -8466,8 +8441,7 @@ impl snapshot::SnapshotSource for Machine {
             mmu: snapshot::mmu_state_from_cpu_core(&self.cpu),
         });
 
-        let ap_cpus = self.ap_cpus.borrow();
-        for (idx, cpu) in ap_cpus.iter().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter().enumerate() {
             mmus.push(snapshot::VcpuMmuSnapshot {
                 apic_id: (idx + 1) as u32,
                 mmu: snapshot::mmu_state_from_cpu_core(cpu),
@@ -9019,7 +8993,7 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
             let apic_id = usize::try_from(state.apic_id)
@@ -9061,7 +9035,7 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
             let apic_id = usize::try_from(state.apic_id)

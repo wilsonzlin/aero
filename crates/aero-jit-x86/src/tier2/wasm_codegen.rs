@@ -820,7 +820,7 @@ impl Emitter<'_> {
                                 //
                                 // This is equivalent under wrapping arithmetic and tends to
                                 // generate better code in Wasm engines.
-                                let sh = u32::from(scale.trailing_zeros()) as i64;
+                                let sh = scale.trailing_zeros() as i64;
                                 self.f.instruction(&Instruction::I64Const(sh));
                                 self.f.instruction(&Instruction::I64Shl);
                             } else {
@@ -833,7 +833,7 @@ impl Emitter<'_> {
                         self.emit_operand(index);
                         if scale != 1 {
                             if scale.is_power_of_two() {
-                                let sh = u32::from(scale.trailing_zeros()) as i64;
+                                let sh = scale.trailing_zeros() as i64;
                                 self.f.instruction(&Instruction::I64Const(sh));
                                 self.f.instruction(&Instruction::I64Shl);
                             } else {

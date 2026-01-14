@@ -484,7 +484,7 @@ fn instantiate_trace(
     wasm: &[u8],
 ) -> (Store<HostEnv>, Memory, TypedFunc<(i32, i32), i64>) {
     let module = Module::new(engine, wasm).unwrap();
-    let mut store = Store::new(engine, HostEnv::default());
+    let mut store = Store::new(engine, HostEnv);
     let mut linker = Linker::new(engine);
 
     // Two pages: guest memory in page 0, CpuState + JIT context at CPU_PTR in page 1.

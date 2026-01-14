@@ -139,49 +139,13 @@ pub fn run(trace: &mut TraceIr) -> bool {
 
                         // 1) Canonicalize `Eq(Eq(x,0),0)` into `x != 0` (`LtU(0,x)`),
                         // and further into `x` if `x` is already boolean.
-                        if let Some(other) = eq_zero_other(lhs, rhs) {
-                            if let Operand::Value(inner) = other {
-                                if let Some(x) = eq_zero.get(&inner).copied() {
-                                    if is_bool_operand(x, &bool_values) {
-                                        // `x != 0` is just `x` when `x` is boolean.
-                                        //
-                                        // Emit an algebraically simplifiable op so `const_fold`
-                                        // can turn this into a pure replacement.
-                                        new = Instr::BinOp {
-                                            dst,
-                                            op: BinOp::Xor,
-                                            lhs: x,
-                                            rhs: Operand::Const(0),
-                                            flags: FlagSet::EMPTY,
-                                        };
-                                    } else {
-                                        // Prefer `!(x == 0)` expressed as `xor(inner, 1)` when the
-                                        // `inner = (x == 0)` value is used elsewhere (e.g. select
-                                        // lowering uses both `inner` and its negation).
-                                        //
-                                        // Otherwise, canonicalize to `x != 0` (`lt_u(0, x)`) so DCE
-                                        // can remove the `inner` comparison entirely.
-                                        let inner_uses = uses.get(&inner).copied().unwrap_or(0);
-                                        if inner_uses > 1 {
-                                            new = Instr::BinOp {
-                                                dst,
-                                                op: BinOp::Xor,
-                                                lhs: Operand::Value(inner),
-                                                rhs: Operand::Const(1),
-                                                flags: FlagSet::EMPTY,
-                                            };
-                                        } else {
-                                            new = Instr::BinOp {
-                                                dst,
-                                                op: BinOp::LtU,
-                                                lhs: Operand::Const(0),
-                                                rhs: x,
-                                                flags: FlagSet::EMPTY,
-                                            };
-                                        }
-                                    }
-                                } else if let Some(x) = not_bool.get(&inner).copied() {
-                                    // `Eq(!b, 0)` == `b` (double negation) for boolean `b`.
+                        if let Some(Operand::Value(inner)) = eq_zero_other(lhs, rhs) {
+                            if let Some(x) = eq_zero.get(&inner).copied() {
+                                if is_bool_operand(x, &bool_values) {
+                                    // `x != 0` is just `x` when `x` is boolean.
+                                    //
+                                    // Emit an algebraically simplifiable op so `const_fold`
+                                    // can turn this into a pure replacement.
                                     new = Instr::BinOp {
                                         dst,
                                         op: BinOp::Xor,
@@ -189,7 +153,41 @@ pub fn run(trace: &mut TraceIr) -> bool {
                                         rhs: Operand::Const(0),
                                         flags: FlagSet::EMPTY,
                                     };
+                                } else {
+                                    // Prefer `!(x == 0)` expressed as `xor(inner, 1)` when the
+                                    // `inner = (x == 0)` value is used elsewhere (e.g. select
+                                    // lowering uses both `inner` and its negation).
+                                    //
+                                    // Otherwise, canonicalize to `x != 0` (`lt_u(0, x)`) so DCE
+                                    // can remove the `inner` comparison entirely.
+                                    let inner_uses = uses.get(&inner).copied().unwrap_or(0);
+                                    if inner_uses > 1 {
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::Xor,
+                                            lhs: Operand::Value(inner),
+                                            rhs: Operand::Const(1),
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    } else {
+                                        new = Instr::BinOp {
+                                            dst,
+                                            op: BinOp::LtU,
+                                            lhs: Operand::Const(0),
+                                            rhs: x,
+                                            flags: FlagSet::EMPTY,
+                                        };
+                                    }
                                 }
+                            } else if let Some(x) = not_bool.get(&inner).copied() {
+                                // `Eq(!b, 0)` == `b` (double negation) for boolean `b`.
+                                new = Instr::BinOp {
+                                    dst,
+                                    op: BinOp::Xor,
+                                    lhs: x,
+                                    rhs: Operand::Const(0),
+                                    flags: FlagSet::EMPTY,
+                                };
                             }
                         }
 
@@ -239,18 +237,16 @@ pub fn run(trace: &mut TraceIr) -> bool {
                     }
                     BinOp::Xor => {
                         // `Xor(!b, 1)` is a redundant double-negation for boolean `b`.
-                        if let Some((other, 1)) = eq_const(lhs, rhs) {
-                            if let Operand::Value(inner) = other {
-                                if let Some(x) = not_bool.get(&inner).copied() {
-                                    if is_bool_operand(x, &bool_values) {
-                                        new = Instr::BinOp {
-                                            dst,
-                                            op: BinOp::Xor,
-                                            lhs: x,
-                                            rhs: Operand::Const(0),
-                                            flags: FlagSet::EMPTY,
-                                        };
-                                    }
+                        if let Some((Operand::Value(inner), 1)) = eq_const(lhs, rhs) {
+                            if let Some(x) = not_bool.get(&inner).copied() {
+                                if is_bool_operand(x, &bool_values) {
+                                    new = Instr::BinOp {
+                                        dst,
+                                        op: BinOp::Xor,
+                                        lhs: x,
+                                        rhs: Operand::Const(0),
+                                        flags: FlagSet::EMPTY,
+                                    };
                                 }
                             }
                         }
@@ -307,11 +303,11 @@ pub fn run(trace: &mut TraceIr) -> bool {
                 rhs,
                 flags,
             } => {
-                if op == BinOp::Eq || op == BinOp::LtU {
-                    bool_values.insert(dst);
-                } else if matches!(op, BinOp::And | BinOp::Or | BinOp::Xor)
-                    && is_bool_operand(lhs, &bool_values)
-                    && is_bool_operand(rhs, &bool_values)
+                if op == BinOp::Eq
+                    || op == BinOp::LtU
+                    || (matches!(op, BinOp::And | BinOp::Or | BinOp::Xor)
+                        && is_bool_operand(lhs, &bool_values)
+                        && is_bool_operand(rhs, &bool_values))
                 {
                     bool_values.insert(dst);
                 }

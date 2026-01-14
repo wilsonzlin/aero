@@ -17,8 +17,10 @@ const CPU_PTR: i32 = 0x1_0000;
 const JIT_CTX_PTR: i32 = CPU_PTR + abi::CPU_STATE_SIZE as i32;
 
 fn cpu_with_sentinel_gprs(entry: u64) -> CpuState {
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
     for (i, slot) in cpu.gpr.iter_mut().enumerate() {
         // Unique non-zero sentinel per GPR.
         *slot = 0x1111_1111_1111_1111u64.wrapping_mul((i as u64) + 1);

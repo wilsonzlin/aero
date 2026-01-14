@@ -45,18 +45,15 @@ fn addr_with_power_of_two_scale_does_not_emit_i64_mul() {
     let mut muls = 0u32;
     let mut shls = 0u32;
     for payload in Parser::new(0).parse_all(&wasm) {
-        match payload.expect("payload") {
-            Payload::CodeSectionEntry(body) => {
-                let mut rdr = body.get_operators_reader().expect("operators reader");
-                while !rdr.eof() {
-                    match rdr.read().expect("op") {
-                        Operator::I64Mul => muls += 1,
-                        Operator::I64Shl => shls += 1,
-                        _ => {}
-                    }
+        if let Payload::CodeSectionEntry(body) = payload.expect("payload") {
+            let mut rdr = body.get_operators_reader().expect("operators reader");
+            while !rdr.eof() {
+                match rdr.read().expect("op") {
+                    Operator::I64Mul => muls += 1,
+                    Operator::I64Shl => shls += 1,
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
 
@@ -97,18 +94,15 @@ fn shift_binops_do_not_emit_redundant_shift_masks() {
     let mut const_63 = 0u32;
     let mut shls = 0u32;
     for payload in Parser::new(0).parse_all(&wasm) {
-        match payload.expect("payload") {
-            Payload::CodeSectionEntry(body) => {
-                let mut rdr = body.get_operators_reader().expect("operators reader");
-                while !rdr.eof() {
-                    match rdr.read().expect("op") {
-                        Operator::I64Const { value } if value == 63 => const_63 += 1,
-                        Operator::I64Shl => shls += 1,
-                        _ => {}
-                    }
+        if let Payload::CodeSectionEntry(body) = payload.expect("payload") {
+            let mut rdr = body.get_operators_reader().expect("operators reader");
+            while !rdr.eof() {
+                match rdr.read().expect("op") {
+                    Operator::I64Const { value: 63 } => const_63 += 1,
+                    Operator::I64Shl => shls += 1,
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
 

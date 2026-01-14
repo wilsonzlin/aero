@@ -9,26 +9,23 @@ fn wasm_accesses_cpu_rflags(wasm: &[u8]) -> (bool, bool) {
     let mut has_load = false;
     let mut has_store = false;
     for payload in Parser::new(0).parse_all(wasm) {
-        match payload.expect("parse wasm") {
-            Payload::CodeSectionEntry(body) => {
-                let mut reader = body.get_operators_reader().expect("operators reader");
-                while !reader.eof() {
-                    match reader.read().expect("read operator") {
-                        Operator::I64Load { memarg } => {
-                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
-                                has_load = true;
-                            }
+        if let Payload::CodeSectionEntry(body) = payload.expect("parse wasm") {
+            let mut reader = body.get_operators_reader().expect("operators reader");
+            while !reader.eof() {
+                match reader.read().expect("read operator") {
+                    Operator::I64Load { memarg } => {
+                        if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                            has_load = true;
                         }
-                        Operator::I64Store { memarg } => {
-                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
-                                has_store = true;
-                            }
-                        }
-                        _ => {}
                     }
+                    Operator::I64Store { memarg } => {
+                        if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                            has_store = true;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
     (has_load, has_store)
@@ -74,4 +71,3 @@ fn tier1_writes_rflags_spills_back() {
     assert!(has_load, "expected Tier-1 block to load CpuState.rflags");
     assert!(has_store, "expected Tier-1 block to spill CpuState.rflags");
 }
-

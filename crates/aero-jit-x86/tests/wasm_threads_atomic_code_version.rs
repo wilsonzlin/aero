@@ -15,17 +15,14 @@ where
     F: FnMut(&Operator<'_>) -> bool,
 {
     for payload in Parser::new(0).parse_all(wasm) {
-        match payload.expect("parse wasm") {
-            Payload::CodeSectionEntry(body) => {
-                let mut ops = body.get_operators_reader().expect("get operators reader");
-                while !ops.eof() {
-                    let op = ops.read().expect("read operator");
-                    if f(&op) {
-                        return true;
-                    }
+        if let Payload::CodeSectionEntry(body) = payload.expect("parse wasm") {
+            let mut ops = body.get_operators_reader().expect("get operators reader");
+            while !ops.eof() {
+                let op = ops.read().expect("read operator");
+                if f(&op) {
+                    return true;
                 }
             }
-            _ => {}
         }
     }
     false
@@ -96,4 +93,3 @@ fn tier2_shared_memory_inline_code_version_guard_uses_atomic_load() {
         "expected Tier-2 inline code-version guard to use i32.atomic.load when memory is shared"
     );
 }
-

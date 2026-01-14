@@ -806,8 +806,10 @@ fn format_mem_diff(expected: &[u8], actual: &[u8]) -> String {
 }
 
 fn random_cpu_state(rng: &mut impl Rng, entry_rip: u64) -> CpuState {
-    let mut cpu = CpuState::default();
-    cpu.rip = entry_rip;
+    let mut cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
 
     for slot in &mut cpu.gpr {
         *slot = rng.gen();

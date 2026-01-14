@@ -40,26 +40,23 @@ fn wasm_accesses_cpu_rflags(wasm: &[u8]) -> (bool, bool) {
     let mut has_load = false;
     let mut has_store = false;
     for payload in Parser::new(0).parse_all(wasm) {
-        match payload.expect("parse wasm") {
-            Payload::CodeSectionEntry(body) => {
-                let mut reader = body.get_operators_reader().expect("operators reader");
-                while !reader.eof() {
-                    match reader.read().expect("read operator") {
-                        Operator::I64Load { memarg } => {
-                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
-                                has_load = true;
-                            }
+        if let Payload::CodeSectionEntry(body) = payload.expect("parse wasm") {
+            let mut reader = body.get_operators_reader().expect("operators reader");
+            while !reader.eof() {
+                match reader.read().expect("read operator") {
+                    Operator::I64Load { memarg } => {
+                        if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                            has_load = true;
                         }
-                        Operator::I64Store { memarg } => {
-                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
-                                has_store = true;
-                            }
-                        }
-                        _ => {}
                     }
+                    Operator::I64Store { memarg } => {
+                        if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                            has_store = true;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
     (has_load, has_store)
@@ -1297,7 +1294,7 @@ mod random_traces {
                     let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
                         .choose(rng)
                         .unwrap();
-                    let bytes = width.bytes() as usize;
+                    let bytes = width.bytes();
                     let addr = if !safe_addrs.is_empty() && rng.gen_bool(0.6) {
                         Operand::Value(*safe_addrs.choose(rng).unwrap())
                     } else {
@@ -1319,7 +1316,7 @@ mod random_traces {
                     let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
                         .choose(rng)
                         .unwrap();
-                    let bytes = width.bytes() as usize;
+                    let bytes = width.bytes();
                     let addr = if !safe_addrs.is_empty() && rng.gen_bool(0.6) {
                         Operand::Value(*safe_addrs.choose(rng).unwrap())
                     } else {
