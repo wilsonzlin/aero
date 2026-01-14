@@ -34,6 +34,10 @@ export type BootDeviceBackend = {
   getMachineCpuBootConfig: () => MachineCpuBootConfigSnapshot | null;
 };
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 /**
  * Installs a small helper API under `window.aero.debug` so automation harnesses can inspect the
  * machine runtime's boot-device state (selected policy vs active boot source).
@@ -64,17 +68,20 @@ export function installBootDeviceBackendOnAeroGlobal(coordinator: WorkerCoordina
       const msg = coordinator.getBootDisks() as unknown;
       if (!msg || typeof msg !== "object") return null;
       const rec = msg as Partial<{ mounts: unknown; bootDevice: unknown }>;
-      const mountsRec = rec.mounts && typeof rec.mounts === "object" ? (rec.mounts as Record<string, unknown>) : {};
+      const mountsRaw = hasOwn(rec as object, "mounts") ? rec.mounts : undefined;
+      const mountsRec = mountsRaw && typeof mountsRaw === "object" ? (mountsRaw as Record<string, unknown>) : {};
       const sanitize = (value: unknown): string | undefined => {
         if (typeof value !== "string") return undefined;
         const trimmed = value.trim();
         return trimmed ? trimmed : undefined;
       };
-      const hddId = sanitize(mountsRec.hddId);
-      const cdId = sanitize(mountsRec.cdId);
+      // Treat mount IDs as untrusted; ignore inherited values (prototype pollution).
+      const hddId = hasOwn(mountsRec, "hddId") ? sanitize(mountsRec.hddId) : undefined;
+      const cdId = hasOwn(mountsRec, "cdId") ? sanitize(mountsRec.cdId) : undefined;
       const mounts = { ...(hddId ? { hddId } : {}), ...(cdId ? { cdId } : {}) };
 
-      const bootDevice = rec.bootDevice === "hdd" || rec.bootDevice === "cdrom" ? rec.bootDevice : undefined;
+      const bootDeviceRaw = hasOwn(rec as object, "bootDevice") ? rec.bootDevice : undefined;
+      const bootDevice = bootDeviceRaw === "hdd" || bootDeviceRaw === "cdrom" ? bootDeviceRaw : undefined;
       return bootDevice ? { mounts, bootDevice } : { mounts };
     },
     getMachineCpuActiveBootDevice: () => {

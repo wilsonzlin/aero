@@ -220,4 +220,39 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
     const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/remote-streaming disks are not supported/i);
   });
+
+  it("does not treat local disks as remote-streaming based on inherited Object.prototype.remote", () => {
+    const remoteExisting = Object.getOwnPropertyDescriptor(Object.prototype, "remote");
+    if (remoteExisting && remoteExisting.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "remote", {
+        value: { url: "https://example.com/evil.img" },
+        configurable: true,
+        writable: true,
+      });
+
+      const hdd = {
+        source: "local",
+        id: "disk-1",
+        name: "Disk 1",
+        backend: "opfs",
+        kind: "hdd",
+        format: "raw",
+        fileName: "disk-1.img",
+        sizeBytes: 512,
+        createdAtMs: 0,
+      } satisfies DiskImageMetadata;
+
+      const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
+      const spec = machineBootDisksToOpfsSpec(msg);
+      expect(spec.hdd?.basePath).toBe(`${OPFS_DISKS_PATH}/${hdd.fileName}`);
+    } finally {
+      if (remoteExisting) Object.defineProperty(Object.prototype, "remote", remoteExisting);
+      else Reflect.deleteProperty(Object.prototype, "remote");
+    }
+  });
 });

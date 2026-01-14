@@ -36,4 +36,38 @@ describe("runtime/boot_device_backend", () => {
       }
     }
   });
+
+  it("ignores inherited mounts/bootDevice fields", () => {
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+    try {
+      const win: any = { aero: { debug: {} } };
+      Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+
+      const mounts = Object.create({ hddId: "evil", cdId: "evil2" });
+      mounts.cdId = "cd0";
+
+      const msg = Object.create({ bootDevice: "hdd" });
+      msg.mounts = mounts;
+      msg.type = "setBootDisks";
+      msg.hdd = null;
+      msg.cd = null;
+
+      const coordinator: any = {
+        getBootDisks: () => msg,
+        getMachineCpuActiveBootDevice: () => null,
+        getMachineCpuBootConfig: () => null,
+      };
+
+      installBootDeviceBackendOnAeroGlobal(coordinator);
+
+      expect(win.aero.debug.getBootDisks()).toEqual({ mounts: { cdId: "cd0" } });
+    } finally {
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
+  });
 });

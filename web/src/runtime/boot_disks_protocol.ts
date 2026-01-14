@@ -36,6 +36,10 @@ function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 /**
  * Best-effort parser for untrusted `postMessage` data.
  *
@@ -49,12 +53,12 @@ function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
 export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage | null {
   if (!isObjectLikeRecord(msg)) return null;
   const rec = msg as Record<string, unknown>;
-  if (!Object.prototype.hasOwnProperty.call(rec, "type")) return null;
+  if (!hasOwn(rec, "type")) return null;
   if (rec.type !== "setBootDisks") return null;
 
   // Mount IDs are the only fields used outside the disk metadata. Normalize to a plain object and
   // accept only string values so downstream code can treat them as opaque IDs without re-validating.
-  const mountsRaw = Object.prototype.hasOwnProperty.call(rec, "mounts") ? rec.mounts : undefined;
+  const mountsRaw = hasOwn(rec, "mounts") ? rec.mounts : undefined;
   // Null prototype prevents inherited IDs from being observed if the global prototype is polluted.
   const mounts: MountConfig = Object.create(null) as MountConfig;
   const sanitizeMountId = (value: unknown): string | undefined => {
@@ -64,30 +68,30 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
   };
   if (isObjectLikeRecord(mountsRaw)) {
     const raw = mountsRaw as Record<string, unknown>;
-    const hddId = Object.prototype.hasOwnProperty.call(raw, "hddId") ? sanitizeMountId(raw.hddId) : undefined;
+    const hddId = hasOwn(raw, "hddId") ? sanitizeMountId(raw.hddId) : undefined;
     if (hddId) mounts.hddId = hddId;
-    const cdId = Object.prototype.hasOwnProperty.call(raw, "cdId") ? sanitizeMountId(raw.cdId) : undefined;
+    const cdId = hasOwn(raw, "cdId") ? sanitizeMountId(raw.cdId) : undefined;
     if (cdId) mounts.cdId = cdId;
   }
 
   const normalizeDiskMeta = (raw: unknown, expectedKind: "hdd" | "cd"): DiskImageMetadata | null => {
     if (!isObjectLikeRecord(raw)) return null;
     const meta = raw as Record<string, unknown>;
-    const source = Object.prototype.hasOwnProperty.call(meta, "source") ? meta.source : undefined;
+    const source = hasOwn(meta, "source") ? meta.source : undefined;
     if (source !== "local" && source !== "remote") return null;
-    const id = Object.prototype.hasOwnProperty.call(meta, "id") ? meta.id : undefined;
+    const id = hasOwn(meta, "id") ? meta.id : undefined;
     if (typeof id !== "string" || !id.trim()) return null;
-    const kind = Object.prototype.hasOwnProperty.call(meta, "kind") ? meta.kind : undefined;
+    const kind = hasOwn(meta, "kind") ? meta.kind : undefined;
     if (kind !== expectedKind) return null;
     return raw as DiskImageMetadata;
   };
 
-  const hddRaw = Object.prototype.hasOwnProperty.call(rec, "hdd") ? rec.hdd : undefined;
-  const cdRaw = Object.prototype.hasOwnProperty.call(rec, "cd") ? rec.cd : undefined;
+  const hddRaw = hasOwn(rec, "hdd") ? rec.hdd : undefined;
+  const cdRaw = hasOwn(rec, "cd") ? rec.cd : undefined;
   const hdd = normalizeDiskMeta(hddRaw, "hdd");
   const cd = normalizeDiskMeta(cdRaw, "cd");
 
-  const bootDeviceRaw = Object.prototype.hasOwnProperty.call(rec, "bootDevice") ? rec.bootDevice : undefined;
+  const bootDeviceRaw = hasOwn(rec, "bootDevice") ? rec.bootDevice : undefined;
   const bootDevice = bootDeviceRaw === "hdd" || bootDeviceRaw === "cdrom" ? bootDeviceRaw : undefined;
 
   return bootDevice ? { type: "setBootDisks", mounts, hdd, cd, bootDevice } : { type: "setBootDisks", mounts, hdd, cd };
@@ -146,20 +150,32 @@ function formatDiskMeta(meta: DiskImageMetadata): string {
 }
 
 function assertMachineRuntimeLocalOpfsDisk(meta: DiskImageMetadata, label: string): void {
-  const anyMeta = meta as unknown as { source?: unknown; backend?: unknown; remote?: unknown };
-  if (anyMeta.source === "remote") {
+  if (!isObjectLikeRecord(meta)) {
+    throw new Error(`${label}: invalid disk metadata (expected an object)`);
+  }
+  const rec = meta as unknown as Record<string, unknown>;
+  const source = hasOwn(rec, "source") ? rec.source : undefined;
+  if (source === "remote") {
     throw new Error(`${label}: remote disks are not supported in machine runtime (${formatDiskMeta(meta)})`);
   }
-  if (anyMeta.source !== "local") {
+  if (source !== "local") {
     throw new Error(`${label}: expected a local disk (${formatDiskMeta(meta)})`);
   }
-  if (anyMeta.remote) {
+  // Legacy local-disk schema allowed remote streaming via `meta.remote`. Reject to avoid opening
+  // network-backed disks in machine runtime until explicit support is implemented. Treat metadata
+  // as untrusted: only observe `remote` when it is an own property (ignore `Object.prototype.remote`
+  // pollution).
+  const legacyRemote = hasOwn(rec, "remote") ? rec.remote : undefined;
+  if (legacyRemote) {
     // Legacy local-disk schema allowed remote streaming via `meta.remote`. Reject to avoid opening
     // network-backed disks in machine runtime until explicit support is implemented.
     throw new Error(`${label}: remote-streaming disks are not supported in machine runtime (${formatDiskMeta(meta)})`);
   }
-  if (anyMeta.backend !== "opfs") {
-    throw new Error(`${label}: only OPFS-backed disks are supported in machine runtime (${formatDiskMeta(meta)})`);
+  const backend = hasOwn(rec, "backend") ? rec.backend : undefined;
+  if (backend !== "opfs") {
+    throw new Error(
+      `${label}: only OPFS-backed disks are supported in machine runtime (${formatDiskMeta(meta)})`,
+    );
   }
 }
 
@@ -183,14 +199,16 @@ export function machineBootDisksToOpfsSpec(
     const meta = msg.hdd;
     const label = "bootDisks.hdd";
     assertMachineRuntimeLocalOpfsDisk(meta, label);
-    const anyMeta = meta as unknown as { kind?: unknown; format?: unknown };
-    if (anyMeta.kind !== "hdd") {
+    const metaRec = meta as unknown as Record<string, unknown>;
+    const kind = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+    if (kind !== "hdd") {
       throw new Error(`${label}: expected kind=\"hdd\" (${formatDiskMeta(meta)})`);
     }
-    if (anyMeta.format === "unknown") {
+    const format = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+    if (format === "unknown") {
       throw new Error(`${label}: requires explicit HDD format metadata (disk format=unknown) (${formatDiskMeta(meta)})`);
     }
-    if (anyMeta.format !== "raw" && anyMeta.format !== "aerospar") {
+    if (format !== "raw" && format !== "aerospar") {
       // The machine runtime supports OPFS-backed base images that can be opened synchronously by
       // Rust storage controllers. Today that is:
       // - raw sector files, and
@@ -207,11 +225,13 @@ export function machineBootDisksToOpfsSpec(
     const meta = msg.cd;
     const label = "bootDisks.cd";
     assertMachineRuntimeLocalOpfsDisk(meta, label);
-    const anyMeta = meta as unknown as { kind?: unknown; format?: unknown };
-    if (anyMeta.kind !== "cd") {
+    const metaRec = meta as unknown as Record<string, unknown>;
+    const kind = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+    if (kind !== "cd") {
       throw new Error(`${label}: expected kind=\"cd\" (${formatDiskMeta(meta)})`);
     }
-    if (anyMeta.format !== "iso") {
+    const format = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+    if (format !== "iso") {
       throw new Error(`${label}: unsupported format (expected \"iso\") (${formatDiskMeta(meta)})`);
     }
     cd = { meta, path: opfsPathForDisk(meta) };
