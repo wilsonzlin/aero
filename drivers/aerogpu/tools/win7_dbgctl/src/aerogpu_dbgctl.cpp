@@ -3213,7 +3213,8 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
                                       uint32_t format,
                                       uint32_t pitchBytes,
                                       uint64_t fbGpa,
-                                      const wchar_t *path) {
+                                      const wchar_t *path,
+                                      bool quiet = false) {
   if (!f || !f->Escape || !hAdapter || !label || !path) {
     return 2;
   }
@@ -3529,14 +3530,16 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   HeapFree(GetProcessHeap(), 0, rowOut);
   fclose(fp);
 
-  wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
-          label,
-          (unsigned long)width,
-          (unsigned long)height,
-          AerogpuFormatName(format),
-          (unsigned long)pitchBytes,
-          (unsigned long long)fbGpa,
-          path);
+  if (!quiet) {
+    wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
+            label,
+            (unsigned long)width,
+            (unsigned long)height,
+            AerogpuFormatName(format),
+            (unsigned long)pitchBytes,
+            (unsigned long long)fbGpa,
+            path);
+  }
   return 0;
 }
 
@@ -3548,7 +3551,8 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
                                       uint32_t format,
                                       uint32_t pitchBytes,
                                       uint64_t fbGpa,
-                                      const wchar_t *path) {
+                                      const wchar_t *path,
+                                      bool quiet = false) {
   if (!f || !f->Escape || !hAdapter || !label || !path) {
     return 2;
   }
@@ -4018,14 +4022,16 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   HeapFree(GetProcessHeap(), 0, rowOut);
   fclose(fp);
 
-  wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
-          label,
-          (unsigned long)width,
-          (unsigned long)height,
-          AerogpuFormatName(format),
-          (unsigned long)pitchBytes,
-          (unsigned long long)fbGpa,
-          path);
+  if (!quiet) {
+    wprintf(L"Wrote %s: %lux%lu format=%S pitch=%lu fb_gpa=0x%I64x -> %s\n",
+            label,
+            (unsigned long)width,
+            (unsigned long)height,
+            AerogpuFormatName(format),
+            (unsigned long)pitchBytes,
+            (unsigned long long)fbGpa,
+            path);
+  }
   return 0;
 }
 
@@ -6348,6 +6354,484 @@ static int DoQueryCursorJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std:
   return 0;
 }
 
+static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
+                                D3DKMT_HANDLE hAdapter,
+                                uint32_t vidpnSourceId,
+                                const wchar_t *path,
+                                std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!path || path[0] == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "--dump-scanout-bmp requires a non-empty path",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  const uint32_t requested = vidpnSourceId;
+  bool fallbackToSource0 = false;
+
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = requested;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requested != 0) {
+    fallbackToSource0 = true;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "D3DKMTEscape(query-scanout) failed", st);
+    return 2;
+  }
+
+  // Prefer MMIO snapshot values (these reflect what the device is actually using).
+  const uint32_t enable = (q.mmio_enable != 0) ? q.mmio_enable : q.cached_enable;
+  const uint32_t width = (q.mmio_width != 0) ? q.mmio_width : q.cached_width;
+  const uint32_t height = (q.mmio_height != 0) ? q.mmio_height : q.cached_height;
+  const uint32_t format = (q.mmio_format != 0) ? q.mmio_format : q.cached_format;
+  const uint32_t pitchBytes = (q.mmio_pitch_bytes != 0) ? q.mmio_pitch_bytes : q.cached_pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.mmio_fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "Scanout has invalid mode (width/height/pitch is 0)",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+  if (fbGpa == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "Scanout MMIO framebuffer GPA is 0; cannot dump framebuffer",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+
+  wchar_t label[32];
+  swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.vidpn_source_id);
+  const int rc = DumpLinearFramebufferToBmp(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path, true);
+  if (rc != 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "Failed to dump scanout framebuffer to BMP", STATUS_UNSUCCESSFUL);
+    return rc;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-scanout-bmp");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("vidpn_source_id_requested");
+  w.Uint32(requested);
+  w.Key("vidpn_source_id");
+  w.Uint32(q.vidpn_source_id);
+  w.Key("fallback_to_source0");
+  w.Bool(fallbackToSource0);
+  w.Key("scanout");
+  w.BeginObject();
+  w.Key("cached");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.cached_enable);
+  w.Key("width");
+  w.Uint32(q.cached_width);
+  w.Key("height");
+  w.Uint32(q.cached_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.cached_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.cached_pitch_bytes);
+  w.EndObject();
+  w.Key("mmio");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.mmio_enable);
+  w.Key("width");
+  w.Uint32(q.mmio_width);
+  w.Key("height");
+  w.Uint32(q.mmio_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.mmio_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.mmio_pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.mmio_fb_gpa));
+  w.EndObject();
+  w.Key("selected");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(enable);
+  w.Key("width");
+  w.Uint32(width);
+  w.Key("height");
+  w.Uint32(height);
+  w.Key("format");
+  w.String(AerogpuFormatName(format));
+  w.Key("pitch_bytes");
+  w.Uint32(pitchBytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(fbGpa));
+  w.EndObject();
+  w.EndObject();
+  w.Key("output");
+  w.BeginObject();
+  w.Key("type");
+  w.String("bmp");
+  w.Key("path");
+  w.String(WideToUtf8(path));
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
+                                D3DKMT_HANDLE hAdapter,
+                                uint32_t vidpnSourceId,
+                                const wchar_t *path,
+                                std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!path || path[0] == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-png", f, "--dump-scanout-png requires a non-empty path",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  const uint32_t requested = vidpnSourceId;
+  bool fallbackToSource0 = false;
+
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = requested;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requested != 0) {
+    fallbackToSource0 = true;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "dump-scanout-png", f, "D3DKMTEscape(query-scanout) failed", st);
+    return 2;
+  }
+
+  // Prefer MMIO snapshot values (these reflect what the device is actually using).
+  const uint32_t enable = (q.mmio_enable != 0) ? q.mmio_enable : q.cached_enable;
+  const uint32_t width = (q.mmio_width != 0) ? q.mmio_width : q.cached_width;
+  const uint32_t height = (q.mmio_height != 0) ? q.mmio_height : q.cached_height;
+  const uint32_t format = (q.mmio_format != 0) ? q.mmio_format : q.cached_format;
+  const uint32_t pitchBytes = (q.mmio_pitch_bytes != 0) ? q.mmio_pitch_bytes : q.cached_pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.mmio_fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-png", f, "Scanout has invalid mode (width/height/pitch is 0)",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+  if (fbGpa == 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-png", f, "Scanout MMIO framebuffer GPA is 0; cannot dump framebuffer",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+
+  wchar_t label[32];
+  swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.vidpn_source_id);
+  const int rc = DumpLinearFramebufferToPng(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path, true);
+  if (rc != 0) {
+    JsonWriteTopLevelError(out, "dump-scanout-png", f, "Failed to dump scanout framebuffer to PNG", STATUS_UNSUCCESSFUL);
+    return rc;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-scanout-png");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("vidpn_source_id_requested");
+  w.Uint32(requested);
+  w.Key("vidpn_source_id");
+  w.Uint32(q.vidpn_source_id);
+  w.Key("fallback_to_source0");
+  w.Bool(fallbackToSource0);
+  w.Key("scanout");
+  w.BeginObject();
+  w.Key("cached");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.cached_enable);
+  w.Key("width");
+  w.Uint32(q.cached_width);
+  w.Key("height");
+  w.Uint32(q.cached_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.cached_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.cached_pitch_bytes);
+  w.EndObject();
+  w.Key("mmio");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(q.mmio_enable);
+  w.Key("width");
+  w.Uint32(q.mmio_width);
+  w.Key("height");
+  w.Uint32(q.mmio_height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.mmio_format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.mmio_pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.mmio_fb_gpa));
+  w.EndObject();
+  w.Key("selected");
+  w.BeginObject();
+  w.Key("enable");
+  w.Uint32(enable);
+  w.Key("width");
+  w.Uint32(width);
+  w.Key("height");
+  w.Uint32(height);
+  w.Key("format");
+  w.String(AerogpuFormatName(format));
+  w.Key("pitch_bytes");
+  w.Uint32(pitchBytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(fbGpa));
+  w.EndObject();
+  w.EndObject();
+  w.Key("output");
+  w.BeginObject();
+  w.Key("type");
+  w.String("png");
+  w.Key("path");
+  w.String(WideToUtf8(path));
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoDumpCursorBmpJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *path, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!path || path[0] == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "--dump-cursor-bmp requires a non-empty path",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "D3DKMTEscape(query-cursor) failed", st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+  }
+  if (!supported) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "Cursor not supported", STATUS_NOT_SUPPORTED);
+    return 2;
+  }
+
+  const uint32_t width = (uint32_t)q.width;
+  const uint32_t height = (uint32_t)q.height;
+  const uint32_t format = (uint32_t)q.format;
+  const uint32_t pitchBytes = (uint32_t)q.pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "Cursor has invalid mode (width/height/pitch is 0)",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+  if (fbGpa == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "Cursor framebuffer GPA is 0; cannot dump cursor",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+
+  const int rc = DumpLinearFramebufferToBmp(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true);
+  if (rc != 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "Failed to dump cursor framebuffer to BMP", STATUS_UNSUCCESSFUL);
+    return rc;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-cursor-bmp");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("cursor");
+  w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("enable");
+  w.Uint32(q.enable);
+  w.Key("x");
+  w.Int32((int32_t)q.x);
+  w.Key("y");
+  w.Int32((int32_t)q.y);
+  w.Key("hot_x");
+  w.Uint32(q.hot_x);
+  w.Key("hot_y");
+  w.Uint32(q.hot_y);
+  w.Key("width");
+  w.Uint32(q.width);
+  w.Key("height");
+  w.Uint32(q.height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.fb_gpa));
+  w.EndObject();
+  w.Key("output");
+  w.BeginObject();
+  w.Key("type");
+  w.String("bmp");
+  w.Key("path");
+  w.String(WideToUtf8(path));
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoDumpCursorPngJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *path, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!path || path[0] == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "--dump-cursor-png requires a non-empty path",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  aerogpu_escape_query_cursor_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_CURSOR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "D3DKMTEscape(query-cursor) failed", st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
+  }
+  if (!supported) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "Cursor not supported", STATUS_NOT_SUPPORTED);
+    return 2;
+  }
+
+  const uint32_t width = (uint32_t)q.width;
+  const uint32_t height = (uint32_t)q.height;
+  const uint32_t format = (uint32_t)q.format;
+  const uint32_t pitchBytes = (uint32_t)q.pitch_bytes;
+  const uint64_t fbGpa = (uint64_t)q.fb_gpa;
+
+  if (width == 0 || height == 0 || pitchBytes == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "Cursor has invalid mode (width/height/pitch is 0)",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+  if (fbGpa == 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "Cursor framebuffer GPA is 0; cannot dump cursor",
+                           STATUS_INVALID_PARAMETER);
+    return 2;
+  }
+
+  const int rc = DumpLinearFramebufferToPng(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true);
+  if (rc != 0) {
+    JsonWriteTopLevelError(out, "dump-cursor-png", f, "Failed to dump cursor framebuffer to PNG", STATUS_UNSUCCESSFUL);
+    return rc;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-cursor-png");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("cursor");
+  w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("enable");
+  w.Uint32(q.enable);
+  w.Key("x");
+  w.Int32((int32_t)q.x);
+  w.Key("y");
+  w.Int32((int32_t)q.y);
+  w.Key("hot_x");
+  w.Uint32(q.hot_x);
+  w.Key("hot_y");
+  w.Uint32(q.hot_y);
+  w.Key("width");
+  w.Uint32(q.width);
+  w.Key("height");
+  w.Uint32(q.height);
+  w.Key("format");
+  w.String(AerogpuFormatName(q.format));
+  w.Key("pitch_bytes");
+  w.Uint32(q.pitch_bytes);
+  w.Key("fb_gpa_hex");
+  w.String(HexU64(q.fb_gpa));
+  w.EndObject();
+  w.Key("output");
+  w.BeginObject();
+  w.Key("type");
+  w.String("png");
+  w.Key("path");
+  w.String(WideToUtf8(path));
+  w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
 static bool WriteCreateAllocationCsvJson(const wchar_t *path, const aerogpu_escape_dump_createallocation_inout &q,
                                         int *errnoOut) {
   if (errnoOut) {
@@ -7293,7 +7777,6 @@ static int DoWaitVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
     }
     sum_ms += dt_ms;
     deltas += 1;
-
     jw.BeginObject();
     jw.Key("index");
     jw.Uint32(i + 1);
@@ -8341,16 +8824,10 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoQueryCursorJson(&f, open.hAdapter, &json);
       break;
     case CMD_DUMP_CURSOR_BMP:
-      JsonWriteTopLevelError(&json, "dump-cursor-bmp", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoDumpCursorBmpJson(&f, open.hAdapter, dumpCursorBmpPath, &json);
       break;
     case CMD_DUMP_CURSOR_PNG:
-      JsonWriteTopLevelError(&json, "dump-cursor-png", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoDumpCursorPngJson(&f, open.hAdapter, dumpCursorPngPath, &json);
       break;
     case CMD_DUMP_RING:
       rc = DoDumpRingJson(&f, open.hAdapter, ringId, &json);
@@ -8368,16 +8845,10 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoSelftestJson(&f, open.hAdapter, timeoutMs, &json);
       break;
     case CMD_DUMP_SCANOUT_BMP:
-      JsonWriteTopLevelError(&json, "dump-scanout-bmp", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoDumpScanoutBmpJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutBmpPath, &json);
       break;
     case CMD_DUMP_SCANOUT_PNG:
-      JsonWriteTopLevelError(&json, "dump-scanout-png", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoDumpScanoutPngJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutPngPath, &json);
       break;
     case CMD_DUMP_LAST_CMD:
       JsonWriteTopLevelError(&json, "dump-last-cmd", &f,
@@ -8404,8 +8875,7 @@ int wmain(int argc, wchar_t **argv) {
       rc = 1;
       break;
     case CMD_WAIT_VBLANK:
-      rc = DoWaitVblankJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter,
-                            &json);
+      rc = DoWaitVblankJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter, &json);
       break;
     case CMD_QUERY_SCANLINE:
       rc = DoQueryScanlineJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs, &json);
