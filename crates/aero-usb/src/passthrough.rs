@@ -1384,6 +1384,34 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_bulk_in_action_with_invalid_endpoint_address() {
+        // IN endpoint, but endpoint number is 0 (control endpoint) which is invalid for BulkIn.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(3) // BulkIn
+            .u32(1)
+            .u8(0x80) // invalid endpoint address
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_out_action_with_invalid_endpoint_address() {
+        // OUT endpoint, but endpoint number is 0 (control endpoint) which is invalid for BulkOut.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(4) // BulkOut
+            .u32(1)
+            .u8(0x00) // invalid endpoint address
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
     fn snapshot_load_rejects_bulk_in_length_over_limit() {
         const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
         let bytes = Encoder::new()
@@ -1698,6 +1726,21 @@ mod tests {
             .bool(false)
             .u32(1) // ep_count
             .u8(0x80) // invalid endpoint number 0
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_inflight_endpoint_address_with_reserved_bits_set() {
+        // Bits 4-6 are reserved and must be zero.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(1) // ep_count
+            .u8(0x91) // endpoint=1 with reserved bit4 set
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
