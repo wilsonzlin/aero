@@ -407,7 +407,11 @@ Known gaps / limitations (enforced by code/tests):
 - Current GS translator limitations / initial target subset (non-exhaustive):
   - No adjacency end-to-end (`*_ADJ`)
   - No multi-stream output (`emit_stream` / `cut_stream`); only stream 0 is supported
-  - Output topology: `triangle_strip` (`TriangleStream`) only (expanded into a triangle list)
+  - Output topology (GS→WGSL compute translator): `pointlist`, `linestrip`, `triangle_strip`
+    - `linestrip` is expanded into an indexed **line list**
+    - `triangle_strip` is expanded into an indexed **triangle list**
+    - Note: executor wiring is still partial; the end-to-end translated-GS prepass path is currently
+      only exercised by point-list draws and still assumes triangle-list output in some places.
   - No GS instancing (`dcl_gsinstancecount` / `[instance(n)]`)
   - No stream-out (SO / transform feedback)
 - Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY`, but HS/DS shader execution is not wired yet (binding HS/DS causes draws to return a clear error), and the current compute-prepass path is still bring-up scaffolding (no real tessellation).
