@@ -32,6 +32,7 @@ ULONGLONG WdfTestSpinLockSequence;
 
 typedef struct _TEST_CALLBACKS {
     WDFDEVICE ExpectedDevice;
+    PVIRTIO_PCI_INTERRUPTS Interrupts;
     int ConfigCalls;
     int QueueCallsTotal;
     int QueueCallsPerIndex[64];
@@ -42,6 +43,9 @@ static VOID TestEvtConfigChange(_In_ WDFDEVICE Device, _In_opt_ PVOID Context)
     TEST_CALLBACKS* cb = (TEST_CALLBACKS*)Context;
     assert(cb != NULL);
     assert(Device == cb->ExpectedDevice);
+    assert(cb->Interrupts != NULL);
+    assert(cb->Interrupts->ConfigLock != NULL);
+    assert(cb->Interrupts->ConfigLock->Held == TRUE);
     cb->ConfigCalls++;
 }
 
@@ -51,6 +55,10 @@ static VOID TestEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, _In_
     assert(cb != NULL);
     assert(Device == cb->ExpectedDevice);
     assert(QueueIndex < 64);
+    assert(cb->Interrupts != NULL);
+    assert(cb->Interrupts->QueueLocks != NULL);
+    assert(cb->Interrupts->QueueLocks[QueueIndex] != NULL);
+    assert(cb->Interrupts->QueueLocks[QueueIndex]->Held == TRUE);
     cb->QueueCallsTotal++;
     cb->QueueCallsPerIndex[QueueIndex]++;
 }
@@ -58,6 +66,14 @@ static VOID TestEvtDrainQueue(_In_ WDFDEVICE Device, _In_ ULONG QueueIndex, _In_
 static void ResetCallbacks(TEST_CALLBACKS* cb)
 {
     memset(cb, 0, sizeof(*cb));
+}
+
+static void ResetCallbackCounters(TEST_CALLBACKS* cb)
+{
+    assert(cb != NULL);
+    cb->ConfigCalls = 0;
+    cb->QueueCallsTotal = 0;
+    memset(cb->QueueCallsPerIndex, 0, sizeof(cb->QueueCallsPerIndex));
 }
 
 static void ResetRegisterReadInstrumentation(void)
@@ -198,6 +214,7 @@ static void PrepareIntx(
 
     ResetCallbacks(Callbacks);
     Callbacks->ExpectedDevice = dev;
+    Callbacks->Interrupts = Interrupts;
 
     st = VirtioPciInterruptsPrepareHardware(
         dev,
@@ -253,6 +270,7 @@ static void PrepareMsix(
 
     ResetCallbacks(Callbacks);
     Callbacks->ExpectedDevice = dev;
+    Callbacks->Interrupts = Interrupts;
 
     commonCfgLock = NULL;
     if (CommonCfgLockOut != NULL) {
@@ -328,7 +346,7 @@ static void TestIntxRealInterruptDispatch(void)
     PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
 
     /* CONFIG only */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     isrStatus = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
@@ -339,7 +357,7 @@ static void TestIntxRealInterruptDispatch(void)
     assert(cb.QueueCallsTotal == 0);
 
     /* QUEUE only */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     isrStatus = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
@@ -351,7 +369,7 @@ static void TestIntxRealInterruptDispatch(void)
     assert(cb.QueueCallsPerIndex[1] == 1);
 
     /* CONFIG + QUEUE */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     isrStatus = VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
@@ -385,7 +403,7 @@ static void TestMsixDispatchAndRouting(void)
     assert(WdfTestReadRegisterUcharCount == 0);
 
     /* Vector 0: config only (no queue mask). */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
@@ -394,7 +412,7 @@ static void TestMsixDispatchAndRouting(void)
     assert(cb.QueueCallsTotal == 0);
 
     /* Vector 1: queue 0 only. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
@@ -405,7 +423,7 @@ static void TestMsixDispatchAndRouting(void)
     assert(cb.QueueCallsPerIndex[1] == 0);
 
     /* Vector 2: queue 1 only. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
     assert(handled == TRUE);
@@ -443,7 +461,7 @@ static void TestMsixLimitedVectorRouting(void)
     assert(WdfTestReadRegisterUcharCount == 0);
 
     /* Vector 0: config only (no queue mask). */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
@@ -452,7 +470,7 @@ static void TestMsixLimitedVectorRouting(void)
     assert(cb.QueueCallsTotal == 0);
 
     /* Vector 1: all queues (round-robin onto the single queue vector). */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
@@ -604,7 +622,7 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     assert(WdfTestReadRegisterUcharCount == 0);
 
     /* Vector 1: queues 0 + 2. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
@@ -617,7 +635,7 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     assert(cb.QueueCallsPerIndex[3] == 0);
 
     /* Vector 2: queues 1 + 3. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
     assert(handled == TRUE);
@@ -801,7 +819,7 @@ static void TestMsixSingleVectorFallbackRouting(void)
     }
 
     /* Vector 0: config + all queues. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
@@ -956,7 +974,7 @@ static void TestResetInProgressGating(void)
      * must bail out without dispatching callbacks and must clear the pending ISR
      * status snapshot.
      */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     ResetRegisterReadInstrumentation();
     InterlockedExchange(&interrupts.ResetInProgress, 0);
@@ -1004,7 +1022,7 @@ static void TestResetInProgressGating(void)
      * MSI-X DPC gating: if reset begins after the ISR queues a DPC, the DPC must
      * still bail out before invoking callbacks.
      */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     InterlockedExchange(&interrupts.ResetInProgress, 0);
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
@@ -1240,7 +1258,7 @@ static void TestIntxQuiesceResume(void)
      * While quiesced/resetting, ISR must still read-to-ack but must not queue a
      * DPC (ResetInProgress gating).
      */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
     ResetRegisterReadInstrumentation();
@@ -1259,7 +1277,7 @@ static void TestIntxQuiesceResume(void)
     assert(interrupts.u.Intx.Interrupt->EnableCalls == 1);
 
     /* After resume, interrupts should dispatch again. */
-    ResetCallbacks(&cb);
+    ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
     isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
