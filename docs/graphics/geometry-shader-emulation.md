@@ -207,7 +207,9 @@ Supported instructions/opcodes:
   - `if` / `else` / `endif`
   - `ifc` (compare-based conditional)
   - `loop` / `endloop`
+  - `break` / `continue`
   - `breakc` / `continuec`
+  - `switch` / `case` / `default` / `endswitch`
 - **Control**
   - `ret`
 
