@@ -3010,6 +3010,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     LARGE_INTEGER nowQpc;
     LARGE_INTEGER qpcFreq;
     ULONGLONG nowQpcValue;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    ULONGLONG runStartTime100ns;
+#endif
     PVIRTIOSND_BACKEND backend;
     VIRTIOSND_PORTCLS_DX dx;
     ULONG bufferSize;
@@ -3038,6 +3041,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     bufferDma = 0;
     bufferVa = NULL;
     bufferMdl = NULL;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    runStartTime100ns = 0;
+#endif
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     oldState = stream->State;
@@ -3580,6 +3586,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 (VOID)VirtIoSndBackend_Prepare(backend);
             }
         } else if ((oldState == KSSTATE_ACQUIRE || oldState == KSSTATE_PAUSE) && State == KSSTATE_RUN) {
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+            runStartTime100ns = KeQueryInterruptTime();
+#endif
             status = VirtIoSndBackend_Start(backend);
         } else if (oldState == KSSTATE_RUN && State == KSSTATE_PAUSE) {
             status = VirtIoSndBackend_Stop(backend);
@@ -3595,6 +3604,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 (VOID)VirtIoSndBackend_SetParams(backend, bufferSize, periodBytes);
                 (VOID)VirtIoSndBackend_Prepare(backend);
             }
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+            runStartTime100ns = KeQueryInterruptTime();
+#endif
             status = VirtIoSndBackend_Start(backend);
         }
     }
@@ -3647,7 +3659,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
          * timer-driven and event-driven wakeups for the same period fall into the
          * same period index.
          */
-        stream->TickBaseTime100ns = KeQueryInterruptTime();
+        stream->TickBaseTime100ns = (runStartTime100ns != 0) ? runStartTime100ns : KeQueryInterruptTime();
         stream->LastTickPeriodIndex = ~0ull;
 #endif
 
