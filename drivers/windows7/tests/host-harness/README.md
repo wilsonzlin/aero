@@ -169,6 +169,33 @@ The Python harness prints:
 
 Note: `--print-qemu-cmd` is accepted as an alias for `--dry-run`.
 
+### Virtio-net link flap regression test (host-side QMP `set_link`)
+
+To deterministically exercise virtio-net **link status change handling** (including config interrupts),
+the harness can flap the virtio-net link state from the host via QMP.
+
+Provisioning:
+
+- Guest selftest flag: `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`)
+- Provisioning script: `New-AeroWin7TestImage.ps1 -TestNetLinkFlap` (adds `--test-net-link-flap` to the scheduled task)
+
+Running (requires QMP; enabled automatically by the flag):
+
+- PowerShell harness: `-WithNetLinkFlap`
+- Python harness: `--with-net-link-flap`
+
+Behavior:
+
+1. Wait for guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
+2. QMP: `set_link name=aero_virtio_net0 up=false`
+3. Sleep 2 seconds
+4. QMP: `set_link name=aero_virtio_net0 up=true`
+5. Require guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|...` (missing/SKIP/FAIL becomes a deterministic harness failure)
+
+The host harness also emits a CI-scrapable marker:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=aero_virtio_net0|down_delay_sec=2`
+
 ### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
 To deterministically exercise the Aero virtio drivers' **multi-vector MSI-X** paths *and* fallback behavior when fewer

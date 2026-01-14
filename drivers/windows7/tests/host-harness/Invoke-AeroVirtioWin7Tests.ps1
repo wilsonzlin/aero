@@ -5273,6 +5273,7 @@ if ($DryRun) {
   $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
   $needInputMediaKeys = [bool]$WithInputMediaKeys
   $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $needNetLinkFlap = [bool]$WithNetLinkFlap
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
   $needBlkResize = [bool]$WithBlkResize
 
@@ -5293,7 +5294,7 @@ if ($DryRun) {
 
   $qmpPort = $null
   $qmpArgs = @()
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
     try {
       $qmpPort = Get-AeroFreeTcpPort
@@ -5301,8 +5302,8 @@ if ($DryRun) {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (input injection / blk resize / QemuPreflightPci): $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (input injection / net link flap / blk resize / QemuPreflightPci): $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -5318,7 +5319,9 @@ if ($DryRun) {
   $inputVectors = $(if ($requestedVirtioInputVectors -gt 0) { $requestedVirtioInputVectors } else { 0 })
 
   if ($VirtioTransitional) {
-    $nic = "virtio-net-pci,netdev=net0"
+    # Include a stable device id so QMP `set_link` can target the virtio-net device when requested
+    # (parity with non-dry-run mode).
+    $nic = "virtio-net-pci,id=$($script:VirtioNetQmpId),netdev=net0"
     if ($VirtioDisableMsix) {
       $nic += ",vectors=0"
     } elseif ($netVectors -gt 0) {
