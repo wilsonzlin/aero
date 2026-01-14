@@ -4946,7 +4946,10 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
 
     const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
     if (!NT_SUCCESS(st)) {
-      PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
+      PrintNtStatus(L"read-gpa failed", f, st);
+      if (st == STATUS_NOT_SUPPORTED) {
+        fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+      }
       fclose(fp);
       return 2;
     }
@@ -4962,6 +4965,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
 
     if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
       PrintNtStatus(L"read-gpa operation failed", f, op);
+      if (op == STATUS_NOT_SUPPORTED) {
+        fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+      }
       fclose(fp);
       return 2;
     }
@@ -6074,7 +6080,10 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
   if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
+    PrintNtStatus(L"read-gpa failed", f, st);
+    if (st == STATUS_NOT_SUPPORTED) {
+      fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+    }
     return 2;
   }
 
@@ -6089,6 +6098,9 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
 
   if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
     PrintNtStatus(L"read-gpa operation failed", f, op);
+    if (op == STATUS_NOT_SUPPORTED) {
+      fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+    }
   } else if (op == STATUS_PARTIAL_COPY) {
     PrintNtStatus(L"read-gpa partial copy", f, op);
   }
