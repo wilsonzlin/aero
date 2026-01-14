@@ -2581,33 +2581,43 @@ fn emit_stmt(
                     }
                 };
 
-            if let Some(Stmt::Op(op)) = then_block.stmts.first() {
+            for stmt in &then_block.stmts {
+                let Stmt::Op(op) = stmt else {
+                    break;
+                };
                 let cond_for_op = cond_with_pred(op, &cond_e)?;
-                if let Some(line) = emit_branchless_predicated_op_line(
+                let Some(line) = emit_branchless_predicated_op_line(
                     op,
                     &cond_for_op,
                     stage,
                     f32_defs,
                     sampler_types,
-                )? {
-                    then_lines.push(line);
-                    then_skip = 1;
-                }
+                )?
+                else {
+                    break;
+                };
+                then_lines.push(line);
+                then_skip += 1;
             }
 
             if let Some(else_b) = else_block.as_ref() {
-                if let Some(Stmt::Op(op)) = else_b.stmts.first() {
+                for stmt in &else_b.stmts {
+                    let Stmt::Op(op) = stmt else {
+                        break;
+                    };
                     let cond_for_op = cond_with_pred(op, &not_cond_e)?;
-                    if let Some(line) = emit_branchless_predicated_op_line(
+                    let Some(line) = emit_branchless_predicated_op_line(
                         op,
                         &cond_for_op,
                         stage,
                         f32_defs,
                         sampler_types,
-                    )? {
-                        else_lines.push(line);
-                        else_skip = 1;
-                    }
+                    )?
+                    else {
+                        break;
+                    };
+                    else_lines.push(line);
+                    else_skip += 1;
                 }
             }
 
