@@ -676,4 +676,73 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn opcode_constant_values_are_globally_unique() {
+        // This is a belt-and-suspenders test: opcode collisions are extremely hard to debug because
+        // they make some decoder `match` arms unreachable and silently misclassify instructions.
+        //
+        // Parse *all* `pub const OPCODE_*: u32 = <literal>;` definitions directly from this source
+        // file so we don't need to manually keep a list up to date as more opcodes are added.
+        //
+        // Exclude bitfield/metadata constants like `OPCODE_MASK`/`OPCODE_LEN_SHIFT` which are not
+        // actual opcode IDs.
+        const SRC: &str = include_str!("opcode.rs");
+
+        let mut seen = std::collections::BTreeMap::<u32, Vec<String>>::new();
+        let mut count = 0usize;
+
+        for line in SRC.lines() {
+            let line = line.trim();
+            if !line.starts_with("pub const OPCODE_") {
+                continue;
+            }
+
+            let name = line
+                .strip_prefix("pub const ")
+                .and_then(|rest| rest.split_once(':').map(|(name, _)| name))
+                .expect("failed to parse opcode const name");
+
+            // Skip opcode-token bitfield constants.
+            if name.ends_with("_MASK") || name.ends_with("_SHIFT") || name.ends_with("_BIT") {
+                continue;
+            }
+
+            let value_str = line
+                .split_once('=')
+                .map(|(_, rhs)| rhs)
+                .and_then(|rhs| rhs.split_once(';').map(|(value, _)| value))
+                .map(str::trim)
+                .expect("failed to parse opcode const value");
+
+            let value_str = value_str.replace('_', "");
+            let value = if let Some(hex) = value_str.strip_prefix("0x") {
+                u32::from_str_radix(hex, 16).expect("invalid hex opcode const value")
+            } else {
+                value_str
+                    .parse::<u32>()
+                    .expect("invalid decimal opcode const value")
+            };
+
+            count += 1;
+            seen.entry(value).or_default().push(name.to_owned());
+        }
+
+        assert!(
+            count > 10,
+            "expected to discover many OPCODE_* constants, got {count}"
+        );
+
+        let mut duplicates = String::new();
+        for (value, names) in seen {
+            if names.len() > 1 {
+                duplicates.push_str(&format!("0x{value:04x}: {names:?}\n"));
+            }
+        }
+
+        assert!(
+            duplicates.is_empty(),
+            "duplicate opcode constant values detected:\n{duplicates}"
+        );
+    }
 }
