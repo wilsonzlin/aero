@@ -2512,6 +2512,115 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restore_snapshot_clears_wddm_scanout_active_when_scanout_is_disabled() {
+        let mut snap = AeroGpuMmioDevice::default().snapshot_v1();
+
+        // Simulate an inconsistent snapshot/restore state where the host-side WDDM ownership latch
+        // is set but the guest-visible enable bit is cleared.
+        snap.scanout0_enable = 0;
+        snap.wddm_scanout_active = true;
+        snap.next_vblank_ns = Some(123);
+        snap.irq_status |= pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.restore_snapshot_v1(&snap);
+
+        assert!(!dev.scanout0_enable);
+        assert!(
+            !dev.wddm_scanout_active,
+            "disable should release WDDM scanout ownership on restore"
+        );
+        assert!(
+            dev.next_vblank_ns.is_none(),
+            "restoring with scanout disabled should clear the pending vblank deadline"
+        );
+        assert_eq!(
+            dev.irq_status & pci::AEROGPU_IRQ_SCANOUT_VBLANK,
+            0,
+            "restoring with scanout disabled should clear any latched vblank IRQ status bit"
+        );
+    }
+
+    #[test]
+    fn io_snapshot_load_state_clears_wddm_scanout_active_when_scanout_is_disabled() {
+        const TAG_ABI_VERSION: u16 = 1;
+        const TAG_FEATURES: u16 = 2;
+        const TAG_RING_GPA: u16 = 3;
+        const TAG_RING_SIZE_BYTES: u16 = 4;
+        const TAG_RING_CONTROL: u16 = 5;
+        const TAG_FENCE_GPA: u16 = 6;
+        const TAG_COMPLETED_FENCE: u16 = 7;
+        const TAG_IRQ_STATUS: u16 = 8;
+        const TAG_IRQ_ENABLE: u16 = 9;
+        const TAG_SCANOUT0_ENABLE: u16 = 10;
+        const TAG_SCANOUT0_WIDTH: u16 = 11;
+        const TAG_SCANOUT0_HEIGHT: u16 = 12;
+        const TAG_SCANOUT0_FORMAT: u16 = 13;
+        const TAG_SCANOUT0_PITCH_BYTES: u16 = 14;
+        const TAG_SCANOUT0_FB_GPA: u16 = 15;
+        const TAG_SCANOUT0_VBLANK_SEQ: u16 = 16;
+        const TAG_SCANOUT0_VBLANK_TIME_NS: u16 = 17;
+        const TAG_SCANOUT0_VBLANK_PERIOD_NS: u16 = 18;
+        const TAG_VBLANK_INTERVAL_NS: u16 = 19;
+        const TAG_NEXT_VBLANK_NS: u16 = 20;
+        const TAG_WDDM_SCANOUT_ACTIVE: u16 = 21;
+
+        let mut w = SnapshotWriter::new(
+            <AeroGpuMmioDevice as IoSnapshot>::DEVICE_ID,
+            <AeroGpuMmioDevice as IoSnapshot>::DEVICE_VERSION,
+        );
+
+        w.field_u32(TAG_ABI_VERSION, pci::AEROGPU_ABI_VERSION_U32);
+        w.field_u64(TAG_FEATURES, supported_features());
+        w.field_u64(TAG_RING_GPA, 0);
+        w.field_u32(TAG_RING_SIZE_BYTES, 0);
+        w.field_u32(TAG_RING_CONTROL, 0);
+        w.field_u64(TAG_FENCE_GPA, 0);
+        w.field_u64(TAG_COMPLETED_FENCE, 0);
+        w.field_u32(TAG_IRQ_STATUS, pci::AEROGPU_IRQ_SCANOUT_VBLANK);
+        w.field_u32(TAG_IRQ_ENABLE, pci::AEROGPU_IRQ_SCANOUT_VBLANK);
+
+        // The inconsistency we want to defend against: `enable=0` with the WDDM ownership latch
+        // set.
+        w.field_bool(TAG_SCANOUT0_ENABLE, false);
+        w.field_u32(TAG_SCANOUT0_WIDTH, 1);
+        w.field_u32(TAG_SCANOUT0_HEIGHT, 1);
+        w.field_u32(
+            TAG_SCANOUT0_FORMAT,
+            pci::AerogpuFormat::B8G8R8X8Unorm as u32,
+        );
+        w.field_u32(TAG_SCANOUT0_PITCH_BYTES, 4);
+        w.field_u64(TAG_SCANOUT0_FB_GPA, 0x1000);
+        w.field_u64(TAG_SCANOUT0_VBLANK_SEQ, 5);
+        w.field_u64(TAG_SCANOUT0_VBLANK_TIME_NS, 1234);
+        w.field_u32(TAG_SCANOUT0_VBLANK_PERIOD_NS, 1);
+
+        w.field_u64(TAG_VBLANK_INTERVAL_NS, 16_666_667);
+        w.field_u64(TAG_NEXT_VBLANK_NS, 999);
+        w.field_bool(TAG_WDDM_SCANOUT_ACTIVE, true);
+
+        let bytes = w.finish();
+
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.load_state(&bytes).unwrap();
+
+        assert!(!dev.scanout0_enable);
+        assert!(
+            !dev.wddm_scanout_active,
+            "disable should release WDDM scanout ownership on load_state"
+        );
+        assert!(
+            dev.next_vblank_ns.is_none(),
+            "load_state with scanout disabled should clear the pending vblank deadline"
+        );
+        assert_eq!(
+            dev.irq_status & pci::AEROGPU_IRQ_SCANOUT_VBLANK,
+            0,
+            "load_state with scanout disabled should clear any latched vblank IRQ status bit"
+        );
+    }
+
+    #[test]
     fn error_mmio_regs_latch_and_survive_irq_ack() {
         let mut dev = AeroGpuMmioDevice::default();
 
