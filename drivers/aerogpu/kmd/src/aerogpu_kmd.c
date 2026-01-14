@@ -56,6 +56,49 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
 
 /*
+ * DXGI_FORMAT subset used by KMD-only helpers.
+ *
+ * The AeroGPU allocation private-data v2 blob stores the DXGI_FORMAT numeric
+ * value for Texture2D allocations. Win7's dxgkrnl can optionally pre-populate
+ * DXGKARG_LOCK::Pitch/SlicePitch for surface locks; AeroGPU overrides these to
+ * match the UMD-selected packed layout, which requires being able to compute the
+ * number of rows in the mip0 layout for block-compressed formats.
+ */
+#define AEROGPU_DXGI_FORMAT_BC1_TYPELESS 70u
+#define AEROGPU_DXGI_FORMAT_BC1_UNORM 71u
+#define AEROGPU_DXGI_FORMAT_BC1_UNORM_SRGB 72u
+#define AEROGPU_DXGI_FORMAT_BC2_TYPELESS 73u
+#define AEROGPU_DXGI_FORMAT_BC2_UNORM 74u
+#define AEROGPU_DXGI_FORMAT_BC2_UNORM_SRGB 75u
+#define AEROGPU_DXGI_FORMAT_BC3_TYPELESS 76u
+#define AEROGPU_DXGI_FORMAT_BC3_UNORM 77u
+#define AEROGPU_DXGI_FORMAT_BC3_UNORM_SRGB 78u
+#define AEROGPU_DXGI_FORMAT_BC7_TYPELESS 97u
+#define AEROGPU_DXGI_FORMAT_BC7_UNORM 98u
+#define AEROGPU_DXGI_FORMAT_BC7_UNORM_SRGB 99u
+
+static __forceinline BOOLEAN AeroGpuDxgiFormatIsBlockCompressed(_In_ ULONG DxgiFormat)
+{
+    switch (DxgiFormat) {
+    case AEROGPU_DXGI_FORMAT_BC1_TYPELESS:
+    case AEROGPU_DXGI_FORMAT_BC1_UNORM:
+    case AEROGPU_DXGI_FORMAT_BC1_UNORM_SRGB:
+    case AEROGPU_DXGI_FORMAT_BC2_TYPELESS:
+    case AEROGPU_DXGI_FORMAT_BC2_UNORM:
+    case AEROGPU_DXGI_FORMAT_BC2_UNORM_SRGB:
+    case AEROGPU_DXGI_FORMAT_BC3_TYPELESS:
+    case AEROGPU_DXGI_FORMAT_BC3_UNORM:
+    case AEROGPU_DXGI_FORMAT_BC3_UNORM_SRGB:
+    case AEROGPU_DXGI_FORMAT_BC7_TYPELESS:
+    case AEROGPU_DXGI_FORMAT_BC7_UNORM:
+    case AEROGPU_DXGI_FORMAT_BC7_UNORM_SRGB:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/*
  * Hard cap on per-submit allocation-list sizes we will process when building submission metadata
  * (AEROGPU_SUBMISSION_META), legacy submission descriptors, and per-submit allocation tables.
  *
@@ -7771,6 +7814,32 @@ static NTSTATUS APIENTRY AeroGpuDdiLock(_In_ const HANDLE hAdapter, _Inout_ DXGK
         }
         if (pLock->SlicePitch == 0 || pLock->SlicePitch != (ULONG)slice) {
             pLock->SlicePitch = (ULONG)slice;
+        }
+    } else if (alloc->Kind == AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D &&
+               pLock->Pitch != 0 &&
+               alloc->Height != 0) {
+        /*
+         * For non-primary Texture2D allocations, expose SlicePitch for the mip0
+         * layout (pitch * rows_in_layout).
+         *
+         * Keep SlicePitch consistent with Pitch when we override Pitch above; this
+         * avoids user-mode observing mismatched Pitch/SlicePitch pairs.
+         */
+        ULONG rows = alloc->Height;
+        if (AeroGpuDxgiFormatIsBlockCompressed(alloc->Format)) {
+            rows = (alloc->Height + 3u) / 4u;
+        }
+        if (rows != 0) {
+            ULONGLONG slice = (ULONGLONG)pLock->Pitch * (ULONGLONG)rows;
+            if (slice > (ULONGLONG)alloc->SizeBytes) {
+                slice = (ULONGLONG)alloc->SizeBytes;
+            }
+            if (slice > (ULONGLONG)MAXULONG) {
+                slice = (ULONGLONG)MAXULONG;
+            }
+            if (pLock->SlicePitch == 0 || pLock->SlicePitch != (ULONG)slice) {
+                pLock->SlicePitch = (ULONG)slice;
+            }
         }
     }
 
