@@ -3219,6 +3219,162 @@ bool TestCaptureStateBlockStreamSourceFreqAffectsApplyStateBlock() {
   return true;
 }
 
+bool TestCaptureStateBlockUsesEffectiveViewportFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCaptureStateBlock != nullptr, "pfnCaptureStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Create a state block that includes viewport state, then capture after binding
+  // a render target while the cached viewport is still unset (Width/Height <= 0).
+  // CaptureStateBlock should store the effective viewport derived from the RT.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  // D3DSBT_PIXELSTATE = 2 (matches d3d9types.h). Pixel state blocks include
+  // render targets + viewport/scissor.
+  HRESULT hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, /*type_u32=*/2u, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(PIXELSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  // Bind a render-target surface with a non-default size.
+  constexpr uint32_t rt_w = 640u;
+  constexpr uint32_t rt_h = 480u;
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;    // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = rt_w;
+  create_rt.height = rt_h;
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Capture the current state into the state block. Since we never called
+  // SetViewport, the effective viewport should be RT-sized.
+  hr = cleanup.device_funcs.pfnCaptureStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "CaptureStateBlock")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Set a different explicit viewport so ApplyStateBlock must restore the
+  // captured effective viewport.
+  D3DDDIVIEWPORTINFO vp_other{};
+  vp_other.X = 5.0f;
+  vp_other.Y = 6.0f;
+  vp_other.Width = 128.0f;
+  vp_other.Height = 256.0f;
+  vp_other.MinZ = 0.25f;
+  vp_other.MaxZ = 0.75f;
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_other);
+  if (!Check(hr == S_OK, "SetViewport(other)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(CaptureStateBlock viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->viewport.X == 0.0f &&
+                   dev->viewport.Y == 0.0f &&
+                   dev->viewport.Width == static_cast<float>(rt_w) &&
+                   dev->viewport.Height == static_cast<float>(rt_h) &&
+                   dev->viewport.MinZ == 0.0f &&
+                   dev->viewport.MaxZ == 1.0f,
+               "ApplyStateBlock restores effective viewport derived from RT")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock CaptureStateBlock viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_viewport = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VIEWPORT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_viewport)) {
+      continue;
+    }
+    const auto* vp = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+    if (vp->x_f32 == F32Bits(0.0f) &&
+        vp->y_f32 == F32Bits(0.0f) &&
+        vp->width_f32 == F32Bits(static_cast<float>(rt_w)) &&
+        vp->height_f32 == F32Bits(static_cast<float>(rt_h)) &&
+        vp->min_depth_f32 == F32Bits(0.0f) &&
+        vp->max_depth_f32 == F32Bits(1.0f)) {
+      saw_viewport = true;
+      break;
+    }
+  }
+  if (!Check(saw_viewport, "ApplyStateBlock emits SET_VIEWPORT for effective RT-sized viewport")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -22557,6 +22713,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCaptureStateBlockStreamSourceFreqAffectsApplyStateBlock()) {
+    return 1;
+  }
+  if (!aerogpu::TestCaptureStateBlockUsesEffectiveViewportFromRenderTarget()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
