@@ -2208,6 +2208,56 @@ fn sm4_gs_half_float_conversions_translate_via_pack_unpack() {
 }
 
 #[test]
+fn sm4_gs_f32tof16_sat_clamps_input_before_packing() {
+    // `f32tof16_sat` should clamp float values to 0..1 *before* converting to half-float bits.
+    let mut tokens = base_gs_tokens();
+
+    // mov r0.xyzw, l(2.0, -1.0, 0.5, 42.0)
+    tokens.push(opcode_token(OPCODE_MOV, 8));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    tokens.extend_from_slice(&imm32_vec4([
+        2.0f32.to_bits(),
+        (-1.0f32).to_bits(),
+        0.5f32.to_bits(),
+        42.0f32.to_bits(),
+    ]));
+
+    // f32tof16_sat r1.xyzw, r0.xyzw
+    //
+    // Extended opcode token (type 0) with saturate bit set at bit 13.
+    tokens.push(opcode_token(OPCODE_F32TOF16, 6) | OPCODE_EXTENDED_BIT);
+    tokens.push(1u32 << 13);
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+
+    // f16tof32 r2.xyzw, r1.xyzw
+    tokens.push(opcode_token(OPCODE_F16TOF32, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert_wgsl_validates(&wgsl);
+    assert!(
+        wgsl.contains("clamp(("),
+        "expected f32tof16_sat lowering to clamp float values:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("pack2x16float"),
+        "expected f32tof16 lowering to use pack2x16float:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("& 0xffffu"),
+        "expected f32tof16 lowering to mask low 16 bits:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
+    );
+}
+
+#[test]
 fn sm4_gs_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
     // `f16tof32` consumes raw binary16 payloads stored in the low 16 bits of untyped DXBC register
     // lanes. Operand modifiers (e.g. -abs) would reinterpret the lane numerically and corrupt the
