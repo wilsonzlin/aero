@@ -31,11 +31,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 namespace {
 
 // Portable D3D9 FVF bits (from d3d9types.h).
+constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzNormalTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1;
 
 #pragma pack(push, 1)
 struct D3DVERTEXELEMENT9_COMPAT {
@@ -52,6 +55,7 @@ static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9_COMPAT m
 
 // D3DDECLTYPE values (from d3d9types.h).
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
@@ -59,6 +63,8 @@ constexpr uint8_t kD3dDeclTypeUnused = 17;
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 // D3DDECLUSAGE values (from d3d9types.h).
+constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageNormal = 3;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
@@ -242,6 +248,17 @@ struct VertexXyzrhwDiffuseTex1 {
   float v;
 };
 
+struct VertexXyzNormalTex1 {
+  float x;
+  float y;
+  float z;
+  float nx;
+  float ny;
+  float nz;
+  float u;
+  float v;
+};
+
 bool TestFixedFuncVertexDeclPatternsNonCanonicalOrdering() {
   aerogpu::Adapter adapter{};
   aerogpu::Device dev(&adapter);
@@ -391,10 +408,162 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalOrdering() {
   return true;
 }
 
+bool TestFixedFuncVertexDeclPatternsNonCanonicalNormalTex1Ordering() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  dev.cmd.reset();
+
+  // Non-canonical decl element ordering + an extra UNUSED placeholder element.
+  //
+  // This is XYZ | NORMAL | TEX1 (float2) but emitted as:
+  //   TEX0, UNUSED, NORMAL, POSITION, END
+  const D3DVERTEXELEMENT9_COMPAT decl_elems[] = {
+      {0, 24, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0, 32, kD3dDeclTypeUnused, kD3dDeclMethodDefault, 0, 0},
+      {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = aerogpu::device_create_vertex_decl(hDevice, decl_elems, sizeof(decl_elems), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl returned S_OK (XYZ|NORMAL|TEX1)")) {
+    return false;
+  }
+
+  hr = aerogpu::device_set_vertex_decl(hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl returned S_OK (XYZ|NORMAL|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t input_layout_handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev.mutex);
+    if (!Check(dev.vertex_decl != nullptr, "SetVertexDecl binds a vertex decl")) {
+      return false;
+    }
+    input_layout_handle = dev.vertex_decl->handle;
+    if (!Check(dev.fvf == kFvfXyzNormalTex1, "SetVertexDecl inferred FVF == XYZ|NORMAL|TEX1")) {
+      return false;
+    }
+  }
+
+  // Fixed-function draw: user VS/PS are NULL by default.
+  const VertexXyzNormalTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0.0f, 1.0f},
+  };
+
+  hr = aerogpu::device_draw_primitive_up(
+      hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP returned S_OK (XYZ|NORMAL|TEX1)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev.mutex);
+
+    const aerogpu::FixedFuncVariant variant = aerogpu::fixedfunc_variant_from_fvf(dev.fvf);
+    if (!Check(variant == aerogpu::FixedFuncVariant::XYZ_NORMAL_TEX1, "implied fixedfunc variant == XYZ_NORMAL_TEX1")) {
+      return false;
+    }
+    const auto& pipe = dev.fixedfunc_pipelines[static_cast<size_t>(variant)];
+
+    if (!Check(pipe.vs != nullptr, "fixedfunc pipeline VS created (XYZ_NORMAL_TEX1)")) {
+      return false;
+    }
+    if (!Check(dev.vs == pipe.vs, "fixedfunc pipeline VS is bound (XYZ_NORMAL_TEX1)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev.vs, aerogpu::fixedfunc::kVsWvpPosNormalWhiteTex0),
+               "fixedfunc pipeline VS bytecode matches kVsWvpPosNormalWhiteTex0")) {
+      return false;
+    }
+
+    if (!Check(pipe.ps != nullptr, "fixedfunc pipeline PS created (XYZ_NORMAL_TEX1)")) {
+      return false;
+    }
+    if (!Check(dev.ps == pipe.ps, "fixedfunc pipeline PS is bound (XYZ_NORMAL_TEX1)")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev.ps, kPsOpTexld), "fixedfunc pipeline PS contains no texld when stage0 texture is unbound")) {
+      return false;
+    }
+  }
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|NORMAL|TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) >= 1, "CREATE_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT) >= 1, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2, "CREATE_SHADER_DXBC emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS) >= 1, "SET_VERTEX_BUFFERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  // Validate that the input layout blob for our explicit vertex decl matches the
+  // non-canonical declaration bytes we provided.
+  const uint8_t* blob = nullptr;
+  uint32_t blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, input_layout_handle, &blob, &blob_size), "found CREATE_INPUT_LAYOUT blob")) {
+    return false;
+  }
+  if (!Check(blob_size == sizeof(decl_elems), "input-layout blob size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(blob, decl_elems, sizeof(decl_elems)) == 0, "input-layout blob contents")) {
+    return false;
+  }
+
+  // Ensure SET_INPUT_LAYOUT binds the expected handle at least once.
+  bool saw_set = false;
+  for (const aerogpu_cmd_hdr* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_input_layout)) {
+      continue;
+    }
+    const auto* s = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (s->input_layout_handle == input_layout_handle) {
+      saw_set = true;
+      break;
+    }
+  }
+  if (!Check(saw_set, "SET_INPUT_LAYOUT binds explicit vertex decl handle")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!TestFixedFuncVertexDeclPatternsNonCanonicalOrdering()) {
+    return 1;
+  }
+  if (!TestFixedFuncVertexDeclPatternsNonCanonicalNormalTex1Ordering()) {
     return 1;
   }
   return 0;
