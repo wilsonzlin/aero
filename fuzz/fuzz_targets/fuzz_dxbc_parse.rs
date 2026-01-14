@@ -571,30 +571,19 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let mut u = Unstructured::new(input);
     let selector = u.arbitrary::<u8>().unwrap_or(0);
 
-    let isgn_fourcc = if selector & 1 == 0 {
-        FourCC(*b"ISGN")
-    } else {
-        FourCC(*b"ISG1")
-    };
-    let osgn_fourcc = if selector & 2 == 0 {
-        FourCC(*b"OSGN")
-    } else {
-        FourCC(*b"OSG1")
-    };
-    let psgn_fourcc = if selector & 4 == 0 {
-        FourCC(*b"PSGN")
-    } else {
-        FourCC(*b"PSG1")
-    };
-    let shader_fourcc = if selector & 8 == 0 {
+    // For each signature type, include both `*SGN` (v0) and `*SG1` (v1) chunk IDs.
+    // Then use `selector` bits to decide which variant is valid vs. present-but-malformed, so
+    // container-level helpers exercise fallback logic when the preferred ID exists but does not
+    // successfully parse.
+    let isg1_good = selector & 1 != 0;
+    let osg1_good = selector & 2 != 0;
+    let psg1_good = selector & 4 != 0;
+    let pcg1_good = selector & 8 != 0;
+
+    let shader_fourcc = if selector & 16 == 0 {
         FourCC(*b"SHDR")
     } else {
         FourCC(*b"SHEX")
-    };
-    let pcsg_fourcc = if selector & 16 == 0 {
-        FourCC(*b"PCSG")
-    } else {
-        FourCC(*b"PCG1")
     };
     let rdef_fourcc = if selector & 32 == 0 {
         FourCC(*b"RDEF")
@@ -603,21 +592,40 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     };
 
     let isgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let isg1_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let osgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let osg1_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let psgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let psg1_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let pcsg_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let pcg1_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let bad_isgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_isg1_seed = take_capped_bytes(&mut u, 32);
     let bad_osgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_osg1_seed = take_capped_bytes(&mut u, 32);
     let bad_psgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_psg1_seed = take_capped_bytes(&mut u, 32);
     let bad_pcsg_seed = take_capped_bytes(&mut u, 32);
-    let isgn_payload = build_patched_signature_chunk(isgn_fourcc, isgn_seed);
-    let osgn_payload = build_patched_signature_chunk(osgn_fourcc, osgn_seed);
-    let psgn_payload = build_patched_signature_chunk(psgn_fourcc, psgn_seed);
-    let pcsg_payload = build_patched_signature_chunk(pcsg_fourcc, pcsg_seed);
+    let bad_pcg1_seed = take_capped_bytes(&mut u, 32);
+
+    let isgn_payload = build_patched_signature_chunk(FourCC(*b"ISGN"), isgn_seed);
+    let isg1_payload = build_patched_signature_chunk(FourCC(*b"ISG1"), isg1_seed);
+    let osgn_payload = build_patched_signature_chunk(FourCC(*b"OSGN"), osgn_seed);
+    let osg1_payload = build_patched_signature_chunk(FourCC(*b"OSG1"), osg1_seed);
+    let psgn_payload = build_patched_signature_chunk(FourCC(*b"PSGN"), psgn_seed);
+    let psg1_payload = build_patched_signature_chunk(FourCC(*b"PSG1"), psg1_seed);
+    let pcsg_payload = build_patched_signature_chunk(FourCC(*b"PCSG"), pcsg_seed);
+    let pcg1_payload = build_patched_signature_chunk(FourCC(*b"PCG1"), pcg1_seed);
+
     let bad_isgn_payload = build_malformed_signature_chunk(bad_isgn_seed);
     let bad_osgn_payload = build_malformed_signature_chunk(bad_osgn_seed);
     let bad_psgn_payload = build_malformed_signature_chunk(bad_psgn_seed);
     let bad_pcsg_payload = build_malformed_signature_chunk(bad_pcsg_seed);
+    let bad_isg1_payload = build_malformed_signature_chunk(bad_isg1_seed);
+    let bad_osg1_payload = build_malformed_signature_chunk(bad_osg1_seed);
+    let bad_psg1_payload = build_malformed_signature_chunk(bad_psg1_seed);
+    let bad_pcg1_payload = build_malformed_signature_chunk(bad_pcg1_seed);
+
     let shader_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SHADER_BYTES);
     let rdef_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
     let ctab_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
@@ -630,14 +638,43 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let mut chunks: Vec<(FourCC, &[u8])> = Vec::with_capacity(16);
     // Insert malformed duplicates before the valid chunks so helper APIs exercise their
     // "try all chunks in file order and return the first that parses" behavior.
-    chunks.push((isgn_fourcc, &bad_isgn_payload));
-    chunks.push((isgn_fourcc, &isgn_payload));
-    chunks.push((osgn_fourcc, &bad_osgn_payload));
-    chunks.push((osgn_fourcc, &osgn_payload));
-    chunks.push((psgn_fourcc, &bad_psgn_payload));
-    chunks.push((psgn_fourcc, &psgn_payload));
-    chunks.push((pcsg_fourcc, &bad_pcsg_payload));
-    chunks.push((pcsg_fourcc, &pcsg_payload));
+    chunks.push((FourCC(*b"ISG1"), &bad_isg1_payload));
+    if isg1_good {
+        chunks.push((FourCC(*b"ISG1"), &isg1_payload));
+    }
+    chunks.push((FourCC(*b"ISGN"), &bad_isgn_payload));
+    if !isg1_good {
+        chunks.push((FourCC(*b"ISGN"), &isgn_payload));
+    }
+
+    chunks.push((FourCC(*b"OSG1"), &bad_osg1_payload));
+    if osg1_good {
+        chunks.push((FourCC(*b"OSG1"), &osg1_payload));
+    }
+    chunks.push((FourCC(*b"OSGN"), &bad_osgn_payload));
+    if !osg1_good {
+        chunks.push((FourCC(*b"OSGN"), &osgn_payload));
+    }
+
+    chunks.push((FourCC(*b"PSG1"), &bad_psg1_payload));
+    if psg1_good {
+        chunks.push((FourCC(*b"PSG1"), &psg1_payload));
+    }
+    chunks.push((FourCC(*b"PSGN"), &bad_psgn_payload));
+    if !psg1_good {
+        chunks.push((FourCC(*b"PSGN"), &psgn_payload));
+    }
+
+    // Patch-constant signature (`PCG1` preferred, `PCSG` fallback).
+    chunks.push((FourCC(*b"PCG1"), &bad_pcg1_payload));
+    if pcg1_good {
+        chunks.push((FourCC(*b"PCG1"), &pcg1_payload));
+    }
+    chunks.push((FourCC(*b"PCSG"), &bad_pcsg_payload));
+    if !pcg1_good {
+        chunks.push((FourCC(*b"PCSG"), &pcsg_payload));
+    }
+
     chunks.push((shader_fourcc, shader_bytes));
 
     // Occasionally include a malformed primary `RDEF` chunk even when we store the real payload
