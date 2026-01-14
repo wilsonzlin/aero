@@ -93,6 +93,13 @@ pub trait VirtualDisk: VirtualDiskSend {
     }
 }
 
+// Compile-time guard: `VirtualDisk` should remain `Send` on native targets.
+#[cfg(not(target_arch = "wasm32"))]
+const _: () = {
+    fn assert_send<T: Send>() {}
+    let _ = assert_send::<Box<dyn VirtualDisk>>;
+};
+
 // Compile-time guard: in the browser build we intentionally allow non-`Send` disk backends
 // (e.g. JS/OPFS handles stored in `Rc`). This module should fail to compile if `VirtualDisk`
 // accidentally regains a `Send` requirement on wasm32.
