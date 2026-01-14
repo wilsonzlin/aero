@@ -78,7 +78,9 @@ describe("runtime disk snapshot payload", () => {
 
     const bytes = serializeRuntimeDiskSnapshot(snapshot);
     const decoded = deserializeRuntimeDiskSnapshot(bytes);
-    expect(decoded).toEqual(snapshot);
+    // The deserializer returns plain record objects that are safe against prototype pollution
+    // (e.g. null-prototype). Compare via JSON so prototype differences don't affect equality.
+    expect(JSON.parse(JSON.stringify(decoded))).toEqual(snapshot);
 
     // Sanity: payload must not contain embedded URLs/tokens.
     const json = new TextDecoder().decode(bytes);
@@ -100,6 +102,40 @@ describe("runtime disk snapshot payload", () => {
 
   it("rejects missing disks array", () => {
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson({ version: 1, nextHandle: 1 }))).toThrow(/disks/);
+  });
+
+  it("does not accept required fields inherited from Object.prototype", () => {
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "version");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "version", { value: 1, configurable: true });
+      // Missing `version` must not be satisfied by prototype pollution.
+      expect(() => deserializeRuntimeDiskSnapshot(encodeJson({ nextHandle: 1, disks: [] }))).toThrow(/Unsupported disk snapshot version/);
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "version", existing);
+      else delete (Object.prototype as any).version;
+    }
+  });
+
+  it("does not observe optional fields inherited from Object.prototype", () => {
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "leaseEndpoint");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "leaseEndpoint", { value: "/evil", configurable: true });
+      const decoded = deserializeRuntimeDiskSnapshot(serializeRuntimeDiskSnapshot(sampleSnapshot()));
+      const remote = decoded.disks[1]?.backend;
+      expect(remote?.kind).toBe("remote");
+      expect((remote as any).base.leaseEndpoint).toBeUndefined();
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "leaseEndpoint", existing);
+      else delete (Object.prototype as any).leaseEndpoint;
+    }
   });
 
   it("defaults remote cacheLimitBytes when missing (backward compatibility)", () => {

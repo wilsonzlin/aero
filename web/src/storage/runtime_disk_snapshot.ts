@@ -118,6 +118,14 @@ function requireRecord(v: unknown, path: string): Record<string, unknown> {
   return v;
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function nullProto<T extends object>(): T {
+  return Object.create(null) as T;
+}
+
 function requireArray(v: unknown, path: string): unknown[] {
   if (!Array.isArray(v)) fail(path, "expected an array");
   return v;
@@ -256,64 +264,85 @@ function validateLeaseEndpoint(v: unknown, path: string): string {
 
 function validateRemoteValidator(v: unknown, path: string): RemoteDiskValidator {
   const obj = requireRecord(v, path);
-  const kind = obj.kind;
+  const kind = hasOwn(obj, "kind") ? obj.kind : undefined;
   if (kind !== "etag" && kind !== "lastModified") {
     fail(`${path}.kind`, 'expected "etag" or "lastModified"');
   }
-  const value = requireBoundedString(obj.value, `${path}.value`, { nonEmpty: true });
-  return { kind, value };
+  const valueRaw = hasOwn(obj, "value") ? obj.value : undefined;
+  const value = requireBoundedString(valueRaw, `${path}.value`, { nonEmpty: true });
+  const out = nullProto<RemoteDiskValidator>();
+  (out as any).kind = kind;
+  (out as any).value = value;
+  return out;
 }
 
 function validateOverlaySnapshot(v: unknown, path: string, expectedDiskSizeBytes: number): DiskOverlaySnapshot {
   const obj = requireRecord(v, path);
-  const fileName = requireBoundedString(obj.fileName, `${path}.fileName`, { nonEmpty: true });
-  const diskSizeBytes = requireSafeInteger(obj.diskSizeBytes, `${path}.diskSizeBytes`, { min: 1 });
+  const fileName = requireBoundedString(hasOwn(obj, "fileName") ? obj.fileName : undefined, `${path}.fileName`, {
+    nonEmpty: true,
+  });
+  const diskSizeBytes = requireSafeInteger(hasOwn(obj, "diskSizeBytes") ? obj.diskSizeBytes : undefined, `${path}.diskSizeBytes`, {
+    min: 1,
+  });
   if (diskSizeBytes !== expectedDiskSizeBytes) {
     fail(`${path}.diskSizeBytes`, `must match sizeBytes=${expectedDiskSizeBytes}`);
   }
   const blockSizeBytes = requirePowerOfTwoMultipleOf512Within(
-    obj.blockSizeBytes,
+    hasOwn(obj, "blockSizeBytes") ? obj.blockSizeBytes : undefined,
     `${path}.blockSizeBytes`,
     MAX_OVERLAY_BLOCK_SIZE_BYTES,
   );
-  return { fileName, diskSizeBytes, blockSizeBytes };
+  const out = nullProto<DiskOverlaySnapshot>();
+  out.fileName = fileName;
+  out.diskSizeBytes = diskSizeBytes;
+  out.blockSizeBytes = blockSizeBytes;
+  return out;
 }
 
 function validateCacheSnapshot(v: unknown, path: string): DiskCacheSnapshot {
   const obj = requireRecord(v, path);
-  const fileName = requireBoundedString(obj.fileName, `${path}.fileName`, { nonEmpty: true });
+  const fileName = requireBoundedString(hasOwn(obj, "fileName") ? obj.fileName : undefined, `${path}.fileName`, {
+    nonEmpty: true,
+  });
 
   // Backward compatibility: older snapshots omitted `cacheLimitBytes`. Treat it as the default
   // bounded cache size (currently 512 MiB).
-  const raw = (obj as { cacheLimitBytes?: unknown }).cacheLimitBytes;
+  const raw = hasOwn(obj, "cacheLimitBytes") ? (obj as { cacheLimitBytes?: unknown }).cacheLimitBytes : undefined;
   const cacheLimitBytes =
     raw === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : raw === null ? null : requireSafeInteger(raw, `${path}.cacheLimitBytes`, { min: 0 });
-  return { fileName, cacheLimitBytes };
+  const out = nullProto<DiskCacheSnapshot>();
+  out.fileName = fileName;
+  out.cacheLimitBytes = cacheLimitBytes;
+  return out;
 }
 
 function validateRemoteBaseSnapshot(v: unknown, path: string): RemoteDiskBaseSnapshot {
   const obj = requireRecord(v, path);
-  const imageId = requireBoundedString(obj.imageId, `${path}.imageId`, { nonEmpty: true });
-  const version = requireBoundedString(obj.version, `${path}.version`, { nonEmpty: true });
-  const deliveryType = requireBoundedString(obj.deliveryType, `${path}.deliveryType`, { nonEmpty: true });
+  const imageId = requireBoundedString(hasOwn(obj, "imageId") ? obj.imageId : undefined, `${path}.imageId`, { nonEmpty: true });
+  const version = requireBoundedString(hasOwn(obj, "version") ? obj.version : undefined, `${path}.version`, { nonEmpty: true });
+  const deliveryType = requireBoundedString(hasOwn(obj, "deliveryType") ? obj.deliveryType : undefined, `${path}.deliveryType`, { nonEmpty: true });
 
-  const leaseEndpointRaw = obj.leaseEndpoint;
+  const leaseEndpointRaw = hasOwn(obj, "leaseEndpoint") ? obj.leaseEndpoint : undefined;
   const leaseEndpoint = leaseEndpointRaw !== undefined ? validateLeaseEndpoint(leaseEndpointRaw, `${path}.leaseEndpoint`) : undefined;
 
-  const expectedValidatorRaw = obj.expectedValidator;
+  const expectedValidatorRaw = hasOwn(obj, "expectedValidator") ? obj.expectedValidator : undefined;
   const expectedValidator =
     expectedValidatorRaw !== undefined ? validateRemoteValidator(expectedValidatorRaw, `${path}.expectedValidator`) : undefined;
 
-  const chunkSize = requirePowerOfTwoMultipleOf512Within(obj.chunkSize, `${path}.chunkSize`, MAX_REMOTE_CHUNK_SIZE_BYTES);
+  const chunkSize = requirePowerOfTwoMultipleOf512Within(
+    hasOwn(obj, "chunkSize") ? obj.chunkSize : undefined,
+    `${path}.chunkSize`,
+    MAX_REMOTE_CHUNK_SIZE_BYTES,
+  );
 
-  return {
-    imageId,
-    version,
-    deliveryType,
-    ...(leaseEndpoint ? { leaseEndpoint } : {}),
-    ...(expectedValidator ? { expectedValidator } : {}),
-    chunkSize,
-  };
+  const out = nullProto<RemoteDiskBaseSnapshot>();
+  out.imageId = imageId;
+  out.version = version;
+  out.deliveryType = deliveryType;
+  if (leaseEndpoint) out.leaseEndpoint = leaseEndpoint;
+  if (expectedValidator) out.expectedValidator = expectedValidator;
+  out.chunkSize = chunkSize;
+  return out;
 }
 
 function validateBackendSnapshot(
@@ -322,16 +351,18 @@ function validateBackendSnapshot(
   opts: { sectorSize: number; capacityBytes: number },
 ): DiskBackendSnapshot {
   const obj = requireRecord(v, path);
-  const kind = obj.kind;
+  const kind = hasOwn(obj, "kind") ? obj.kind : undefined;
   if (kind === "local") {
-    const backend = requireDiskBackend(obj.backend, `${path}.backend`);
-    const key = requireBoundedString(obj.key, `${path}.key`, { nonEmpty: true });
-    const dirPathRaw = obj.dirPath;
+    const backend = requireDiskBackend(hasOwn(obj, "backend") ? obj.backend : undefined, `${path}.backend`);
+    const key = requireBoundedString(hasOwn(obj, "key") ? obj.key : undefined, `${path}.key`, { nonEmpty: true });
+    const dirPathRaw = hasOwn(obj, "dirPath") ? obj.dirPath : undefined;
     const dirPath =
       dirPathRaw !== undefined ? requireBoundedString(dirPathRaw, `${path}.dirPath`, { nonEmpty: true }) : undefined;
-    const format = requireDiskFormat(obj.format, `${path}.format`);
-    const diskKind = requireDiskKind(obj.diskKind, `${path}.diskKind`);
-    const sizeBytes = requireSafeInteger(obj.sizeBytes, `${path}.sizeBytes`, { min: 1 });
+    const format = requireDiskFormat(hasOwn(obj, "format") ? obj.format : undefined, `${path}.format`);
+    const diskKind = requireDiskKind(hasOwn(obj, "diskKind") ? obj.diskKind : undefined, `${path}.diskKind`);
+    const sizeBytes = requireSafeInteger(hasOwn(obj, "sizeBytes") ? obj.sizeBytes : undefined, `${path}.sizeBytes`, {
+      min: 1,
+    });
     if (sizeBytes !== opts.capacityBytes) {
       fail(`${path}.sizeBytes`, `must match capacityBytes=${opts.capacityBytes}`);
     }
@@ -339,27 +370,29 @@ function validateBackendSnapshot(
       fail(`${path}.sizeBytes`, `must be a multiple of sectorSize=${opts.sectorSize}`);
     }
 
-    const overlayRaw = obj.overlay;
+    const overlayRaw = hasOwn(obj, "overlay") ? obj.overlay : undefined;
     const overlay =
       overlayRaw !== undefined ? validateOverlaySnapshot(overlayRaw, `${path}.overlay`, sizeBytes) : undefined;
 
-    return {
-      kind: "local",
-      backend,
-      key,
-      ...(dirPath ? { dirPath } : {}),
-      format,
-      diskKind,
-      sizeBytes,
-      ...(overlay ? { overlay } : {}),
-    };
+    const out = nullProto<LocalDiskBackendSnapshot>();
+    out.kind = "local";
+    out.backend = backend;
+    out.key = key;
+    if (dirPath) out.dirPath = dirPath;
+    out.format = format;
+    out.diskKind = diskKind;
+    out.sizeBytes = sizeBytes;
+    if (overlay) out.overlay = overlay;
+    return out;
   }
 
   if (kind === "remote") {
-    const backendRaw = obj.backend;
+    const backendRaw = hasOwn(obj, "backend") ? obj.backend : undefined;
     const backend = backendRaw !== undefined ? requireDiskBackend(backendRaw, `${path}.backend`) : undefined;
-    const diskKind = requireDiskKind(obj.diskKind, `${path}.diskKind`);
-    const sizeBytes = requireSafeInteger(obj.sizeBytes, `${path}.sizeBytes`, { min: 1 });
+    const diskKind = requireDiskKind(hasOwn(obj, "diskKind") ? obj.diskKind : undefined, `${path}.diskKind`);
+    const sizeBytes = requireSafeInteger(hasOwn(obj, "sizeBytes") ? obj.sizeBytes : undefined, `${path}.sizeBytes`, {
+      min: 1,
+    });
     if (sizeBytes !== opts.capacityBytes) {
       fail(`${path}.sizeBytes`, `must match capacityBytes=${opts.capacityBytes}`);
     }
@@ -367,19 +400,19 @@ function validateBackendSnapshot(
       fail(`${path}.sizeBytes`, `must be a multiple of sectorSize=${opts.sectorSize}`);
     }
 
-    const base = validateRemoteBaseSnapshot(obj.base, `${path}.base`);
-    const overlay = validateOverlaySnapshot(obj.overlay, `${path}.overlay`, sizeBytes);
-    const cache = validateCacheSnapshot(obj.cache, `${path}.cache`);
+    const base = validateRemoteBaseSnapshot(hasOwn(obj, "base") ? obj.base : undefined, `${path}.base`);
+    const overlay = validateOverlaySnapshot(hasOwn(obj, "overlay") ? obj.overlay : undefined, `${path}.overlay`, sizeBytes);
+    const cache = validateCacheSnapshot(hasOwn(obj, "cache") ? obj.cache : undefined, `${path}.cache`);
 
-    return {
-      kind: "remote",
-      ...(backend ? { backend } : {}),
-      diskKind,
-      sizeBytes,
-      base,
-      overlay,
-      cache,
-    };
+    const out = nullProto<RemoteDiskBackendSnapshot>();
+    out.kind = "remote";
+    if (backend) out.backend = backend;
+    out.diskKind = diskKind;
+    out.sizeBytes = sizeBytes;
+    out.base = base;
+    out.overlay = overlay;
+    out.cache = cache;
+    return out;
   }
 
   fail(`${path}.kind`, 'expected "local" or "remote"');
@@ -398,13 +431,14 @@ export function deserializeRuntimeDiskSnapshot(bytes: Uint8Array): RuntimeDiskSn
   }
   const obj = requireRecord(parsed, "root");
 
-  if (obj.version !== 1) {
-    throw new Error(`Unsupported disk snapshot version: ${String(obj.version)}`);
+  const version = hasOwn(obj, "version") ? obj.version : undefined;
+  if (version !== 1) {
+    throw new Error(`Unsupported disk snapshot version: ${String(version)}`);
   }
 
-  const nextHandle = requireSafeInteger(obj.nextHandle, "nextHandle", { min: 1 });
+  const nextHandle = requireSafeInteger(hasOwn(obj, "nextHandle") ? obj.nextHandle : undefined, "nextHandle", { min: 1 });
 
-  const disksRaw = requireArray(obj.disks, "disks");
+  const disksRaw = requireArray(hasOwn(obj, "disks") ? obj.disks : undefined, "disks");
   if (disksRaw.length > MAX_DISKS) {
     fail("disks", `too many disks (max ${MAX_DISKS})`);
   }
@@ -414,34 +448,47 @@ export function deserializeRuntimeDiskSnapshot(bytes: Uint8Array): RuntimeDiskSn
   for (let i = 0; i < disksRaw.length; i++) {
     const entryPath = `disks[${i}]`;
     const diskObj = requireRecord(disksRaw[i], entryPath);
-    const handle = requireSafeInteger(diskObj.handle, `${entryPath}.handle`, { min: 1 });
+    const handle = requireSafeInteger(hasOwn(diskObj, "handle") ? diskObj.handle : undefined, `${entryPath}.handle`, {
+      min: 1,
+    });
     if (seenHandles.has(handle)) {
       fail(`${entryPath}.handle`, `duplicate handle ${handle}`);
     }
     seenHandles.add(handle);
 
-    const readOnly = requireBoolean(diskObj.readOnly, `${entryPath}.readOnly`);
-    const sectorSize = requireSectorSize(diskObj.sectorSize, `${entryPath}.sectorSize`);
-    const capacityBytes = requireSafeInteger(diskObj.capacityBytes, `${entryPath}.capacityBytes`, { min: 1 });
+    const readOnly = requireBoolean(hasOwn(diskObj, "readOnly") ? diskObj.readOnly : undefined, `${entryPath}.readOnly`);
+    const sectorSize = requireSectorSize(
+      hasOwn(diskObj, "sectorSize") ? diskObj.sectorSize : undefined,
+      `${entryPath}.sectorSize`,
+    );
+    const capacityBytes = requireSafeInteger(
+      hasOwn(diskObj, "capacityBytes") ? diskObj.capacityBytes : undefined,
+      `${entryPath}.capacityBytes`,
+      { min: 1 },
+    );
     if (capacityBytes % sectorSize !== 0) {
       fail(`${entryPath}.capacityBytes`, `must be a multiple of sectorSize=${sectorSize}`);
     }
 
-    const backend = validateBackendSnapshot(diskObj.backend, `${entryPath}.backend`, {
+    const backend = validateBackendSnapshot(hasOwn(diskObj, "backend") ? diskObj.backend : undefined, `${entryPath}.backend`, {
       sectorSize,
       capacityBytes,
     });
 
-    disks.push({
-      handle,
-      readOnly,
-      sectorSize,
-      capacityBytes,
-      backend,
-    });
+    const entry = nullProto<RuntimeDiskSnapshotEntry>();
+    entry.handle = handle;
+    entry.readOnly = readOnly;
+    entry.sectorSize = sectorSize;
+    entry.capacityBytes = capacityBytes;
+    entry.backend = backend;
+    disks.push(entry);
   }
 
-  return { version: 1, nextHandle, disks };
+  const out = nullProto<RuntimeDiskSnapshot>();
+  out.version = 1;
+  out.nextHandle = nextHandle;
+  out.disks = disks;
+  return out;
 }
 
 export type RemoteCacheBinding = {
@@ -456,9 +503,11 @@ function remoteDeliveryKind(deliveryType: string): string {
 
 function isRemoteDiskValidator(value: unknown): value is RemoteDiskValidator {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const obj = value as { kind?: unknown; value?: unknown };
-  if (obj.kind !== "etag" && obj.kind !== "lastModified") return false;
-  if (typeof obj.value !== "string" || obj.value.trim().length === 0) return false;
+  const obj = value as Record<string, unknown>;
+  const kind = hasOwn(obj, "kind") ? obj.kind : undefined;
+  if (kind !== "etag" && kind !== "lastModified") return false;
+  const v = hasOwn(obj, "value") ? obj.value : undefined;
+  if (typeof v !== "string" || v.trim().length === 0) return false;
   return true;
 }
 
@@ -472,14 +521,17 @@ export function shouldInvalidateRemoteOverlay(
   if (!binding || binding.version !== 1) return false;
   const base = binding.base;
   if (!base) return false;
-  const baseAny = base as unknown as { imageId?: unknown; version?: unknown; deliveryType?: unknown; expectedValidator?: unknown };
-  if (typeof baseAny.imageId !== "string" || baseAny.imageId.trim().length === 0) return false;
-  if (typeof baseAny.version !== "string" || baseAny.version.trim().length === 0) return false;
-  if (typeof baseAny.deliveryType !== "string" || baseAny.deliveryType.trim().length === 0) return false;
+  const baseAny = base as unknown as Record<string, unknown>;
+  const imageId = hasOwn(baseAny, "imageId") ? baseAny.imageId : undefined;
+  const version = hasOwn(baseAny, "version") ? baseAny.version : undefined;
+  const deliveryType = hasOwn(baseAny, "deliveryType") ? baseAny.deliveryType : undefined;
+  if (typeof imageId !== "string" || imageId.trim().length === 0) return false;
+  if (typeof version !== "string" || version.trim().length === 0) return false;
+  if (typeof deliveryType !== "string" || deliveryType.trim().length === 0) return false;
 
-  if (baseAny.imageId !== expected.imageId) return true;
-  if (baseAny.version !== expected.version) return true;
-  if (remoteDeliveryKind(baseAny.deliveryType) !== remoteDeliveryKind(expected.deliveryType)) return true;
+  if (imageId !== expected.imageId) return true;
+  if (version !== expected.version) return true;
+  if (remoteDeliveryKind(deliveryType) !== remoteDeliveryKind(expected.deliveryType)) return true;
 
   // NOTE: We intentionally *do not* compare `chunkSize` here. `chunkSize` is a local cache
   // tuning parameter for remote delivery and can be changed without changing the underlying
@@ -487,7 +539,8 @@ export function shouldInvalidateRemoteOverlay(
   // user state.
 
   const a = expected.expectedValidator;
-  const b = isRemoteDiskValidator(baseAny.expectedValidator) ? (baseAny.expectedValidator as RemoteDiskValidator) : undefined;
+  const expectedValidatorRaw = hasOwn(baseAny, "expectedValidator") ? baseAny.expectedValidator : undefined;
+  const b = isRemoteDiskValidator(expectedValidatorRaw) ? (expectedValidatorRaw as RemoteDiskValidator) : undefined;
   // Only invalidate when both expected and binding provide a validator and they conflict. Missing
   // validator info is not positive evidence of mismatch, and overlays may contain user data.
   if (!a || !b) return false;
@@ -501,24 +554,23 @@ export function shouldInvalidateRemoteCache(
   if (!binding || binding.version !== 1) return true;
   const base = binding.base;
   if (!base) return true;
-  const baseAny = base as unknown as {
-    imageId?: unknown;
-    version?: unknown;
-    deliveryType?: unknown;
-    chunkSize?: unknown;
-    expectedValidator?: unknown;
-  };
-  if (typeof baseAny.imageId !== "string" || baseAny.imageId.trim().length === 0) return true;
-  if (typeof baseAny.version !== "string" || baseAny.version.trim().length === 0) return true;
-  if (typeof baseAny.deliveryType !== "string" || baseAny.deliveryType.trim().length === 0) return true;
-  if (typeof baseAny.chunkSize !== "number" || !Number.isSafeInteger(baseAny.chunkSize) || baseAny.chunkSize <= 0) return true;
-  if (baseAny.imageId !== expected.imageId) return true;
-  if (baseAny.version !== expected.version) return true;
-  if (baseAny.deliveryType !== expected.deliveryType) return true;
-  if (baseAny.chunkSize !== expected.chunkSize) return true;
+  const baseAny = base as unknown as Record<string, unknown>;
+  const imageId = hasOwn(baseAny, "imageId") ? baseAny.imageId : undefined;
+  const version = hasOwn(baseAny, "version") ? baseAny.version : undefined;
+  const deliveryType = hasOwn(baseAny, "deliveryType") ? baseAny.deliveryType : undefined;
+  const chunkSize = hasOwn(baseAny, "chunkSize") ? baseAny.chunkSize : undefined;
+  if (typeof imageId !== "string" || imageId.trim().length === 0) return true;
+  if (typeof version !== "string" || version.trim().length === 0) return true;
+  if (typeof deliveryType !== "string" || deliveryType.trim().length === 0) return true;
+  if (typeof chunkSize !== "number" || !Number.isSafeInteger(chunkSize) || chunkSize <= 0) return true;
+  if (imageId !== expected.imageId) return true;
+  if (version !== expected.version) return true;
+  if (deliveryType !== expected.deliveryType) return true;
+  if (chunkSize !== expected.chunkSize) return true;
 
   const a = expected.expectedValidator;
-  const b = isRemoteDiskValidator(baseAny.expectedValidator) ? (baseAny.expectedValidator as RemoteDiskValidator) : undefined;
+  const expectedValidatorRaw = hasOwn(baseAny, "expectedValidator") ? baseAny.expectedValidator : undefined;
+  const b = isRemoteDiskValidator(expectedValidatorRaw) ? (expectedValidatorRaw as RemoteDiskValidator) : undefined;
   if (!a && !b) return false;
   if (!a || !b) return true;
   return a.kind !== b.kind || a.value !== b.value;
