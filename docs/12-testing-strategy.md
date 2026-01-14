@@ -785,6 +785,7 @@ Tuning / reproducing failures:
 - `AERO_CONFORMANCE_CASES=<n>` to increase/decrease the corpus size (default `512`).
 - `AERO_CONFORMANCE_SEED=<n>` to reproduce a specific random corpus (decimal or `0x...` hex; `_` separators allowed).
 - `AERO_CONFORMANCE_FILTER=<expr>` to select a subset of the corpus/templates (e.g. `add`).
+- `AERO_CONFORMANCE_REFERENCE=qemu` to compare against a QEMU reference backend (requires running the `conformance` crate with `--features qemu-reference` and a `qemu-system-*` binary).
 - `AERO_CONFORMANCE_REPORT_PATH=<path>` to write a JSON report (written on failure; also written on success when set).
 - `AERO_CONFORMANCE_REFERENCE_ISOLATE=0` to disable `fork()` isolation in the native reference backend (can help in sandboxed environments).
 
