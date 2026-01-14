@@ -130,8 +130,11 @@ Notes:
 
 - On Win7 x64, `aerogpu_dbgctl.exe` is intentionally an **x86 (32-bit)** binary and runs under **WOW64**
   (even when invoked from `X:\drivers\amd64\...`), so you can run it directly from the mounted media without editing `PATH`.
-- This requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
-  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+- This requires the installed KMD to allow the debug-only `AEROGPU_ESCAPE_OP_READ_GPA` escape.
+  - If `READ_GPA` is not enabled/authorized, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+  - To enable it, set (and reboot/restart the driver):  
+    `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableReadGpaEscape = 1` (REG_DWORD)  
+    and run dbgctl as a privileged user (Administrator and/or `SeDebugPrivilege`).
 - If dbgctl refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
   - `aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin --force`
 - To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:

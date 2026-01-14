@@ -319,8 +319,11 @@ aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.
 Copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host.
 
 Tips:
-- This requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
-  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+- This requires the installed KMD to allow the debug-only `AEROGPU_ESCAPE_OP_READ_GPA` escape.
+  - If `READ_GPA` is not enabled/authorized, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+  - To enable it, set (and reboot/restart the driver):  
+    `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableReadGpaEscape = 1` (REG_DWORD)  
+    and run dbgctl as a privileged user (Administrator and/or `SeDebugPrivilege`).
 - To dump multiple recent submissions in one run (useful if the newest submission is a tiny no-op), use `--count N`:
   - `aerogpu_dbgctl.exe --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
   - This writes one output per submission (for example `C:\cmd_0.bin`, `C:\cmd_1.bin`, ...) plus per-submission `.txt`
