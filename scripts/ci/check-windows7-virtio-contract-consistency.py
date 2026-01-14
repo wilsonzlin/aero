@@ -341,12 +341,13 @@ def parse_inf_hardware_ids(path: Path) -> set[str]:
         parts = [p.strip() for p in line.split(",")]
         if not parts:
             continue
-        # Model lines can optionally include compatible IDs after the HWID. Scan for
-        # the last comma-separated field that looks like a PCI HWID.
-        for part in reversed(parts):
+        # Model lines can optionally include additional IDs after the primary HWID.
+        # Collect every comma-separated field that looks like a PCI HWID so we don't
+        # accidentally miss the strict REV-qualified match (and so we can fail fast
+        # if any extra IDs violate revision gating policy).
+        for part in parts:
             if part.upper().startswith("PCI\\VEN_"):
                 out.add(part)
-                break
     return out
 
 

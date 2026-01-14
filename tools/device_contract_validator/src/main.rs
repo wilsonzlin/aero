@@ -899,15 +899,10 @@ fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
         if line.is_empty() {
             continue;
         }
-        let mut hwid = None;
-        for part in line.split(',').map(|p| p.trim()).rev() {
+        for part in line.split(',').map(|p| p.trim()) {
             if part.to_ascii_uppercase().starts_with("PCI\\VEN_") {
-                hwid = Some(part);
-                break;
+                out.insert(part.to_string());
             }
-        }
-        if let Some(hwid) = hwid {
-            out.insert(hwid.to_string());
         }
     }
     out
