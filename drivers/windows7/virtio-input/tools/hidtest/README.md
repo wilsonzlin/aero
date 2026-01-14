@@ -58,8 +58,8 @@ Mouse input reports (`ReportID=2`) are 6 bytes:
 
 Older/alternate builds may use PCI-style virtio IDs (PID `1052`/`1011`); `hidtest` still recognizes these as virtio-input.
 
-Note: `--selftest` currently validates the **keyboard + mouse** descriptor contract. Tablet support is included for
-enumeration and report decoding, but is not yet covered by `--selftest`.
+Note: `--selftest` validates the **keyboard + mouse** descriptor contract by default. Pass `--tablet` to validate the
+tablet collection contract (when present).
 
 ## Build (MSVC)
 
@@ -114,6 +114,7 @@ hidtest.exe --selftest
 
 The selftest validates (per selected device):
   - input report length (`HidP_GetCaps`)
+  - output report length (`HidP_GetCaps`, keyboard only)
   - report descriptor length (`IOCTL_HID_GET_REPORT_DESCRIPTOR`)
   - HID descriptor-reported report length (`IOCTL_HID_GET_DEVICE_DESCRIPTOR`)
   - collection descriptor length (`IOCTL_HID_GET_COLLECTION_DESCRIPTOR`) **when supported**
@@ -134,6 +135,7 @@ To selftest just one collection:
 ```bat
 hidtest.exe --selftest --keyboard
 hidtest.exe --selftest --mouse
+hidtest.exe --selftest --tablet
 ```
 
 Machine-readable selftest output:
@@ -141,6 +143,12 @@ Machine-readable selftest output:
 ```bat
 hidtest.exe --selftest --json
 ```
+
+The JSON output is an object with:
+
+- `pass` (bool)
+- `keyboard`, `mouse`, `tablet` (object or null; `tablet` is null unless `--tablet` is used or a tablet interface is detected)
+- `failures` (array)
 
 The JSON output includes additional fields for the optional collection descriptor check:
   - `collectionDescLen`, `collectionDescIoctl`, `collectionDescErr`
