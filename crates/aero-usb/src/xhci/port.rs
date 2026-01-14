@@ -182,7 +182,7 @@ impl XhciPort {
                     "usb device snapshot too large",
                 ));
             }
-            Some(d.bytes(len)?.to_vec())
+            Some(d.bytes(len)?)
         } else {
             None
         };
@@ -190,12 +190,12 @@ impl XhciPort {
 
         if let Some(device_state) = device_state {
             if self.device.is_none() {
-                if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&device_state)? {
+                if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(device_state)? {
                     self.device = Some(dev);
                 }
             }
             if let Some(dev) = self.device.as_mut() {
-                dev.load_state(&device_state)?;
+                dev.load_state(device_state)?;
             }
         } else {
             // Snapshot indicates no device attached.

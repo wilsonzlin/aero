@@ -533,8 +533,7 @@ impl Usb2MuxPort {
                     "usb2 mux device snapshot",
                 ));
             }
-            let bytes = pd.bytes(len)?;
-            Some(bytes.to_vec())
+            Some(pd.bytes(len)?)
         } else {
             None
         };
@@ -542,11 +541,11 @@ impl Usb2MuxPort {
 
         if let Some(device_state) = device_state {
             if let Some(dev) = self.device.as_mut() {
-                dev.load_state(&device_state)?;
-            } else if let Some(mut dev) = AttachedUsbDevice::try_new_from_snapshot(&device_state)? {
+                dev.load_state(device_state)?;
+            } else if let Some(mut dev) = AttachedUsbDevice::try_new_from_snapshot(device_state)? {
                 // `try_new_from_snapshot` only selects the concrete device model; the wrapper state
                 // must still be restored from the snapshot bytes.
-                dev.load_state(&device_state)?;
+                dev.load_state(device_state)?;
                 self.device = Some(dev);
             }
         } else {

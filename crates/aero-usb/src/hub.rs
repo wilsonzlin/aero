@@ -480,7 +480,7 @@ impl RootHubPortSlot {
                             "usb device snapshot too large",
                         ));
                     }
-                    Some(pd.bytes(len)?.to_vec())
+                    Some(pd.bytes(len)?)
                 } else {
                     None
                 };
@@ -488,14 +488,14 @@ impl RootHubPortSlot {
 
                 if let Some(device_state) = device_state {
                     if let Some(dev) = port.device.as_mut() {
-                        dev.load_state(&device_state)?;
+                        dev.load_state(device_state)?;
                     } else if let Some(mut dev) =
-                        AttachedUsbDevice::try_new_from_snapshot(&device_state)?
+                        AttachedUsbDevice::try_new_from_snapshot(device_state)?
                     {
                         // `try_new_from_snapshot` only chooses the concrete device model; the rest
                         // of the device wrapper state (address, pending control transfer, model
                         // internals, etc.) still needs to be loaded.
-                        dev.load_state(&device_state)?;
+                        dev.load_state(device_state)?;
                         port.device = Some(dev);
                     }
                 } else {
@@ -1208,7 +1208,7 @@ impl IoSnapshot for UsbHubDevice {
                             "usb device snapshot too large",
                         ));
                     }
-                    Some(pd.bytes(len)?.to_vec())
+                    Some(pd.bytes(len)?)
                 } else {
                     None
                 };
@@ -1216,13 +1216,16 @@ impl IoSnapshot for UsbHubDevice {
 
                 if let Some(state) = device_state {
                     if port.device.is_none() {
-                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(state)? {
                             port.device = Some(dev);
                         }
                     }
                     if let Some(dev) = port.device.as_mut() {
-                        dev.load_state(&state)?;
+                        dev.load_state(state)?;
                     }
+                } else {
+                    // Snapshot indicates no device attached.
+                    port.device = None;
                 }
             }
             d.finish()?;

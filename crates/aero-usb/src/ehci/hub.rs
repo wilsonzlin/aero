@@ -522,7 +522,7 @@ impl RootHubPortSlot {
                             "usb device snapshot too large",
                         ));
                     }
-                    Some(pd.bytes(len)?.to_vec())
+                    Some(pd.bytes(len)?)
                 } else {
                     None
                 };
@@ -530,12 +530,12 @@ impl RootHubPortSlot {
 
                 if let Some(state) = device_state {
                     if port.device.is_none() {
-                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(state)? {
                             port.device = Some(dev);
                         }
                     }
                     if let Some(dev) = port.device.as_mut() {
-                        dev.load_state(&state)?;
+                        dev.load_state(state)?;
                     }
                 } else {
                     // Snapshot indicates no device attached.
