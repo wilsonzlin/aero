@@ -74,6 +74,69 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     expect(argv[idx + 1]).toBe("jit");
   });
 
+  it("builds missing aero-d3d11-wasm outputs when core + gpu + jit outputs exist", async () => {
+    const { existsSync } = await import("node:fs");
+    const { spawnSync } = await import("node:child_process");
+    const existsSyncMock = vi.mocked(existsSync);
+    const spawnSyncMock = vi.mocked(spawnSync);
+
+    let builtD3d11 = false;
+
+    existsSyncMock.mockImplementation((file) => {
+      const p = normalizePath(file);
+
+      // Pretend the JIT crate exists.
+      if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return true;
+
+      // Core + GPU outputs already exist.
+      if (p.includes("/web/src/wasm/pkg-single/") && (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))) {
+        return true;
+      }
+      if (
+        p.includes("/web/src/wasm/pkg-single-gpu/") &&
+        (p.endsWith("/aero_gpu_wasm.js") || p.endsWith("/aero_gpu_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+
+      // JIT outputs already exist.
+      if (
+        p.includes("/web/src/wasm/pkg-jit-single/") &&
+        (p.endsWith("/aero_jit_wasm.js") || p.endsWith("/aero_jit_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+
+      // D3D11 outputs are missing until the build step runs.
+      if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
+      ) {
+        return builtD3d11;
+      }
+
+      return false;
+    });
+
+    spawnSyncMock.mockImplementation(() => {
+      builtD3d11 = true;
+      return { status: 0 } as unknown as ReturnType<typeof spawnSync>;
+    });
+
+    const { ensureVariant } = await import("../scripts/ensure_wasm.mjs");
+    ensureVariant("single");
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    const [cmd, args] = spawnSyncMock.mock.calls[0]!;
+    expect(cmd).toBe("node");
+    expect(Array.isArray(args)).toBe(true);
+    const argv = args as string[];
+    expect(argv[1]).toBe("single");
+    const idx = argv.indexOf("--packages");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe("d3d11");
+  });
+
   it("builds missing aero-jit-wasm outputs for the threaded variant when core + gpu outputs exist", async () => {
     const { existsSync } = await import("node:fs");
     const { spawnSync } = await import("node:child_process");
