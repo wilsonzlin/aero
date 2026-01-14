@@ -411,6 +411,10 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfIrqVblankDelivered;
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfIrqSpurious;
 
+    /* DBG-only: GetScanLine telemetry (cache hits vs MMIO polling). */
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfGetScanLineCacheHits;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfGetScanLineMmioPolls;
+
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfResetFromTimeoutCount;
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfLastResetTime100ns;
 

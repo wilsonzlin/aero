@@ -234,14 +234,27 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u32 pending_meta_handle_count;
   aerogpu_escape_u32 pending_meta_handle_reserved0;
   aerogpu_escape_u64 pending_meta_handle_bytes;
+ 
+  /*
+   * DxgkDdiGetScanLine (GetRasterStatus) telemetry (appended).
+   *
+   * When supported (DBG builds), these counters allow measuring how often the KMD
+   * served scanline queries from the cached vblank anchor vs falling back to MMIO
+   * polling of vblank timing registers.
+   *
+   * Callers must check `hdr.size` before reading them.
+   */
+  aerogpu_escape_u64 get_scanline_cache_hits;
+  aerogpu_escape_u64 get_scanline_mmio_polls;
 } aerogpu_escape_query_perf_out;
 
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID (1u << 31)
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID (1u << 0)
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID (1u << 1)
+#define AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID (1u << 2)
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 200);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 216);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
@@ -270,6 +283,8 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, flags) == 1
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) == 184);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_reserved0) == 188);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) == 192);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, get_scanline_cache_hits) == 200);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) == 208);
 
 /*
  * Must remain stable across x86/x64.

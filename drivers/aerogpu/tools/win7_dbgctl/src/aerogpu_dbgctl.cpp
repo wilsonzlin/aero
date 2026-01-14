@@ -1866,6 +1866,15 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(qp.ring_push_failures)) {
       wprintf(L"  ring_push_failures: %I64u\n", (unsigned long long)qp.ring_push_failures);
     }
+    if (qp.hdr.size >=
+        offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(qp.get_scanline_mmio_polls)) {
+      const bool scanlineCountersValid =
+          (qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0;
+      wprintf(L"  get_scanline: cache_hits=%I64u mmio_polls=%I64u%s\n",
+              (unsigned long long)qp.get_scanline_cache_hits,
+              (unsigned long long)qp.get_scanline_mmio_polls,
+              scanlineCountersValid ? L"" : L" (unsupported)");
+    }
     wprintf(L"  irqs: fence=%I64u vblank=%I64u spurious=%I64u\n",
             (unsigned long long)qp.irq_fence_delivered,
             (unsigned long long)qp.irq_vblank_delivered,

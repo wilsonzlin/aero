@@ -7125,21 +7125,6 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceVisibility(_In_ const HANDLE hA
     return STATUS_SUCCESS;
 }
 
-#if DBG
-/*
- * DBG-only scanline query telemetry.
- *
- * D3D9-era apps can call GetRasterStatus (DxgkDdiGetScanLine) in a tight loop to
- * busy-wait for vblank. When vblank IRQs are enabled, the ISR maintains a cached
- * vblank anchor so we can estimate scanline position without hammering MMIO.
- *
- * These counters are best-effort and intentionally global (not per-adapter). They
- * are intended for ad-hoc performance investigations (kernel debugger / internal
- * builds), not for stable user-mode tooling.
- */
-static volatile LONGLONG g_AeroGpuPerfGetScanLineCacheHits = 0;
-static volatile LONGLONG g_AeroGpuPerfGetScanLineMmioPolls = 0;
-#endif
 static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_GETSCANLINE* pGetScanLine)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
@@ -7232,11 +7217,11 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     if (usedCache) {
 #if DBG
-        InterlockedIncrement64(&g_AeroGpuPerfGetScanLineCacheHits);
+        InterlockedIncrement64(&adapter->PerfGetScanLineCacheHits);
 #endif
     } else if (haveVblankRegs) {
 #if DBG
-        InterlockedIncrement64(&g_AeroGpuPerfGetScanLineMmioPolls);
+        InterlockedIncrement64(&adapter->PerfGetScanLineMmioPolls);
 #endif
         ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
@@ -11416,6 +11401,27 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (adapter->SupportsVblank) {
                 out->flags |= AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID;
             }
+#if DBG
+            if (pEscape->PrivateDriverDataSize >=
+                (offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(aerogpu_escape_u64))) {
+                out->flags |= AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID;
+            }
+#endif
+        }
+
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, get_scanline_cache_hits) + sizeof(aerogpu_escape_u64))) {
+#if DBG
+            out->get_scanline_cache_hits =
+                (uint64_t)InterlockedCompareExchange64(&adapter->PerfGetScanLineCacheHits, 0, 0);
+#endif
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(aerogpu_escape_u64))) {
+#if DBG
+            out->get_scanline_mmio_polls =
+                (uint64_t)InterlockedCompareExchange64(&adapter->PerfGetScanLineMmioPolls, 0, 0);
+#endif
         }
 
         if (pEscape->PrivateDriverDataSize >=
