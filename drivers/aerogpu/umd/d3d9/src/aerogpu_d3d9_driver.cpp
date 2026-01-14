@@ -15793,10 +15793,11 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         ++end;
       }
       const uint32_t count = (end - start + 1);
-      std::memcpy(dst + static_cast<size_t>(start) * 4,
-                  src + static_cast<size_t>(start) * 4,
+      const size_t base = static_cast<size_t>(start) * 4;
+      std::memcpy(dst + base,
+                  src + base,
                   static_cast<size_t>(count) * 4 * sizeof(int32_t));
-      const int32_t* payload = src + static_cast<size_t>(start) * 4;
+      const int32_t* payload = src + base;
       const size_t payload_size = static_cast<size_t>(count) * 4 * sizeof(int32_t);
       auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
           dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, payload, payload_size);
