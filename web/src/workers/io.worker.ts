@@ -215,7 +215,13 @@ import { tryInitVirtioSndDevice } from "./io_virtio_snd_init";
 import { tryInitXhciDevice } from "./io_xhci_init";
 import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
 import { VmTimebase } from "../runtime/vm_timebase";
-import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
+import {
+  INPUT_BATCH_HEADER_BYTES,
+  INPUT_BATCH_HEADER_WORDS,
+  INPUT_BATCH_WORDS_PER_EVENT,
+  MAX_INPUT_EVENTS_PER_BATCH,
+  validateInputBatchBuffer,
+} from "./io_input_batch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -5607,7 +5613,33 @@ function safeSyntheticUsbHidConfigured(dev: UsbHidPassthroughBridge | null): boo
   }
 }
 
+let inputBatchDropWarns = 0;
+const MAX_INPUT_BATCH_DROP_WARNS = 8;
+
+function noteInputBatchDrop(reason: string, detail: string): void {
+  if (!import.meta.env.DEV) return;
+  if (inputBatchDropWarns >= MAX_INPUT_BATCH_DROP_WARNS) return;
+  inputBatchDropWarns += 1;
+  console.warn(`[io.worker] Dropping malformed input batch (${reason}): ${detail}`);
+  if (inputBatchDropWarns === MAX_INPUT_BATCH_DROP_WARNS) {
+    console.warn("[io.worker] Suppressing further malformed input batch warnings.");
+  }
+}
+
 function handleInputBatch(buffer: ArrayBuffer): void {
+  const byteLength = buffer.byteLength >>> 0;
+  if (byteLength < INPUT_BATCH_HEADER_BYTES || byteLength % 4 !== 0) {
+    invalidInputBatchCount += 1;
+    try {
+      Atomics.add(status, StatusIndex.IoInputBatchDropCounter, 1);
+    } catch {
+      // ignore if shared status isn't initialized yet.
+    }
+    perf.counter("io:inputBatchDrops", invalidInputBatchCount);
+    noteInputBatchDrop("invalid-buffer", `byteLength=${byteLength}`);
+    return;
+  }
+
   const t0 = performance.now();
   const nowUs = Math.round(t0 * 1000) >>> 0;
   const decoded = validateInputBatchBuffer(buffer);
@@ -5620,11 +5652,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     }
     // `invalidInputBatchCount` is local (non-atomic) but sufficient for perf/debug counters.
     perf.counter("io:inputBatchDrops", invalidInputBatchCount);
+    noteInputBatchDrop("invalid-contents", `error=${decoded.error} byteLength=${byteLength}`);
     return;
   }
 
   // `buffer` is transferred from the main thread, so it is uniquely owned here.
-  const { words, count } = decoded;
+  const { words, count, claimedCount, maxCount } = decoded;
   const batchSendTimestampUs = words[1] >>> 0;
   const batchSendLatencyUs = u32Delta(nowUs, batchSendTimestampUs);
 
@@ -5643,6 +5676,25 @@ function handleInputBatch(buffer: ArrayBuffer): void {
 
   Atomics.add(status, StatusIndex.IoInputBatchCounter, 1);
   Atomics.add(status, StatusIndex.IoInputEventCounter, count);
+  if (count !== claimedCount) {
+    invalidInputBatchCount += 1;
+    try {
+      Atomics.add(status, StatusIndex.IoInputBatchDropCounter, 1);
+    } catch {
+      // ignore if shared status isn't initialized yet.
+    }
+    perf.counter("io:inputBatchDrops", invalidInputBatchCount);
+    noteInputBatchDrop(
+      "clamped-count",
+      `claimed=${claimedCount} max=${maxCount} cap=${MAX_INPUT_EVENTS_PER_BATCH} processed=${count} byteLength=${byteLength}`,
+    );
+  }
+
+  if (count === 0) {
+    perfIoReadBytes += byteLength;
+    perfIoMs += performance.now() - t0;
+    return;
+  }
 
   const virtioKeyboard = virtioInputKeyboard;
   const virtioMouse = virtioInputMouse;
@@ -5778,16 +5830,16 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
         // cause duplicated input in the guest.
         if (keyboardInputBackend === "ps2") {
-           if (i8042Wasm) {
-             i8042Wasm.injectKeyScancode(packed, len);
-           } else if (i8042Ts) {
+          if (i8042Wasm) {
+            i8042Wasm.injectKeyScancode(packed, len);
+          } else if (i8042Ts) {
             i8042Ts.injectKeyScancodePacked(packed, len);
-           }
-         }
-         break;
-       }
+          }
+        }
+        break;
+      }
       default:
-        // Should be unreachable: `validateInputBatchBuffer` rejects unknown types.
+        // Unknown event type; ignore.
         break;
     }
   }
@@ -5817,7 +5869,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   // Forward newly queued USB HID reports into the guest-visible UHCI USB HID devices.
   drainSyntheticUsbHidReports();
 
-  perfIoReadBytes += buffer.byteLength;
+  perfIoReadBytes += byteLength;
   perfIoMs += performance.now() - t0;
 }
 
