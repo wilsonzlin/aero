@@ -29,7 +29,9 @@ use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 // `ShaderTranslationFlags::half_pixel_center` is enabled.
 // v5: add `lrp` opcode support in the D3D9 translators (affects WGSL semantics for shaders that
 // previously translated but produced incorrect output).
-pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 5;
+// v6: adaptive vertex input semantic→location mapping (incl. TEXCOORD8+) and fixes to ensure SM3
+// semantic remapping + reflection metadata stay consistent for declared-but-unused semantics.
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 6;
 
 fn default_d3d9_translator_cache_version() -> u32 {
     D3D9_TRANSLATOR_CACHE_VERSION

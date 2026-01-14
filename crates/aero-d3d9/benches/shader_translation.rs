@@ -129,7 +129,7 @@ fn bench_shader_cache_keying(c: &mut Criterion) {
     // Key computation alone for the persistent-cache in-memory key.
     let flags = ShaderTranslationFlags {
         // Keep in sync with `runtime::shader_cache::D3D9_TRANSLATOR_CACHE_VERSION`.
-        d3d9_translator_version: 4,
+        d3d9_translator_version: 6,
         half_pixel_center: false,
         // Representative stable hash for GPU caps/limits; the real value is typically a short hex
         // string.
