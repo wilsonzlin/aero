@@ -14,6 +14,10 @@
 //! ```
 //! (Omit `-- --noplot` to generate Criterion plots/reports.)
 //!
+//! Note: Criterion's cargo integration also supports a fast "smoke test" mode
+//! (no timings) when the benchmark binary is executed without `--bench`. Using
+//! `cargo bench` as shown above will run the full benchmark measurements.
+//!
 //! Shader fixture blobs are loaded from `crates/aero-d3d11/tests/fixtures/*.dxbc`.
 
 #[cfg(target_arch = "wasm32")]
