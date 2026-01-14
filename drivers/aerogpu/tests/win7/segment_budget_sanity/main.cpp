@@ -21,6 +21,7 @@ static const uint32_t kExpectedPagingBufferPrivateDataSize = AEROGPU_WIN7_DMA_BU
 static const uint32_t kExpectedPagingBufferSegmentId = 1;  // AEROGPU_SEGMENT_ID_SYSTEM
 
 static const wchar_t* kAeroGpuHwidNeedleNew = L"PCI\\VEN_A3A0&DEV_0001";
+static const wchar_t* kAeroGpuServiceName = L"aerogpu";
 
 struct SegmentGroupSize {
   uint64_t LocalMemorySize;
@@ -312,23 +313,51 @@ static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::s
   devinfo.cbSize = sizeof(devinfo);
 
   for (DWORD idx = 0; SetupDiEnumDeviceInfo(devs, idx, &devinfo); ++idx) {
+    bool is_aerogpu = false;
+
+    // Prefer matching by service name; this avoids hard-coding deprecated hardware IDs while still
+    // uniquely identifying the driver we care about.
+    wchar_t service[256];
+    ZeroMemory(service, sizeof(service));
+    DWORD service_reg_type = 0;
+    DWORD service_required = 0;
+    if (SetupDiGetDeviceRegistryPropertyW(devs,
+                                          &devinfo,
+                                          SPDRP_SERVICE,
+                                          &service_reg_type,
+                                          (PBYTE)service,
+                                          sizeof(service),
+                                          &service_required)) {
+      if (service_reg_type == REG_SZ && lstrcmpiW(service, kAeroGpuServiceName) == 0) {
+        is_aerogpu = true;
+      }
+    }
+
+    // Fallback for older installs: match by canonical HWID.
     wchar_t hwid[4096];
     ZeroMemory(hwid, sizeof(hwid));
     DWORD reg_type = 0;
     DWORD required = 0;
-    if (!SetupDiGetDeviceRegistryPropertyW(devs,
-                                           &devinfo,
-                                           SPDRP_HARDWAREID,
-                                           &reg_type,
-                                           (PBYTE)hwid,
-                                           sizeof(hwid),
-                                           &required)) {
-      continue;
+    if (!is_aerogpu) {
+      if (!SetupDiGetDeviceRegistryPropertyW(devs,
+                                             &devinfo,
+                                             SPDRP_HARDWAREID,
+                                             &reg_type,
+                                             (PBYTE)hwid,
+                                             sizeof(hwid),
+                                             &required)) {
+        continue;
+      }
+      if (reg_type != REG_MULTI_SZ) {
+        continue;
+      }
+      if (!MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedleNew)) {
+        continue;
+      }
+      is_aerogpu = true;
     }
-    if (reg_type != REG_MULTI_SZ) {
-      continue;
-    }
-    if (!MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedleNew)) {
+
+    if (!is_aerogpu) {
       continue;
     }
 
