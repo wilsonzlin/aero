@@ -690,6 +690,30 @@ fn malformed_mov_missing_src_token_errors() {
 }
 
 #[test]
+fn malformed_relative_src_missing_token_errors() {
+    // Source parameter requests relative addressing but the relative register token is missing.
+    //
+    // The opcode length field is (malformed) too small to include the required extra token.
+    let words = [
+        0xFFFE_0200,
+        0x0300_0001, // mov len=3 (opcode + dst + src)
+        0x800F_0000, // r0
+        0xA0E4_2000, // c0 (relative) - missing relative register token
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_predicated_mov_missing_src_token_errors() {
     // Predicated mov with a predicate + dst but missing a src token.
     let words = [

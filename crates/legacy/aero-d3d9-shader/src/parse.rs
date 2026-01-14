@@ -207,6 +207,18 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                 }
                 let pred_token_idx = operands.len() - 1;
                 let pred_slice = &operands[pred_token_idx..];
+                // Predicate is encoded as a source parameter token at the end of the operand
+                // stream. If the predicate token requests relative addressing, it requires an
+                // extra token, which cannot be present because the predicate is already the last
+                // token.
+                if pred_slice[0] & 0x8000_0000 != 0 && pred_slice[0] & 0x0000_2000 != 0 {
+                    return Err(ShaderParseError::TruncatedInstruction {
+                        opcode: opcode_raw,
+                        at_token,
+                        needed_tokens: operand_len + 1,
+                        remaining_tokens: operand_len,
+                    });
+                }
                 let mut pred_idx = 0usize;
                 let pred = decode_src(pred_slice, &mut pred_idx, stage);
                 validate_src(&pred, pred_slice, at_token + 1 + pred_token_idx, 0)?;
@@ -296,6 +308,18 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             let mut src = Vec::new();
             while idx < operands.len() {
                 let token_idx = idx;
+                // Relative-addressed source parameters require an extra token.
+                if operands[token_idx] & 0x8000_0000 != 0
+                    && operands[token_idx] & 0x0000_2000 != 0
+                    && token_idx + 1 >= operands.len()
+                {
+                    return Err(ShaderParseError::TruncatedInstruction {
+                        opcode: opcode_raw,
+                        at_token,
+                        needed_tokens: token_idx + 2 + pred_operand_tokens,
+                        remaining_tokens: operand_len,
+                    });
+                }
                 let s = decode_src(operands, &mut idx, stage);
                 validate_src(&s, operands, at_token + 1, token_idx)?;
                 src.push(s);
