@@ -4471,6 +4471,7 @@ impl AerogpuD3d11Executor {
                 ],
             };
             self.ensure_bound_resources_uploaded(
+                ShaderStage::Geometry,
                 encoder,
                 &prepass_resource_bindings,
                 allocs,
