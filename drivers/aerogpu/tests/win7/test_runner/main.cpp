@@ -1736,6 +1736,8 @@ int main(int argc, char** argv) {
       "d3d9_fixedfunc_xyz_diffuse_tex1",
       "d3d9_fixedfunc_vertexdecl_patterns",
       "d3d9_fixedfunc_lighting_directional",
+      "d3d9_fixedfunc_lighting_multi_directional",
+      "d3d9_fixedfunc_lighting_point",
       "d3d9_patch_rendering_smoke",
       "d3d9ex_fixedfunc_textured_triangle",
       "d3d9ex_fixedfunc_texture_stage_state",
