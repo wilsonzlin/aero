@@ -3352,7 +3352,8 @@ mod tests {
             let _ = socket.read(&mut buf).await?;
 
             let body = vec![b'a'; 11];
-            let header = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+            let header =
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
             socket.write_all(header).await?;
             socket
                 .write_all(format!("{:x}\r\n", body.len()).as_bytes())
@@ -3385,10 +3386,9 @@ mod tests {
 
     #[tokio::test]
     async fn download_http_bytes_optional_with_retry_returns_none_on_404() -> Result<()> {
-        let (base_url, shutdown_tx, handle) = start_test_http_server(Arc::new(|_req| {
-            (404, Vec::new(), b"not found".to_vec())
-        }))
-        .await?;
+        let (base_url, shutdown_tx, handle) =
+            start_test_http_server(Arc::new(|_req| (404, Vec::new(), b"not found".to_vec())))
+                .await?;
 
         let url: reqwest::Url = format!("{base_url}/meta.json").parse().unwrap();
         let client = build_reqwest_client(&[])?;
@@ -6559,6 +6559,74 @@ mod tests {
             msg.contains("sha256 mismatch") && msg.contains("chunk 0"),
             "unexpected error message: {msg}"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_local_manifest_fails_fast_without_summary() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 1024;
+        let chunk1 = vec![b'b'; 512];
+        let total_size = chunk_size + (chunk1.len() as u64);
+
+        // Only chunk 1 exists; chunk 0 is missing.
+        let chunk1_path = dir.path().join(chunk_object_key(1)?);
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        let err = verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .expect_err("expected verify failure");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("chunk 0"),
+            "expected error mentioning chunk 0; got: {msg}"
+        );
+        assert!(
+            !msg.contains("verification failed with"),
+            "expected fail-fast error without failure summary; got: {msg}"
+        );
+
         Ok(())
     }
 
