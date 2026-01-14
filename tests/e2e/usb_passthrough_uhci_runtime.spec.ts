@@ -1,54 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 
-const THREADED_WASM_BINARY_RELEASE = fileURLToPath(
-  new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
-);
-const THREADED_WASM_JS_RELEASE = fileURLToPath(new URL("../../web/src/wasm/pkg-threaded/aero_wasm.js", import.meta.url));
-const THREADED_WASM_BINARY_DEV = fileURLToPath(
-  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", import.meta.url),
-);
-const THREADED_WASM_JS_DEV = fileURLToPath(
-  new URL("../../web/src/wasm/pkg-threaded-dev/aero_wasm.js", import.meta.url),
-);
-
-async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Promise<boolean> {
-  const baseUrl = new URL(page.url()).origin;
-  // `wasm_loader.ts` fetches these paths when instantiating the threaded build.
-  const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
-    const wasm = await page.request.get(new URL(wasmPath, baseUrl).toString());
-    if (!wasm.ok()) return false;
-    const js = await page.request.get(new URL(jsPath, baseUrl).toString());
-    return js.ok();
-  };
-
-  if (await check("/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded/aero_wasm.js")) {
-    return true;
-  }
-  return await check("/web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded-dev/aero_wasm.js");
-}
+import { checkThreadedWasmBundle } from "./util/wasm_bundle";
 
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
   test.setTimeout(45_000);
 
   await page.goto(`/`, { waitUntil: "load" });
 
-  const hasBundle = await hasThreadedWasmBundle(page);
-  if (!hasBundle) {
-    const message = [
-      "threaded WASM bundle (pkg-threaded) is missing",
-      "",
-      "Expected one of:",
-      `- ${THREADED_WASM_BINARY_RELEASE} (+ ${THREADED_WASM_JS_RELEASE})`,
-      `- ${THREADED_WASM_BINARY_DEV} (+ ${THREADED_WASM_JS_DEV})`,
-      "",
-      "Build it with (from the repo root):",
-      "  npm -w web run wasm:build",
-    ].join("\n");
-    if (process.env.CI) {
-      throw new Error(message);
-    }
-    test.skip(true, message);
+  const bundle = await checkThreadedWasmBundle(page);
+  if (!bundle.ok) {
+    if (process.env.CI) throw new Error(bundle.message);
+    test.skip(true, bundle.message);
   }
 
   const support = await page.evaluate(() => {
