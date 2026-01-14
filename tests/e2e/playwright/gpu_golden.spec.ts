@@ -550,8 +550,12 @@ for (const traceFile of fs
       await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
     });
 
-    if (traceHeader.commandAbiVersion === 1) {
-      // The WebGPU trace backend currently only supports the minimal trace ABI v1.
+    const webgpuTraceSupported =
+      // Minimal reference command ABI v1.
+      traceHeader.commandAbiVersion === 1 ||
+      // AeroGPU command stream ABI v1 (0x0001_xxxx).
+      (traceHeader.commandAbiVersion >>> 16) === 1;
+    if (webgpuTraceSupported) {
       test(`renders deterministically (golden) @webgpu`, async ({ page }, testInfo) => {
         test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU trace replay only runs on Chromium WebGPU project.');
 

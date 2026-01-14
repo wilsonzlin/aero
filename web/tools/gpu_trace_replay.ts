@@ -2868,7 +2868,13 @@ void main() {
     if (!gpu) fail("WebGPU is not available");
     const adapter = await gpu.requestAdapter();
     if (!adapter) fail("navigator.gpu.requestAdapter() returned null");
-    const device = await adapter.requestDevice();
+    const requiredFeatures = [];
+    const hasTextureCompressionBc =
+      adapter.features &&
+      typeof adapter.features.has === "function" &&
+      adapter.features.has("texture-compression-bc");
+    if (hasTextureCompressionBc) requiredFeatures.push("texture-compression-bc");
+    const device = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : {});
 
     const ctx = canvas.getContext("webgpu");
     if (!ctx) fail("canvas.getContext('webgpu') returned null");
@@ -2886,6 +2892,8 @@ void main() {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
+    const acmdSupportsBc = hasTextureCompressionBc;
+
     const buffers = new Map(); // u32 -> GPUBuffer
     const shaders = new Map(); // u32 -> { stage, module }
     const pipelines = new Map(); // u32 -> GPURenderPipeline
@@ -2899,6 +2907,302 @@ void main() {
     let pass = null;
     let currentTexture = null;
     let lastPixels = null; // Uint8Array (tightly packed RGBA, origin top-left)
+
+    // A3A0 (AeroGPU command stream) replay state.
+    const acmdBuffers = new Map(); // u32 handle -> GPUBuffer
+    const acmdTextures = new Map(); // u32 handle -> { texture, view, width, height, format, mipLevels, arrayLayers, isBc1, bcCompressed }
+    const acmdDepthStencils = new Map(); // u32 handle -> { texture, view, width, height, format, wgpuFormat, hasStencil }
+
+    // ACMD current bindings/state.
+    let acmdCurrentColor0 = 0; // u32 texture handle (0 = implicit backbuffer)
+    let acmdCurrentDepthStencil = 0; // u32 depth-stencil handle (0 = none)
+    let acmdVertexBuffer0 = null; // { buffer, strideBytes, offsetBytes }
+    let acmdPrimitiveTopology = "triangle-list";
+    let acmdPsTexture0 = 0; // u32 texture handle (0 = none)
+    let acmdViewport = null; // { x, y, w, h, minDepth, maxDepth }
+    let acmdScissor = null; // { x, y, w, h }
+    let acmdDepthState = { enable: false, write: false, compare: "always" };
+
+    // ACMD command encoding state.
+    let acmdEncoder = null;
+    let acmdPass = null;
+
+    const align = (n, a) => Math.ceil(n / a) * a;
+
+    // ACMD uses an implicit RGBA8 backbuffer when no explicit render target is bound.
+    const acmdBackbufferFormat = "rgba8unorm";
+    let acmdBackbuffer = null; // { texture, view, width, height }
+
+    function ensureAcmdBackbuffer() {
+      const w = canvas.width;
+      const h = canvas.height;
+      if (acmdBackbuffer && acmdBackbuffer.width === w && acmdBackbuffer.height === h) return acmdBackbuffer;
+      const tex = device.createTexture({
+        size: { width: w, height: h, depthOrArrayLayers: 1 },
+        format: acmdBackbufferFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      acmdBackbuffer = { texture: tex, view: tex.createView(), width: w, height: h };
+      return acmdBackbuffer;
+    }
+
+    // ACMD fixed shaders/pipelines (mirrors WebGL2 ACMD backend).
+    const ACMD_WGSL_VS_COLOR24 = `
+      struct Out {
+        @builtin(position) pos: vec4<f32>,
+        @location(0) color: vec4<f32>,
+      };
+      @vertex fn vs_main(@location(0) a_pos: vec2<f32>, @location(1) a_color: vec4<f32>) -> Out {
+        var o: Out;
+        o.pos = vec4<f32>(a_pos, 0.0, 1.0);
+        o.color = a_color;
+        return o;
+      }
+      @fragment fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
+        return color;
+      }
+    `;
+    const ACMD_WGSL_VS_COLOR28 = `
+      struct Out {
+        @builtin(position) pos: vec4<f32>,
+        @location(0) color: vec4<f32>,
+      };
+      @vertex fn vs_main(@location(0) a_pos: vec3<f32>, @location(1) a_color: vec4<f32>) -> Out {
+        var o: Out;
+        o.pos = vec4<f32>(a_pos.xy, a_pos.z, 1.0);
+        o.color = a_color;
+        return o;
+      }
+      @fragment fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
+        return color;
+      }
+    `;
+    const ACMD_WGSL_VS_TEX20 = `
+      struct Out {
+        @builtin(position) pos: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      };
+      @vertex fn vs_main(@location(0) a_pos: vec3<f32>, @location(1) a_uv: vec2<f32>) -> Out {
+        var o: Out;
+        o.pos = vec4<f32>(a_pos.xy, a_pos.z, 1.0);
+        o.uv = a_uv;
+        return o;
+      }
+    `;
+    const ACMD_WGSL_FS_TEX = `
+      @group(0) @binding(0) var u_samp: sampler;
+      @group(0) @binding(1) var u_tex0: texture_2d<f32>;
+      @fragment fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+        return textureSample(u_tex0, u_samp, uv);
+      }
+    `;
+    const acmdColor24Module = device.createShaderModule({ code: ACMD_WGSL_VS_COLOR24 });
+    const acmdColor28Module = device.createShaderModule({ code: ACMD_WGSL_VS_COLOR28 });
+    const acmdTexVsModule = device.createShaderModule({ code: ACMD_WGSL_VS_TEX20 });
+    const acmdTexFsModule = device.createShaderModule({ code: ACMD_WGSL_FS_TEX });
+
+    const acmdSampler = device.createSampler({
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+      addressModeW: "clamp-to-edge",
+      magFilter: "nearest",
+      minFilter: "nearest",
+      mipmapFilter: "nearest",
+    });
+
+    const acmdPipelineCache = new Map(); // string -> GPURenderPipeline
+
+    function getWgpuCompareFunc(func) {
+      switch (func >>> 0) {
+        case 0:
+          return "never";
+        case 1:
+          return "less";
+        case 2:
+          return "equal";
+        case 3:
+          return "less-equal";
+        case 4:
+          return "greater";
+        case 5:
+          return "not-equal";
+        case 6:
+          return "greater-equal";
+        case 7:
+          return "always";
+        default:
+          fail("ACMD unsupported compare func=" + func);
+      }
+    }
+
+    function getAcmdPipeline(opts) {
+      const key = JSON.stringify(opts);
+      const cached = acmdPipelineCache.get(key);
+      if (cached) return cached;
+
+      const isTextured = opts.kind === "tex";
+      const stride = opts.strideBytes | 0;
+      const depthFormat = opts.depthFormat || null;
+
+      let vertexModule = null;
+      let vertexBuffers = null;
+      if (isTextured) {
+        if (stride !== 20) fail("ACMD unsupported textured vertex stride_bytes=" + stride + " (expected 20)");
+        vertexModule = acmdTexVsModule;
+        vertexBuffers = [
+          {
+            arrayStride: 20,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x3" },
+              { shaderLocation: 1, offset: 12, format: "float32x2" },
+            ],
+          },
+        ];
+      } else {
+        if (stride === 24) {
+          vertexModule = acmdColor24Module;
+          vertexBuffers = [
+            {
+              arrayStride: 24,
+              attributes: [
+                { shaderLocation: 0, offset: 0, format: "float32x2" },
+                { shaderLocation: 1, offset: 8, format: "float32x4" },
+              ],
+            },
+          ];
+        } else if (stride === 28) {
+          vertexModule = acmdColor28Module;
+          vertexBuffers = [
+            {
+              arrayStride: 28,
+              attributes: [
+                { shaderLocation: 0, offset: 0, format: "float32x3" },
+                { shaderLocation: 1, offset: 12, format: "float32x4" },
+              ],
+            },
+          ];
+        } else {
+          fail("ACMD unsupported colored vertex stride_bytes=" + stride + " (supported: 24/28)");
+        }
+      }
+
+      const desc = {
+        layout: "auto",
+        vertex: { module: vertexModule, entryPoint: "vs_main", buffers: vertexBuffers },
+        fragment: isTextured
+          ? { module: acmdTexFsModule, entryPoint: "fs_main", targets: [{ format: acmdBackbufferFormat }] }
+          : { module: vertexModule, entryPoint: "fs_main", targets: [{ format: acmdBackbufferFormat }] },
+        primitive: { topology: opts.topology || "triangle-list", cullMode: "none" },
+      };
+
+      if (opts.depthEnable && depthFormat) {
+        desc.depthStencil = {
+          format: depthFormat,
+          depthWriteEnabled: !!opts.depthWrite,
+          depthCompare: opts.depthCompare || "less",
+        };
+      }
+
+      const p = device.createRenderPipeline(desc);
+      acmdPipelineCache.set(key, p);
+      return p;
+    }
+
+    // Full-screen blit (rgba8unorm -> canvas format).
+    const BLIT_WGSL = `
+      struct VSOut {
+        @builtin(position) pos: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      };
+      @vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+        var pos = array<vec2<f32>, 3>(
+          vec2<f32>(-1.0, -1.0),
+          vec2<f32>(-1.0,  3.0),
+          vec2<f32>( 3.0, -1.0)
+        );
+        let p = pos[vi];
+        var o: VSOut;
+        o.pos = vec4<f32>(p, 0.0, 1.0);
+        // Map NDC->UV (v=0 is top in WebGPU textures).
+        o.uv = vec2<f32>(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+        return o;
+      }
+      @group(0) @binding(0) var u_samp: sampler;
+      @group(0) @binding(1) var u_tex: texture_2d<f32>;
+      @fragment fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+        return textureSample(u_tex, u_samp, uv);
+      }
+    `;
+    const blitModule = device.createShaderModule({ code: BLIT_WGSL });
+    const blitPipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: { module: blitModule, entryPoint: "vs_main" },
+      fragment: { module: blitModule, entryPoint: "fs_main", targets: [{ format }] },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+    });
+
+    function rgb565ToRgb8(c) {
+      const r5 = (c >>> 11) & 0x1f;
+      const g6 = (c >>> 5) & 0x3f;
+      const b5 = c & 0x1f;
+      const r = (r5 << 3) | (r5 >>> 2);
+      const g = (g6 << 2) | (g6 >>> 4);
+      const b = (b5 << 3) | (b5 >>> 2);
+      return [r & 0xff, g & 0xff, b & 0xff];
+    }
+
+    function decodeBc1Rgba8(srcBytes, width, height) {
+      const blocksX = Math.ceil(width / 4);
+      const blocksY = Math.ceil(height / 4);
+      const expectedLen = blocksX * blocksY * 8;
+      if (srcBytes.byteLength !== expectedLen) {
+        fail("BC1 data length mismatch: got " + srcBytes.byteLength + " expected " + expectedLen);
+      }
+      const out = new Uint8Array(width * height * 4);
+      let off = 0;
+      for (let by = 0; by < blocksY; by++) {
+        for (let bx = 0; bx < blocksX; bx++) {
+          const c0 = srcBytes[off + 0] | (srcBytes[off + 1] << 8);
+          const c1 = srcBytes[off + 2] | (srcBytes[off + 3] << 8);
+          const [r0, g0, b0] = rgb565ToRgb8(c0);
+          const [r1, g1, b1] = rgb565ToRgb8(c1);
+          const bits =
+            (srcBytes[off + 4] | (srcBytes[off + 5] << 8) | (srcBytes[off + 6] << 16) | (srcBytes[off + 7] << 24)) >>> 0;
+
+          const pal = [
+            [r0, g0, b0, 255],
+            [r1, g1, b1, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+          ];
+          if (c0 > c1) {
+            pal[2] = [((2 * r0 + r1) / 3) | 0, ((2 * g0 + g1) / 3) | 0, ((2 * b0 + b1) / 3) | 0, 255];
+            pal[3] = [((r0 + 2 * r1) / 3) | 0, ((g0 + 2 * g1) / 3) | 0, ((b0 + 2 * b1) / 3) | 0, 255];
+          } else {
+            pal[2] = [((r0 + r1) / 2) | 0, ((g0 + g1) / 2) | 0, ((b0 + b1) / 2) | 0, 255];
+            pal[3] = [0, 0, 0, 0];
+          }
+
+          for (let py = 0; py < 4; py++) {
+            for (let px = 0; px < 4; px++) {
+              const x = bx * 4 + px;
+              const y = by * 4 + py;
+              if (x >= width || y >= height) continue;
+              const code = (bits >>> (2 * (py * 4 + px))) & 3;
+              const di = (y * width + x) * 4;
+              const c = pal[code];
+              out[di + 0] = c[0] & 0xff;
+              out[di + 1] = c[1] & 0xff;
+              out[di + 2] = c[2] & 0xff;
+              out[di + 3] = c[3] & 0xff;
+            }
+          }
+
+          off += 8;
+        }
+      }
+      return out;
+    }
 
     function beginPass(loadOp) {
       if (pass) return;
@@ -2929,7 +3233,730 @@ void main() {
       }
     }
 
-    async function executePacket(packetBytes, trace) {
+    function isAerogpuCmdStreamPacket(packetBytes) {
+      return (
+        packetBytes.byteLength >= 4 &&
+        packetBytes[0] === AEROGPU_CMD_STREAM_MAGIC[0] &&
+        packetBytes[1] === AEROGPU_CMD_STREAM_MAGIC[1] &&
+        packetBytes[2] === AEROGPU_CMD_STREAM_MAGIC[2] &&
+        packetBytes[3] === AEROGPU_CMD_STREAM_MAGIC[3]
+      );
+    }
+
+    function ensureAcmdEncoder() {
+      if (acmdEncoder) return;
+      acmdEncoder = device.createCommandEncoder();
+    }
+
+    function endAcmdPass() {
+      if (!acmdPass) return;
+      acmdPass.end();
+      acmdPass = null;
+    }
+
+    function getAcmdColorTarget() {
+      if (acmdCurrentColor0 === 0) return ensureAcmdBackbuffer();
+      const tex = acmdTextures.get(acmdCurrentColor0);
+      if (!tex) fail("ACMD missing render target texture handle=" + acmdCurrentColor0);
+      return tex;
+    }
+
+    function getAcmdDepthTarget() {
+      if (acmdCurrentDepthStencil === 0) return null;
+      const ds = acmdDepthStencils.get(acmdCurrentDepthStencil);
+      if (!ds) fail("ACMD missing depth-stencil handle=" + acmdCurrentDepthStencil);
+      return ds;
+    }
+
+    function applyAcmdViewportScissor(p) {
+      const rt = getAcmdColorTarget();
+      const w = rt.width;
+      const h = rt.height;
+
+      if (acmdViewport) {
+        const vx = Math.max(0, acmdViewport.x | 0);
+        const vy = Math.max(0, acmdViewport.y | 0);
+        const vw = Math.max(0, acmdViewport.w | 0);
+        const vh = Math.max(0, acmdViewport.h | 0);
+        p.setViewport(vx, vy, vw, vh, acmdViewport.minDepth, acmdViewport.maxDepth);
+      } else {
+        p.setViewport(0, 0, w, h, 0, 1);
+      }
+
+      if (acmdScissor) {
+        const sx = Math.max(0, acmdScissor.x | 0);
+        const sy = Math.max(0, acmdScissor.y | 0);
+        const sw = Math.max(0, acmdScissor.w | 0);
+        const sh = Math.max(0, acmdScissor.h | 0);
+        p.setScissorRect(sx, sy, sw, sh);
+      } else {
+        p.setScissorRect(0, 0, w, h);
+      }
+    }
+
+    function beginAcmdPass(passDesc) {
+      if (acmdPass) return;
+      ensureAcmdEncoder();
+      acmdPass = acmdEncoder.beginRenderPass(passDesc);
+
+      if (acmdVertexBuffer0) {
+        acmdPass.setVertexBuffer(0, acmdVertexBuffer0.buffer, acmdVertexBuffer0.offsetBytes);
+      }
+      applyAcmdViewportScissor(acmdPass);
+    }
+
+    function writeTextureRgba(texture, width, height, rgbaBytes) {
+      const bytesPerPixel = 4;
+      const unpaddedBytesPerRow = width * bytesPerPixel;
+      const bytesPerRow = align(unpaddedBytesPerRow, 256);
+      const padded = new Uint8Array(bytesPerRow * height);
+      for (let y = 0; y < height; y++) {
+        padded.set(rgbaBytes.subarray(y * unpaddedBytesPerRow, y * unpaddedBytesPerRow + unpaddedBytesPerRow), y * bytesPerRow);
+      }
+      device.queue.writeTexture(
+        { texture },
+        padded,
+        { bytesPerRow, rowsPerImage: height },
+        { width, height, depthOrArrayLayers: 1 },
+      );
+    }
+
+    function writeTextureBc1(texture, width, height, bc1Bytes) {
+      const blocksX = Math.ceil(width / 4);
+      const blocksY = Math.ceil(height / 4);
+      const unpaddedBytesPerRow = blocksX * 8;
+      const bytesPerRow = align(unpaddedBytesPerRow, 256);
+      const padded = new Uint8Array(bytesPerRow * blocksY);
+      for (let y = 0; y < blocksY; y++) {
+        padded.set(bc1Bytes.subarray(y * unpaddedBytesPerRow, y * unpaddedBytesPerRow + unpaddedBytesPerRow), y * bytesPerRow);
+      }
+      device.queue.writeTexture(
+        { texture },
+        padded,
+        { bytesPerRow, rowsPerImage: blocksY },
+        { width, height, depthOrArrayLayers: 1 },
+      );
+    }
+
+    async function acmdPresent() {
+      endAcmdPass();
+
+      // No-op if nothing has been encoded.
+      if (!acmdEncoder) {
+        ensureAcmdEncoder();
+      }
+
+      const src = getAcmdColorTarget();
+
+      const canvasTexture = ctx.getCurrentTexture();
+
+      // Blit to the canvas via a full-screen draw so we can handle format differences.
+      const blitBindGroup = device.createBindGroup({
+        layout: blitPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: acmdSampler },
+          { binding: 1, resource: src.view },
+        ],
+      });
+
+      const blitPass = acmdEncoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: canvasTexture.createView(),
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            storeOp: "store",
+          },
+        ],
+      });
+      blitPass.setPipeline(blitPipeline);
+      blitPass.setBindGroup(0, blitBindGroup);
+      blitPass.setViewport(0, 0, canvas.width, canvas.height, 0, 1);
+      blitPass.setScissorRect(0, 0, canvas.width, canvas.height);
+      blitPass.draw(3, 1, 0, 0);
+      blitPass.end();
+
+      // Capture a CPU-readable copy of the presented frame (matches minimal backend behavior).
+      const w = canvas.width;
+      const h = canvas.height;
+      const bytesPerPixel = 4;
+      const unpaddedBytesPerRow = w * bytesPerPixel;
+      const bytesPerRow = align(unpaddedBytesPerRow, 256);
+
+      const readback = device.createBuffer({
+        size: bytesPerRow * h,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      acmdEncoder.copyTextureToBuffer(
+        { texture: canvasTexture },
+        { buffer: readback, bytesPerRow },
+        { width: w, height: h, depthOrArrayLayers: 1 },
+      );
+
+      device.queue.submit([acmdEncoder.finish()]);
+      acmdEncoder = null;
+
+      await device.queue.onSubmittedWorkDone();
+
+      await readback.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readback.getMappedRange());
+
+      const rgba = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        const srcRow = y * bytesPerRow;
+        const dstRow = y * unpaddedBytesPerRow;
+        for (let x = 0; x < w; x++) {
+          const si = srcRow + x * 4;
+          const di = dstRow + x * 4;
+          const c0 = mapped[si + 0];
+          const c1 = mapped[si + 1];
+          const c2 = mapped[si + 2];
+          const c3 = mapped[si + 3];
+          if (isBGRA) {
+            rgba[di + 0] = c2;
+            rgba[di + 1] = c1;
+            rgba[di + 2] = c0;
+            rgba[di + 3] = c3;
+          } else {
+            rgba[di + 0] = c0;
+            rgba[di + 1] = c1;
+            rgba[di + 2] = c2;
+            rgba[di + 3] = c3;
+          }
+        }
+      }
+
+      readback.unmap();
+      if (typeof readback.destroy === "function") readback.destroy();
+
+      lastPixels = rgba;
+    }
+
+    async function executeAerogpuCmdStream(packetBytes, execCtx) {
+      if (packetBytes.byteLength < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("ACMD stream header out of bounds");
+      const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
+
+      let sizeBytes = 0;
+      if (decodeCmdStreamHeader) {
+        const hdr = decodeCmdStreamHeader(pv, 0);
+        sizeBytes = hdr.sizeBytes >>> 0;
+      } else {
+        const magic = readU32(pv, 0);
+        if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad ACMD magic");
+        sizeBytes = readU32(pv, 8);
+      }
+      if (sizeBytes < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("ACMD size_bytes too small: " + sizeBytes);
+      if (sizeBytes > packetBytes.byteLength) fail("ACMD size_bytes out of bounds: " + sizeBytes);
+
+      const streamEnd = sizeBytes;
+      let off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
+
+      const allocMemory = execCtx && execCtx.allocMemory;
+
+      while (off < streamEnd) {
+        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > streamEnd) fail("ACMD command header out of bounds");
+
+        let opcode = 0;
+        let cmdSize = 0;
+        if (decodeCmdHdr) {
+          const hdr = decodeCmdHdr(pv, off);
+          opcode = hdr.opcode >>> 0;
+          cmdSize = hdr.sizeBytes >>> 0;
+        } else {
+          opcode = readU32(pv, off + 0);
+          cmdSize = readU32(pv, off + 4);
+        }
+        if (cmdSize < AEROGPU_CMD_HDR_SIZE_BYTES) fail("ACMD cmd size_bytes too small: " + cmdSize);
+        if ((cmdSize & 3) !== 0) fail("ACMD cmd size_bytes not 4-byte aligned: " + cmdSize);
+        if (off + cmdSize > streamEnd) fail("ACMD cmd overruns stream");
+
+        switch (opcode) {
+          case AEROGPU_CMD_CREATE_BUFFER: {
+            if (cmdSize < 40) fail("ACMD CREATE_BUFFER size_bytes too small: " + cmdSize);
+            const bufferHandle = readU32(pv, off + 8);
+            const sizeBytesU64 = readU64Big(pv, off + 16);
+            const backingAllocId = readU32(pv, off + 24);
+            const backingOffsetBytes = readU32(pv, off + 28);
+
+            if (bufferHandle === 0) fail("ACMD CREATE_BUFFER invalid handle 0");
+
+            const sizeBytesNum = u64BigToSafeNumber(sizeBytesU64, "ACMD CREATE_BUFFER size_bytes");
+            const buf = device.createBuffer({
+              size: sizeBytesNum,
+              usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            acmdBuffers.set(bufferHandle, buf);
+
+            if (backingAllocId !== 0) {
+              if (!allocMemory) fail("ACMD CREATE_BUFFER missing alloc memory map");
+              const alloc = allocMemory.get(backingAllocId);
+              if (!alloc) fail("ACMD CREATE_BUFFER missing alloc_id=" + backingAllocId);
+              const end = backingOffsetBytes + sizeBytesNum;
+              if (end > alloc.bytes.byteLength) fail("ACMD CREATE_BUFFER backing range out of bounds");
+              device.queue.writeBuffer(buf, 0, alloc.bytes.subarray(backingOffsetBytes, end));
+            }
+            break;
+          }
+          case AEROGPU_CMD_CREATE_TEXTURE2D: {
+            if (cmdSize < 56) fail("ACMD CREATE_TEXTURE2D size_bytes too small: " + cmdSize);
+            const textureHandle = readU32(pv, off + 8);
+            const usageFlags = readU32(pv, off + 12);
+            const formatRaw = readU32(pv, off + 16);
+            const width = readU32(pv, off + 20);
+            const height = readU32(pv, off + 24);
+            const mipLevels = readU32(pv, off + 28);
+            const arrayLayers = readU32(pv, off + 32);
+            const rowPitchBytes = readU32(pv, off + 36);
+            const backingAllocId = readU32(pv, off + 40);
+            const backingOffsetBytes = readU32(pv, off + 44);
+
+            if (textureHandle === 0) fail("ACMD CREATE_TEXTURE2D invalid handle 0");
+            if (mipLevels === 0) fail("ACMD CREATE_TEXTURE2D mip_levels must be >= 1");
+            if (arrayLayers === 0) fail("ACMD CREATE_TEXTURE2D array_layers must be >= 1");
+
+            // Depth-stencil.
+            if ((usageFlags & AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL) !== 0) {
+              if (backingAllocId !== 0) fail("ACMD CREATE_TEXTURE2D depth-stencil backing_alloc_id is not supported");
+              if (arrayLayers !== 1 || mipLevels !== 1) {
+                fail("ACMD CREATE_TEXTURE2D depth-stencil array/mip chains are not supported");
+              }
+
+              let wgpuFormat = null;
+              let hasStencil = false;
+              if (formatRaw === AEROGPU_FORMAT_D32_FLOAT) {
+                wgpuFormat = "depth32float";
+                hasStencil = false;
+              } else if (formatRaw === AEROGPU_FORMAT_D24_UNORM_S8_UINT) {
+                // Prefer the required format (depth24plus-stencil8) for broad compatibility.
+                wgpuFormat = "depth24plus-stencil8";
+                hasStencil = true;
+              } else {
+                fail("ACMD CREATE_TEXTURE2D unsupported depth-stencil format=" + formatRaw);
+              }
+
+              const tex = device.createTexture({
+                size: { width, height, depthOrArrayLayers: 1 },
+                format: wgpuFormat,
+                usage: GPUTextureUsage.RENDER_ATTACHMENT,
+              });
+              acmdDepthStencils.set(textureHandle, {
+                texture: tex,
+                view: tex.createView(),
+                width,
+                height,
+                format: formatRaw,
+                wgpuFormat,
+                hasStencil,
+              });
+              break;
+            }
+
+            let isBc1 = false;
+            let bcCompressed = false;
+            let wgpuFormat = null;
+            let logicalFormat = formatRaw;
+            if (formatRaw === AEROGPU_FORMAT_R8G8B8A8_UNORM || formatRaw === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
+              wgpuFormat = "rgba8unorm";
+              logicalFormat = AEROGPU_FORMAT_R8G8B8A8_UNORM;
+            } else if (formatRaw === AEROGPU_FORMAT_BC1_RGBA_UNORM || formatRaw === AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB) {
+              isBc1 = true;
+              // For parity with WebGL2, treat sRGB variant as UNORM (no conversion).
+              if (acmdSupportsBc) {
+                wgpuFormat = "bc1-rgba-unorm";
+                bcCompressed = true;
+              } else {
+                wgpuFormat = "rgba8unorm";
+                bcCompressed = false;
+              }
+            } else {
+              const bcHint = formatRaw >= 64 && formatRaw <= 71 ? " (BC formats require GPU backend)" : "";
+              fail("ACMD CREATE_TEXTURE2D unsupported format=" + formatRaw + bcHint);
+            }
+
+            const usage = bcCompressed
+              ? GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+              : GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT;
+
+            const tex = device.createTexture({
+              size: { width, height, depthOrArrayLayers: arrayLayers },
+              format: wgpuFormat,
+              usage,
+              mipLevelCount: mipLevels,
+            });
+            const view = tex.createView();
+
+            const obj = {
+              texture: tex,
+              view,
+              width,
+              height,
+              format: logicalFormat,
+              mipLevels,
+              arrayLayers,
+              isBc1,
+              bcCompressed,
+            };
+            acmdTextures.set(textureHandle, obj);
+
+            if (backingAllocId !== 0) {
+              if (!allocMemory) fail("ACMD CREATE_TEXTURE2D missing alloc memory map");
+              const alloc = allocMemory.get(backingAllocId);
+              if (!alloc) fail("ACMD CREATE_TEXTURE2D missing alloc_id=" + backingAllocId);
+              if (isBc1) fail("ACMD CREATE_TEXTURE2D BC formats do not support guest-backed alloc uploads");
+
+              // Guest backing is a packed `(array_layer, mip)` chain; mip0 uses
+              // `row_pitch_bytes`, other mips are tightly packed.
+              let chainOff = backingOffsetBytes;
+              for (let layer = 0; layer < arrayLayers; layer++) {
+                for (let mip = 0; mip < mipLevels; mip++) {
+                  const mipW = Math.max(1, width >> mip);
+                  const mipH = Math.max(1, height >> mip);
+                  const rowBytes = mipW * 4;
+                  const pitch = mip === 0 ? (rowPitchBytes !== 0 ? rowPitchBytes : rowBytes) : rowBytes;
+                  if (pitch < rowBytes) {
+                    fail("ACMD CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
+                  }
+                  const requiredBytes = pitch * mipH;
+                  const endOff = chainOff + requiredBytes;
+                  if (endOff > alloc.bytes.byteLength) {
+                    fail("ACMD CREATE_TEXTURE2D backing range out of bounds");
+                  }
+
+                  const packed = new Uint8Array(rowBytes * mipH);
+                  for (let y = 0; y < mipH; y++) {
+                    const srcOff = chainOff + y * pitch;
+                    packed.set(alloc.bytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+                  }
+
+                  // Pad rows for WebGPU's 256-byte row alignment.
+                  const bytesPerRow = align(rowBytes, 256);
+                  const padded = new Uint8Array(bytesPerRow * mipH);
+                  for (let y = 0; y < mipH; y++) {
+                    padded.set(packed.subarray(y * rowBytes, y * rowBytes + rowBytes), y * bytesPerRow);
+                  }
+                  device.queue.writeTexture(
+                    { texture: tex, mipLevel: mip, origin: { x: 0, y: 0, z: layer } },
+                    padded,
+                    { bytesPerRow, rowsPerImage: mipH },
+                    { width: mipW, height: mipH, depthOrArrayLayers: 1 },
+                  );
+
+                  chainOff = endOff;
+                }
+              }
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_RENDER_TARGETS: {
+            if (cmdSize < 48) fail("ACMD SET_RENDER_TARGETS size_bytes too small: " + cmdSize);
+            const colorCount = readU32(pv, off + 8);
+            if (colorCount > 8) fail("ACMD SET_RENDER_TARGETS color_count out of bounds: " + colorCount);
+            const depthStencilRaw = readU32(pv, off + 12);
+            const color0Raw = colorCount > 0 ? readU32(pv, off + 16) : 0;
+            const color0 = color0Raw >>> 0;
+            const depthStencil = depthStencilRaw >>> 0;
+
+            endAcmdPass();
+
+            acmdCurrentColor0 = color0;
+            acmdCurrentDepthStencil = depthStencil;
+
+            // Validate sizes if both are bound.
+            if (acmdCurrentDepthStencil !== 0) {
+              const rt = color0 !== 0 ? acmdTextures.get(color0) : ensureAcmdBackbuffer();
+              if (!rt) fail("ACMD SET_RENDER_TARGETS unknown color0=" + color0Raw);
+              const ds = acmdDepthStencils.get(depthStencil);
+              if (!ds) fail("ACMD SET_RENDER_TARGETS unknown depth_stencil=" + depthStencilRaw);
+              if (rt.width !== ds.width || rt.height !== ds.height) {
+                fail("ACMD SET_RENDER_TARGETS depth-stencil size mismatch: rt=" + rt.width + "x" + rt.height + " ds=" + ds.width + "x" + ds.height);
+              }
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_VIEWPORT: {
+            if (cmdSize < AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES) fail("ACMD SET_VIEWPORT size_bytes too small: " + cmdSize);
+            const x = readF32(pv, off + 8);
+            const y = readF32(pv, off + 12);
+            const wf = readF32(pv, off + 16);
+            const hf = readF32(pv, off + 20);
+            const minDepth = readF32(pv, off + 24);
+            const maxDepth = readF32(pv, off + 28);
+
+            // Treat 0/0 as canvas size (mirrors WebGL2 replay backend).
+            let w = wf;
+            let h = hf;
+            if (w === 0 && h === 0) {
+              w = canvas.width;
+              h = canvas.height;
+            }
+
+            acmdViewport = {
+              x: Math.round(x) | 0,
+              y: Math.round(y) | 0,
+              w: Math.round(w) | 0,
+              h: Math.round(h) | 0,
+              minDepth: Math.min(1, Math.max(0, minDepth)),
+              maxDepth: Math.min(1, Math.max(0, maxDepth)),
+            };
+            if (acmdPass) applyAcmdViewportScissor(acmdPass);
+            break;
+          }
+          case AEROGPU_CMD_SET_SCISSOR: {
+            if (cmdSize < AEROGPU_CMD_SET_SCISSOR_SIZE_BYTES) fail("ACMD SET_SCISSOR size_bytes too small: " + cmdSize);
+            const x = readI32(pv, off + 8);
+            const y = readI32(pv, off + 12);
+            const w = readI32(pv, off + 16);
+            const h = readI32(pv, off + 20);
+            acmdScissor = { x: x | 0, y: y | 0, w: Math.max(0, w | 0), h: Math.max(0, h | 0) };
+            if (acmdPass) applyAcmdViewportScissor(acmdPass);
+            break;
+          }
+          case AEROGPU_CMD_SET_VERTEX_BUFFERS: {
+            if (cmdSize < 16) fail("ACMD SET_VERTEX_BUFFERS size_bytes too small: " + cmdSize);
+            const startSlot = readU32(pv, off + 8);
+            const bufferCount = readU32(pv, off + 12);
+            const requiredLen = 16 + bufferCount * 16;
+            if (cmdSize < requiredLen) fail("ACMD SET_VERTEX_BUFFERS bindings out of bounds");
+
+            for (let i = 0; i < bufferCount; i++) {
+              const slot = startSlot + i;
+              const bOff = off + 16 + i * 16;
+              const bufferHandle = readU32(pv, bOff + 0);
+              const strideBytes = readU32(pv, bOff + 4);
+              const offsetBytes = readU32(pv, bOff + 8);
+              if (slot === 0) {
+                if (bufferHandle === 0) {
+                  acmdVertexBuffer0 = null;
+                } else {
+                  const buf = acmdBuffers.get(bufferHandle);
+                  if (!buf) fail("ACMD unknown buffer_handle=" + bufferHandle);
+                  acmdVertexBuffer0 = { buffer: buf, strideBytes, offsetBytes };
+                  if (acmdPass) acmdPass.setVertexBuffer(0, buf, offsetBytes);
+                }
+              }
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY: {
+            if (cmdSize < 16) fail("ACMD SET_PRIMITIVE_TOPOLOGY size_bytes too small: " + cmdSize);
+            const topology = readU32(pv, off + 8);
+            if (topology !== AEROGPU_TOPOLOGY_TRIANGLELIST) {
+              fail("ACMD unsupported primitive topology " + topology);
+            }
+            acmdPrimitiveTopology = "triangle-list";
+            break;
+          }
+          case AEROGPU_CMD_SET_TEXTURE: {
+            if (cmdSize < AEROGPU_CMD_SET_TEXTURE_SIZE_BYTES) fail("ACMD SET_TEXTURE size_bytes too small: " + cmdSize);
+            const shaderStage = readU32(pv, off + 8);
+            const slot = readU32(pv, off + 12);
+            const textureRaw = readU32(pv, off + 16);
+            if (shaderStage === 1 && slot === 0) {
+              acmdPsTexture0 = textureRaw >>> 0;
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_DEPTH_STENCIL_STATE: {
+            if (cmdSize < AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE_BYTES) {
+              fail("ACMD SET_DEPTH_STENCIL_STATE size_bytes too small: " + cmdSize);
+            }
+            const depthEnable = readU32(pv, off + 8) !== 0;
+            const depthWrite = readU32(pv, off + 12) !== 0;
+            const depthFunc = readU32(pv, off + 16);
+            // Stencil fields are currently ignored by the WebGPU replay tool.
+            acmdDepthState = { enable: depthEnable, write: depthWrite, compare: getWgpuCompareFunc(depthFunc) };
+            break;
+          }
+          case AEROGPU_CMD_CLEAR: {
+            if (cmdSize < AEROGPU_CMD_CLEAR_SIZE_BYTES) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
+            const flags = readU32(pv, off + 8);
+            const clearColor = flags & AEROGPU_CLEAR_COLOR ? { r: readF32(pv, off + 12), g: readF32(pv, off + 16), b: readF32(pv, off + 20), a: readF32(pv, off + 24) } : null;
+            const clearDepth = flags & AEROGPU_CLEAR_DEPTH ? readF32(pv, off + 28) : null;
+            const clearStencil = flags & AEROGPU_CLEAR_STENCIL ? readU32(pv, off + 32) : null;
+
+            endAcmdPass();
+
+            const rt = getAcmdColorTarget();
+            const ds = getAcmdDepthTarget();
+
+            const passDesc = {
+              colorAttachments: [
+                {
+                  view: rt.view,
+                  loadOp: clearColor ? "clear" : "load",
+                  clearValue: clearColor || { r: 0, g: 0, b: 0, a: 1 },
+                  storeOp: "store",
+                },
+              ],
+            };
+
+            if (ds) {
+              const dsAtt = {
+                view: ds.view,
+                depthLoadOp: clearDepth !== null ? "clear" : "load",
+                depthClearValue: clearDepth !== null ? clearDepth : 1.0,
+                depthStoreOp: "store",
+              };
+              if (ds.hasStencil) {
+                dsAtt.stencilLoadOp = clearStencil !== null ? "clear" : "load";
+                dsAtt.stencilClearValue = clearStencil !== null ? clearStencil : 0;
+                dsAtt.stencilStoreOp = "store";
+              } else if (clearStencil !== null) {
+                // Forward-compat: ignore stencil clears for depth-only attachments.
+              }
+              passDesc.depthStencilAttachment = dsAtt;
+            } else {
+              if (clearDepth !== null || clearStencil !== null) {
+                // Forward-compat: ignore clears when no DS is bound.
+              }
+            }
+
+            beginAcmdPass(passDesc);
+            break;
+          }
+          case AEROGPU_CMD_UPLOAD_RESOURCE: {
+            if (cmdSize < AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES) fail("ACMD UPLOAD_RESOURCE size_bytes too small: " + cmdSize);
+            const resourceHandle = readU32(pv, off + 8);
+            const offsetBytesU64 = readU64Big(pv, off + 16);
+            const sizeBytesU64 = readU64Big(pv, off + 24);
+            const offsetBytes = u64BigToSafeNumber(offsetBytesU64, "ACMD UPLOAD_RESOURCE offset_bytes");
+            const sizeBytes = u64BigToSafeNumber(sizeBytesU64, "ACMD UPLOAD_RESOURCE size_bytes");
+            const dataOff = off + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES;
+            const dataEnd = dataOff + sizeBytes;
+            if (dataEnd > off + cmdSize) fail("ACMD UPLOAD_RESOURCE data out of bounds");
+            const data = packetBytes.subarray(dataOff, dataEnd);
+
+            const buf = acmdBuffers.get(resourceHandle);
+            if (buf) {
+              device.queue.writeBuffer(buf, offsetBytes, data);
+              break;
+            }
+
+            const texObj = acmdTextures.get(resourceHandle);
+            if (texObj) {
+              if (offsetBytes !== 0) fail("ACMD UPLOAD_RESOURCE texture offset_bytes not supported: " + offsetBytes);
+              if (texObj.arrayLayers !== 1 || texObj.mipLevels < 1) {
+                fail("ACMD UPLOAD_RESOURCE only supports array_layers=1");
+              }
+              if (texObj.isBc1) {
+                const blocksX = Math.ceil(texObj.width / 4);
+                const blocksY = Math.ceil(texObj.height / 4);
+                const expected = blocksX * blocksY * 8;
+                if (sizeBytes !== expected) {
+                  fail("ACMD UPLOAD_RESOURCE BC1 size_bytes mismatch: got " + sizeBytes + " expected " + expected);
+                }
+                if (texObj.bcCompressed) {
+                  writeTextureBc1(texObj.texture, texObj.width, texObj.height, data);
+                } else {
+                  const rgba = decodeBc1Rgba8(data, texObj.width, texObj.height);
+                  writeTextureRgba(texObj.texture, texObj.width, texObj.height, rgba);
+                }
+              } else {
+                const expected = texObj.width * texObj.height * 4;
+                if (sizeBytes !== expected) {
+                  fail("ACMD UPLOAD_RESOURCE texture size_bytes mismatch: got " + sizeBytes + " expected " + expected);
+                }
+                writeTextureRgba(texObj.texture, texObj.width, texObj.height, data);
+              }
+              break;
+            }
+
+            fail("ACMD UPLOAD_RESOURCE unknown resource_handle=" + resourceHandle);
+          }
+          case AEROGPU_CMD_DRAW: {
+            if (cmdSize < 24) fail("ACMD DRAW size_bytes too small: " + cmdSize);
+            const vertexCount = readU32(pv, off + 8);
+            const instanceCount = readU32(pv, off + 12);
+            const firstVertex = readU32(pv, off + 16);
+            const firstInstance = readU32(pv, off + 20);
+            if (firstInstance !== 0) fail("ACMD DRAW first_instance not supported: " + firstInstance);
+
+            const rt = getAcmdColorTarget();
+            const ds = getAcmdDepthTarget();
+            if (!acmdPass) {
+              const passDesc = {
+                colorAttachments: [
+                  {
+                    view: rt.view,
+                    loadOp: "load",
+                    storeOp: "store",
+                  },
+                ],
+              };
+              if (ds) {
+                const dsAtt = {
+                  view: ds.view,
+                  depthClearValue: 1.0,
+                  depthLoadOp: "load",
+                  depthStoreOp: "store",
+                };
+                if (ds.hasStencil) {
+                  dsAtt.stencilClearValue = 0;
+                  dsAtt.stencilLoadOp = "load";
+                  dsAtt.stencilStoreOp = "store";
+                }
+                passDesc.depthStencilAttachment = dsAtt;
+              }
+              beginAcmdPass(passDesc);
+            }
+
+            if (!acmdVertexBuffer0) fail("ACMD DRAW missing vertex buffer binding 0");
+
+            const isTextured = acmdPsTexture0 !== 0;
+            const depthEnable = acmdDepthState.enable && !!ds;
+            const pipeline = getAcmdPipeline({
+              kind: isTextured ? "tex" : "color",
+              strideBytes: acmdVertexBuffer0.strideBytes,
+              topology: acmdPrimitiveTopology,
+              depthEnable,
+              depthWrite: acmdDepthState.write,
+              depthCompare: acmdDepthState.compare,
+              depthFormat: ds ? ds.wgpuFormat : null,
+            });
+
+            acmdPass.setPipeline(pipeline);
+
+            if (isTextured) {
+              const tex = acmdTextures.get(acmdPsTexture0);
+              if (!tex) fail("ACMD DRAW missing texture0 handle=" + acmdPsTexture0);
+              const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                  { binding: 0, resource: acmdSampler },
+                  { binding: 1, resource: tex.view },
+                ],
+              });
+              acmdPass.setBindGroup(0, bindGroup);
+            }
+
+            acmdPass.draw(vertexCount, instanceCount, firstVertex, firstInstance);
+            break;
+          }
+          case AEROGPU_CMD_PRESENT: {
+            if (cmdSize < AEROGPU_CMD_PRESENT_SIZE_BYTES) fail("ACMD PRESENT size_bytes too small: " + cmdSize);
+            await acmdPresent();
+            break;
+          }
+          case AEROGPU_CMD_PRESENT_EX: {
+            if (cmdSize < AEROGPU_CMD_PRESENT_EX_SIZE_BYTES) fail("ACMD PRESENT_EX size_bytes too small: " + cmdSize);
+            await acmdPresent();
+            break;
+          }
+          default:
+            // Unknown opcode: skip (forward-compat).
+            break;
+        }
+
+        off += cmdSize;
+      }
+    }
+
+    async function executePacket(packetBytes, trace, execCtx) {
+      if (isAerogpuCmdStreamPacket(packetBytes)) {
+        await executeAerogpuCmdStream(packetBytes, execCtx);
+        return;
+      }
       const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
       const opcode = readU32(pv, 0);
       const totalDwords = readU32(pv, 4);
@@ -3183,15 +4210,11 @@ void main() {
     const backendName = (opts && opts.backend) || "webgl2";
     const backend =
       backendName === "webgpu"
-        ? hasSubmissions
+        ? !isMinimalAbiV1 && !isAerogpuAbiV1
           ? fail(
-              "backend webgpu does not support AeroGPU submission traces (use backend: 'webgl2')",
+              "backend webgpu only supports command_abi_version=1 (minimal ABI v1) or 0x0001_xxxx (AeroGPU ABI v1)",
             )
-          : !isMinimalAbiV1
-            ? fail(
-                "backend webgpu does not support AeroGPU command stream packet traces (use backend: 'webgl2')",
-              )
-            : await createWebgpuBackend(canvas)
+          : await createWebgpuBackend(canvas)
         : createWebgl2Backend(canvas);
     let cursor = 0;
     let playing = false;
