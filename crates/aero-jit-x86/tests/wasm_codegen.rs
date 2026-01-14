@@ -12,7 +12,9 @@ use aero_jit_x86::wasm::abi::{
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
-use wasmparser::{Parser, Payload};
+use std::collections::HashMap;
+
+use wasmparser::{Parser, Payload, TypeRef, ValType};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct HostState {
@@ -40,6 +42,42 @@ fn type_count(bytes: &[u8]) -> u32 {
         }
     }
     panic!("type section not found");
+}
+
+fn func_types(bytes: &[u8]) -> Vec<(Vec<ValType>, Vec<ValType>)> {
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::TypeSection(types) = payload.expect("parse wasm") {
+            let mut out = Vec::new();
+            for ty in types.into_iter_err_on_gc_types() {
+                let ty = ty.expect("parse type");
+                out.push((ty.params().to_vec(), ty.results().to_vec()));
+            }
+            return out;
+        }
+    }
+    panic!("type section not found");
+}
+
+fn env_func_import_types(bytes: &[u8]) -> HashMap<String, u32> {
+    let mut types = HashMap::new();
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::ImportSection(imports) = payload.expect("parse wasm") {
+            for group in imports {
+                let group = group.expect("parse import group");
+                for import in group {
+                    let (_offset, import) = import.expect("parse import");
+                    if import.module != IMPORT_MODULE {
+                        continue;
+                    }
+                    let TypeRef::Func(idx) = import.ty else {
+                        continue;
+                    };
+                    types.insert(import.name.to_string(), idx);
+                }
+            }
+        }
+    }
+    types
 }
 
 fn instantiate(
@@ -445,6 +483,81 @@ fn wasm_codegen_reuses_helper_types() {
         type_count(&wasm),
         7,
         "expected baseline codegen to dedupe identical helper signatures"
+    );
+
+    let import_types = env_func_import_types(&wasm);
+    let ty_read_u8 = *import_types
+        .get(IMPORT_MEM_READ_U8)
+        .expect("expected mem_read_u8 import");
+    let ty_read_u16 = *import_types
+        .get(IMPORT_MEM_READ_U16)
+        .expect("expected mem_read_u16 import");
+    let ty_read_u32 = *import_types
+        .get(IMPORT_MEM_READ_U32)
+        .expect("expected mem_read_u32 import");
+    assert_eq!(
+        ty_read_u8, ty_read_u16,
+        "expected mem_read_u8 and mem_read_u16 to reuse a type index"
+    );
+    assert_eq!(
+        ty_read_u8, ty_read_u32,
+        "expected mem_read_u8 and mem_read_u32 to reuse a type index"
+    );
+
+    let ty_write_u8 = *import_types
+        .get(IMPORT_MEM_WRITE_U8)
+        .expect("expected mem_write_u8 import");
+    let ty_write_u16 = *import_types
+        .get(IMPORT_MEM_WRITE_U16)
+        .expect("expected mem_write_u16 import");
+    let ty_write_u32 = *import_types
+        .get(IMPORT_MEM_WRITE_U32)
+        .expect("expected mem_write_u32 import");
+    assert_eq!(
+        ty_write_u8, ty_write_u16,
+        "expected mem_write_u8 and mem_write_u16 to reuse a type index"
+    );
+    assert_eq!(
+        ty_write_u8, ty_write_u32,
+        "expected mem_write_u8 and mem_write_u32 to reuse a type index"
+    );
+
+    let ty_read_u64 = *import_types
+        .get(IMPORT_MEM_READ_U64)
+        .expect("expected mem_read_u64 import");
+    let ty_page_fault = *import_types
+        .get(IMPORT_PAGE_FAULT)
+        .expect("expected page_fault import");
+    let ty_jit_exit = *import_types
+        .get(IMPORT_JIT_EXIT)
+        .expect("expected jit_exit import");
+    assert_eq!(
+        ty_read_u64, ty_page_fault,
+        "expected mem_read_u64 and page_fault to reuse a type index"
+    );
+    assert_eq!(
+        ty_read_u64, ty_jit_exit,
+        "expected mem_read_u64 and jit_exit to reuse a type index"
+    );
+
+    let tys = func_types(&wasm);
+    assert_eq!(
+        tys[ty_read_u8 as usize],
+        (vec![ValType::I32, ValType::I64], vec![ValType::I32]),
+        "expected shared mem_read_u8/u16/u32 type to have signature (i32, i64) -> i32"
+    );
+    assert_eq!(
+        tys[ty_write_u8 as usize],
+        (
+            vec![ValType::I32, ValType::I64, ValType::I32],
+            Vec::new()
+        ),
+        "expected shared mem_write_u8/u16/u32 type to have signature (i32, i64, i32) -> ()"
+    );
+    assert_eq!(
+        tys[ty_read_u64 as usize],
+        (vec![ValType::I32, ValType::I64], vec![ValType::I64]),
+        "expected shared (mem_read_u64/page_fault/jit_exit) type to have signature (i32, i64) -> i64"
     );
 }
 

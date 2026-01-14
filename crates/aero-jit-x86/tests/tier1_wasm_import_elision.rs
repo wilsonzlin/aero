@@ -10,7 +10,7 @@ use aero_jit_x86::wasm::{
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_jit_x86::wasm::{IMPORT_JIT_EXIT_MMIO, IMPORT_MEM_READ_U32, IMPORT_MMU_TRANSLATE};
 use aero_types::Width;
-use wasmparser::{Parser, Payload, TypeRef};
+use wasmparser::{Parser, Payload, TypeRef, ValType};
 
 fn import_entries(wasm: &[u8]) -> Vec<(String, String, TypeRef)> {
     let mut out = Vec::new();
@@ -41,6 +41,20 @@ fn type_count(wasm: &[u8]) -> u32 {
                 count += 1;
             }
             return count;
+        }
+    }
+    panic!("type section not found");
+}
+
+fn func_types(wasm: &[u8]) -> Vec<(Vec<ValType>, Vec<ValType>)> {
+    for payload in Parser::new(0).parse_all(wasm) {
+        if let Payload::TypeSection(types) = payload.expect("parse wasm") {
+            let mut out = Vec::new();
+            for ty in types.into_iter_err_on_gc_types() {
+                let ty = ty.expect("parse type");
+                out.push((ty.params().to_vec(), ty.results().to_vec()));
+            }
+            return out;
         }
     }
     panic!("type section not found");
@@ -122,14 +136,20 @@ fn tier1_block_with_multiple_load_widths_reuses_mem_read_type() {
     let wasm = Tier1WasmCodegen::new().compile_block(&ir);
     let imports = import_entries(&wasm);
 
-    let mut found_u8 = false;
-    let mut found_u16 = false;
-    for (module, name, _ty) in imports {
+    let mut found_u8: Option<u32> = None;
+    let mut found_u16: Option<u32> = None;
+    for (module, name, ty) in imports {
         if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U8 {
-            found_u8 = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.mem_read_u8 import to be a function, got {ty:?}");
+            };
+            found_u8 = Some(idx);
         }
         if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U16 {
-            found_u16 = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.mem_read_u16 import to be a function, got {ty:?}");
+            };
+            found_u16 = Some(idx);
         }
         // Sanity: a pure load block shouldn't need any write helpers.
         assert_ne!(name, IMPORT_MEM_WRITE_U8);
@@ -138,8 +158,18 @@ fn tier1_block_with_multiple_load_widths_reuses_mem_read_type() {
         assert_ne!(name, IMPORT_MEM_WRITE_U64);
     }
 
-    assert!(found_u8, "expected env.mem_read_u8 import");
-    assert!(found_u16, "expected env.mem_read_u16 import");
+    let ty_u8 = found_u8.expect("expected env.mem_read_u8 import");
+    let ty_u16 = found_u16.expect("expected env.mem_read_u16 import");
+    assert_eq!(
+        ty_u8, ty_u16,
+        "expected env.mem_read_u8 and env.mem_read_u16 to reference the same type index"
+    );
+    let tys = func_types(&wasm);
+    assert_eq!(
+        tys[ty_u8 as usize],
+        (vec![ValType::I32, ValType::I64], vec![ValType::I32]),
+        "expected shared mem_read type to have signature (i32, i64) -> i32"
+    );
 
     assert_eq!(
         type_count(&wasm),
@@ -195,14 +225,20 @@ fn tier1_block_with_multiple_store_widths_reuses_mem_write_type() {
     let wasm = Tier1WasmCodegen::new().compile_block(&ir);
     let imports = import_entries(&wasm);
 
-    let mut found_u8 = false;
-    let mut found_u16 = false;
-    for (module, name, _ty) in imports {
+    let mut found_u8: Option<u32> = None;
+    let mut found_u16: Option<u32> = None;
+    for (module, name, ty) in imports {
         if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U8 {
-            found_u8 = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.mem_write_u8 import to be a function, got {ty:?}");
+            };
+            found_u8 = Some(idx);
         }
         if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U16 {
-            found_u16 = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.mem_write_u16 import to be a function, got {ty:?}");
+            };
+            found_u16 = Some(idx);
         }
         // Sanity: a pure store block shouldn't need any read helpers.
         assert_ne!(name, IMPORT_MEM_READ_U8);
@@ -210,8 +246,21 @@ fn tier1_block_with_multiple_store_widths_reuses_mem_write_type() {
         assert_ne!(name, IMPORT_MEM_READ_U64);
     }
 
-    assert!(found_u8, "expected env.mem_write_u8 import");
-    assert!(found_u16, "expected env.mem_write_u16 import");
+    let ty_u8 = found_u8.expect("expected env.mem_write_u8 import");
+    let ty_u16 = found_u16.expect("expected env.mem_write_u16 import");
+    assert_eq!(
+        ty_u8, ty_u16,
+        "expected env.mem_write_u8 and env.mem_write_u16 to reference the same type index"
+    );
+    let tys = func_types(&wasm);
+    assert_eq!(
+        tys[ty_u8 as usize],
+        (
+            vec![ValType::I32, ValType::I64, ValType::I32],
+            Vec::new()
+        ),
+        "expected shared mem_write type to have signature (i32, i64, i32) -> ()"
+    );
 
     assert_eq!(
         type_count(&wasm),
@@ -268,14 +317,20 @@ fn tier1_block_with_u64_load_and_call_helper_reuses_i64_return_type() {
     let wasm = Tier1WasmCodegen::new().compile_block(&ir);
     let imports = import_entries(&wasm);
 
-    let mut found_mem_read_u64 = false;
-    let mut found_jit_exit = false;
-    for (module, name, _ty) in imports {
+    let mut found_mem_read_u64: Option<u32> = None;
+    let mut found_jit_exit: Option<u32> = None;
+    for (module, name, ty) in imports {
         if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U64 {
-            found_mem_read_u64 = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.mem_read_u64 import to be a function, got {ty:?}");
+            };
+            found_mem_read_u64 = Some(idx);
         }
         if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT {
-            found_jit_exit = true;
+            let TypeRef::Func(idx) = ty else {
+                panic!("expected env.jit_exit import to be a function, got {ty:?}");
+            };
+            found_jit_exit = Some(idx);
         }
         // Sanity: this block shouldn't need any write helpers.
         assert_ne!(name, IMPORT_MEM_WRITE_U8);
@@ -284,8 +339,18 @@ fn tier1_block_with_u64_load_and_call_helper_reuses_i64_return_type() {
         assert_ne!(name, IMPORT_MEM_WRITE_U64);
     }
 
-    assert!(found_mem_read_u64, "expected env.mem_read_u64 import");
-    assert!(found_jit_exit, "expected env.jit_exit import");
+    let ty_mem_read_u64 = found_mem_read_u64.expect("expected env.mem_read_u64 import");
+    let ty_jit_exit = found_jit_exit.expect("expected env.jit_exit import");
+    assert_eq!(
+        ty_mem_read_u64, ty_jit_exit,
+        "expected env.mem_read_u64 and env.jit_exit to reference the same type index"
+    );
+    let tys = func_types(&wasm);
+    assert_eq!(
+        tys[ty_mem_read_u64 as usize],
+        (vec![ValType::I32, ValType::I64], vec![ValType::I64]),
+        "expected shared (mem_read_u64/jit_exit) type to have signature (i32, i64) -> i64"
+    );
 
     assert_eq!(
         type_count(&wasm),
