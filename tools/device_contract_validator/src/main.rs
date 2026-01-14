@@ -1457,6 +1457,32 @@ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
     }
 
     #[test]
+    fn virtio_input_device_desc_split_rejects_extra_subsys_entries() {
+        let inf = r#"
+[Aero.NTx86]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioTablet.DeviceDesc%   = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
+
+[Aero.NTamd64]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioTablet.DeviceDesc%   = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
+
+[Strings]
+AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
+"#;
+        let err = validate(inf).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("extra SUBSYS-qualified model entry"));
+    }
+
+    #[test]
     fn virtio_input_device_desc_split_requires_distinct_device_descs() {
         let inf = r#"
 [Aero.NTx86]
