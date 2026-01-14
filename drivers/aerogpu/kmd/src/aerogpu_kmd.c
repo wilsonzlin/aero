@@ -11047,52 +11047,55 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
         }
 
-        /* Scanout framebuffer (best-effort): allow reads within the current SCANOUT0 framebuffer region. */
-        if (adapter->Bar0) {
-            ULONGLONG fbGpa = 0;
-            ULONG fbPitchBytes = 0;
-            ULONG fbHeight = 0;
+        /*
+         * Scanout framebuffer (best-effort): allow reads within the cached scanout
+         * region last programmed via SetVidPnSourceAddress.
+         *
+         * IMPORTANT: do not trust scanout MMIO registers as the source of truth
+         * for authorizing READ_GPA. If the registers are corrupted or
+         * misprogrammed, using them here would turn this escape into a generic
+         * physical-memory read primitive.
+         *
+         * Also: when powered down (non-D0) or BAR0 is unmapped, do not attempt
+         * scanout physical translation.
+         */
+        if (poweredOn) {
+            const ULONGLONG fbGpa = (ULONGLONG)adapter->CurrentScanoutFbPa.QuadPart;
+            const ULONG fbPitchBytes = adapter->CurrentPitch;
+            const ULONG fbHeight = adapter->CurrentHeight;
 
-            if (poweredOn) {
-                if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
-                    adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
-                    fbPitchBytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
-                    fbHeight = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
-                    const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO);
-                    const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
-                    fbGpa = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
-                } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
-                    fbPitchBytes = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
-                    fbHeight = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
-                    const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO);
-                    const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
-                    fbGpa = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
-                }
-            } else {
-                /*
-                 * Avoid touching scanout MMIO registers while powered down.
-                 * Use the last cached mode + scanout framebuffer address instead.
-                 */
-                fbPitchBytes = adapter->CurrentPitch;
-                fbHeight = adapter->CurrentHeight;
-                fbGpa = (ULONGLONG)adapter->CurrentScanoutFbPa.QuadPart;
-            }
-
+            /* Derive a plausible bound for the scanout window (pitch * height). */
             ULONGLONG fbSizeBytes = 0;
-            if (fbGpa != 0 && fbPitchBytes != 0 && fbHeight != 0) {
+            if (adapter->SourceVisible && fbGpa != 0 && fbPitchBytes != 0 && fbHeight != 0) {
                 if ((ULONGLONG)fbPitchBytes <= (~0ull / (ULONGLONG)fbHeight)) {
                     fbSizeBytes = (ULONGLONG)fbPitchBytes * (ULONGLONG)fbHeight;
                 }
             }
 
-            /*
-             * The KMD reports a 512MB system segment. Reject implausibly large
-             * scanout sizes to avoid inadvertently turning this into a generic
-             * physical memory read primitive if registers are corrupted.
-             */
-            if (fbSizeBytes != 0 && fbSizeBytes <= (512ull * 1024ull * 1024ull) &&
-                fbGpa <= (~0ull - fbSizeBytes) &&
-                gpa >= fbGpa && gpa < (fbGpa + fbSizeBytes)) {
+            /* Tight cap: never allow reads beyond the reported segment budget or 512 MiB. */
+            const ULONGLONG segmentCap = adapter->NonLocalMemorySizeBytes;
+            ULONGLONG maxAllowedBytes = (512ull * 1024ull * 1024ull);
+            if (segmentCap != 0 && segmentCap < maxAllowedBytes) {
+                maxAllowedBytes = segmentCap;
+            }
+
+            const BOOLEAN scanoutStateValid =
+                (fbSizeBytes != 0) && (fbSizeBytes <= maxAllowedBytes) && (fbGpa <= (~0ull - fbSizeBytes));
+
+            if (!scanoutStateValid) {
+#if DBG
+                static LONG s_ReadGpaScanoutInvalidStateCount = 0;
+                AEROGPU_LOG_RATELIMITED(s_ReadGpaScanoutInvalidStateCount,
+                                        8,
+                                        "READ_GPA: scanout unavailable/invalid (visible=%u fb_gpa=0x%I64x pitch=%lu height=%lu size=%I64u max=%I64u)",
+                                        (unsigned)adapter->SourceVisible,
+                                        (ULONGLONG)fbGpa,
+                                        (ULONG)fbPitchBytes,
+                                        (ULONG)fbHeight,
+                                        (ULONGLONG)fbSizeBytes,
+                                        (ULONGLONG)maxAllowedBytes);
+#endif
+            } else if (gpa >= fbGpa && gpa < (fbGpa + fbSizeBytes)) {
                 const ULONGLONG offset = gpa - fbGpa;
                 const ULONGLONG maxBytesU64 = fbSizeBytes - offset;
                 const ULONG bytesToCopy =
