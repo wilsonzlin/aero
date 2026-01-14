@@ -1,4 +1,5 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 
 fn enable_a20(m: &mut Machine) {
@@ -104,7 +105,7 @@ fn aerogpu_vbe_lfb_is_reachable_via_pci_mmio_router() {
     let base = m.vbe_lfb_base();
     let bar1_base = m
         .aerogpu()
-        .and_then(|bdf| m.pci_bar_base(bdf, 1))
+        .and_then(|bdf| m.pci_bar_base(bdf, profile::AEROGPU_BAR1_VRAM_INDEX))
         .expect("expected AeroGPU BAR1 to be present");
     assert_eq!(base, bar1_base + VBE_LFB_OFFSET as u64);
     m.write_physical_u32(base, 0x00FF_0000);
