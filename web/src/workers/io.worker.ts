@@ -3013,6 +3013,242 @@ function machineHostOnlyMessageLabel(data: unknown): string {
   return "message";
 }
 
+function stopIoIpcServerForMachineHostOnlyMode(): void {
+  // Best-effort stop of the guest IO RPC loop. This is used when the worker learns it is running
+  // under `vmRuntime=machine` *after* it already started guest device models.
+  //
+  // IMPORTANT: The IO worker must remain alive in this mode (it still participates in the
+  // coordinator protocol and must ACK snapshot pause/resume), so do not call `shutdown()`.
+  const abort = ioServerAbort;
+  if (!abort) return;
+  if (ioServerExitMode === "host-only") return;
+  ioServerExitMode = "host-only";
+  try {
+    abort.abort();
+  } catch {
+    // ignore
+  }
+}
+
+function teardownGuestStateForMachineHostOnlyMode(): void {
+  // Stop any per-tick guest loops first so we don't contend for shared rings (NET/HID/disk) with
+  // the canonical Machine runtime.
+  stopIoIpcServerForMachineHostOnlyMode();
+
+  // Tear down any guest-side resources that may have been initialized before we learned the VM
+  // runtime is "machine". This is best-effort: the coordinator owns the authoritative guest state.
+  try {
+    if (audioOutTelemetryTimer !== undefined) {
+      clearInterval(audioOutTelemetryTimer);
+      audioOutTelemetryTimer = undefined;
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (usbPassthroughDebugTimer !== undefined) {
+      clearInterval(usbPassthroughDebugTimer);
+      usbPassthroughDebugTimer = undefined;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Detach HID rings so we stop draining SharedArrayBuffer-backed report queues.
+  try {
+    detachHidRings("vmRuntime=machine host-only mode", { notifyBroker: false });
+  } catch {
+    // ignore
+  }
+
+  // Disk: release OPFS sync handles by terminating the runtime disk worker. The Machine runtime
+  // opens its own exclusive `FileSystemSyncAccessHandle`s.
+  activeDisk = null;
+  cdDisk = null;
+  pendingBootDisks = null;
+  try {
+    diskClient?.close();
+  } catch {
+    // ignore
+  }
+  diskClient = null;
+  diskIoChain = Promise.resolve();
+
+  try {
+    usbHid?.free();
+  } catch {
+    // ignore
+  }
+  usbHid = null;
+
+  try {
+    syntheticUsbKeyboard?.free();
+  } catch {
+    // ignore
+  }
+  syntheticUsbKeyboard = null;
+  try {
+    syntheticUsbMouse?.free();
+  } catch {
+    // ignore
+  }
+  syntheticUsbMouse = null;
+  try {
+    syntheticUsbGamepad?.free();
+  } catch {
+    // ignore
+  }
+  syntheticUsbGamepad = null;
+  try {
+    syntheticUsbConsumerControl?.free();
+  } catch {
+    // ignore
+  }
+  syntheticUsbConsumerControl = null;
+  syntheticUsbHidAttached = false;
+  syntheticUsbKeyboardPendingReport = null;
+  syntheticUsbGamepadPendingReport = null;
+  syntheticUsbConsumerControlPendingReport = null;
+
+  // Reset input backend selection state so host-only mode doesn't attempt to inject into guest devices.
+  keyboardInputBackend = "ps2";
+  pressedKeyboardHidUsages.fill(0);
+  pressedKeyboardHidUsageCount = 0;
+  mouseInputBackend = "ps2";
+  mouseButtonsMask = 0;
+
+  webUsbGuestBridge = null;
+  webUsbGuestControllerKind = null;
+  uhciRuntimeWebUsbBridge = null;
+
+  try {
+    usbPassthroughRuntime?.destroy();
+  } catch {
+    // ignore
+  }
+  usbPassthroughRuntime = null;
+
+  try {
+    usbUhciHarnessRuntime?.destroy();
+  } catch {
+    // ignore
+  }
+  usbUhciHarnessRuntime = null;
+  try {
+    usbEhciHarnessRuntime?.destroy();
+  } catch {
+    // ignore
+  }
+  usbEhciHarnessRuntime = null;
+
+  // Guest USB controller models.
+  try {
+    uhciDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  uhciDevice = null;
+  try {
+    ehciDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  ehciDevice = null;
+  try {
+    xhciDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  xhciDevice = null;
+  uhciRuntime = null;
+  uhciControllerBridge = null;
+  ehciControllerBridge = null;
+  xhciControllerBridge = null;
+
+  // Guest NIC models.
+  teardownGuestNicDevices();
+
+  // Guest input models.
+  try {
+    virtioInputKeyboard?.destroy();
+  } catch {
+    // ignore
+  }
+  virtioInputKeyboard = null;
+  try {
+    virtioInputMouse?.destroy();
+  } catch {
+    // ignore
+  }
+  virtioInputMouse = null;
+
+  // Reset HID topology routing.
+  uhciHidTopology.setUhciBridge(null);
+  uhciHidTopologyBridgeSource = null;
+  xhciHidTopologyBridge = null;
+  xhciHidTopologyBridgeSource = null;
+  xhciHidTopology.setXhciBridge(null);
+  const prevHidGuest = hidGuest;
+  try {
+    prevHidGuest.destroy?.();
+  } catch {
+    // ignore
+  }
+  uhciRuntimeHidGuest = null;
+  wasmHidGuest = null;
+  hidGuest = hidGuestInMemory;
+
+  // Guest audio devices.
+  try {
+    hdaDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  hdaDevice = null;
+  hdaControllerBridge = null;
+  audioHdaBridge = null;
+  pendingAudioHdaSnapshotBytes = null;
+
+  try {
+    virtioSndDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  virtioSndDevice = null;
+
+  // Guest cursor forwarding.
+  aerogpuDevice = null;
+
+  // WebUSB demo runtime (dev-only harness).
+  try {
+    usbDemoApi?.free();
+  } catch {
+    // ignore
+  }
+  usbDemoApi = null;
+  usbDemo = null;
+  lastUsbSelected = null;
+
+  // Clear any buffered async IO events so we stop touching the IO event ring.
+  pendingIoEvents.length = 0;
+
+  // Finally, clear buses/rings that are guest-owned in machine mode.
+  deviceManager = null;
+  netTxRing = null;
+  netRxRing = null;
+  hidInRing = null;
+  ioCmdRing = null;
+  ioEvtRing = null;
+  ioIpcSab = null;
+  i8042Ts = null;
+  try {
+    i8042Wasm?.free();
+  } catch {
+    // ignore
+  }
+  i8042Wasm = null;
+}
+
 function setVmRuntimeFromConfigUpdate(update: ConfigUpdateMessage): void {
   // `vmRuntime` is supplied by the coordinator/runtime layer (not part of AeroConfig).
   // Support both shapes:
@@ -3040,6 +3276,7 @@ function setVmRuntimeFromConfigUpdate(update: ConfigUpdateMessage): void {
     }
     pendingBootDisks = null;
     maybeAnnounceMachineHostOnlyMode();
+    teardownGuestStateForMachineHostOnlyMode();
   }
 }
 
@@ -3111,6 +3348,7 @@ let started = false;
 let shuttingDown = false;
 let ioServerAbort: AbortController | null = null;
 let ioServerTask: Promise<void> | null = null;
+let ioServerExitMode: "shutdown" | "host-only" | null = null;
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -5477,6 +5715,10 @@ function isPerfActive(): boolean {
 
 function startIoIpcServer(): void {
   if (started) return;
+  // In the canonical `api.Machine` runtime, the CPU worker owns all guest device models (PCI, disk,
+  // NIC, USB controllers, etc). The IO worker should behave as a host-only stub, so do not start
+  // the guest I/O RPC loop.
+  if (machineHostOnlyMode) return;
   const cmdRing = ioCmdRing;
   const evtRing = ioEvtRing;
   const mgr = deviceManager;
@@ -5486,6 +5728,7 @@ function startIoIpcServer(): void {
 
   started = true;
   ioServerAbort = new AbortController();
+  ioServerExitMode = null;
   startAudioOutTelemetryTimer();
 
   // Publish initial input backend state for debug HUDs/tests (best-effort; the periodic tick will refresh).
@@ -5498,6 +5741,7 @@ function startIoIpcServer(): void {
 
   const dispatchTarget: AeroIpcIoDispatchTarget = {
     portRead: (port, size) => {
+      if (machineHostOnlyMode) return defaultReadValue(size);
       let value = 0;
       try {
         value = mgr.portRead(port, size);
@@ -5509,6 +5753,7 @@ function startIoIpcServer(): void {
       return value >>> 0;
     },
     portWrite: (port, size, value) => {
+      if (machineHostOnlyMode) return;
       try {
         mgr.portWrite(port, size, value);
       } catch {
@@ -5518,6 +5763,7 @@ function startIoIpcServer(): void {
       if ((portWriteCount & 0xff) === 0) perf.counter("io:portWrites", portWriteCount);
     },
     mmioRead: (addr, size) => {
+      if (machineHostOnlyMode) return defaultReadValue(size);
       let value = 0;
       try {
         value = mgr.mmioRead(addr, size);
@@ -5529,6 +5775,7 @@ function startIoIpcServer(): void {
       return value >>> 0;
     },
     mmioWrite: (addr, size, value) => {
+      if (machineHostOnlyMode) return;
       try {
         mgr.mmioWrite(addr, size, value);
       } catch {
@@ -5540,6 +5787,16 @@ function startIoIpcServer(): void {
     diskRead,
     diskWrite,
     tick: (nowMs) => {
+      // Machine runtime host-only mode: do not tick guest devices or interact with shared rings.
+      // Keep draining the runtime control ring so shutdown requests are still observed.
+      if (machineHostOnlyMode) {
+        drainRuntimeCommands();
+        if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
+          ioServerExitMode = "shutdown";
+          ioServerAbort?.abort();
+        }
+        return;
+      }
       const vmNowMs = ioTickTimebase.tick(nowMs, snapshotPaused);
 
       const perfActive = isPerfActive();
@@ -5551,6 +5808,7 @@ function startIoIpcServer(): void {
       if (snapshotPaused) {
         drainRuntimeCommands();
         if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
+          ioServerExitMode = "shutdown";
           ioServerAbort?.abort();
         }
         return;
@@ -5623,6 +5881,7 @@ function startIoIpcServer(): void {
       maybeEmitPerfSample();
 
       if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
+        ioServerExitMode = "shutdown";
         ioServerAbort?.abort();
       }
     },
@@ -5638,6 +5897,18 @@ function startIoIpcServer(): void {
       await server.runAsync({ signal: ioServerAbort!.signal, yieldEveryNCommands: 128 });
     } catch (err) {
       fatal(err);
+      return;
+    }
+
+    const exitMode = ioServerExitMode;
+    ioServerExitMode = null;
+    ioServerAbort = null;
+    ioServerTask = null;
+
+    if (exitMode === "host-only") {
+      // Host-only transition: the worker stays alive, but the guest I/O server stops so it
+      // no longer touches shared rings (NET, HID, disk, etc).
+      started = false;
       return;
     }
 
@@ -5663,6 +5934,7 @@ function drainRuntimeCommands(): void {
       continue;
     }
     if (cmd.kind === "shutdown") {
+      ioServerExitMode = "shutdown";
       Atomics.store(status, StatusIndex.StopRequested, 1);
       ioServerAbort?.abort();
     }
@@ -5743,6 +6015,11 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
 }
 
 function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
+  if (machineHostOnlyMode) {
+    // Machine runtime owns disk attachment in the CPU worker; the IO worker must not perform any
+    // disk DMA into guest RAM (or hold OPFS sync handles).
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
+  }
   const length = len >>> 0;
 
   const disk = activeDisk;
@@ -5789,6 +6066,9 @@ function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpc
 }
 
 function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
+  if (machineHostOnlyMode) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
+  }
   const length = len >>> 0;
 
   const disk = activeDisk;
