@@ -301,6 +301,34 @@ fn decodes_alloc_table_and_cmd_stream_header() {
 }
 
 #[test]
+fn ring_pending_exceeds_entry_count_advances_head_to_tail() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    // Corrupt ring state: pending = tail - head = 9 (> entry_count=8).
+    // The executor should clamp by advancing head to tail and returning early.
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 9, regs.abi_version);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 9);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_eq!(regs.completed_fence, 0);
+    assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
 fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
