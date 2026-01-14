@@ -226,6 +226,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     let _ = cmd::decode_cmd_copy_texture2d_le(packet_bytes);
                 }
                 Some(cmd::AerogpuCmdOpcode::Dispatch) => {
+                    let _ = pkt.decode_dispatch_payload_le();
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ = cmd::decode_cmd_dispatch_le(packet_bytes);
                     }
