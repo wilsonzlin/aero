@@ -680,16 +680,21 @@ impl IoSnapshot for XhciController {
                 false
             }
             // Legacy tag collision mapping: tag 26 = time_ms and tag 27 = last_tick_dma_dword.
+            //
+            // Some historical builds wrote `time_ms` after the EP0 TD image, overwriting it. Other
+            // builds wrote it before and lost the `time_ms` field. Accept both:
+            // - if tag 26 looks like a u64 (8 bytes), treat it as `time_ms` and skip EP0 TD restore
+            // - otherwise treat `time_ms` as missing and keep the EP0 TD image.
             (Some(time_bytes), None) if time_bytes.len() == 4 => {
-                let ok = matches!(r.bytes(TAG_EP0_CONTROL_TD_FULL), Some(b) if b.len() == 8);
-                if !ok {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "xhci time_ms legacy tag collision",
-                    ));
+                if matches!(r.bytes(TAG_EP0_CONTROL_TD_FULL), Some(b) if b.len() == 8) {
+                    self.time_ms = r.u64(TAG_EP0_CONTROL_TD_FULL)?.unwrap_or(0);
+                    self.last_tick_dma_dword = r.u32(TAG_TIME_MS)?.unwrap_or(0);
+                    true
+                } else {
+                    self.time_ms = 0;
+                    self.last_tick_dma_dword = r.u32(TAG_TIME_MS)?.unwrap_or(0);
+                    false
                 }
-                self.time_ms = r.u64(TAG_EP0_CONTROL_TD_FULL)?.unwrap_or(0);
-                self.last_tick_dma_dword = r.u32(TAG_TIME_MS)?.unwrap_or(0);
-                true
             }
             (Some(_), None) => {
                 return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms"));

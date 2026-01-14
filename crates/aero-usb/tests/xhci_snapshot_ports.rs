@@ -292,3 +292,30 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
     assert_eq!(r2.u64(27).unwrap().unwrap(), 3);
     assert_eq!(r2.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
 }
+
+#[test]
+fn xhci_snapshot_loads_legacy_time_and_tick_tag_mapping() {
+    let ctrl = XhciController::new();
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
+
+    // Regression test for an early xHCI snapshot v0.7 bug where `last_tick_dma_dword` was stored
+    // under the tag now used for `time_ms` and the `time_ms` field was missing due to a tag
+    // collision.
+    let mut w = SnapshotWriter::new(*b"XHCI", <XhciController as IoSnapshot>::DEVICE_VERSION);
+    for (tag, field) in r.iter_fields() {
+        match tag {
+            // Drop time_ms.
+            27 => {}
+            // Move last_tick_dma_dword into the old tag.
+            28 => w.field_bytes(27, field.to_vec()),
+            _ => w.field_bytes(tag, field.to_vec()),
+        }
+    }
+    let legacy_bytes = w.finish();
+
+    let mut restored = XhciController::new();
+    restored
+        .load_state(&legacy_bytes)
+        .expect("load legacy time/tick snapshot");
+}
