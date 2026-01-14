@@ -2245,7 +2245,10 @@ impl AeroGpuDevice {
             // Attribute controller: reads happen via 0x3C1.
             0x03C1 => self.attr_regs[usize::from(self.attr_index)],
             // Misc Output readback (0x3CC).
-            0x03CC => self.misc_output,
+            //
+            // Real hardware reads Misc Output at 0x3CC (and 0x3C2 is Input Status 0). Accept reads
+            // from either port for maximum guest compatibility.
+            0x03CC | 0x03C2 => self.misc_output,
             // Sequencer.
             0x03C4 => self.seq_index,
             0x03C5 => self.seq_regs[usize::from(self.seq_index)],
@@ -2256,7 +2259,7 @@ impl AeroGpuDevice {
             0x03B4 | 0x03D4 => self.crtc_index,
             0x03B5 | 0x03D5 => self.crtc_regs[usize::from(self.crtc_index)],
             // Input Status 1: reading resets the attribute controller flip-flop.
-            0x03DA => {
+            0x03DA | 0x03BA => {
                 self.attr_flip_flop = false;
                 0xFF
             }
@@ -2587,6 +2590,27 @@ impl MmioHandler for AeroGpuLegacyVgaMmio {
 
 struct AeroGpuVgaPortWindow {
     dev: Rc<RefCell<AeroGpuDevice>>,
+    clock: ManualClock,
+}
+
+impl AeroGpuVgaPortWindow {
+    // Model VGA Input Status 1 vblank bit (bit 3) as a deterministic 60Hz pulse based on the
+    // machine's deterministic `ManualClock`.
+    //
+    // This avoids real-mode software hanging in retrace polling loops like:
+    //   while (inb(0x3DA) & 0x08) {}
+    //   while (!(inb(0x3DA) & 0x08)) {}
+    const VBLANK_PERIOD_NS: u64 = 16_666_667;
+    const VBLANK_PULSE_NS: u64 = Self::VBLANK_PERIOD_NS / 20;
+
+    fn input_status1_value(&self) -> u8 {
+        let now_ns = aero_interrupts::clock::Clock::now_ns(&self.clock);
+        let pos = now_ns % Self::VBLANK_PERIOD_NS;
+        let in_vblank = pos < Self::VBLANK_PULSE_NS;
+        let v = if in_vblank { 0x08 } else { 0x00 };
+        // Bit 3: vertical retrace. Bit 0: display enable (rough approximation).
+        v | (v >> 3)
+    }
 }
 
 impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
@@ -2601,7 +2625,14 @@ impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
         let mut dev = self.dev.borrow_mut();
         for i in 0..size {
             let p = port.wrapping_add(i as u16);
-            let b = dev.vga_port_read_u8(p) as u32;
+            let b = match p {
+                // Input Status 1: reading resets the attribute controller flip-flop.
+                0x03DA | 0x03BA => {
+                    dev.attr_flip_flop = false;
+                    u32::from(self.input_status1_value())
+                }
+                _ => u32::from(dev.vga_port_read_u8(p)),
+            };
             out |= b << (i * 8);
         }
         out
@@ -6065,9 +6096,11 @@ impl Machine {
                     aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                     {
                         let aerogpu = aerogpu.clone();
+                        let clock = clock.clone();
                         move |_port| {
                             Box::new(AeroGpuVgaPortWindow {
                                 dev: aerogpu.clone(),
+                                clock: clock.clone(),
                             })
                         }
                     },
