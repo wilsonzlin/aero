@@ -1042,6 +1042,64 @@ void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
   }
 }
 
+void test_process_vertices_dest_decl_ignores_other_streams() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Pre-transformed vertices: should be handled by the fixed-function CPU path.
+  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 20;
+  src.storage.resize(20);
+  write_f32(src.storage, 0, 10.0f);
+  write_f32(src.storage, 4, 20.0f);
+  write_f32(src.storage, 8, 0.5f);
+  write_f32(src.storage, 12, 2.0f);
+  write_u32(src.storage, 16, 0xAABBCCDDu);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  // The destination stride should be inferred from stream 0 only (20 bytes). If
+  // other streams influenced the inferred stride, this destination would fail
+  // bounds checks.
+  dst.size_bytes = 20;
+  dst.storage.resize(20);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      // Unrelated element in a different stream; must not affect stride inference.
+      {1, 100, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 20;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+  assert(dst.storage == src.storage);
+}
+
 void test_xyz_diffuse_tex1_padded_dest_stride() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1843,6 +1901,7 @@ int main() {
   aerogpu::test_xyz_tex1_defaults_white_diffuse();
   aerogpu::test_xyzrhw_tex1_defaults_white_diffuse();
   aerogpu::test_xyzrhw_tex1_do_not_copy_data_preserves_dest();
+  aerogpu::test_process_vertices_dest_decl_ignores_other_streams();
   aerogpu::test_xyz_diffuse_tex1_padded_dest_stride();
   aerogpu::test_xyz_diffuse_tex1_dest_decl_extra_elements();
   aerogpu::test_xyz_diffuse_offsets();

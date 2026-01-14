@@ -5850,8 +5850,12 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
     if (elem_size == 0) {
       continue;
     }
-    const uint32_t end = static_cast<uint32_t>(e.Offset) + elem_size;
-    stride = std::max(stride, end);
+    // ProcessVertices writes a single destination buffer (stream 0); ignore
+    // declaration elements in other streams when inferring the destination stride.
+    if (e.Stream == 0) {
+      const uint32_t end = static_cast<uint32_t>(e.Offset) + elem_size;
+      stride = std::max(stride, end);
+    }
 
     if (e.Stream != 0) {
       continue;
