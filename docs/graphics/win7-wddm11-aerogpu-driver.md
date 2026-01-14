@@ -460,7 +460,11 @@ actually untrack a wrapper (so duplicate callback sequences do not underflow).
 When the final refcount reaches zero, the KMD emits `RELEASE_SHARED_SURFACE` to
 the host so it can remove the `share_token -> resource` mapping used by
 `IMPORT_SHARED_SURFACE`.
-  
+
+Implementation note: this is emitted as a best-effort internal ring submission that must not advance the OS-visible
+fence domain. In practice the KMD reuses the most recently submitted fence value and sets the `NO_IRQ` submit flag, so
+host-side executors must tolerate **duplicate fence values** in the ring stream.
+   
 #### `DxgkDdiLock` / `DxgkDdiUnlock`
   
 - **Purpose:** Map/unmap allocation memory for CPU access.
