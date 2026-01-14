@@ -51,14 +51,13 @@ bool CheckFixup(uint32_t d3d9_format, uint32_t expected_dxgi_format, uint32_t ex
 } // namespace
 
 int main() {
-  // DXGI_FORMAT numeric values (dxgiformat.h).
-  constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;
-  constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;
-
-  // D3DFORMAT numeric values (d3d9types.h).
-  constexpr uint32_t kD3d9FmtR5G6B5 = 23;
-  constexpr uint32_t kD3d9FmtX1R5G5B5 = 24;
-  constexpr uint32_t kD3d9FmtA1R5G5B5 = 25;
+  // Reuse the shared-surface fixup helper's numeric constants to keep tests and
+  // UMD fixup logic in sync.
+  using aerogpu::shared_surface::kDxgiFormatB5G6R5Unorm;
+  using aerogpu::shared_surface::kDxgiFormatB5G5R5A1Unorm;
+  using aerogpu::shared_surface::kD3d9FmtR5G6B5;
+  using aerogpu::shared_surface::kD3d9FmtX1R5G5B5;
+  using aerogpu::shared_surface::kD3d9FmtA1R5G5B5;
 
   if (!CheckFixup(kD3d9FmtR5G6B5, kDxgiFormatB5G6R5Unorm, /*bpp=*/2)) {
     return 1;
@@ -72,4 +71,3 @@ int main() {
 
   return 0;
 }
-
