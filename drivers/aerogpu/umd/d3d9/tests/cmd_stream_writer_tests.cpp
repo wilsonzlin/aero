@@ -1616,15 +1616,22 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
              "StretchRectFilterCaps does not include mip filter caps")) {
     return false;
   }
-  // Fixed-function texture stage operation caps must include the minimal stage0
-  // combiner ops that the UMD's fixed-function fallback supports.
+  // Fixed-function texture stage operation caps must include the subset of
+  // combiner ops that the UMD's fixed-function fallback supports (stages 0..3).
   const uint32_t required_texop_caps =
       D3DTEXOPCAPS_DISABLE |
       D3DTEXOPCAPS_SELECTARG1 |
       D3DTEXOPCAPS_SELECTARG2 |
-      D3DTEXOPCAPS_MODULATE;
+      D3DTEXOPCAPS_MODULATE |
+      D3DTEXOPCAPS_MODULATE2X |
+      D3DTEXOPCAPS_MODULATE4X |
+      D3DTEXOPCAPS_ADD |
+      D3DTEXOPCAPS_SUBTRACT |
+      D3DTEXOPCAPS_ADDSIGNED |
+      D3DTEXOPCAPS_BLENDTEXTUREALPHA |
+      D3DTEXOPCAPS_BLENDDIFFUSEALPHA;
   if (!Check((caps.TextureOpCaps & required_texop_caps) == required_texop_caps,
-               "TextureOpCaps includes DISABLE/SELECTARG1/SELECTARG2/MODULATE")) {
+               "TextureOpCaps includes fixed-function subset ops")) {
     return false;
   }
   const uint32_t blend_required = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE |
