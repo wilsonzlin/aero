@@ -2866,13 +2866,41 @@ impl AerogpuD3d9Executor {
                 // invalidate+retranslate cycle when the persistent cache returns mismatched stage
                 // metadata.
                 if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
-                    let stage_matches_expected = match shader::parse(dxbc_bytes) {
-                        Ok(program) => program.version.stage == expected_stage,
+                    let stage_matches_expected =
+                        match aero_d3d9::dxbc::extract_shader_bytecode(dxbc_bytes) {
+                        Ok(token_stream) => {
+                            let first_token = if token_stream.len() >= 4 {
+                                Some(u32::from_le_bytes([
+                                    token_stream[0],
+                                    token_stream[1],
+                                    token_stream[2],
+                                    token_stream[3],
+                                ]))
+                            } else {
+                                None
+                            };
+                            let actual_stage = first_token.and_then(|token| match token & 0xFFFF_0000 {
+                                0xFFFE_0000 => Some(shader::ShaderStage::Vertex),
+                                0xFFFF_0000 => Some(shader::ShaderStage::Pixel),
+                                _ => None,
+                            });
+                            match actual_stage {
+                                Some(stage) => stage == expected_stage,
+                                None => {
+                                    debug!(
+                                        shader_handle,
+                                        ?first_token,
+                                        "failed to decode shader stage token while validating cached shader stage; invalidating and retranslating"
+                                    );
+                                    true
+                                }
+                            }
+                        }
                         Err(err) => {
                             debug!(
                                 shader_handle,
                                 ?err,
-                                "failed to parse DXBC while validating cached shader stage; invalidating and retranslating"
+                                "failed to extract shader bytecode while validating cached shader stage; invalidating and retranslating"
                             );
                             true
                         }
