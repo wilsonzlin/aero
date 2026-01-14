@@ -2380,6 +2380,73 @@ function Try-EmitAeroVirtioBlkCountersMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioBlkResizeMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-resize marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  if ($toks.Count -ge 4) {
+    $s = $toks[3].Trim().ToUpperInvariant()
+    if ($s -eq "PASS" -or $s -eq "FAIL" -or $s -eq "SKIP" -or $s -eq "READY" -or $s -eq "INFO") {
+      $status = $s
+    }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|$status"
+
+  # The guest SKIP marker uses a plain token (e.g. `...|SKIP|flag_not_set`) rather than a
+  # `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+  if ($status -eq "SKIP" -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim().ToUpperInvariant() -eq "SKIP") {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $out += "|reason=$(Sanitize-AeroMarkerValue $reasonTok)"
+          }
+        }
+        break
+      }
+    }
+  }
+
+  # Keep ordering stable for log scraping.
+  $ordered = @("disk", "old_bytes", "new_bytes", "elapsed_ms", "last_bytes", "err", "reason")
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  foreach ($k in ($fields.Keys | Where-Object { -not $orderedSet.ContainsKey($_) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioNetLargeMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -5878,6 +5945,7 @@ try {
   Try-EmitAeroVirtioBlkIoMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkCountersMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkResizeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpDnsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath

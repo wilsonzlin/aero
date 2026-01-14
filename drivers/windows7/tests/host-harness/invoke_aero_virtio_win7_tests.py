@@ -6551,6 +6551,7 @@ def main() -> int:
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
+        _emit_virtio_blk_resize_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
@@ -8683,6 +8684,66 @@ def _emit_virtio_blk_counters_host_marker(
     extra = sorted(k for k in fields if k not in ordered)
     for k in extra:
         parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_resize_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-blk runtime resize selftest.
+
+    Guest markers:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|reason=...|disk=<N>|old_bytes=<u64>|last_bytes=<u64>|err=<GetLastError>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS/FAIL/SKIP/READY|...
+
+    Note: this does not affect harness PASS/FAIL; it is intended for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+
+    status = toks[3] if len(toks) >= 4 else "INFO"
+    if status not in ("PASS", "FAIL", "SKIP", "READY", "INFO"):
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|{status}"]
+
+    # The guest SKIP marker uses a plain token (e.g. `...|SKIP|flag_not_set`) rather than
+    # a `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+    if status == "SKIP" and "reason" not in fields:
+        try:
+            idx = toks.index("SKIP")
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    parts.append(f"reason={_sanitize_marker_value(reason_tok)}")
+        except Exception:
+            pass
+
+    ordered = (
+        "disk",
+        "old_bytes",
+        "new_bytes",
+        "elapsed_ms",
+        "last_bytes",
+        "err",
+        "reason",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
     print("|".join(parts))
 
 
