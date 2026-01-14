@@ -39,5 +39,16 @@ describe("io/bus/mmio_ram", () => {
     h.mmioWrite(15n, 2, 0xbeef);
     expect(backing[15]).toBe(0x7a);
   });
-});
 
+  it("treats unsupported access sizes as unmapped/ignored", () => {
+    const backing = new Uint8Array(16);
+    const h = new MmioRamHandler(backing);
+
+    // Reads of unsupported sizes return the default unmapped value.
+    expect(h.mmioRead(0n, 8)).toBe(defaultReadValue(8));
+
+    // Writes of unsupported sizes are ignored.
+    h.mmioWrite(0n, 8, 0x1122_3344);
+    expect(Array.from(backing)).toEqual(new Array(16).fill(0));
+  });
+});
