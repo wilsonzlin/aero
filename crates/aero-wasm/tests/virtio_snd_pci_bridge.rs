@@ -1758,8 +1758,24 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_buffer_is_out_of_bounds
 
     // Post an out-of-bounds buffer then a valid 8-byte buffer.
     guest.fill(ok_buf, 8, 0xBB);
-    write_desc(&guest, desc_table, 0, oob_buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
-    write_desc(&guest, desc_table, 1, ok_buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        &guest,
+        desc_table,
+        0,
+        oob_buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+    write_desc(
+        &guest,
+        desc_table,
+        1,
+        ok_buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 2);
     guest.write_u16(avail + 4, 0);

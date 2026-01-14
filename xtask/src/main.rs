@@ -105,16 +105,15 @@ fn maybe_isolate_cargo_home(repo_root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let is_false = matches!(
-        value,
-        "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
-    );
+    let is_false = matches!(value, "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF");
     if is_false {
         return Ok(());
     }
 
-    let mut cargo_home: PathBuf = if matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
-    {
+    let mut cargo_home: PathBuf = if matches!(
+        value,
+        "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+    ) {
         repo_root.join(".cargo-home")
     } else {
         let mut custom = value.to_string();
@@ -151,9 +150,7 @@ fn maybe_isolate_cargo_home(repo_root: &Path) -> Result<()> {
         ))
     })?;
     // Ensure the path is normalized for consistent downstream env usage.
-    cargo_home = cargo_home
-        .canonicalize()
-        .unwrap_or(cargo_home);
+    cargo_home = cargo_home.canonicalize().unwrap_or(cargo_home);
     env::set_var("CARGO_HOME", &cargo_home);
 
     Ok(())
