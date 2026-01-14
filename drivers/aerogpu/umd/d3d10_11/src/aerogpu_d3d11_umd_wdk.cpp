@@ -8323,6 +8323,10 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
   // The bring-up implementation does not track UAV counters. Best-effort:
   // if the UAV is currently bound and has a known initial_count, forward that;
   // otherwise write 0.
+  //
+  // Writing into the destination buffer is an output hazard; unbind any aliasing
+  // SRVs to preserve D3D11's "no SRV+output simultaneously" rule.
+  UnbindResourceFromSrvsLocked(dev, dst->handle, dst);
   uint32_t count = 0;
   for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
     if (!ResourcesAlias(dev->current_cs_uavs[slot], src->resource)) {
