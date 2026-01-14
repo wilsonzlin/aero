@@ -194,8 +194,12 @@ impl TlbEntry {
     }
 
     #[inline]
-    fn matches_pcid(&self, pcid: u16, pcid_enabled: bool) -> bool {
-        self.valid() && (!pcid_enabled || self.global() || self.pcid == pcid)
+    fn matches_pcid<const PCID_ENABLED: bool>(&self, pcid: u16) -> bool {
+        if PCID_ENABLED {
+            self.valid() && (self.global() || self.pcid == pcid)
+        } else {
+            self.valid()
+        }
     }
 
     #[inline]
@@ -244,6 +248,20 @@ impl TlbSet {
         pcid_enabled: bool,
         page_sizes: TlbLookupPageSizes,
     ) -> Option<TlbHit<'_>> {
+        if pcid_enabled {
+            self.lookup_impl::<true>(vaddr, pcid, page_sizes)
+        } else {
+            self.lookup_impl::<false>(vaddr, pcid, page_sizes)
+        }
+    }
+
+    #[inline]
+    fn lookup_impl<const PCID_ENABLED: bool>(
+        &self,
+        vaddr: u64,
+        pcid: u16,
+        page_sizes: TlbLookupPageSizes,
+    ) -> Option<TlbHit<'_>> {
         // Common case: TLB contains only 4KiB entries (no large pages have been
         // inserted since the last full flush), so we can skip page-size probes
         // and the page-size compare in the way loop.
@@ -253,7 +271,7 @@ impl TlbSet {
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &self.entries[set][way];
-                if entry.vbase == vbase && entry.matches_pcid(pcid, pcid_enabled) {
+                if entry.vbase == vbase && entry.matches_pcid::<PCID_ENABLED>(pcid) {
                     debug_assert_eq!(entry.page_size, PageSize::Size4K);
                     return Some(TlbHit {
                         entry,
@@ -275,7 +293,7 @@ impl TlbSet {
                     let entry = &self.entries[set][way];
                     if entry.page_size == page_size
                         && entry.vbase == vbase
-                        && entry.matches_pcid(pcid, pcid_enabled)
+                        && entry.matches_pcid::<PCID_ENABLED>(pcid)
                     {
                         return Some(TlbHit {
                             entry,
