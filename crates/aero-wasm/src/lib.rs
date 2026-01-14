@@ -5270,11 +5270,11 @@ impl Machine {
         let vbe_enabled = (regs.enable & 0x0001) != 0;
         let lfb_enabled = (regs.enable & 0x0040) != 0;
         if vbe_enabled && lfb_enabled {
-            // `ScanoutState` currently only supports a single representable scanout pixel format:
-            // B8G8R8X8 (32bpp).
+            // This legacy VBE scanout publication path currently only supports the canonical boot
+            // pixel format: 32bpp packed pixels `B8G8R8X8`.
             //
             // If the guest programs a palettized VBE mode (e.g. 8bpp), fall back to the implicit
-            // legacy scanout path rather than publishing a misleading B8G8R8X8 descriptor.
+            // legacy scanout path rather than publishing a misleading 32bpp descriptor.
             if regs.bpp != 32 {
                 self.publish_legacy_text_scanout();
                 return;
