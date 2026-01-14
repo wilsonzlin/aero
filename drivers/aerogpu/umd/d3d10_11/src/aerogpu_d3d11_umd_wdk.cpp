@@ -1418,26 +1418,67 @@ static void UnbindResourceFromUavsLocked(Device* dev, aerogpu_handle_t resource,
   UnbindResourceFromUavsLocked(dev, resource, res, /*exclude_slot=*/kMaxUavSlots);
 }
 
+static bool AppendSetRenderTargetsCmdLocked(Device* dev,
+                                            uint32_t rtv_count,
+                                            const std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS>& rtvs,
+                                            aerogpu_handle_t dsv) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return false;
+  }
+  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  cmd->color_count = count;
+  cmd->depth_stencil = dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    cmd->colors[i] = (i < count) ? rtvs[i] : 0;
+  }
+  return true;
+}
+
 static bool UnbindResourceFromRenderTargetsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {
   if (!dev || (resource == 0 && !res)) {
     return false;
   }
+
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs = dev->current_rtvs;
+  std::array<Resource*, AEROGPU_MAX_RENDER_TARGETS> new_resources = dev->current_rtv_resources;
+  aerogpu_handle_t new_dsv = dev->current_dsv;
+  Resource* new_dsv_resource = dev->current_dsv_resource;
+
   bool changed = false;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if ((resource != 0 && dev->current_rtvs[i] == resource) ||
-        (res && ResourcesAlias(dev->current_rtv_resources[i], res))) {
-      dev->current_rtvs[i] = 0;
-      dev->current_rtv_resources[i] = nullptr;
+    if ((resource != 0 && new_rtvs[i] == resource) ||
+        (res && ResourcesAlias(new_resources[i], res))) {
+      new_rtvs[i] = 0;
+      new_resources[i] = nullptr;
       changed = true;
     }
   }
-  if ((resource != 0 && dev->current_dsv == resource) ||
-      (res && ResourcesAlias(dev->current_dsv_resource, res))) {
-    dev->current_dsv = 0;
-    dev->current_dsv_resource = nullptr;
+  if ((resource != 0 && new_dsv == resource) ||
+      (res && ResourcesAlias(new_dsv_resource, res))) {
+    new_dsv = 0;
+    new_dsv_resource = nullptr;
     changed = true;
   }
-  return changed;
+  if (!changed) {
+    return false;
+  }
+
+  if (!AppendSetRenderTargetsCmdLocked(dev, count, new_rtvs, new_dsv)) {
+    return false;
+  }
+
+  dev->current_rtvs = new_rtvs;
+  dev->current_rtv_resources = new_resources;
+  dev->current_dsv = new_dsv;
+  dev->current_dsv_resource = new_dsv_resource;
+
+  return true;
 }
 
 static void EmitSetRenderTargetsLocked(Device* dev) {
@@ -1468,13 +1509,10 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
   if (!dev || (resource == 0 && !res)) {
     return;
   }
-  const bool changed = UnbindResourceFromRenderTargetsLocked(dev, resource, res);
   // Compute UAVs are outputs too: binding a resource as an SRV must unbind any
   // aliasing UAVs.
   UnbindResourceFromUavsLocked(dev, resource, res);
-  if (changed) {
-    EmitSetRenderTargetsLocked(dev);
-  }
+  (void)UnbindResourceFromRenderTargetsLocked(dev, resource, res);
 }
 
 static void UnbindResourceFromOutputsLocked(Device* dev, const Resource* resource) {
@@ -6780,9 +6818,7 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
     if (b.buffer) {
       // D3D11 hazards: unbind from SRVs and other outputs when binding as UAV.
       UnbindResourceFromSrvsLocked(dev, b.buffer, res);
-      if (UnbindResourceFromRenderTargetsLocked(dev, b.buffer, res)) {
-        EmitSetRenderTargetsLocked(dev);
-      }
+      (void)UnbindResourceFromRenderTargetsLocked(dev, b.buffer, res);
       UnbindResourceFromUavsLocked(dev, b.buffer, res, slot);
     }
 
@@ -7541,36 +7577,63 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 }
 
 void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                           UINT NumViews,
-                                           const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
-                                           D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
+                                            UINT NumViews,
+                                            const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                            D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  std::array<const RenderTargetView*, AEROGPU_MAX_RENDER_TARGETS> rtvs{};
-  const uint32_t rtv_count = std::min<uint32_t>(NumViews, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = 0; i < rtv_count; ++i) {
-    if (phRtvs && phRtvs[i].pDrvPrivate) {
-      rtvs[i] = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[i]);
-    }
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs{};
+  std::array<Resource*, AEROGPU_MAX_RENDER_TARGETS> new_rtv_resources{};
+  const uint32_t new_rtv_count = std::min<uint32_t>(NumViews, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = 0; i < new_rtv_count; ++i) {
+    const RenderTargetView* view = (phRtvs && phRtvs[i].pDrvPrivate) ? FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[i])
+                                                                     : nullptr;
+    Resource* res = view ? view->resource : nullptr;
+    new_rtv_resources[i] = res;
+    new_rtvs[i] = view ? (view->texture ? view->texture : (res ? res->handle : 0)) : 0;
   }
 
-  const DepthStencilView* dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv) : nullptr;
-  SetRenderTargetsStateLocked(dev, NumViews, rtvs.data(), dsv);
+  aerogpu_handle_t new_dsv = 0;
+  Resource* new_dsv_resource = nullptr;
+  if (hDsv.pDrvPrivate) {
+    const DepthStencilView* dsv = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv);
+    new_dsv_resource = dsv ? dsv->resource : nullptr;
+    new_dsv = dsv ? (dsv->texture ? dsv->texture : (new_dsv_resource ? new_dsv_resource->handle : 0)) : 0;
+  }
 
   // Auto-unbind SRVs/UAVs that alias the newly bound render targets/depth buffer.
-  const uint32_t bound_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = 0; i < bound_count; ++i) {
-    UnbindResourceFromSrvsLocked(dev, dev->current_rtvs[i], dev->current_rtv_resources[i]);
-    UnbindResourceFromUavsLocked(dev, dev->current_rtvs[i], dev->current_rtv_resources[i]);
+  for (uint32_t i = 0; i < new_rtv_count; ++i) {
+    UnbindResourceFromSrvsLocked(dev, new_rtvs[i], new_rtv_resources[i]);
+    UnbindResourceFromUavsLocked(dev, new_rtvs[i], new_rtv_resources[i]);
   }
-  UnbindResourceFromSrvsLocked(dev, dev->current_dsv, dev->current_dsv_resource);
-  UnbindResourceFromUavsLocked(dev, dev->current_dsv, dev->current_dsv_resource);
+  UnbindResourceFromSrvsLocked(dev, new_dsv, new_dsv_resource);
+  UnbindResourceFromUavsLocked(dev, new_dsv, new_dsv_resource);
 
-  EmitSetRenderTargetsLocked(dev);
+  if (!AppendSetRenderTargetsCmdLocked(dev, new_rtv_count, new_rtvs, new_dsv)) {
+    return;
+  }
+
+  dev->current_rtv_count = new_rtv_count;
+  dev->current_rtvs = new_rtvs;
+  dev->current_rtv_resources = new_rtv_resources;
+  dev->current_dsv = new_dsv;
+  dev->current_dsv_resource = new_dsv_resource;
+
+  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
+                       static_cast<unsigned>(new_rtv_count),
+                       static_cast<unsigned>(new_dsv),
+                       static_cast<unsigned>(new_rtvs[0]),
+                       static_cast<unsigned>(new_rtvs[1]),
+                       static_cast<unsigned>(new_rtvs[2]),
+                       static_cast<unsigned>(new_rtvs[3]),
+                       static_cast<unsigned>(new_rtvs[4]),
+                       static_cast<unsigned>(new_rtvs[5]),
+                       static_cast<unsigned>(new_rtvs[6]),
+                       static_cast<unsigned>(new_rtvs[7]));
 }
 
 // D3D11 exposes OMSetRenderTargetsAndUnorderedAccessViews which may map to
