@@ -196,6 +196,25 @@ impl XhciPciDevice {
         self.service_interrupts();
     }
 
+    /// Test/harness hook: inject a Port Status Change Event on interrupter 0.
+    ///
+    /// This exists so platform integration tests can validate PCI INTx wiring without booting a
+    /// guest OS. Callers are expected to have configured the event ring (ERST*) and enabled
+    /// IMAN.IE.
+    pub fn trigger_port_status_change_event(&mut self, mem: &mut MemoryBus) {
+        use aero_usb::xhci::trb::{Trb, TrbType};
+
+        let mut trb = Trb::default();
+        trb.set_trb_type(TrbType::PortStatusChangeEvent);
+        self.controller.post_event(trb);
+
+        // This helper is test-only; it always uses the provided platform memory bus, regardless of
+        // PCI Bus Master Enable gating.
+        let mut adapter = AeroUsbMemoryBus::Dma(mem);
+        self.controller.service_event_ring(&mut adapter);
+        self.service_interrupts();
+    }
+
     /// Advance the device by 1ms.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
         enum TickMemoryBus<'a> {
