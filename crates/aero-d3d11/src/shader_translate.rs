@@ -3877,7 +3877,8 @@ fn emit_src_vec4_u32(
 ///
 /// SM4/SM5 register operands are untyped; in practice integer values can show up either as:
 /// - Raw integer bits written into the register file (common in real DXBC).
-/// - Numeric floats (e.g. system-value inputs expanded via `f32(input.vertex_id)`).
+/// - Numeric float values (e.g. produced by float arithmetic or explicit int/uint->float
+///   conversions like `utof`).
 ///
 /// To cover both, this helper derives a `u32` value per lane by selecting between:
 /// - `bitcast<u32>(f32)` (raw bits)
