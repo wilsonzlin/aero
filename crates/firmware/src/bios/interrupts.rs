@@ -811,7 +811,7 @@ fn handle_int13(
                 //
                 // We treat this as a bounds check: if the requested ISO LBA range is valid,
                 // succeed.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -1438,7 +1438,7 @@ fn handle_int13(
             // Extended verify via Disk Address Packet (EDD).
             //
             // We treat this as a bounds check: if the requested LBA range is valid, succeed.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }

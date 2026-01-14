@@ -9037,6 +9037,7 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
+        let bsp = &mut self.cpu;
         let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
@@ -9051,7 +9052,7 @@ impl snapshot::SnapshotTarget for Machine {
             seen[apic_id] = true;
 
             if apic_id == 0 {
-                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, &mut self.cpu);
+                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, bsp);
             } else {
                 let idx = apic_id - 1;
                 let Some(cpu) = ap_cpus.get_mut(idx) else {
@@ -9079,6 +9080,7 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
+        let bsp = &mut self.cpu;
         let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
@@ -9093,8 +9095,8 @@ impl snapshot::SnapshotTarget for Machine {
             seen[apic_id] = true;
 
             if apic_id == 0 {
-                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, &mut self.cpu);
-                self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
+                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, bsp);
+                bsp.time.set_tsc(bsp.state.msr.tsc);
             } else {
                 let idx = apic_id - 1;
                 let Some(cpu) = ap_cpus.get_mut(idx) else {
