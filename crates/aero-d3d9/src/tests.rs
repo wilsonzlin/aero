@@ -686,6 +686,26 @@ fn assemble_ps3_nonuniform_if_dsx_then_mov() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_nonuniform_if_mov_then_dsx() -> Vec<u32> {
+    // ps_3_0
+    //
+    // Non-uniform `if v0 { mov; dsx }` to ensure we can avoid invalid control flow when the
+    // derivative op is not the first instruction in the branch.
+    let mut out = vec![0xFFFF0300];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // dsx r1, v0
+    out.extend(enc_inst(0x0056, &[enc_dst(0, 1, 0xF), enc_src(1, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 1, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_nonuniform_if_else_dsx() -> Vec<u32> {
     // ps_3_0
     //
@@ -732,6 +752,30 @@ fn assemble_ps3_nonuniform_if_else_dsx_then_mov() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_nonuniform_if_else_mov_then_dsx() -> Vec<u32> {
+    // ps_3_0
+    //
+    // Non-uniform `if v0 { mov } else { mov; dsx }` to ensure we can hoist derivatives out of
+    // larger else blocks where the derivative op is not the first instruction.
+    let mut out = vec![0xFFFF0300];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // else
+    out.extend(enc_inst(0x002A, &[]));
+    // mov r0, c1
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 1, 0xE4)]));
+    // dsx r1, v0
+    out.extend(enc_inst(0x0056, &[enc_dst(0, 1, 0xF), enc_src(1, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 1, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps2_nonuniform_if_texld() -> Vec<u32> {
     // ps_2_0
     //
@@ -753,6 +797,33 @@ fn assemble_ps2_nonuniform_if_texld() -> Vec<u32> {
     out.extend(enc_inst(0x002B, &[]));
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps2_nonuniform_if_mov_then_texld() -> Vec<u32> {
+    // ps_2_0
+    //
+    // Non-uniform `if v0 { mov; texld }` to ensure we can avoid invalid control flow when implicit
+    // derivative texture sampling is not the first instruction in the branch.
+    let mut out = vec![0xFFFF0200];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // texld r1, t0, s0
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 1, 0xF),   // r1
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 1, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -809,6 +880,37 @@ fn assemble_ps2_nonuniform_if_else_texld_then_mov() -> Vec<u32> {
     ));
     // mov r1, r0
     out.extend(enc_inst(0x0001, &[enc_dst(0, 1, 0xF), enc_src(0, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 1, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps2_nonuniform_if_else_mov_then_texld() -> Vec<u32> {
+    // ps_2_0
+    //
+    // Non-uniform `if v0 { mov } else { mov; texld }` to ensure we can hoist implicit derivative
+    // texture sampling out of larger else blocks where the `texld` op is not first.
+    let mut out = vec![0xFFFF0200];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // mov r0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // else
+    out.extend(enc_inst(0x002A, &[]));
+    // mov r0, c1
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 1, 0xE4)]));
+    // texld r1, t0, s0
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 1, 0xF),   // r1
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
     // endif
     out.extend(enc_inst(0x002B, &[]));
     // mov oC0, r1
@@ -1517,7 +1619,7 @@ fn assemble_ps3_mova_multi_component_relative_const() -> Vec<u32> {
     out.extend(enc_inst(
         0x002E,
         &[
-            enc_dst(3, 0, 0x3),    // a0.xy (regtype 3)
+            enc_dst(3, 0, 0x3),  // a0.xy (regtype 3)
             enc_src(2, 0, 0xE4), // c0.xyzw
         ],
     ));
@@ -1548,10 +1650,7 @@ fn assemble_ps3_mova_multi_component_relative_const() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -3061,7 +3160,7 @@ fn translate_entrypoint_rejects_out_of_range_register_index_after_fallback() {
     // the legacy parser applies tighter D3D9 caps. This test ensures those legacy-parser failures
     // are treated as `Malformed`, not a generic translation error.
     let mut words = vec![0xFFFE_0200]; // vs_2_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // mov oD200, v0 (oD index exceeds Aero's supported range)
     words.extend(enc_inst(
@@ -3089,7 +3188,7 @@ fn translate_entrypoint_rejects_unknown_sampler_texture_type() {
     // This triggers fallback via the SM3 WGSL generator error, then ensures the legacy parser's
     // sampler-type rejection is surfaced as `Malformed`.
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // dcl_<unknown> s0 (texture type 0 encoded in opcode_token[16..20])
+                                       // dcl_<unknown> s0 (texture type 0 encoded in opcode_token[16..20])
     words.extend(enc_inst_with_extra(
         0x001F,
         0u32 << 16,
@@ -3098,13 +3197,14 @@ fn translate_entrypoint_rejects_unknown_sampler_texture_type() {
     // texld r0, t0, s0
     words.extend(enc_inst(
         0x0042,
-        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
     ));
     // mov oC0, r0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(
@@ -3124,7 +3224,7 @@ fn translate_entrypoint_rejects_invalid_tex_specific_field() {
     // between `texld` (0), `texldp` (1), and `texldb` (2). Other values are malformed input and
     // must not trigger legacy fallback.
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // dcl_2d s0
+                                       // dcl_2d s0
     words.extend(enc_inst_with_extra(
         0x001F,
         2u32 << 16,
@@ -3134,13 +3234,14 @@ fn translate_entrypoint_rejects_invalid_tex_specific_field() {
     words.extend(enc_inst_with_extra(
         0x0042,
         3u32 << 16,
-        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
     ));
     // mov oC0, r0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(
@@ -3468,6 +3569,25 @@ fn legacy_translator_nonuniform_if_dsx_then_mov_is_naga_valid() {
 }
 
 #[test]
+fn legacy_translator_nonuniform_if_mov_then_dsx_is_naga_valid() {
+    let ps_bytes = to_bytes(&assemble_ps3_nonuniform_if_mov_then_dsx());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dpdx("));
+    assert!(!wgsl.wgsl.contains("if ("));
+}
+
+#[test]
 fn legacy_translator_nonuniform_if_texld_then_mov_is_naga_valid() {
     let ps_bytes = to_bytes(&assemble_ps2_nonuniform_if_texld_then_mov());
     let program = shader::parse(&ps_bytes).unwrap();
@@ -3482,6 +3602,25 @@ fn legacy_translator_nonuniform_if_texld_then_mov_is_naga_valid() {
     .validate(&module)
     .expect("wgsl validate");
     assert!(wgsl.wgsl.contains("textureSample("));
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_mov_then_texld_is_naga_valid() {
+    let ps_bytes = to_bytes(&assemble_ps2_nonuniform_if_mov_then_texld());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("textureSample("));
+    assert!(!wgsl.wgsl.contains("if ("));
 }
 
 #[test]
@@ -3522,6 +3661,25 @@ fn legacy_translator_nonuniform_if_else_dsx_then_mov_is_naga_valid() {
     let dpdx_pos = wgsl.wgsl.find("dpdx(").expect("dpdx present");
     let if_pos = wgsl.wgsl.find("if (").expect("if present");
     assert!(dpdx_pos < if_pos, "wgsl:\n{}", wgsl.wgsl);
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_else_mov_then_dsx_is_naga_valid() {
+    let ps_bytes = to_bytes(&assemble_ps3_nonuniform_if_else_mov_then_dsx());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dpdx("));
+    assert!(!wgsl.wgsl.contains("if ("));
 }
 
 #[test]
@@ -3568,6 +3726,25 @@ fn legacy_translator_nonuniform_if_else_texld_then_mov_is_naga_valid() {
         .expect("textureSample present");
     let if_pos = wgsl.wgsl.find("if (").expect("if present");
     assert!(sample_pos < if_pos, "wgsl:\n{}", wgsl.wgsl);
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_else_mov_then_texld_is_naga_valid() {
+    let ps_bytes = to_bytes(&assemble_ps2_nonuniform_if_else_mov_then_texld());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("textureSample("));
+    assert!(!wgsl.wgsl.contains("if ("));
 }
 
 #[test]

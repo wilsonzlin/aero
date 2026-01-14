@@ -1534,6 +1534,20 @@ pub fn generate_wgsl_with_options(
                     continue;
                 }
 
+                if let Some(next_i) = try_emit_uniform_control_flow_if_predicated_block(
+                    &mut wgsl,
+                    indent,
+                    &ir.ops,
+                    i,
+                    &ir.const_defs_f32,
+                    const_base,
+                    ir.version.stage,
+                    &ir.sampler_texture_types,
+                ) {
+                    i = next_i;
+                    continue;
+                }
+
                 // If the `else` block begins with a uniformity-sensitive op, hoist it out of the
                 // branch by emitting it as a conditional `select` assignment *before* the `if`.
                 //
@@ -1816,6 +1830,401 @@ fn find_else_first_op_index(ops: &[Instruction], if_index: usize) -> Option<usiz
         }
     }
     None
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IfBounds {
+    else_idx: Option<usize>,
+    endif_idx: usize,
+    has_nested: bool,
+}
+
+fn find_if_bounds(ops: &[Instruction], if_index: usize) -> Option<IfBounds> {
+    // Walk forward until we find the matching `endif` for the `if` at `if_index`. Track nested `if`
+    // depth so we ignore inner `else`/`endif` tokens.
+    let mut depth = 0usize;
+    let mut else_idx = None;
+    let mut has_nested = false;
+    for (idx, inst) in ops.iter().enumerate().skip(if_index + 1) {
+        match inst.op {
+            Op::If | Op::Ifc => {
+                if depth == 0 {
+                    has_nested = true;
+                }
+                depth += 1;
+            }
+            Op::EndIf => {
+                if depth == 0 {
+                    return Some(IfBounds {
+                        else_idx,
+                        endif_idx: idx,
+                        has_nested,
+                    });
+                }
+                depth -= 1;
+            }
+            Op::Else if depth == 0 => {
+                else_idx = Some(idx);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_uniformity_sensitive_op(op: Op) -> bool {
+    matches!(op, Op::Texld | Op::Dsx | Op::Dsy)
+}
+
+fn branch_has_uniformity_sensitive_op_not_first(
+    ops: &[Instruction],
+    start: usize,
+    end: usize,
+) -> bool {
+    if start >= end {
+        return false;
+    }
+    ops.iter()
+        .enumerate()
+        .take(end)
+        .skip(start + 1)
+        .any(|(_, inst)| is_uniformity_sensitive_op(inst.op))
+}
+
+fn inst_value_expr(
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> Option<String> {
+    let expr = match inst.op {
+        Op::Mov => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                src_expr(src0, const_defs_f32, const_base),
+                inst.result_modifier,
+            ))
+        }
+        Op::Add | Op::Sub | Op::Mul => {
+            let src0 = inst.src.get(0)?;
+            let src1 = inst.src.get(1)?;
+            let op = match inst.op {
+                Op::Add => "+",
+                Op::Sub => "-",
+                Op::Mul => "*",
+                _ => unreachable!(),
+            };
+            Some(apply_result_modifier(
+                format!(
+                    "({} {} {})",
+                    src_expr(src0, const_defs_f32, const_base),
+                    op,
+                    src_expr(src1, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Min | Op::Max => {
+            let src0 = inst.src.get(0)?;
+            let src1 = inst.src.get(1)?;
+            let func = if inst.op == Op::Min { "min" } else { "max" };
+            Some(apply_result_modifier(
+                format!(
+                    "{}({}, {})",
+                    func,
+                    src_expr(src0, const_defs_f32, const_base),
+                    src_expr(src1, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Mad => {
+            let a = inst.src.get(0)?;
+            let b = inst.src.get(1)?;
+            let c = inst.src.get(2)?;
+            Some(apply_result_modifier(
+                format!(
+                    "fma({}, {}, {})",
+                    src_expr(a, const_defs_f32, const_base),
+                    src_expr(b, const_defs_f32, const_base),
+                    src_expr(c, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Dp2Add => {
+            let a = inst.src.get(0)?;
+            let b = inst.src.get(1)?;
+            let c = inst.src.get(2)?;
+            let a = src_expr(a, const_defs_f32, const_base);
+            let b = src_expr(b, const_defs_f32, const_base);
+            let c = src_expr(c, const_defs_f32, const_base);
+            Some(apply_result_modifier(
+                format!("vec4<f32>(dot(({a}).xy, ({b}).xy) + ({c}).x)"),
+                inst.result_modifier,
+            ))
+        }
+        Op::Lrp => {
+            let t = inst.src.get(0)?;
+            let a = inst.src.get(1)?;
+            let b = inst.src.get(2)?;
+            // D3D9 `lrp`: dst = t * a + (1 - t) * b = mix(b, a, t).
+            Some(apply_result_modifier(
+                format!(
+                    "mix({}, {}, {})",
+                    src_expr(b, const_defs_f32, const_base),
+                    src_expr(a, const_defs_f32, const_base),
+                    src_expr(t, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Cmp => {
+            let cond = inst.src.get(0)?;
+            let a = inst.src.get(1)?;
+            let b = inst.src.get(2)?;
+            // Per-component compare: if cond >= 0 then a else b.
+            Some(apply_result_modifier(
+                format!(
+                    "select({}, {}, ({} >= vec4<f32>(0.0)))",
+                    src_expr(b, const_defs_f32, const_base),
+                    src_expr(a, const_defs_f32, const_base),
+                    src_expr(cond, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
+            let a = inst.src.get(0)?;
+            let b = inst.src.get(1)?;
+            let op = match inst.op {
+                Op::Slt => "<",
+                Op::Sge => ">=",
+                Op::Seq => "==",
+                Op::Sne => "!=",
+                _ => unreachable!(),
+            };
+            Some(apply_result_modifier(
+                format!(
+                    "select(vec4<f32>(0.0), vec4<f32>(1.0), ({} {} {}))",
+                    src_expr(a, const_defs_f32, const_base),
+                    op,
+                    src_expr(b, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Dp2 | Op::Dp3 | Op::Dp4 => {
+            let a = inst.src.get(0)?;
+            let b = inst.src.get(1)?;
+            let a = src_expr(a, const_defs_f32, const_base);
+            let b = src_expr(b, const_defs_f32, const_base);
+            let expr = match inst.op {
+                Op::Dp2 => format!("vec4<f32>(dot(({a}).xy, ({b}).xy))"),
+                Op::Dp3 => format!("vec4<f32>(dot(({a}).xyz, ({b}).xyz))"),
+                Op::Dp4 => format!("vec4<f32>(dot({a}, {b}))"),
+                _ => unreachable!(),
+            };
+            Some(apply_result_modifier(expr, inst.result_modifier))
+        }
+        Op::Texld => Some(texld_sample_expr(
+            inst,
+            const_defs_f32,
+            const_base,
+            stage,
+            sampler_texture_types,
+        )),
+        Op::Rcp => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                format!(
+                    "(vec4<f32>(1.0) / {})",
+                    src_expr(src0, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Rsq => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                format!(
+                    "inverseSqrt({})",
+                    src_expr(src0, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Exp => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                format!("exp2({})", src_expr(src0, const_defs_f32, const_base)),
+                inst.result_modifier,
+            ))
+        }
+        Op::Log => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                format!("log2({})", src_expr(src0, const_defs_f32, const_base)),
+                inst.result_modifier,
+            ))
+        }
+        Op::Dsx | Op::Dsy if stage == ShaderStage::Pixel => {
+            Some(derivative_expr(inst, const_defs_f32, const_base, inst.op))
+        }
+        Op::Pow => {
+            let src0 = inst.src.get(0)?;
+            let src1 = inst.src.get(1)?;
+            Some(apply_result_modifier(
+                format!(
+                    "pow({}, {})",
+                    src_expr(src0, const_defs_f32, const_base),
+                    src_expr(src1, const_defs_f32, const_base)
+                ),
+                inst.result_modifier,
+            ))
+        }
+        Op::Frc => {
+            let src0 = inst.src.get(0)?;
+            Some(apply_result_modifier(
+                format!("fract({})", src_expr(src0, const_defs_f32, const_base)),
+                inst.result_modifier,
+            ))
+        }
+        _ => None,
+    }?;
+    Some(expr)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_emit_predicated_assignment(
+    wgsl: &mut String,
+    indent: usize,
+    pred: &str,
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> bool {
+    let dst = match inst.dst {
+        Some(dst) => dst,
+        None => return false,
+    };
+    let new_value = match inst_value_expr(
+        inst,
+        const_defs_f32,
+        const_base,
+        stage,
+        sampler_texture_types,
+    ) {
+        Some(v) => v,
+        None => return false,
+    };
+
+    let dst_name = reg_var_name(dst.reg);
+    let expr = format!("select({dst_name}, {new_value}, {pred})");
+    emit_assign(wgsl, indent, dst, &expr);
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_emit_uniform_control_flow_if_predicated_block(
+    wgsl: &mut String,
+    indent: usize,
+    ops: &[Instruction],
+    if_index: usize,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> Option<usize> {
+    if stage != ShaderStage::Pixel {
+        return None;
+    }
+    let if_inst = ops.get(if_index)?;
+    if !matches!(if_inst.op, Op::If | Op::Ifc) {
+        return None;
+    }
+
+    let bounds = find_if_bounds(ops, if_index)?;
+    if bounds.has_nested {
+        return None;
+    }
+
+    let then_start = if_index + 1;
+    let then_end = bounds.else_idx.unwrap_or(bounds.endif_idx);
+    if then_end > ops.len() {
+        return None;
+    }
+    let else_start = bounds.else_idx.map(|idx| idx + 1);
+
+    // Only rewrite when a uniformity-sensitive op appears somewhere other than the first op of its
+    // branch. These cases cannot be fixed by simply hoisting a single op without reordering the
+    // non-uniform branch contents.
+    let needs_predication = branch_has_uniformity_sensitive_op_not_first(ops, then_start, then_end)
+        || else_start.is_some_and(|start| {
+            branch_has_uniformity_sensitive_op_not_first(ops, start, bounds.endif_idx)
+        });
+    if !needs_predication {
+        return None;
+    }
+
+    // Ensure there is at least one uniformity-sensitive op in this statement; otherwise keep the
+    // original control flow intact.
+    let has_uniformity_sensitive = ops
+        .iter()
+        .take(bounds.endif_idx)
+        .skip(then_start)
+        .any(|inst| is_uniformity_sensitive_op(inst.op));
+    if !has_uniformity_sensitive {
+        return None;
+    }
+
+    let cond = if_condition_expr(if_inst, const_defs_f32, const_base)?;
+
+    // Emit into a temporary buffer so we don't partially rewrite on failure.
+    let mut tmp = String::new();
+    for inst in &ops[then_start..then_end] {
+        if inst.op == Op::Nop {
+            continue;
+        }
+        if !try_emit_predicated_assignment(
+            &mut tmp,
+            indent,
+            &cond,
+            inst,
+            const_defs_f32,
+            const_base,
+            stage,
+            sampler_texture_types,
+        ) {
+            return None;
+        }
+    }
+    if let Some(else_idx) = bounds.else_idx {
+        let pred = format!("!({cond})");
+        for inst in &ops[(else_idx + 1)..bounds.endif_idx] {
+            if inst.op == Op::Nop {
+                continue;
+            }
+            if !try_emit_predicated_assignment(
+                &mut tmp,
+                indent,
+                &pred,
+                inst,
+                const_defs_f32,
+                const_base,
+                stage,
+                sampler_texture_types,
+            ) {
+                return None;
+            }
+        }
+    }
+
+    wgsl.push_str(&tmp);
+    Some(bounds.endif_idx + 1)
 }
 
 #[allow(clippy::too_many_arguments)]
