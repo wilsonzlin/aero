@@ -19511,6 +19511,123 @@ bool TestFixedfuncFogRhwColorSelectsFogVsAndUsesWDivision() {
   return true;
 }
 
+bool TestFixedfuncFogRhwTex1SelectsFogVsAndUsesWDivision() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;      // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;       // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;   // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;       // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;         // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dRsFogVertexMode = 140u; // D3DRS_FOGVERTEXMODE
+  constexpr uint32_t kD3dFogLinear = 3u;         // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  // Enable linear fog via FOGVERTEXMODE (FOGTABLEMODE must be NONE so vertex fog
+  // is the active mode).
+  constexpr float fog_start = 0.25f;
+  constexpr float fog_end = 0.75f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogVertexMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGVERTEXMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Use RHW != 1 so fog VS must divide clip-space z by clip-space w before
+  // emitting TEXCOORD0.z for the fog PS.
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0.5f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 0.5f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 0.5f, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|TEX1; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "fog RHW_TEX1: VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosWhiteTex1Fog),
+               "fog RHW_TEX1: selected kVsPassthroughPosWhiteTex1Fog")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*rcp=*/0x03000006u), "fog RHW_TEX1: VS divides by w (rcp)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*mul=*/0x04000005u), "fog RHW_TEX1: VS divides by w (mul)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*v0.wwww=*/0x10FF0000u), "fog RHW_TEX1: VS reads v0.w")) {
+      return false;
+    }
+    if (dev->up_vertex_buffer) {
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri),
+                 "fog RHW_TEX1: scratch VB storage contains uploaded vertices")) {
+        return false;
+      }
+      float clip_z = 0.0f;
+      float clip_w = 0.0f;
+      std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+      std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+      if (!Check(clip_w == 2.0f, "fog RHW_TEX1: XYZRHW conversion produced clip_w == 2")) {
+        return false;
+      }
+      if (!Check(clip_z == 0.5f, "fog RHW_TEX1: XYZRHW conversion produced clip_z == z*w")) {
+        return false;
+      }
+    }
+    if (!Check(dev->ps != nullptr, "fog RHW_TEX1: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "fog RHW_TEX1: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20411,6 +20528,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncFogRhwTex1SelectsFogVsAndUsesWDivision()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogRhwColorSelectsFogVsAndUsesWDivision()) {
