@@ -45,9 +45,9 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     while xhci.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
     xhci.mmio_write(
-        regs::REG_USBCMD,
+        aero_usb::xhci::regs::REG_USBCMD,
         4,
-        u64::from(regs::USBCMD_RUN),
+        u64::from(aero_usb::xhci::regs::USBCMD_RUN),
     );
 
     let completion = xhci.enable_slot(&mut mem);
