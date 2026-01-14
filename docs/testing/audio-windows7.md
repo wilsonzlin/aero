@@ -271,6 +271,10 @@ out?.ringBuffer && {
 Alternative (if the web UI exposes it):
 
 - Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing `getMetrics()` + ring indices + IO-worker producer counters.
+- Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
+  - `audio-metrics.json`
+  - `hda-codec-state.json` (best-effort; requires the I/O worker)
+  - `screenshot-*.png` (best-effort; requires the GPU worker)
 
 Quick interpretation tips:
 
@@ -388,6 +392,7 @@ Collect:
 - Browser permission status + any `getUserMedia` error shown in the console.
 - Mic ring stats (buffered/dropped) if available in UI.
 - Optional: if the web UI exposes it, use **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
+- Or use **Audio → “Export audio QA bundle (tar)”** to grab all relevant host-side artifacts in one file.
 - **HDA codec gating state** (pin/power/amp) from the I/O worker DevTools console:
   ```js
   __aeroAudioHdaBridge?.codec_debug_state?.()

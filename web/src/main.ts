@@ -4,6 +4,7 @@ import { installAeroGlobals } from "./aero";
 import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameScheduler";
 import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
+import { createTarArchive } from "./utils/tar";
 import { perf } from "./perf/perf";
 import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
@@ -4067,6 +4068,7 @@ function renderAudioPanel(): HTMLElement {
   };
 
   let hdaCodecDebugRequestId = 1;
+  let qaBundleScreenshotRequestId = 1;
   const exportHdaCodecStateButton = el("button", {
     text: "Export HDA codec state (json)",
     onclick: async () => {
@@ -4118,12 +4120,163 @@ function renderAudioPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const exportQaBundleButton = el("button", {
+    text: "Export audio QA bundle (tar)",
+    onclick: async () => {
+      status.textContent = "";
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const g = globalThis as any;
+        const encoder = new TextEncoder();
+        const timeIso = new Date().toISOString();
+        const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
+        const dir = `aero-audio-qa-${ts}`;
+        const mtimeSec = Math.trunc(Date.now() / 1000);
+
+        status.textContent = "Exporting audio QA bundle…";
+
+        const metricsReport = {
+          timeIso,
+          build: getBuildInfoForExport(),
+          userAgent: navigator.userAgent,
+          crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+          audioOutputs: {
+            __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
+            __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
+            __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
+            __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
+          },
+          workerProducer: {
+            bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
+            underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
+            overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
+          },
+        };
+
+        const entries: Array<{ path: string; data: Uint8Array }> = [
+          {
+            path: `${dir}/audio-metrics.json`,
+            data: encoder.encode(JSON.stringify(metricsReport, null, 2)),
+          },
+        ];
+
+        // HDA codec debug state (best-effort).
+        try {
+          const ioWorker = workerCoordinator.getIoWorker();
+          if (!ioWorker) throw new Error("I/O worker is not running.");
+          const requestId = hdaCodecDebugRequestId++;
+          const response = await new Promise<HdaCodecDebugStateResultMessage>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              cleanup();
+              reject(new Error("Timed out waiting for IO worker HDA codec debug state response."));
+            }, 3000);
+            (timeout as unknown as { unref?: () => void }).unref?.();
+
+            const onMessage = (ev: MessageEvent<unknown>) => {
+              const msg = ev.data as Partial<HdaCodecDebugStateResultMessage> | null;
+              if (!msg || msg.type !== "hda.codecDebugStateResult") return;
+              if (msg.requestId !== requestId) return;
+              cleanup();
+              resolve(msg as HdaCodecDebugStateResultMessage);
+            };
+
+            const cleanup = () => {
+              window.clearTimeout(timeout);
+              ioWorker.removeEventListener("message", onMessage);
+            };
+
+            ioWorker.addEventListener("message", onMessage);
+            ioWorker.postMessage({ type: "hda.codecDebugState", requestId });
+          });
+
+          entries.push({
+            path: `${dir}/hda-codec-state.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                {
+                  timeIso,
+                  build: getBuildInfoForExport(),
+                  ok: response.ok,
+                  ...(response.ok ? { state: response.state ?? null } : { error: response.error || "unknown" }),
+                },
+                null,
+                2,
+              ),
+            ),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({
+            path: `${dir}/hda-codec-state.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
+          });
+        }
+
+        // Guest screenshot (best-effort).
+        try {
+          const gpuWorker = workerCoordinator.getWorker("gpu");
+          if (!gpuWorker) throw new Error("GPU worker is not running.");
+
+          const requestId = qaBundleScreenshotRequestId++;
+          const response = await new Promise<GpuRuntimeScreenshotResponseMessage>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              cleanup();
+              reject(new Error("Timed out waiting for GPU screenshot response."));
+            }, 8000);
+            (timeout as unknown as { unref?: () => void }).unref?.();
+
+            const onMessage = (ev: MessageEvent<unknown>) => {
+              const msg = ev.data;
+              if (!isGpuWorkerMessageBase(msg)) return;
+              const typed = msg as GpuRuntimeScreenshotResponseMessage;
+              if (typed.type !== "screenshot") return;
+              if (typed.requestId !== requestId) return;
+              if (!(typed.rgba8 instanceof ArrayBuffer)) return;
+              cleanup();
+              resolve(typed);
+            };
+
+            const cleanup = () => {
+              window.clearTimeout(timeout);
+              gpuWorker.removeEventListener("message", onMessage);
+            };
+
+            gpuWorker.addEventListener("message", onMessage);
+            gpuWorker.postMessage({
+              protocol: GPU_PROTOCOL_NAME,
+              protocolVersion: GPU_PROTOCOL_VERSION,
+              type: "screenshot",
+              requestId,
+              includeCursor: false,
+            });
+          });
+
+          const rgba8 = new Uint8Array(response.rgba8);
+          const pngBlob = await rgba8ToPngBlob(response.width, response.height, rgba8);
+          const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
+          entries.push({ path: `${dir}/screenshot-${response.width}x${response.height}.png`, data: pngBytes });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/screenshot-error.txt`, data: encoder.encode(message) });
+        }
+
+        const tarBytes = createTarArchive(entries, { mtimeSec });
+        // `BlobPart` typings require ArrayBuffer-backed views; defensively normalize.
+        const tarPayload = ensureArrayBufferBacked(tarBytes);
+        downloadFile(new Blob([tarPayload], { type: "application/x-tar" }), `${dir}.tar`);
+        status.textContent = `Saved QA bundle → ${dir}.tar`;
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
     el("div", { class: "row" }, button, workerButton, hdaDemoButton, virtioSndDemoButton, loopbackButton),
-    el("div", { class: "row" }, exportMetricsButton, exportHdaCodecStateButton),
+    el("div", { class: "row" }, exportMetricsButton, exportHdaCodecStateButton, exportQaBundleButton),
     status,
   );
 }
