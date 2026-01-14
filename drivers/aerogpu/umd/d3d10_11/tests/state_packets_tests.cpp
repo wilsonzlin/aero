@@ -177,8 +177,8 @@ bool InitTestDevice(TestDevice* out) {
 
   D3D10DDIARG_OPENADAPTER open = {};
   open.pAdapterFuncs = &out->adapter_funcs;
-  HRESULT hr = OpenAdapter10(&open);
-  if (!Check(hr == S_OK, "OpenAdapter10")) {
+  HRESULT hr = OpenAdapter10_2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter10_2")) {
     return false;
   }
   out->hAdapter = open.hAdapter;
