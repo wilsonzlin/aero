@@ -296,6 +296,18 @@ cargo run --locked --manifest-path tools/image-chunker/Cargo.toml -- publish \
   --concurrency 4
 ```
 
+Then verify the published manifest + chunks end-to-end:
+
+```bash
+cargo run --locked --manifest-path tools/image-chunker/Cargo.toml -- verify \
+  --bucket disk-images \
+  --prefix images/demo/sha256-test/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1 \
+  --concurrency 4
+```
+
 ### Verify with `curl`
 
 This compose setup makes the bucket anonymously readable, so you can verify without signing:
