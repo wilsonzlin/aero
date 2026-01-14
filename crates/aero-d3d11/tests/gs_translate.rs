@@ -2419,10 +2419,12 @@ fn sm4_gs_f32tof16_sat_clamps_input_before_packing() {
 }
 
 #[test]
-fn sm4_gs_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
+fn sm4_gs_f16tof32_applies_operand_modifier_after_unpacking_half_bits() {
     // `f16tof32` consumes raw binary16 payloads stored in the low 16 bits of untyped DXBC register
-    // lanes. Operand modifiers (e.g. -abs) would reinterpret the lane numerically and corrupt the
-    // packed half bits, so the GS compute-prepass translator must ignore them.
+    // lanes.
+    //
+    // Operand modifiers must not be applied to the raw half bits (u32 domain), but they should be
+    // applied to the numeric f32 result of the conversion.
     let mut tokens = base_gs_tokens();
 
     // mov r0.xyzw, l(1,0,0,0)
@@ -2459,8 +2461,12 @@ fn sm4_gs_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
         "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
     );
     assert!(
+        wgsl.contains("-(vec4<f32>(unpack2x16float"),
+        "expected f16tof32 to apply operand modifier after unpacking half bits:\n{wgsl}"
+    );
+    assert!(
         !wgsl.contains("vec4<u32>(0u) -"),
-        "expected f16tof32 to ignore source operand modifiers (preserve half bits):\n{wgsl}"
+        "expected f16tof32 operand modifier not to be applied in the u32 domain:\n{wgsl}"
     );
 }
 
