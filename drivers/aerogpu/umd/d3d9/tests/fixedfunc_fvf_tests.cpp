@@ -903,6 +903,8 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
+  // Set a non-identity transform so the fixed-function WVP constant upload is
+  // easy to spot (WVP columns are uploaded into c240..c243).
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
@@ -990,6 +992,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
     return false;
   }
   cleanup.resources.push_back(create_vb.hResource);
+
   aerogpu_handle_t expected_vb = 0;
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
@@ -1072,7 +1075,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
     return false;
   }
 
-  bool saw_expected_vb_bind = false;
+  bool saw_expected_vb = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -1087,15 +1090,15 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
       if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuse)) {
-        saw_expected_vb_bind = true;
+        saw_expected_vb = true;
         break;
       }
     }
-    if (saw_expected_vb_bind) {
+    if (saw_expected_vb) {
       break;
     }
   }
-  if (!Check(saw_expected_vb_bind, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE)")) {
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE)")) {
     return false;
   }
 
@@ -1661,6 +1664,8 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
+  // Set a non-identity transform so the fixed-function WVP constant upload is
+  // easy to spot (WVP columns are uploaded into c240..c243).
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
@@ -1757,6 +1762,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
     return false;
   }
   cleanup.resources.push_back(create_vb.hResource);
+
   aerogpu_handle_t expected_vb = 0;
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
@@ -1839,7 +1845,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
     return false;
   }
 
-  bool saw_expected_vb_bind = false;
+  bool saw_expected_vb = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -1854,15 +1860,15 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
       if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuseTex1)) {
-        saw_expected_vb_bind = true;
+        saw_expected_vb = true;
         break;
       }
     }
-    if (saw_expected_vb_bind) {
+    if (saw_expected_vb) {
       break;
     }
   }
-  if (!Check(saw_expected_vb_bind, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE|TEX1)")) {
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE|TEX1)")) {
     return false;
   }
 
@@ -2665,7 +2671,8 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   dev->cmd.reset();
 
   // Create and bind a vertex decl matching XYZ|DIFFUSE (no SetFVF call). The
-  // driver should infer the implied FVF and use the fixed-function WVP VS path.
+  // driver should infer the implied FVF and use the fixed-function WVP VS path
+  // for DrawPrimitive.
   const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
@@ -2842,13 +2849,14 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
     if (il->input_layout_handle == decl_handle) {
       saw_decl_layout = true;
+      break;
     }
   }
   if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds explicit decl (XYZ|DIFFUSE VB draw)")) {
     return false;
   }
 
-  bool saw_vb = false;
+  bool saw_expected_vb = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -2863,15 +2871,15 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
       if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuse)) {
-        saw_vb = true;
+        saw_expected_vb = true;
         break;
       }
     }
-    if (saw_vb) {
+    if (saw_expected_vb) {
       break;
     }
   }
-  if (!Check(saw_vb, "SET_VERTEX_BUFFERS binds the created VB (decl xyz|diffuse)")) {
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds the created VB (decl xyz|diffuse)")) {
     return false;
   }
 
@@ -2941,7 +2949,8 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   dev->cmd.reset();
 
   // Create and bind a vertex decl matching XYZ|DIFFUSE|TEX1 (no SetFVF call). The
-  // driver should infer the implied FVF and use the fixed-function WVP VS path.
+  // driver should infer the implied FVF and use the fixed-function WVP VS path
+  // for DrawPrimitive.
   const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
@@ -3127,13 +3136,14 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
     if (il->input_layout_handle == decl_handle) {
       saw_decl_layout = true;
+      break;
     }
   }
   if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds explicit decl (XYZ|DIFFUSE|TEX1 VB draw)")) {
     return false;
   }
 
-  bool saw_vb = false;
+  bool saw_expected_vb = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -3148,15 +3158,15 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
       if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuseTex1)) {
-        saw_vb = true;
+        saw_expected_vb = true;
         break;
       }
     }
-    if (saw_vb) {
+    if (saw_expected_vb) {
       break;
     }
   }
-  if (!Check(saw_vb, "SET_VERTEX_BUFFERS binds the created VB (decl xyz|diffuse|tex1)")) {
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds the created VB (decl xyz|diffuse|tex1)")) {
     return false;
   }
 

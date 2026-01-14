@@ -2917,9 +2917,9 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
-  // Fixed-function emulation for non-pretransformed XYZ vertices uses internal
-  // vertex shaders that apply the cached WORLD/VIEW/PROJECTION matrix via a
-  // reserved high VS constant range (c240..c243).
+  // Fixed-function draws that use non-pretransformed positions (D3DFVF_XYZ*) rely
+  // on internal WVP vertex shaders that read a reserved high VS constant register
+  // range (c240..c243).
   const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
   return (base == kSupportedFvfXyzDiffuse) ||
          (base == kSupportedFvfXyzDiffuseTex1) ||
@@ -5238,6 +5238,9 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
       break;
     case kSupportedFvfXyzDiffuse:
+      // XYZ vertices require world/view/projection transforms in the fixed-function
+      // VS. Upload WVP into the reserved constant range and bind the internal WVP
+      // shader.
       vs_slot = &dev->fixedfunc_vs_xyz_diffuse;
       ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse;
@@ -14845,8 +14848,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       return hr;
     }
     // State blocks can capture and re-apply VS constant registers even when the
-    // app uses fixed-function rendering. Since the fixed-function fallback shader
-    // consumes c0-c3 for WVP, re-emit those constants after the block is applied.
+    // app uses fixed-function rendering. Since the fixed-function WVP shader
+    // consumes c240..c243, treat the range as clobbered and re-upload the matrix
+    // after the block is applied.
     if (fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
     }

@@ -265,21 +265,29 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   return count;
 }
 
-CmdLoc FindLastVsWvpConstants(const uint8_t* buf, size_t capacity) {
+CmdLoc FindLastShaderConstsFBefore(const uint8_t* buf,
+                                  size_t capacity,
+                                  size_t end_offset,
+                                  uint32_t stage,
+                                  uint32_t start_register,
+                                  uint32_t vec4_count) {
   CmdLoc loc{};
   const size_t stream_len = StreamBytesUsed(buf, capacity);
   if (stream_len == 0) {
     return loc;
   }
+  if (end_offset > stream_len) {
+    end_offset = stream_len;
+  }
 
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len && offset < end_offset) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
         hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f) &&
         hdr->size_bytes <= stream_len - offset) {
-      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 240 && sc->vec4_count == 4) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (cmd->stage == stage && cmd->start_register == start_register && cmd->vec4_count == vec4_count) {
         loc.hdr = hdr;
         loc.offset = offset;
       }
@@ -290,6 +298,68 @@ CmdLoc FindLastVsWvpConstants(const uint8_t* buf, size_t capacity) {
     offset += hdr->size_bytes;
   }
   return loc;
+}
+
+CmdLoc FindLastVsWvpConstants(const uint8_t* buf, size_t capacity) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return {};
+  }
+  return FindLastShaderConstsFBefore(buf,
+                                     capacity,
+                                     stream_len,
+                                     AEROGPU_SHADER_STAGE_VERTEX,
+                                     /*start_register=*/240u,
+                                     /*vec4_count=*/4u);
+}
+
+bool CheckWvpConstantsUploadedBeforeDraw(const uint8_t* buf,
+                                        size_t capacity,
+                                        size_t draw_offset,
+                                        const float wvp_row_major[16],
+                                        const char* what) {
+  if (!buf || !wvp_row_major) {
+    return Check(false, "CheckWvpConstantsUploadedBeforeDraw: invalid args");
+  }
+  constexpr uint32_t kWvpStartReg = 240u;
+  constexpr uint32_t kWvpVec4Count = 4u;
+
+  const CmdLoc loc = FindLastShaderConstsFBefore(buf,
+                                                 capacity,
+                                                 draw_offset,
+                                                 AEROGPU_SHADER_STAGE_VERTEX,
+                                                 kWvpStartReg,
+                                                 kWvpVec4Count);
+  if (!Check(loc.hdr != nullptr, what)) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(loc.hdr);
+  if (!Check(cmd->hdr.size_bytes >= sizeof(*cmd) + (kWvpVec4Count * 4u * sizeof(float)), "WVP constant payload present")) {
+    return false;
+  }
+
+  float expected_cols[16] = {};
+  for (uint32_t c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp_row_major[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp_row_major[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp_row_major[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp_row_major[3 * 4 + c];
+  }
+
+  const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd));
+  constexpr float kEps = 1e-6f;
+  for (uint32_t i = 0; i < 16; ++i) {
+    if (std::fabs(payload[i] - expected_cols[i]) > kEps) {
+      std::fprintf(stderr,
+                   "FAIL: %s (WVP constant[%u]=%.9g expected=%.9g)\n",
+                   what ? what : "WVP constants",
+                   static_cast<unsigned>(i),
+                   payload[i],
+                   expected_cols[i]);
+      return false;
+    }
+  }
+  return true;
 }
 
 void MulMat4RowMajor(const float a[16], const float b[16], float out[16]) {
@@ -13934,6 +14004,28 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
     return false;
   }
 
+  const auto* create_vs = FindCreateShaderByHandle(buf, len, bind_cmd->vs);
+  if (!Check(create_vs != nullptr, "CREATE_SHADER_DXBC for VS fallback is present")) {
+    return false;
+  }
+  if (!Check(create_vs->stage == AEROGPU_SHADER_STAGE_VERTEX, "VS fallback stage is VERTEX")) {
+    return false;
+  }
+  if (!Check(create_vs->dxbc_size_bytes == sizeof(fixedfunc::kVsWvpPosColor), "VS fallback bytecode size matches")) {
+    return false;
+  }
+  {
+    const uint8_t* vs_payload = reinterpret_cast<const uint8_t*>(create_vs) + sizeof(*create_vs);
+    if (!Check(std::memcmp(vs_payload, fixedfunc::kVsWvpPosColor, sizeof(fixedfunc::kVsWvpPosColor)) == 0,
+               "VS fallback bytecode matches fixedfunc WVP shader")) {
+      return false;
+    }
+  }
+
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "PS-only XYZ: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -14974,6 +15066,44 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS binds non-zero VS")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps != 0, "BIND_SHADERS binds non-zero PS")) {
+    return false;
+  }
+
+  const auto* create_vs = FindCreateShaderByHandle(buf, len, bind_cmd->vs);
+  if (!Check(create_vs != nullptr, "CREATE_SHADER_DXBC for bound VS is present")) {
+    return false;
+  }
+  if (!Check(create_vs->stage == AEROGPU_SHADER_STAGE_VERTEX, "bound VS stage is VERTEX")) {
+    return false;
+  }
+  if (!Check(create_vs->dxbc_size_bytes == sizeof(fixedfunc::kVsWvpPosColor), "bound VS bytecode size matches")) {
+    return false;
+  }
+  {
+    const uint8_t* vs_payload = reinterpret_cast<const uint8_t*>(create_vs) + sizeof(*create_vs);
+    if (!Check(std::memcmp(vs_payload, fixedfunc::kVsWvpPosColor, sizeof(fixedfunc::kVsWvpPosColor)) == 0,
+               "bound VS bytecode matches fixedfunc WVP shader")) {
+      return false;
+    }
+  }
+
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ UP: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -15831,6 +15961,41 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS binds non-zero VS")) {
+    return false;
+  }
+
+  const auto* create_vs = FindCreateShaderByHandle(buf, len, bind_cmd->vs);
+  if (!Check(create_vs != nullptr, "CREATE_SHADER_DXBC for bound VS is present")) {
+    return false;
+  }
+  if (!Check(create_vs->stage == AEROGPU_SHADER_STAGE_VERTEX, "bound VS stage is VERTEX")) {
+    return false;
+  }
+  if (!Check(create_vs->dxbc_size_bytes == sizeof(fixedfunc::kVsWvpPosColorTex0), "bound VS bytecode size matches")) {
+    return false;
+  }
+  {
+    const uint8_t* vs_payload = reinterpret_cast<const uint8_t*>(create_vs) + sizeof(*create_vs);
+    if (!Check(std::memcmp(vs_payload, fixedfunc::kVsWvpPosColorTex0, sizeof(fixedfunc::kVsWvpPosColorTex0)) == 0,
+               "bound VS bytecode matches fixedfunc WVP(TEX1) shader")) {
+      return false;
+    }
+  }
+
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ|TEX1 UP: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -15942,7 +16107,8 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  // Set WORLD/VIEW/PROJECTION transforms to exercise fixed-function WVP constant upload.
+  // Set WORLD/VIEW/PROJECTION transforms and verify fixed-function WVP constants
+  // (c240..c243) are uploaded for XYZ vertices.
   D3DMATRIX identity{};
   identity.m[0][0] = 1.0f;
   identity.m[1][1] = 1.0f;
@@ -16093,6 +16259,41 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   }
   const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
+    return false;
+  }
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS binds non-zero VS")) {
+    return false;
+  }
+
+  const auto* create_vs = FindCreateShaderByHandle(buf, len, bind_cmd->vs);
+  if (!Check(create_vs != nullptr, "CREATE_SHADER_DXBC for bound VS is present")) {
+    return false;
+  }
+  if (!Check(create_vs->stage == AEROGPU_SHADER_STAGE_VERTEX, "bound VS stage is VERTEX")) {
+    return false;
+  }
+  if (!Check(create_vs->dxbc_size_bytes == sizeof(fixedfunc::kVsWvpPosColorTex0), "bound VS bytecode size matches")) {
+    return false;
+  }
+  {
+    const uint8_t* vs_payload = reinterpret_cast<const uint8_t*>(create_vs) + sizeof(*create_vs);
+    if (!Check(std::memcmp(vs_payload, fixedfunc::kVsWvpPosColorTex0, sizeof(fixedfunc::kVsWvpPosColorTex0)) == 0,
+               "bound VS bytecode matches fixedfunc WVP(TEX1) shader")) {
+      return false;
+    }
+  }
+
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ|TEX1 SetTransform: WVP constants uploaded")) {
     return false;
   }
 
@@ -16364,6 +16565,14 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
     return false;
   }
 
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ|TEX1 clobber: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -16598,6 +16807,14 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
     return false;
   }
 
+  const CmdLoc draw_cmd = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw_cmd.hdr != nullptr, "DRAW_INDEXED emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw_cmd.offset, wvp, "XYZ|TEX1 Indexed UP: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -16802,6 +17019,14 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   }
   const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
+    return false;
+  }
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ SetTransform: WVP constants uploaded")) {
     return false;
   }
 
@@ -17082,6 +17307,14 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0,
              "WVP constants payload matches expected columns for WORLD=A")) {
+    return false;
+  }
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "StateBlock XYZ|TEX1: WVP constants uploaded after ApplyStateBlock")) {
     return false;
   }
 
@@ -22119,6 +22352,14 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
     return false;
   }
 
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw.offset, wvp, "XYZ UP: WVP constants uploaded")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -22355,7 +22596,21 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  if (!Check(dev->up_vertex_buffer == nullptr, "XYZ draw does not allocate scratch up_vertex_buffer")) {
+  if (!Check(dev->up_vertex_buffer == nullptr, "XYZ draw does not allocate scratch VB")) {
+    return false;
+  }
+
+  const auto* vb_res = reinterpret_cast<const Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(vb_res != nullptr, "vb pointer")) {
+    return false;
+  }
+  const uint32_t vb_handle = vb_res->handle;
+  if (!Check(vb_handle != 0, "vb handle")) {
+    return false;
+  }
+
+  const CmdLoc draw_loc = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW emitted")) {
     return false;
   }
 
@@ -22372,28 +22627,6 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
 
-  const auto* vb_res = reinterpret_cast<const Resource*>(create_res.hResource.pDrvPrivate);
-  const uint32_t vb_handle = vb_res ? vb_res->handle : 0;
-  if (!Check(vb_handle != 0, "vertex buffer handle")) {
-    return false;
-  }
-
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t off = sizeof(aerogpu_cmd_stream_header);
-  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (!Check(u->resource_handle == vb_handle, "XYZ draw emits no scratch UPLOAD_RESOURCE")) {
-        return false;
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
-      break;
-    }
-    off += hdr->size_bytes;
-  }
-
   const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
   if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
     return false;
@@ -22404,6 +22637,33 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
   }
   const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
+    return false;
+  }
+
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw_loc.offset, wvp, "XYZ draw: WVP constants uploaded")) {
+    return false;
+  }
+
+  // Ensure we didn't upload to any internal scratch VB: XYZ fixed-function draws
+  // should not require CPU conversion.
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  bool saw_upload = false;
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      saw_upload = true;
+      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (!Check(u->resource_handle == vb_handle, "XYZ draw emits no scratch UPLOAD_RESOURCE")) {
+        return false;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+  if (!Check(saw_upload, "vertex buffer upload emitted")) {
     return false;
   }
 
@@ -25778,23 +26038,43 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   if (!Check(dev->up_index_buffer == nullptr, "XYZ|DIFFUSE|TEX1 indexed draw does not allocate scratch IB")) {
     return false;
   }
-
+ 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-
+ 
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) >= 1, "DRAW_INDEXED emitted")) {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "no non-indexed DRAW emitted")) {
     return false;
   }
-
-  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
+ 
+  const auto* vb_res = reinterpret_cast<const Resource*>(create_vb.hResource.pDrvPrivate);
+  if (!Check(vb_res != nullptr, "vb pointer")) {
+    return false;
+  }
+  const uint32_t vb_handle = vb_res->handle;
+  if (!Check(vb_handle != 0, "vb handle")) {
+    return false;
+  }
+ 
+  const auto* ib_res = reinterpret_cast<const Resource*>(create_ib.hResource.pDrvPrivate);
+  if (!Check(ib_res != nullptr, "ib pointer")) {
+    return false;
+  }
+  const uint32_t ib_handle = ib_res->handle;
+  if (!Check(ib_handle != 0, "ib handle")) {
+    return false;
+  }
+ 
+  // Expected WVP matrix (row-major).
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
+
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float expected_cols[16] = {};
   for (int c = 0; c < 4; ++c) {
     expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
@@ -25802,18 +26082,28 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
     expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
     expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
-
-  const auto* vb_res = reinterpret_cast<const Resource*>(create_vb.hResource.pDrvPrivate);
-  const auto* ib_res = reinterpret_cast<const Resource*>(create_ib.hResource.pDrvPrivate);
-  const uint32_t vb_handle = vb_res ? vb_res->handle : 0;
-  const uint32_t ib_handle = ib_res ? ib_res->handle : 0;
-  if (!Check(vb_handle != 0, "vb handle")) {
+ 
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
     return false;
   }
-  if (!Check(ib_handle != 0, "ib handle")) {
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
     return false;
   }
-
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
+    return false;
+  }
+ 
+  const CmdLoc draw_loc = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW_INDEXED emitted")) {
+    return false;
+  }
+  if (!CheckWvpConstantsUploadedBeforeDraw(buf, len, draw_loc.offset, wvp, "XYZ|DIFFUSE|TEX1 indexed draw: WVP constants uploaded")) {
+    return false;
+  }
+ 
   // Ensure we upload only the user-provided VB/IB and not a scratch VB conversion.
   bool saw_vb_upload = false;
   bool saw_ib_upload = false;
@@ -25842,7 +26132,7 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   if (!Check(saw_ib_upload, "index buffer upload emitted")) {
     return false;
   }
-
+ 
   const CmdLoc vb_upload = FindLastUploadForHandle(buf, len, vb_handle);
   if (!Check(vb_upload.hdr != nullptr, "upload_resource(VB) emitted")) {
     return false;
@@ -25854,7 +26144,7 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   if (!Check(vb_upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
-
+ 
   const uint8_t* payload = reinterpret_cast<const uint8_t*>(vb_upload_cmd) + sizeof(*vb_upload_cmd);
   float x0 = 0.0f;
   float y0 = 0.0f;
@@ -25868,7 +26158,7 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   std::memcpy(&c0, payload + 12, sizeof(uint32_t));
   std::memcpy(&u0, payload + 16, sizeof(float));
   std::memcpy(&v0_out, payload + 20, sizeof(float));
-
+ 
   if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: x0 is not CPU-converted")) {
     return false;
   }
@@ -25887,20 +26177,7 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: v preserved")) {
     return false;
   }
-
-  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
-  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
-    return false;
-  }
-  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
-  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
-    return false;
-  }
-  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
-  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
-    return false;
-  }
-
+ 
   return ValidateStream(buf, len);
 }
 
