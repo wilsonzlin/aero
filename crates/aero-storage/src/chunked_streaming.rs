@@ -1473,7 +1473,10 @@ mod tests {
         raw.schema = "not-a-schema".to_string();
         let err = parse_manifest_v1(raw).expect_err("expected schema mismatch");
         assert!(
-            matches!(&err, ChunkedStreamingDiskError::UnsupportedManifestSchema(_)),
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::UnsupportedManifestSchema(_)
+            ),
             "unexpected error: {err:?}"
         );
     }

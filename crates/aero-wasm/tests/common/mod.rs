@@ -90,7 +90,11 @@ impl GuestRegion {
         let addr = self.abs(paddr, dst.len() as u32);
         // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
         unsafe {
-            core::ptr::copy_nonoverlapping(addr as *const u8, dst.as_mut_ptr(), dst.len());
+            core::ptr::copy_nonoverlapping(
+                core::ptr::with_exposed_provenance(addr as usize),
+                dst.as_mut_ptr(),
+                dst.len(),
+            );
         }
     }
 
@@ -98,7 +102,11 @@ impl GuestRegion {
         let addr = self.abs(paddr, byte_len);
         // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
         unsafe {
-            core::ptr::write_bytes(addr as *mut u8, value, byte_len as usize);
+            core::ptr::write_bytes(
+                core::ptr::with_exposed_provenance_mut::<u8>(addr as usize),
+                value,
+                byte_len as usize,
+            );
         }
     }
 
@@ -114,7 +122,10 @@ impl GuestRegion {
     pub fn write_u64(&self, paddr: u32, value: u64) {
         let addr = self.abs(paddr, 8);
         unsafe {
-            core::ptr::write_unaligned(addr as *mut u64, value);
+            core::ptr::write_unaligned(
+                core::ptr::with_exposed_provenance_mut(addr as usize),
+                value,
+            );
         }
     }
 
@@ -126,25 +137,33 @@ impl GuestRegion {
     pub fn read_u16(&self, paddr: u32) -> u16 {
         let addr = self.abs(paddr, 2);
         // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
-        unsafe { u16::from_le(core::ptr::read_unaligned(addr as *const u16)) }
+        unsafe {
+            u16::from_le(core::ptr::read_unaligned(
+                core::ptr::with_exposed_provenance(addr as usize),
+            ))
+        }
     }
 }
 
 /// Write a little-endian u32 to an absolute linear-memory address.
 pub unsafe fn write_u32(addr: u32, value: u32) {
     unsafe {
-        core::ptr::write_unaligned(addr as *mut u32, value);
+        core::ptr::write_unaligned(core::ptr::with_exposed_provenance_mut(addr as usize), value);
     }
 }
 
 /// Read a little-endian u32 from an absolute linear-memory address.
 pub unsafe fn read_u32(addr: u32) -> u32 {
-    unsafe { core::ptr::read_unaligned(addr as *const u32) }
+    unsafe { core::ptr::read_unaligned(core::ptr::with_exposed_provenance(addr as usize)) }
 }
 
 /// Write raw bytes to an absolute linear-memory address.
 pub unsafe fn write_bytes(addr: u32, bytes: &[u8]) {
     unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+        core::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            core::ptr::with_exposed_provenance_mut(addr as usize),
+            bytes.len(),
+        );
     }
 }

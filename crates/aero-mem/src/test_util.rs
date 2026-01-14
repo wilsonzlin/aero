@@ -31,9 +31,8 @@ pub(crate) fn capture_panic_location(f: impl FnOnce()) -> (String, u32) {
         let capture = CAPTURE_PANIC_OUTPUT.with(|cell| cell.get());
         if capture {
             if let Some(loc) = info.location() {
-                LAST_PANIC_LOC.with(|cell| {
-                    *cell.borrow_mut() = Some((loc.file().to_string(), loc.line()))
-                });
+                LAST_PANIC_LOC
+                    .with(|cell| *cell.borrow_mut() = Some((loc.file().to_string(), loc.line())));
             }
             // Suppress panic output for the expected panic we are catching in this thread.
             return;
@@ -64,4 +63,3 @@ pub(crate) fn capture_panic_location(f: impl FnOnce()) -> (String, u32) {
             .expect("panic hook did not capture a location")
     })
 }
-

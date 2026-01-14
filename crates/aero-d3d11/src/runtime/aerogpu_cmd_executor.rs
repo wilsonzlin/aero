@@ -15,11 +15,11 @@ use aero_gpu::pipeline_key::{
 };
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_gpu::GpuCapabilities;
-use aero_gpu::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_gpu::{
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
     pack_rgba8_to_b5g6r5_unorm,
 };
+use aero_gpu::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_bind_shaders_payload_le, decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,

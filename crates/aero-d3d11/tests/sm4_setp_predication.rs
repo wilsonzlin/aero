@@ -520,8 +520,11 @@ fn decodes_and_translates_trailing_predicated_setp() {
     let dst_p1x = reg_dst(OPERAND_TYPE_PREDICATE, 1, WriteMask::X);
     let src_v0y = reg_src(OPERAND_TYPE_INPUT, 0, [1, 1, 1, 1]);
     let pred_p0x = pred_operand(0, 0);
-    let setp2_len =
-        1 + dst_p1x.len() as u32 + src_v0y.len() as u32 + src_zero.len() as u32 + pred_p0x.len() as u32;
+    let setp2_len = 1
+        + dst_p1x.len() as u32
+        + src_v0y.len() as u32
+        + src_zero.len() as u32
+        + pred_p0x.len() as u32;
     body.push(opcode_token_setp(setp2_len, 5));
     body.extend_from_slice(&dst_p1x);
     body.extend_from_slice(&src_v0y);

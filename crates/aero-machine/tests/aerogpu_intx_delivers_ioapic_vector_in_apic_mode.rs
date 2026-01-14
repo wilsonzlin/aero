@@ -92,10 +92,13 @@ fn aerogpu_intx_delivers_ioapic_vector_in_apic_mode() {
     assert_ne!(bar0_base, 0, "AeroGPU BAR0 should be assigned by BIOS POST");
 
     // Enable scanout to start vblank scheduling, then enable vblank IRQ delivery.
-    m.write_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
-    let period_ns = u64::from(
-        m.read_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    m.write_physical_u32(
+        bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        1,
     );
+    let period_ns = u64::from(m.read_physical_u32(
+        bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
+    ));
     assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
     m.write_physical_u32(
         bar0_base + u64::from(proto::AEROGPU_MMIO_REG_IRQ_ENABLE),
@@ -112,4 +115,3 @@ fn aerogpu_intx_delivers_ioapic_vector_in_apic_mode() {
         Some(VECTOR)
     );
 }
-

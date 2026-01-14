@@ -4462,7 +4462,9 @@ mod tests {
         assert_eq!(req.request_id, 1);
         assert_eq!(req.report_id, 5);
         assert!(
-            model.feature_report_requests_pending.contains_key(&req.report_id),
+            model
+                .feature_report_requests_pending
+                .contains_key(&req.report_id),
             "expected request to remain pending after host drain"
         );
 
@@ -4482,10 +4484,7 @@ mod tests {
         assert!(webhid.feature_report_requests_pending.is_empty());
         assert!(webhid.feature_report_requests_failed.is_empty());
         assert_eq!(
-            webhid
-                .cached_feature_reports
-                .get(&9)
-                .map(|v| v.as_slice()),
+            webhid.cached_feature_reports.get(&9).map(|v| v.as_slice()),
             Some(&[9, 0xAA][..])
         );
 

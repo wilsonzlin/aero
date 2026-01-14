@@ -29,4 +29,3 @@ fn usb_hub_snapshot_load_clamps_configuration_field_to_1() {
     );
     assert_eq!(resp, ControlResponse::Data(vec![1]));
 }
-
