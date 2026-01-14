@@ -340,7 +340,9 @@ impl GuestMemory for MappedGuestMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::phys::{DenseMemory, SparseMemory};
+    use crate::phys::DenseMemory;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::phys::SparseMemory;
 
     #[test]
     fn reads_and_writes_translate_and_holes_are_open_bus() {
@@ -444,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn supports_large_phys_addrs_with_sparse_inner_without_allocating_gigabytes() {
         let pcie_ecam_base = aero_pc_constants::PCIE_ECAM_BASE;
         let total_memory = pcie_ecam_base + 0x2000;
