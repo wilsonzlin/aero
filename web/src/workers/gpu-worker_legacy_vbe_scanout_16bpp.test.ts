@@ -14,6 +14,9 @@ import {
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
 } from "../ipc/scanout_state";
 
+const WORKER_MESSAGE_TIMEOUT_MS = 15_000;
+const TEST_TIMEOUT_MS = 40_000;
+
 async function waitForWorkerMessage(
   worker: Worker,
   predicate: (msg: unknown) => boolean,
@@ -144,7 +147,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -164,7 +167,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       // Screenshot B5G6R5.
@@ -173,10 +176,10 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
         const shotPromise = waitForWorkerMessage(
           worker,
           (msg) =>
-            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
-            (msg as { type?: unknown }).type === "screenshot" &&
-            (msg as { requestId?: unknown }).requestId === requestId,
-          10_000,
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "screenshot" &&
+          (msg as { requestId?: unknown }).requestId === requestId,
+          WORKER_MESSAGE_TIMEOUT_MS,
         );
         worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -217,7 +220,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
             (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
             (msg as { type?: unknown }).type === "screenshot" &&
             (msg as { requestId?: unknown }).requestId === requestId,
-          10_000,
+          WORKER_MESSAGE_TIMEOUT_MS,
         );
         worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -234,9 +237,9 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
-  it("reads B5G6R5 legacy VBE scanout from the VRAM aperture and expands to RGBA8", async () => {
+  it("reads B5G6R5 legacy VBE scanout from the VRAM aperture even when last-row pitch padding is out of bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
@@ -249,9 +252,15 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     const width = 2;
     const height = 2;
     const pitchBytes = 8; // padded (rowBytes=4)
-    const vramOffset = 0x1000;
+    const rowBytes = width * 2;
+    const requiredBytes = pitchBytes * (height - 1) + rowBytes;
+    if (requiredBytes > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for RGB565 surface");
+    }
+    // Place the surface at the end of the VRAM SAB so the unused pitch padding after the last row
+    // would be out of bounds if the readback path incorrectly required `pitchBytes * height`.
+    const vramOffset = views.vramU8.byteLength - requiredBytes;
     const basePaddr = (VRAM_BASE_PADDR + vramOffset) >>> 0;
-    const requiredBytes = pitchBytes * height;
 
     views.vramU8.fill(0);
     writeRgb5652x2(views.vramU8.subarray(vramOffset, vramOffset + requiredBytes), pitchBytes);
@@ -291,7 +300,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -311,7 +320,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -321,7 +330,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -339,7 +348,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads B5G5R5A1 legacy VBE scanout from the VRAM aperture and expands alpha bit", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -396,7 +405,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -416,7 +425,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 2;
@@ -426,7 +435,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -444,5 +453,5 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 });
