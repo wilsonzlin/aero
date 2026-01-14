@@ -85,6 +85,7 @@ import {
   estimateFullFrameUploadBytes,
   estimateTextureUploadBytes,
 } from "../gpu/dirty-rect-policy";
+import { readScanoutRgba8FromGuestRam } from "../runtime/scanout_readback";
 import type { AeroConfig } from '../config/aero_config';
 import {
   createSharedMemoryViews,
@@ -3015,9 +3016,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             if (snap.source !== SCANOUT_SOURCE_WDDM) return false;
             if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return false;
 
-            const layout = guestLayout;
             const guest = guestU8;
-            if (!layout || !guest) {
+            if (!guest) {
               postStub(typeof seq === "number" ? seq : undefined);
               return true;
             }
@@ -3032,18 +3032,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
 
-              // Only format supported by the shared scanout descriptor today.
-              if ((snap.format >>> 0) !== SCANOUT_FORMAT_B8G8R8X8) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-
               const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
               if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-              if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
@@ -3068,51 +3058,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              const out = new Uint8Array(outBytes);
-              const ramBytes = layout.guest_size >>> 0;
-              // Convert little-endian B8G8R8X8 -> RGBA8 (alpha forced to 255).
-              //
-              // IMPORTANT: guest physical memory may contain holes (PC/Q35 ECAM + PCI/MMIO). Do not
-              // translate only the base and then treat the range as contiguous in backing RAM;
-              // that can incorrectly allow reads that cross the hole boundary.
-              for (let y = 0; y < height; y += 1) {
-                const rowPaddrBig = basePaddr + BigInt(pitchBytes) * BigInt(y);
-                if (rowPaddrBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                const rowPaddr = Number(rowPaddrBig);
-
-                try {
-                  if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
-                    postStub(typeof seq === "number" ? seq : undefined);
-                    return true;
-                  }
-                } catch {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-
-                const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-                if (rowOff === null) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                if (rowOff + rowBytes > guest.byteLength) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-
-                const dstRow = y * rowBytes;
-                for (let x = 0; x < width; x += 1) {
-                  const srcPx = rowOff + x * BYTES_PER_PIXEL_RGBA8;
-                  const dstPx = dstRow + x * BYTES_PER_PIXEL_RGBA8;
-                  out[dstPx + 0] = guest[srcPx + 2]; // R
-                  out[dstPx + 1] = guest[srcPx + 1]; // G
-                  out[dstPx + 2] = guest[srcPx + 0]; // B
-                  out[dstPx + 3] = 255;
-                }
-              }
+              const format = snap.format >>> 0;
+              const out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
 
               if (includeCursor) {
                 try {
