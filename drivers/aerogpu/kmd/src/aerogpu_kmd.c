@@ -12043,10 +12043,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->error_fence = 0;
         out->error_count = 0;
         out->reserved0 = 0;
- 
-        if (!adapter->Bar0) {
-            return STATUS_SUCCESS;
-        }
 
         /*
          * Always expose best-effort error state based on the KMD's IRQ_ERROR latch, even if the
