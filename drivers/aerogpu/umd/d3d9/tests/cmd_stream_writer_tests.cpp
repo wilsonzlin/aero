@@ -2705,7 +2705,7 @@ bool TestLockSizeZeroClampsToMipSubresource() {
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
   lock.offset_bytes = kMip1Offset;
-  lock.size_bytes = 0; // lock the remainder (default size semantics)
+  lock.size_bytes = 0; // default size semantics (driver clamps to the containing mip level)
   lock.flags = 0;
   D3DDDI_LOCKEDBOX box{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
@@ -3387,7 +3387,85 @@ bool TestLockInfersMipLevelPitchFromOffsetBytes() {
   if (!lock_fail(create_dxt1.hResource, /*offset_bytes=*/48, E_INVALIDARG, "Lock(DXT1 offset==size) rejects")) {
     return false;
   }
-  return lock_check(create_dxt1.hResource, /*offset_bytes=*/40, /*row=*/8, /*slice=*/8, "Lock(DXT1 level2)");
+  if (!lock_check(create_dxt1.hResource, /*offset_bytes=*/40, /*row=*/8, /*slice=*/8, "Lock(DXT1 level2)")) {
+    return false;
+  }
+
+  // Repeat the above checks for array textures (depth/array_layers > 1) to
+  // ensure offsets into later layers are interpreted correctly.
+  //
+  // BGRA32: 4x4, mip_levels=3, array_layers=2.
+  // Each layer packs the same mip chain as above (84 bytes).
+  D3D9DDIARG_CREATERESOURCE create_rgba_array{};
+  create_rgba_array.type = kD3dRTypeTexture;
+  create_rgba_array.format = 22u; // D3DFMT_X8R8G8B8
+  create_rgba_array.width = 4;
+  create_rgba_array.height = 4;
+  create_rgba_array.depth = 2;
+  create_rgba_array.mip_levels = 3;
+  create_rgba_array.usage = 0;
+  create_rgba_array.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_rgba_array.size = 0;
+  create_rgba_array.hResource.pDrvPrivate = nullptr;
+  create_rgba_array.pSharedHandle = nullptr;
+  create_rgba_array.pPrivateDriverData = nullptr;
+  create_rgba_array.PrivateDriverDataSize = 0;
+  create_rgba_array.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_rgba_array);
+  if (!Check(hr == S_OK, "CreateResource(BGRA array mip chain)")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rgba_array.hResource);
+
+  // Layer1 starts at offset 84.
+  if (!lock_check(create_rgba_array.hResource, /*offset_bytes=*/84, /*row=*/16, /*slice=*/64, "Lock(BGRA layer1 level0)")) {
+    return false;
+  }
+  if (!lock_check(create_rgba_array.hResource, /*offset_bytes=*/148, /*row=*/8, /*slice=*/16, "Lock(BGRA layer1 level1)")) {
+    return false;
+  }
+  if (!lock_check(create_rgba_array.hResource, /*offset_bytes=*/152, /*row=*/8, /*slice=*/16, "Lock(BGRA layer1 level1+4)")) {
+    return false;
+  }
+  if (!lock_fail(create_rgba_array.hResource, /*offset_bytes=*/168, E_INVALIDARG, "Lock(BGRA array offset==size) rejects")) {
+    return false;
+  }
+
+  // DXT1: 7x5, mip_levels=3, array_layers=2. Each layer is 48 bytes.
+  D3D9DDIARG_CREATERESOURCE create_dxt1_array{};
+  create_dxt1_array.type = kD3dRTypeTexture;
+  create_dxt1_array.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1
+  create_dxt1_array.width = 7;
+  create_dxt1_array.height = 5;
+  create_dxt1_array.depth = 2;
+  create_dxt1_array.mip_levels = 3;
+  create_dxt1_array.usage = 0;
+  create_dxt1_array.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_dxt1_array.size = 0;
+  create_dxt1_array.hResource.pDrvPrivate = nullptr;
+  create_dxt1_array.pSharedHandle = nullptr;
+  create_dxt1_array.pPrivateDriverData = nullptr;
+  create_dxt1_array.PrivateDriverDataSize = 0;
+  create_dxt1_array.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_dxt1_array);
+  if (!Check(hr == S_OK, "CreateResource(DXT1 array mip chain)")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_dxt1_array.hResource);
+
+  // Layer1 starts at offset 48.
+  if (!lock_check(create_dxt1_array.hResource, /*offset_bytes=*/48, /*row=*/16, /*slice=*/32, "Lock(DXT1 layer1 level0)")) {
+    return false;
+  }
+  if (!lock_check(create_dxt1_array.hResource, /*offset_bytes=*/80, /*row=*/8, /*slice=*/8, "Lock(DXT1 layer1 level1)")) {
+    return false;
+  }
+  if (!lock_check(create_dxt1_array.hResource, /*offset_bytes=*/81, /*row=*/8, /*slice=*/8, "Lock(DXT1 layer1 level1+1)")) {
+    return false;
+  }
+  return lock_fail(create_dxt1_array.hResource, /*offset_bytes=*/96, E_INVALIDARG, "Lock(DXT1 array offset==size) rejects");
 }
 
 bool TestCreateResourceMipLevelsZeroAllocatesFullMipChain() {
