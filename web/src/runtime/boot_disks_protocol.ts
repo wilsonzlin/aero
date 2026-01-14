@@ -135,10 +135,14 @@ export function machineBootDisksToOpfsSpec(
     if (anyMeta.kind !== "hdd") {
       throw new Error(`${label}: expected kind=\"hdd\" (${formatDiskMeta(meta)})`);
     }
-    if (anyMeta.format !== "raw") {
-      // `Machine.set_primary_hdd_opfs_cow` uses `RawDisk::open` for the base image; reject other
-      // formats rather than guessing.
-      throw new Error(`${label}: unsupported format (expected \"raw\") (${formatDiskMeta(meta)})`);
+    if (anyMeta.format !== "raw" && anyMeta.format !== "aerospar" && anyMeta.format !== "unknown") {
+      // The machine runtime supports OPFS-backed base images that can be opened synchronously by
+      // Rust storage controllers. Today that is:
+      // - raw sector files, and
+      // - `aero_storage` aerosparse images (`.aerospar`).
+      //
+      // Treat `format="unknown"` as "assume raw" for back-compat with older metadata schemas.
+      throw new Error(`${label}: unsupported format (expected \"raw\" or \"aerospar\") (${formatDiskMeta(meta)})`);
     }
     const basePath = opfsPathForDisk(meta);
     const overlayPath = opfsOverlayPathForCow(meta);

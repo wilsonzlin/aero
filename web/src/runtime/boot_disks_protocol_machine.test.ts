@@ -33,6 +33,28 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
     expect(spec.bootDrive).toBe(0x80);
   });
 
+  it("accepts aerosparse HDD base images", () => {
+    const hdd = {
+      source: "local",
+      id: "disk-aerospar",
+      name: "Disk aerospar",
+      backend: "opfs",
+      kind: "hdd",
+      format: "aerospar",
+      fileName: "disk.aerospar",
+      sizeBytes: 512,
+      createdAtMs: 0,
+    } satisfies DiskImageMetadata;
+
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
+    const spec = machineBootDisksToOpfsSpec(msg);
+
+    expect(spec.hdd?.basePath).toBe(`${OPFS_DISKS_PATH}/${hdd.fileName}`);
+    expect(spec.hdd?.overlayPath).toBe(`${OPFS_DISKS_PATH}/${hdd.id}.overlay.aerospar`);
+    expect(spec.hdd?.overlayBlockSizeBytes).toBe(DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES);
+    expect(spec.bootDrive).toBe(0x80);
+  });
+
   it("derives OPFS path and bootDrive for local OPFS CD ISO", () => {
     const cd = {
       source: "local",
@@ -99,7 +121,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/only OPFS-backed disks are supported/i);
   });
 
-  it("rejects non-raw HDD formats", () => {
+  it("rejects unsupported HDD formats", () => {
     const hdd = {
       source: "local",
       id: "disk-qcow2",
