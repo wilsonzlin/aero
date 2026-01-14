@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use aero_d3d11::runtime::tessellator::{
-    tri_integer_index_count, tri_integer_indices_cw, tri_integer_vertex_count,
-    tri_integer_vertex_ijk, TriIntegerBarycentric,
+    tri_index_to_vertex_indices_cw, tri_integer_index_count, tri_integer_indices_cw,
+    tri_integer_vertex_count, tri_integer_vertex_ijk, TriIntegerBarycentric,
 };
 
 #[test]
@@ -56,6 +56,16 @@ fn triangle_integer_indices_are_in_bounds_non_degenerate_and_cw() {
             tri_integer_index_count(n) as usize,
             "index buffer length mismatch for n={n}"
         );
+
+        // Verify CPU reference implementation matches the per-triangle helper (same as GPU path
+        // order, but CW).
+        for (tri_id, tri) in indices.chunks_exact(3).enumerate() {
+            let expected = tri_index_to_vertex_indices_cw(n, tri_id as u32);
+            assert_eq!(
+                tri, expected,
+                "triangle mismatch for n={n}, tri_id={tri_id}"
+            );
+        }
 
         for tri in indices.chunks_exact(3) {
             let a = tri[0];

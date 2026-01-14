@@ -130,6 +130,16 @@ pub fn tri_index_to_vertex_indices(level: u32, local_triangle: u32) -> [u32; 3] 
     }
 }
 
+/// CW variant of [`tri_index_to_vertex_indices`].
+///
+/// This is equivalent to swapping the last two vertices of the triangle produced by
+/// [`tri_index_to_vertex_indices`], and therefore inherits the same clamping behavior for
+/// `level`/`local_triangle`.
+pub fn tri_index_to_vertex_indices_cw(level: u32, local_triangle: u32) -> [u32; 3] {
+    let [a, b, c] = tri_index_to_vertex_indices(level, local_triangle);
+    [a, c, b]
+}
+
 /// Returns a WGSL snippet implementing triangle-domain tessellation helpers.
 ///
 /// This snippet is pure math (no bindings) and can be concatenated into shader templates.
