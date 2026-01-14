@@ -87,6 +87,12 @@ if (tooOld) {
     log(`- Override: AERO_ALLOW_UNSUPPORTED_NODE=1 (skipping Node version enforcement)`);
   } else {
     log("");
+    log("Override (not recommended):");
+    log("  Set AERO_ALLOW_UNSUPPORTED_NODE=1 to bypass this check.");
+    log(
+      `  (CI is pinned to Node v${expected.raw}; unsupported versions may cause toolchain hangs/flakiness.)`,
+    );
+    log("");
     log("Fix:");
     log(`- Install/use Node v${expected.raw} (the version CI uses).`);
     log("  If you use nvm:");
@@ -105,6 +111,12 @@ if (tooOld) {
   if (allowUnsupported) {
     log(`- Override: AERO_ALLOW_UNSUPPORTED_NODE=1 (skipping Node version enforcement)`);
   } else {
+    log("");
+    log("Override (not recommended):");
+    log("  Set AERO_ALLOW_UNSUPPORTED_NODE=1 to bypass this check.");
+    log(
+      `  (CI is pinned to Node v${expected.raw}; unsupported majors may cause toolchain hangs/flakiness.)`,
+    );
     log("");
     log("Fix:");
     log(`- Install/use Node ${expected.major}.x (CI baseline).`);
