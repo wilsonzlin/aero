@@ -915,70 +915,15 @@ const tryReadHwCursorImageRgba8 = (
         if (end >= start && end <= vram.byteLength) {
           const src = vram.subarray(start, end);
           const out = new Uint8Array(rowBytes * h);
-
-          const canScanoutSwizzle = BigInt(pitch) * BigInt(h) <= BigInt(vram.byteLength - start);
-          if (kind === "bgra" || kind === "bgrx") {
-            if (canScanoutSwizzle) {
-              try {
-                convertScanoutToRgba8({
-                  src,
-                  srcStrideBytes: pitch,
-                  dst: out,
-                  dstStrideBytes: rowBytes,
-                  width: w,
-                  height: h,
-                  kind: kind as ScanoutSwizzleKind,
-                });
-                if (isSrgb) linearizeSrgbRgba8InPlace(out);
-                return out;
-              } catch {
-                // Fall back to the byte-wise shuffle when the u32 fast-path view would be OOB.
-              }
-            }
-
-            const preserveAlpha = kind === "bgra";
-            for (let y = 0; y < h; y += 1) {
-              let srcOff = y * pitch;
-              let dstOff = y * rowBytes;
-              for (let x = 0; x < w; x += 1) {
-                const b = src[srcOff + 0]!;
-                const g = src[srcOff + 1]!;
-                const r = src[srcOff + 2]!;
-                const a = preserveAlpha ? src[srcOff + 3]! : 0xff;
-                out[dstOff + 0] = r;
-                out[dstOff + 1] = g;
-                out[dstOff + 2] = b;
-                out[dstOff + 3] = a;
-                srcOff += 4;
-                dstOff += 4;
-              }
-            }
-            if (isSrgb) linearizeSrgbRgba8InPlace(out);
-            return out;
-          }
-
-          if (kind === "rgba") {
-            for (let y = 0; y < h; y += 1) {
-              const srcOff = y * pitch;
-              out.set(src.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
-            }
-            if (isSrgb) linearizeSrgbRgba8InPlace(out);
-            return out;
-          }
-
-          // RGBX -> RGBA with forced alpha=255.
-          for (let y = 0; y < h; y += 1) {
-            let srcOff = y * pitch;
-            let dstOff = y * rowBytes;
-            for (let x = 0; x < w; x += 1) {
-              out[dstOff + 0] = src[srcOff + 0]!;
-              out[dstOff + 1] = src[srcOff + 1]!;
-              out[dstOff + 2] = src[srcOff + 2]!;
-              out[dstOff + 3] = 0xff;
-              srcOff += 4;
-              dstOff += 4;
-            }
-          }
+          convertScanoutToRgba8({
+            src,
+            srcStrideBytes: pitch,
+            dst: out,
+            dstStrideBytes: rowBytes,
+            width: w,
+            height: h,
+            kind: kind as ScanoutSwizzleKind,
+          });
           if (isSrgb) linearizeSrgbRgba8InPlace(out);
           return out;
         }
@@ -1008,70 +953,15 @@ const tryReadHwCursorImageRgba8 = (
 
   const src = guest.subarray(start, end);
   const out = new Uint8Array(rowBytes * h);
-
-  const canScanoutSwizzle = BigInt(pitch) * BigInt(h) <= BigInt(guest.byteLength - start);
-  if (kind === "bgra" || kind === "bgrx") {
-    if (canScanoutSwizzle) {
-      try {
-        convertScanoutToRgba8({
-          src,
-          srcStrideBytes: pitch,
-          dst: out,
-          dstStrideBytes: rowBytes,
-          width: w,
-          height: h,
-          kind: kind as ScanoutSwizzleKind,
-        });
-        if (isSrgb) linearizeSrgbRgba8InPlace(out);
-        return out;
-      } catch {
-        // Fall back to byte shuffle when the u32 view would be OOB (pitch*h > guest RAM region).
-      }
-    }
-
-    const preserveAlpha = kind === "bgra";
-    for (let y = 0; y < h; y += 1) {
-      let srcOff = y * pitch;
-      let dstOff = y * rowBytes;
-      for (let x = 0; x < w; x += 1) {
-        const b = src[srcOff + 0]!;
-        const g = src[srcOff + 1]!;
-        const r = src[srcOff + 2]!;
-        const a = preserveAlpha ? src[srcOff + 3]! : 0xff;
-        out[dstOff + 0] = r;
-        out[dstOff + 1] = g;
-        out[dstOff + 2] = b;
-        out[dstOff + 3] = a;
-        srcOff += 4;
-        dstOff += 4;
-      }
-    }
-    if (isSrgb) linearizeSrgbRgba8InPlace(out);
-    return out;
-  }
-
-  if (kind === "rgba") {
-    for (let y = 0; y < h; y += 1) {
-      const srcOff = y * pitch;
-      out.set(src.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
-    }
-    if (isSrgb) linearizeSrgbRgba8InPlace(out);
-    return out;
-  }
-
-  // RGBX -> RGBA with forced alpha=255.
-  for (let y = 0; y < h; y += 1) {
-    let srcOff = y * pitch;
-    let dstOff = y * rowBytes;
-    for (let x = 0; x < w; x += 1) {
-      out[dstOff + 0] = src[srcOff + 0]!;
-      out[dstOff + 1] = src[srcOff + 1]!;
-      out[dstOff + 2] = src[srcOff + 2]!;
-      out[dstOff + 3] = 0xff;
-      srcOff += 4;
-      dstOff += 4;
-    }
-  }
+  convertScanoutToRgba8({
+    src,
+    srcStrideBytes: pitch,
+    dst: out,
+    dstStrideBytes: rowBytes,
+    width: w,
+    height: h,
+    kind: kind as ScanoutSwizzleKind,
+  });
 
   if (isSrgb) linearizeSrgbRgba8InPlace(out);
   return out;
