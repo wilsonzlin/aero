@@ -2465,7 +2465,7 @@ impl AerogpuD3d9Executor {
                 entry_point: cached.entry_point,
                 uses_semantic_locations: cached.uses_semantic_locations
                     && bytecode_stage == shader::ShaderStage::Vertex,
-                semantic_locations: cached.ir.semantic_locations.clone(),
+                semantic_locations: cached.semantic_locations.clone(),
                 used_samplers_mask,
                 cube_samplers_mask,
             },
@@ -2534,7 +2534,7 @@ impl AerogpuD3d9Executor {
                         uses_semantic_locations: translated.uses_semantic_locations,
                         used_samplers_mask,
                         cube_samplers_mask,
-                        semantic_locations: ir.semantic_locations.clone(),
+                        semantic_locations: translated.semantic_locations.clone(),
                     };
                     let reflection = serde_json::to_value(reflection).map_err(|e| e.to_string())?;
 

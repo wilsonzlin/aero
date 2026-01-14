@@ -654,9 +654,12 @@ fn run_vertex_shader(
                     }
                     Op::Dp2Add => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let a =
+                            exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b =
+                            exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let c =
+                            exec_src(inst.src[2], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::splat(a.x * b.x + a.y * b.y + c.x);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -996,9 +999,30 @@ fn run_pixel_shader(
                     }
                     Op::Dp2Add => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(
+                            inst.src[0],
+                            &temps,
+                            inputs_v,
+                            inputs_t,
+                            &constants,
+                            bool_consts,
+                        );
+                        let b = exec_src(
+                            inst.src[1],
+                            &temps,
+                            inputs_v,
+                            inputs_t,
+                            &constants,
+                            bool_consts,
+                        );
+                        let c = exec_src(
+                            inst.src[2],
+                            &temps,
+                            inputs_v,
+                            inputs_t,
+                            &constants,
+                            bool_consts,
+                        );
                         let v = Vec4::splat(a.x * b.x + a.y * b.y + c.x);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(

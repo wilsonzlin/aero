@@ -25,6 +25,13 @@ pub struct ShaderTranslation {
     pub wgsl: String,
     pub entry_point: &'static str,
     pub uses_semantic_locations: bool,
+    /// Semantic→location mapping produced by shader translation when `uses_semantic_locations` is
+    /// true.
+    ///
+    /// Some translation paths use the fixed [`crate::vertex::StandardLocationMap`] and therefore do
+    /// not need to return an explicit mapping; in those cases this vector is empty and host-side
+    /// executors should fall back to the standard map.
+    pub semantic_locations: Vec<shader::SemanticLocation>,
     pub used_samplers: BTreeSet<u16>,
     pub sampler_texture_types: HashMap<u16, TextureType>,
     /// When `backend == LegacyFallback`, describes the SM3 pipeline failure that
@@ -186,6 +193,7 @@ pub fn translate_d3d9_shader_to_wgsl(
                 wgsl: wgsl.wgsl,
                 entry_point: wgsl.entry_point,
                 uses_semantic_locations: ir.uses_semantic_locations,
+                semantic_locations: ir.semantic_locations.clone(),
                 used_samplers: ir.used_samplers,
                 sampler_texture_types: ir.sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
@@ -331,6 +339,9 @@ fn try_translate_sm3(
         wgsl: wgsl_str,
         entry_point: wgsl.entry_point,
         uses_semantic_locations: ir.uses_semantic_locations,
+        // SM3 translation currently uses StandardLocationMap for semantic remapping and therefore
+        // does not need to return an explicit mapping.
+        semantic_locations: Vec::new(),
         used_samplers,
         sampler_texture_types,
         fallback_reason: None,
