@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::atapi::IsoBackend;
-use aero_storage::{DiskError, VirtualDisk};
+use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE};
+use firmware::bios::{BlockDevice, DiskError as BiosDiskError};
 
 #[cfg(target_arch = "wasm32")]
 type SharedIsoDiskBackend = Box<dyn VirtualDisk>;
@@ -117,5 +118,17 @@ impl IsoBackend for SharedIsoDisk {
         self.inner_mut()
             .read_at(offset, buf)
             .map_err(io::Error::other)
+    }
+}
+
+impl BlockDevice for SharedIsoDisk {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+        self.inner_mut()
+            .read_sectors(lba, buf)
+            .map_err(|_err| BiosDiskError::OutOfRange)
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        self.capacity_bytes / SECTOR_SIZE as u64
     }
 }

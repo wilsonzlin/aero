@@ -151,6 +151,12 @@ pub use pc::{PcMachine, PcMachineConfig};
 pub struct MachineConfig {
     /// Guest RAM size in bytes.
     pub ram_size_bytes: u64,
+    /// BIOS drive number used for the initial boot attempt (placed in `DL` when jumping to the
+    /// boot sector / El Torito boot image).
+    ///
+    /// Default is `0x80` (first HDD). For the canonical Windows 7 install ISO boot flow, use
+    /// `0xE0` (first CD-ROM drive number).
+    pub boot_drive: u8,
     /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
     ///
     /// Must be >= 1.
@@ -300,6 +306,7 @@ impl Default for MachineConfig {
     fn default() -> Self {
         Self {
             ram_size_bytes: 64 * 1024 * 1024,
+            boot_drive: 0x80,
             cpu_count: 1,
             smbios_uuid_seed: 0,
             enable_pc_platform: false,
@@ -347,6 +354,7 @@ impl MachineConfig {
     pub fn win7_storage(ram_size_bytes: u64) -> Self {
         Self {
             ram_size_bytes,
+            boot_drive: 0x80,
             cpu_count: 1,
             smbios_uuid_seed: 0,
             enable_pc_platform: true,
@@ -384,6 +392,23 @@ impl MachineConfig {
         let mut cfg = Self::win7_storage(ram_size_bytes);
         cfg.enable_aerogpu = true;
         cfg.enable_vga = false;
+        cfg
+    }
+
+    /// Configuration preset for the canonical Windows 7 install / recovery flow (CD-first).
+    ///
+    /// This is equivalent to [`MachineConfig::win7_storage_defaults`], but configures firmware to
+    /// boot from the first CD-ROM drive (`boot_drive = 0xE0`) so El Torito install media boots
+    /// without additional boilerplate.
+    ///
+    /// Note: this preset only configures the BIOS boot drive number. Callers should still attach a
+    /// bootable ISO to the canonical install-media attachment point (PIIX3 IDE secondary master
+    /// ATAPI) and, for the full `Machine` integration, also provide an ISO backend for firmware
+    /// INT 13h CD reads (see [`Machine::configure_win7_install_boot`]).
+    #[must_use]
+    pub fn win7_install_defaults(ram_size_bytes: u64) -> Self {
+        let mut cfg = Self::win7_storage_defaults(ram_size_bytes);
+        cfg.boot_drive = 0xE0;
         cfg
     }
 
@@ -440,6 +465,7 @@ impl MachineConfig {
         // Enforce the required platform topology for these devices.
         cfg.enable_pc_platform = true;
         cfg.cpu_count = 1;
+        cfg.boot_drive = 0x80;
 
         cfg
     }
@@ -3027,6 +3053,7 @@ impl Machine {
 
         let chipset = ChipsetState::new(false);
         let mem = SystemMemory::new(cfg.ram_size_bytes, chipset.a20())?;
+        let boot_drive = cfg.boot_drive;
 
         let mut machine = Self {
             cfg,
@@ -3071,10 +3098,13 @@ impl Machine {
             ide_irq14_line: None,
             ide_irq15_line: None,
             uhci_ns_remainder: 0,
-            bios: Bios::new(BiosConfig::default()),
+            bios: Bios::new(BiosConfig {
+                boot_drive,
+                ..Default::default()
+            }),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             install_media: None,
-            boot_drive: 0x80,
+            boot_drive,
             ahci_port0_auto_attach_shared_disk: true,
             virtio_blk_auto_attach_shared_disk: true,
             network_backend: None,
@@ -3107,6 +3137,56 @@ impl Machine {
     /// See `docs/05-storage-topology-win7.md` for the normative BDFs and media attachment mapping.
     pub fn new_with_win7_storage(ram_size_bytes: u64) -> Result<Self, MachineError> {
         Self::new(MachineConfig::win7_storage_defaults(ram_size_bytes))
+    }
+
+    /// Convenience constructor for the canonical Windows 7 install flow (CD-first).
+    ///
+    /// This configures:
+    /// - the canonical Windows 7 storage topology (AHCI + IDE at canonical BDFs),
+    /// - the IDE secondary master as an ATAPI CD-ROM backed by `iso`, and
+    /// - firmware boot drive selection to boot from the first CD-ROM (`DL=0xE0`) so El Torito
+    ///   install media boots without additional boilerplate.
+    ///
+    /// Notes:
+    /// - The install ISO is stored separately from the canonical [`SharedDisk`] so callers can
+    ///   still attach an HDD image (installed OS disk) via [`Machine::set_disk_backend`] /
+    ///   [`Machine::set_disk_image`].
+    /// - This helper resets the machine after attaching the ISO so firmware POST transfers control
+    ///   to the ISO boot image immediately.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_with_win7_install(
+        ram_size_bytes: u64,
+        iso: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Result<Self, MachineError> {
+        let mut m = Self::new(MachineConfig::win7_storage_defaults(ram_size_bytes))?;
+        m.configure_win7_install_boot(iso)
+            .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
+        Ok(m)
+    }
+
+    /// Configure the machine for the canonical Windows 7 install boot flow (CD-first).
+    ///
+    /// This is a builder-style helper for callers that construct a [`Machine`] first (for example
+    /// to tweak other config fields) and then want to attach an install ISO and reboot into it.
+    ///
+    /// This method:
+    /// - sets the firmware boot drive to `0xE0` (CD0),
+    /// - attaches the ISO as an ATAPI CD-ROM on the IDE secondary master (if IDE is enabled),
+    /// - then resets the machine.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn configure_win7_install_boot(
+        &mut self,
+        iso: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> std::io::Result<()> {
+        // Canonical Win7 install flow boots from the first CD-ROM.
+        self.set_boot_drive(0xE0);
+
+        // Attach the ISO to the canonical install-media attachment point (IDE secondary master).
+        self.attach_ide_secondary_master_iso(iso)?;
+
+        // Re-run firmware POST so control transfers to the ISO boot image.
+        self.reset();
+        Ok(())
     }
 
     fn map_pc_platform_mmio_regions(&mut self) {
@@ -6750,11 +6830,31 @@ impl Machine {
             let blocks = vram_bytes.div_ceil(64 * 1024);
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
+        // Firmware INT 13h (and boot device reads) are backed by exactly one BlockDevice. For the
+        // Win7 install flow, that is the install ISO (CD); otherwise it is the machine's canonical
+        // shared disk (HDD).
+        let cd_boot = (0xE0..=0xEF).contains(&boot_drive);
         let bus: &mut dyn BiosBus = &mut self.mem;
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
-            self.bios
-                .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
+            if cd_boot {
+                if let Some(iso) = self.install_media.as_mut() {
+                    self.bios
+                        .post_with_pci(&mut self.cpu.state, bus, iso, Some(&mut pci));
+                } else {
+                    self.bios
+                        .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
+                }
+            } else {
+                self.bios
+                    .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
+            }
+        } else if cd_boot {
+            if let Some(iso) = self.install_media.as_mut() {
+                self.bios.post(&mut self.cpu.state, bus, iso);
+            } else {
+                self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+            }
         } else {
             self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
@@ -7421,8 +7521,19 @@ impl Machine {
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
             let bus: &mut dyn BiosBus = &mut self.mem;
-            self.bios
-                .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk, None);
+            let boot_drive = self.bios.config().boot_drive;
+            if (0xE0..=0xEF).contains(&boot_drive) {
+                if let Some(iso) = self.install_media.as_mut() {
+                    self.bios
+                        .dispatch_interrupt(vector, &mut self.cpu.state, bus, iso, None);
+                } else {
+                    self.bios
+                        .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk, None);
+                }
+            } else {
+                self.bios
+                    .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk, None);
+            }
         }
         if force_vbe_no_clear {
             // Restore the guest-visible BX value (don't leak our forced no-clear flag).
