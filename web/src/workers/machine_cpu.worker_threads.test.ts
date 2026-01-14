@@ -84,7 +84,6 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
     vram: segments.vram,
     vramBasePaddr: segments.vram ? VRAM_BASE_PADDR : undefined,
     vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
-    vgaFramebuffer: segments.vgaFramebuffer,
     scanoutState: segments.scanoutState,
     scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
     cursorState: segments.cursorState,

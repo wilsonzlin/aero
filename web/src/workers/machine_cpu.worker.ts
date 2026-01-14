@@ -72,7 +72,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       control: init.controlSab,
       guestMemory: init.guestMemory,
       vram: init.vram,
-      vgaFramebuffer: init.vgaFramebuffer,
       scanoutState: init.scanoutState,
       scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
       cursorState: init.cursorState,
