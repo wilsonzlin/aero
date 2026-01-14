@@ -147,6 +147,11 @@ In addition to the pixel/scanout structures, the browser runtime uses a small `S
 - Main-thread scheduler that posts `tick` messages to the GPU worker based on this state (and optionally `ScanoutState`): `web/src/main/frameScheduler.ts`
 - GPU worker updates this state as it receives/presents frames: `web/src/workers/gpu-worker.ts`
 
+Note: this “frame status” SAB is **separate** from the legacy shared framebuffer header’s `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`). The names are similar but they serve different purposes:
+
+- `FRAME_STATUS_INDEX` / `FRAME_DIRTY` / `FRAME_PRESENTED` (in `web/src/ipc/gpu-protocol.ts`): main-thread↔GPU-worker **tick/pacing coordination**.
+- `SharedFramebufferHeaderIndex.FRAME_DIRTY` (in `web/src/ipc/shared-layout.ts` / `crates/aero-shared/src/shared_framebuffer.rs`): producer→consumer **“new frame” / liveness** flag for the shared framebuffer itself.
+
 ## Shared-memory display path #1: `SharedFramebuffer` (double-buffered + dirty tiles)
 
 **Goal:** move pixels from the VM/CPU side to the GPU worker with minimal copying and an efficient “only upload what changed” option.
@@ -163,7 +168,7 @@ Key properties:
 - **Header is an array of 32-bit atomics** so it can be accessed from both Rust and JS via `AtomicU32` / `Int32Array + Atomics`.
 - **Double buffering** (`slot 0` and `slot 1`):
   - producer writes into the “back” slot, then publishes it by flipping `active_index` and incrementing `frame_seq`.
-- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on.
+- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on. (Not to be confused with the frame pacing state value `FRAME_DIRTY` in `web/src/ipc/gpu-protocol.ts`.)
   - Published by: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
   - Cleared by consumers after consuming a frame (examples):
     - Rust: `FrameSource::poll_frame()` in `crates/aero-gpu/src/frame_source.rs`
@@ -366,6 +371,10 @@ npm run test:e2e -- tests/e2e/web/aero-gpu-shared-framebuffer.spec.ts
 
 # Targeted test for ScanoutState-driven scanout presentation (guest-memory scanout readback)
 npm run test:e2e -- tests/e2e/web/runtime_workers_scanout_state.spec.ts
+
+# Targeted scanout harness smoke tests (served by `/web/wddm-scanout-*.html`)
+npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
+npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts
 
 # Targeted test for presenter backend fallback (WebGPU disabled → WebGL2)
 npm run test:e2e -- tests/e2e/web/gpu-fallback.spec.ts
