@@ -172,7 +172,14 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
 
   let activeIndex = 0;
 
-  const publishFrame = (rgba8: Uint8Array) => {
+  const publishFrame = (rgba8: Uint8Array): boolean => {
+    // `frame_dirty` is a producer->consumer "new frame" / liveness flag. Consumers clear it after
+    // they finish copying/presenting; treat it as a best-effort ACK gate and throttle publishing so
+    // we don't overwrite a buffer that might still be read by the presenter.
+    if (Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_DIRTY) !== 0) {
+      return false;
+    }
+
     const back = activeIndex ^ 1;
     const dst = back === 0 ? slot0 : slot1;
     dst.set(rgba8);
@@ -191,6 +198,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
 
     Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
     Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+    return true;
   };
 
   // IMPORTANT: Keep the `new Worker(new URL(..., import.meta.url), ...)` shape so
@@ -393,13 +401,15 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function presentTestPattern(): void {
-    publishFrame(createTestPattern(params.width, params.height));
-    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+    if (publishFrame(createTestPattern(params.width, params.height))) {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+    }
   }
 
   function presentRgba8(rgba8: Uint8Array): void {
-    publishFrame(rgba8);
-    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+    if (publishFrame(rgba8)) {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+    }
   }
 
   function setCursorImageRgba8(width: number, height: number, rgba8: ArrayBuffer): void {
