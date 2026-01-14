@@ -191,8 +191,7 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const expected: Array<[number, number]> = [
     [AerogpuCmdOpcode.SetShaderConstantsF, AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16],
     [AerogpuCmdOpcode.SetShaderConstantsI, AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + 16],
-    // Bool constants are encoded as vec4<u32> per register.
-    [AerogpuCmdOpcode.SetShaderConstantsB, AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 32],
+    [AerogpuCmdOpcode.SetShaderConstantsB, AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 8],
     [AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE],
     [AerogpuCmdOpcode.SetSamplerState, AEROGPU_CMD_SET_SAMPLER_STATE_SIZE],
     [AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE],
@@ -228,17 +227,9 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const pkt2Base = pkt1Base + expected[1][1];
   assert.equal(view.getUint32(pkt2Base + 16, true), 2);
   const bPayloadBase = pkt2Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
-  // Payload is expanded to vec4<u32> per bool register.
-  // bool0 = 0
+  // Payload is scalar u32 values (0/1), one per bool register.
   assert.equal(view.getUint32(bPayloadBase + 0, true), 0);
-  assert.equal(view.getUint32(bPayloadBase + 4, true), 0);
-  assert.equal(view.getUint32(bPayloadBase + 8, true), 0);
-  assert.equal(view.getUint32(bPayloadBase + 12, true), 0);
-  // bool1 = 1
-  assert.equal(view.getUint32(bPayloadBase + 16, true), 1);
-  assert.equal(view.getUint32(bPayloadBase + 20, true), 1);
-  assert.equal(view.getUint32(bPayloadBase + 24, true), 1);
-  assert.equal(view.getUint32(bPayloadBase + 28, true), 1);
+  assert.equal(view.getUint32(bPayloadBase + 4, true), 1);
 
   // Validate byte-sized fields within nested state structs.
   const preBlendSize = expected
@@ -289,9 +280,9 @@ test("AerogpuCmdWriter.setShaderConstantsI emits vec4-aligned int32 payload", ()
   }
 });
 
-test("AerogpuCmdWriter.setShaderConstantsB encodes bool regs as vec4<u32> (normalized 0/1)", () => {
+test("AerogpuCmdWriter.setShaderConstantsB encodes bool regs as scalar u32 values (0/1)", () => {
   const w = new AerogpuCmdWriter();
-  const data = [0, 2];
+  const data = [false, true];
   w.setShaderConstantsB(AerogpuShaderStage.Vertex, 7, data);
   const boolCount = data.length;
 
@@ -302,24 +293,19 @@ test("AerogpuCmdWriter.setShaderConstantsB encodes bool regs as vec4<u32> (norma
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetShaderConstantsB);
   assert.equal(
     view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
-    AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16,
+    AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 4,
   );
   assert.equal(view.getUint32(pkt0 + 8, true), AerogpuShaderStage.Vertex);
   assert.equal(view.getUint32(pkt0 + 12, true), 7);
   assert.equal(view.getUint32(pkt0 + 16, true), boolCount);
   assert.equal(view.getUint32(pkt0 + 20, true), 0);
 
-  // Register 0: false -> 0 replicated across lanes.
+  // Register 0: false -> 0.
   const payloadBase = pkt0 + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
-  for (let lane = 0; lane < 4; lane++) {
-    assert.equal(view.getUint32(payloadBase + lane * 4, true), 0);
-  }
+  assert.equal(view.getUint32(payloadBase + 0, true), 0);
 
-  // Register 1: non-zero -> 1 replicated across lanes.
-  const reg1 = payloadBase + 16;
-  for (let lane = 0; lane < 4; lane++) {
-    assert.equal(view.getUint32(reg1 + lane * 4, true), 1);
-  }
+  // Register 1: true -> 1.
+  assert.equal(view.getUint32(payloadBase + 4, true), 1);
 });
 
 test("AerogpuCmdWriter emits copy packets", () => {
@@ -1193,7 +1179,7 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
   // SET_SHADER_CONSTANTS_B
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
   assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Domain);
-  cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 2 * 16;
+  cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 2 * 4;
 
   assert.equal(cursor, bytes.byteLength);
 });

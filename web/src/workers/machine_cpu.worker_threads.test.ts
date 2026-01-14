@@ -655,6 +655,109 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("does not drain AeroGPU submissions while snapshot-paused and drains them after resume (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    Atomics.store(status, StatusIndex.GpuReady, 1);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+      await dummyReady;
+
+      const pauseAck = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      await pauseAck;
+
+      const cmdBytes = new Uint8Array([1, 2, 3, 4]);
+      const allocBytes = new Uint8Array([9, 8, 7]);
+      const signalFence = 77n;
+      const contextId = 5;
+
+      worker.postMessage({
+        kind: "__test.machine_cpu.enqueueDummyAerogpuSubmission",
+        cmdStream: cmdBytes,
+        allocTable: allocBytes,
+        signalFence,
+        contextId,
+      });
+
+      // Flip `running=true` while paused so the run loop will execute `run_slice()` immediately
+      // after resume (and thus reach `drainAerogpuSubmissions()`).
+      const regions = ringRegionsForWorker("cpu");
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      void commandRing.tryPush(encodeCommand({ kind: "nop", seq: 1 }));
+
+      // While snapshot-paused, draining should not occur.
+      await expect(
+        waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { kind?: unknown }).kind === "aerogpu.submit",
+          200,
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      const resumedAck = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 2,
+        10_000,
+      );
+      const submitPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "aerogpu.submit",
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
+
+      const [submit] = (await Promise.all([submitPromise, resumedAck])) as [
+        { cmdStream?: unknown; allocTable?: unknown; signalFence?: unknown; contextId?: unknown },
+        unknown,
+      ];
+
+      expect(submit.contextId).toBe(contextId);
+      expect(submit.signalFence).toBe(signalFence);
+      expect(submit.cmdStream).toBeInstanceOf(ArrayBuffer);
+      expect(submit.allocTable).toBeInstanceOf(ArrayBuffer);
+      expect(Array.from(new Uint8Array(submit.cmdStream as ArrayBuffer))).toEqual(Array.from(cmdBytes));
+      expect(Array.from(new Uint8Array(submit.allocTable as ArrayBuffer))).toEqual(Array.from(allocBytes));
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
