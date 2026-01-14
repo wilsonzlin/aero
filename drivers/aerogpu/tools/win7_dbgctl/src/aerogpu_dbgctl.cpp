@@ -3406,7 +3406,10 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
 
       const NTSTATUS rst = ReadGpa(f, hAdapter, chunkGpa, rowSrc + done, chunk, escapeBuf, escapeBufCap);
       if (!NT_SUCCESS(rst)) {
-        PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, rst);
+        PrintNtStatus(L"read-gpa failed", f, rst);
+        if (rst == STATUS_NOT_SUPPORTED) {
+          fwprintf(stderr, L"%s: hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n", label);
+        }
         fwprintf(stderr, L"%s: failed to read row %ld (offset %Iu, size %lu)\n", label, (long)y, done, (unsigned long)chunk);
         HeapFree(GetProcessHeap(), 0, escapeBuf);
         HeapFree(GetProcessHeap(), 0, rowSrc);
@@ -3843,7 +3846,10 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
 
       const NTSTATUS rst = ReadGpa(f, hAdapter, chunkGpa, rowSrc + done, chunk, escapeBuf, escapeBufCap);
       if (!NT_SUCCESS(rst)) {
-        PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, rst);
+        PrintNtStatus(L"read-gpa failed", f, rst);
+        if (rst == STATUS_NOT_SUPPORTED) {
+          fwprintf(stderr, L"%s: hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n", label);
+        }
         fwprintf(stderr,
                  L"%s: failed to read row %lu (offset %Iu, size %lu)\n",
                  label,
