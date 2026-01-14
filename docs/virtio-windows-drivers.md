@@ -329,6 +329,16 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
   -OutIso .\dist\aero-virtio-win7-drivers.iso
 ```
 
+For a deterministic ISO build (recommended), force the Rust backend and a fixed timestamp:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-iso.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutIso .\dist\aero-virtio-win7-drivers.iso `
+  -IsoBackend rust `
+  -SourceDateEpoch 0
+```
+
 1) Extract a Win7 driver pack from the ISO:
 
 ```powershell
