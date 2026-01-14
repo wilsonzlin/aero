@@ -148,6 +148,10 @@ pub const KEY_DOWN: u16 = 108;
 pub const KEY_PAGEDOWN: u16 = 109;
 pub const KEY_INSERT: u16 = 110;
 pub const KEY_DELETE: u16 = 111;
+// Consumer/media keys (used by the Windows 7 virtio-input driver to expose a Consumer Control HID collection).
+pub const KEY_MUTE: u16 = 113;
+pub const KEY_VOLUMEDOWN: u16 = 114;
+pub const KEY_VOLUMEUP: u16 = 115;
 pub const KEY_KPEQUAL: u16 = 117;
 pub const KEY_PAUSE: u16 = 119;
 pub const KEY_KPCOMMA: u16 = 121;
@@ -155,6 +159,10 @@ pub const KEY_YEN: u16 = 124;
 pub const KEY_LEFTMETA: u16 = 125;
 pub const KEY_RIGHTMETA: u16 = 126;
 pub const KEY_MENU: u16 = 139;
+pub const KEY_NEXTSONG: u16 = 163;
+pub const KEY_PLAYPAUSE: u16 = 164;
+pub const KEY_PREVIOUSSONG: u16 = 165;
+pub const KEY_STOPCD: u16 = 166;
 
 // Host-side safety: cap how many events we will buffer when the guest is not consuming the
 // virtio-input event queue (e.g. driver stalled or malicious guest). Real virtio-input devices do
@@ -352,11 +360,18 @@ impl VirtioInputBitmaps {
             KEY_PAGEDOWN,
             KEY_INSERT,
             KEY_DELETE,
+            KEY_MUTE,
+            KEY_VOLUMEDOWN,
+            KEY_VOLUMEUP,
             KEY_KPEQUAL,
             KEY_PAUSE,
             KEY_KPCOMMA,
             KEY_YEN,
             KEY_MENU,
+            KEY_NEXTSONG,
+            KEY_PLAYPAUSE,
+            KEY_PREVIOUSSONG,
+            KEY_STOPCD,
         ]);
         bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL, LED_COMPOSE, LED_KANA]);
         bitmaps

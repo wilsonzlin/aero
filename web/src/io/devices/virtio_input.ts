@@ -178,6 +178,11 @@ const KEY_DOWN = 108;
 const KEY_PAGEDOWN = 109;
 const KEY_INSERT = 110;
 const KEY_DELETE = 111;
+// Consumer/media keys. These are used by the Windows 7 virtio-input driver to expose a Consumer Control
+// HID collection (ReportID=3) on the keyboard device.
+const KEY_MUTE = 113;
+const KEY_VOLUMEDOWN = 114;
+const KEY_VOLUMEUP = 115;
 const KEY_KPEQUAL = 117;
 const KEY_PAUSE = 119;
 const KEY_KPCOMMA = 121;
@@ -185,6 +190,10 @@ const KEY_YEN = 124;
 const KEY_LEFTMETA = 125;
 const KEY_RIGHTMETA = 126;
 const KEY_MENU = 139;
+const KEY_NEXTSONG = 163;
+const KEY_PLAYPAUSE = 164;
+const KEY_PREVIOUSSONG = 165;
+const KEY_STOPCD = 166;
 
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
@@ -474,6 +483,35 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
     case 0x89:
       return KEY_YEN;
 
+    default:
+      return null;
+  }
+}
+
+/**
+ * Map a HID Consumer Control Usage ID (Usage Page 0x0C) to a Linux input `KEY_*` code.
+ *
+ * This is used when routing browser media keys through virtio-input (instead of the dedicated
+ * synthetic USB HID consumer-control device).
+ *
+ * Returns `null` for unsupported usages.
+ */
+export function hidConsumerUsageToLinuxKeyCode(usageId: number): number | null {
+  switch (usageId & 0xffff) {
+    case 0x00e2:
+      return KEY_MUTE;
+    case 0x00ea:
+      return KEY_VOLUMEDOWN;
+    case 0x00e9:
+      return KEY_VOLUMEUP;
+    case 0x00cd:
+      return KEY_PLAYPAUSE;
+    case 0x00b5:
+      return KEY_NEXTSONG;
+    case 0x00b6:
+      return KEY_PREVIOUSSONG;
+    case 0x00b7:
+      return KEY_STOPCD;
     default:
       return null;
   }

@@ -181,6 +181,22 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       );
     };
 
+    const sendVolumeUpInputBatch = (): void => {
+      const q = new InputEventQueue(4);
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+      // Consumer Control (Usage Page 0x0C): AudioVolumeUp usage ID 0x00E9.
+      q.pushHidUsage16(nowUs, 0x0c, 0x00e9, true);
+      q.pushHidUsage16(nowUs, 0x0c, 0x00e9, false);
+      q.flush(
+        {
+          postMessage: (msg, transfer) => {
+            ioWorker.postMessage(msg, transfer);
+          },
+        },
+        { recycle: false },
+      );
+    };
+
     const cpuWorkerCode = `
       import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
       import { queueKind } from "${location.origin}/web/src/ipc/layout.ts";
@@ -408,10 +424,13 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
             mmioWriteU64(commonBase + 0x30n, BigInt(used));
             mmioWriteU16(commonBase + 0x1cn, 1); // queue_enable
 
-            // Provide >=4 buffers (requirement), but only make the first two available so the queue
-            // deterministically completes exactly one EV_KEY + one EV_SYN pair (used.idx += 2).
-            // The release pair will remain pending in the device until more buffers are posted.
-            const bufferCount = 4;
+            // Provide enough buffers so we can observe multiple input transitions without the guest
+            // driver replenishing the ring. Each injected key transition produces an EV_KEY + EV_SYN
+            // pair (2 buffers). This test triggers:
+            // - KeyA press+release (4 buffers)
+            // - AudioVolumeUp press+release (4 buffers)
+            // => 8 buffers total.
+            const bufferCount = 8;
             for (let i = 0; i < bufferCount; i += 1) {
               const bufAddr = eventBufBase + i * 8;
               guestWriteBytes(bufAddr, new Uint8Array(8).fill(0xaa));
@@ -420,7 +439,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
 
             // Avail ring: flags=0, idx=bufferCount, ring[i]=descriptor index.
             guestWriteU16(avail + 0, 0);
-            const availCount = 2;
+            const availCount = bufferCount;
             guestWriteU16(avail + 2, availCount);
             for (let i = 0; i < availCount; i += 1) {
               guestWriteU16(avail + 4 + i * 2, i);
@@ -603,21 +622,13 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       sendKeyboardAInputBatch();
       await waitForIoInputBatchCounter(batchCounter1, 2000);
 
-      // With only 2 buffers posted to the eventq, we expect exactly one key-press pair.
-      const expectedUsedDelta = 2;
+      // One press+release pair yields 4 virtio input events: EV_KEY/EV_SYN + EV_KEY/EV_SYN.
+      const expectedUsedDelta = 4;
       await callCpu(
         "waitForVirtioUsedIdx",
         { initial: virtioUsedIdxInitial, target: virtioUsedIdxInitial + expectedUsedDelta, timeoutMs: 2000 },
         3000,
       );
-
-      // Read back the first two 8-byte virtio-input events (EV_KEY + EV_SYN).
-      const virtioRead = (await callCpu("readVirtioEvents", { maxEvents: virtioUsedIdxInitial + expectedUsedDelta }, 2000)) as {
-        usedIdx: number;
-        events: Array<{ event: { type: number; code: number; value: number } }>;
-      };
-      virtioUsedIdxAfter = virtioRead.usedIdx >>> 0;
-      virtioEvents = virtioRead.events.map((e) => e.event);
 
       const drained2 = (await callCpu("drainI8042", {}, 2000)) as { bytes: number[] };
       phase2I8042Bytes = drained2.bytes.length;
@@ -625,7 +636,37 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       keyboardBackendAfterPhase2 = Atomics.load(status, StatusIndex.IoInputKeyboardBackend) | 0;
       virtioKeyboardDriverOkAfterPhase2 = Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) | 0;
 
-      if (((virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0) !== expectedUsedDelta) {
+      // Phase 3: consumer/media keys should also be routed through virtio-input when the virtio
+      // keyboard backend is active.
+      const expectedConsumerDelta = 4;
+      const batchCounter2 = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+      sendVolumeUpInputBatch();
+      await waitForIoInputBatchCounter(batchCounter2, 2000);
+
+      await callCpu(
+        "waitForVirtioUsedIdx",
+        {
+          initial: virtioUsedIdxInitial,
+          target: virtioUsedIdxInitial + expectedUsedDelta + expectedConsumerDelta,
+          timeoutMs: 2000,
+        },
+        3000,
+      );
+
+      // Read back the first 8-byte virtio-input events (EV_KEY + EV_SYN pairs).
+      const virtioRead = (await callCpu(
+        "readVirtioEvents",
+        { maxEvents: virtioUsedIdxInitial + expectedUsedDelta + expectedConsumerDelta },
+        2000,
+      )) as {
+        usedIdx: number;
+        events: Array<{ event: { type: number; code: number; value: number } }>;
+      };
+      virtioUsedIdxAfter = virtioRead.usedIdx >>> 0;
+      virtioEvents = virtioRead.events.map((e) => e.event);
+
+      const totalDelta = (virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0;
+      if (totalDelta !== expectedUsedDelta + expectedConsumerDelta) {
         throw new Error(`virtio used.idx delta mismatch: initial=${virtioUsedIdxInitial} after=${virtioUsedIdxAfter}`);
       }
     } finally {
@@ -664,11 +705,20 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
   // Backend switching should be observable via the IO worker telemetry counter.
   expect(result.keyboardBackendSwitchesAfter - result.keyboardBackendSwitchesBefore).toBe(1);
 
-  // Phase 2: virtio eventq should receive EV_KEY/EV_SYN pairs for press and release.
+  // Phase 2: virtio eventq should receive EV_KEY/EV_SYN pairs for press and release (KeyA),
+  // followed by the same pattern for the Consumer Control "AudioVolumeUp" key.
   const delta = result.virtioUsedIdxAfter - result.virtioUsedIdxInitial;
-  expect(delta).toBe(2);
-  expect(result.virtioEvents.slice(0, 2)).toEqual([
+  expect(delta).toBe(8);
+  expect(result.virtioEvents.slice(0, 8)).toEqual([
+    // KeyA press + release.
     { type: 1, code: 30, value: 1 },
+    { type: 0, code: 0, value: 0 },
+    { type: 1, code: 30, value: 0 },
+    { type: 0, code: 0, value: 0 },
+    // AudioVolumeUp press + release.
+    { type: 1, code: 115, value: 1 },
+    { type: 0, code: 0, value: 0 },
+    { type: 1, code: 115, value: 0 },
     { type: 0, code: 0, value: 0 },
   ]);
 });

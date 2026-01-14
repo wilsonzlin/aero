@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { keyboardCodeToHidUsage } from "../../input/hid_usage";
-import { hidUsageToLinuxKeyCode } from "./virtio_input";
+import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "../../input/hid_usage";
+import { hidConsumerUsageToLinuxKeyCode, hidUsageToLinuxKeyCode } from "./virtio_input";
 import fs from "node:fs";
 
 describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
@@ -134,6 +134,38 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
     for (const entry of fixture) {
       const usage = Number.parseInt(entry.usage, 16);
       expect(hidUsageToLinuxKeyCode(usage)).not.toBeNull();
+    }
+  });
+
+  it("maps Consumer Control usages for media keys supported by the Win7 virtio-input driver", () => {
+    const cases: Array<{ usageId: number; linuxKey: number }> = [
+      { usageId: 0x00e2, linuxKey: 113 }, // Mute -> KEY_MUTE
+      { usageId: 0x00ea, linuxKey: 114 }, // Volume Down -> KEY_VOLUMEDOWN
+      { usageId: 0x00e9, linuxKey: 115 }, // Volume Up -> KEY_VOLUMEUP
+      { usageId: 0x00cd, linuxKey: 164 }, // Play/Pause -> KEY_PLAYPAUSE
+      { usageId: 0x00b5, linuxKey: 163 }, // Next Track -> KEY_NEXTSONG
+      { usageId: 0x00b6, linuxKey: 165 }, // Previous Track -> KEY_PREVIOUSSONG
+      { usageId: 0x00b7, linuxKey: 166 }, // Stop -> KEY_STOPCD
+    ];
+    for (const tc of cases) {
+      expect(hidConsumerUsageToLinuxKeyCode(tc.usageId)).toBe(tc.linuxKey);
+    }
+  });
+
+  it("keeps DOM->ConsumerUsage->Linux key mapping consistent for supported media keys", () => {
+    const cases: Array<{ code: string; linuxKey: number }> = [
+      { code: "AudioVolumeUp", linuxKey: 115 }, // KEY_VOLUMEUP
+      { code: "AudioVolumeDown", linuxKey: 114 }, // KEY_VOLUMEDOWN
+      { code: "AudioVolumeMute", linuxKey: 113 }, // KEY_MUTE
+      { code: "MediaPlayPause", linuxKey: 164 }, // KEY_PLAYPAUSE
+      { code: "MediaTrackNext", linuxKey: 163 }, // KEY_NEXTSONG
+      { code: "MediaTrackPrevious", linuxKey: 165 }, // KEY_PREVIOUSSONG
+      { code: "MediaStop", linuxKey: 166 }, // KEY_STOPCD
+    ];
+    for (const tc of cases) {
+      const usage = keyboardCodeToConsumerUsage(tc.code);
+      if (usage === null) throw new Error(`expected keyboardCodeToConsumerUsage(${JSON.stringify(tc.code)}) to be non-null`);
+      expect(hidConsumerUsageToLinuxKeyCode(usage)).toBe(tc.linuxKey);
     }
   });
 });

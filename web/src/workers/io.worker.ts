@@ -77,7 +77,12 @@ import { AeroGpuPciDevice } from "../io/devices/aerogpu";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { EhciPciDevice, type EhciControllerBridgeLike } from "../io/devices/ehci";
 import { XhciPciDevice } from "../io/devices/xhci";
-import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
+import {
+  VirtioInputPciFunction,
+  hidConsumerUsageToLinuxKeyCode,
+  hidUsageToLinuxKeyCode,
+  type VirtioInputPciDeviceLike,
+} from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
 import { VirtioSndPciDevice } from "../io/devices/virtio_snd";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
@@ -6590,9 +6595,25 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const usagePage = a & 0xffff;
         const pressed = ((a >>> 16) & 1) !== 0;
         const usageId = words[off + 3] & 0xffff;
-        // Consumer Control (0x0C) uses a dedicated synthetic USB HID device; PS/2 and virtio-input
-        // paths do not currently model consumer-page usages.
+        // Consumer Control (0x0C) can be delivered either via:
+        // - virtio-input keyboard (media keys subset, exposed by the Win7 virtio-input driver as a Consumer Control collection), or
+        // - a dedicated synthetic USB HID consumer-control device (supports the full usage ID range).
         if (usagePage === 0x0c) {
+          // Prefer virtio-input when the virtio keyboard backend is active and the usage is representable as a Linux key code.
+          if (keyboardInputBackend === "virtio" && virtioKeyboardOk && virtioKeyboard) {
+            const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
+            if (keyCode !== null) {
+              try {
+                virtioKeyboard.injectKey(keyCode, pressed);
+              } catch {
+                // ignore
+              }
+              break;
+            }
+          }
+
+          // Otherwise fall back to the synthetic USB consumer-control device (when available). This handles browser
+          // navigation keys (AC Back/Forward/etc.) which are not currently modeled by the virtio-input keyboard.
           try {
             usbHid?.consumer_event?.(usageId, pressed);
           } catch {
