@@ -8168,14 +8168,30 @@ impl Machine {
                         }
                         Some(mode) => {
                             if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                                let base = u64::from(self.bios.video.vbe.lfb_base);
+                                let pitch = u64::from(
+                                    self.bios
+                                        .video
+                                        .vbe
+                                        .bytes_per_scan_line
+                                        .max(mode_info.bytes_per_scan_line()),
+                                );
+                                let bytes_per_pixel = u64::from(mode_info.bytes_per_pixel()).max(1);
+                                let base = u64::from(self.bios.video.vbe.lfb_base)
+                                    .saturating_add(
+                                        u64::from(self.bios.video.vbe.display_start_y)
+                                            .saturating_mul(pitch),
+                                    )
+                                    .saturating_add(
+                                        u64::from(self.bios.video.vbe.display_start_x)
+                                            .saturating_mul(bytes_per_pixel),
+                                    );
                                 scanout_state.publish(ScanoutStateUpdate {
                                     source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                                     base_paddr_lo: base as u32,
                                     base_paddr_hi: (base >> 32) as u32,
                                     width: u32::from(mode_info.width),
                                     height: u32::from(mode_info.height),
-                                    pitch_bytes: u32::from(self.bios.video.vbe.bytes_per_scan_line),
+                                    pitch_bytes: pitch as u32,
                                     format: SCANOUT_FORMAT_B8G8R8X8,
                                 });
                             }
