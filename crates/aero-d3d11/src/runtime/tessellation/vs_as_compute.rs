@@ -47,7 +47,7 @@ pub const VS_AS_COMPUTE_INDEX_BUFFER_BINDING: u32 = INDEX_PULLING_BUFFER_BINDING
 /// This is placed immediately after the index pulling bindings so it remains disjoint from:
 /// - vertex pulling's per-slot vertex buffers (`VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot`)
 /// - index pulling's params + index buffer bindings
-/// - the D3D11 register-space binding ranges used by guest shaders
+/// - future internal emulation buffers (reserved from `BINDING_BASE_INTERNAL + 64` onward)
 pub const VS_AS_COMPUTE_VS_OUT_REGS_BINDING: u32 = VS_AS_COMPUTE_INDEX_BUFFER_BINDING + 1;
 
 fn vs_as_compute_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
@@ -95,6 +95,7 @@ impl VsAsComputeConfig {
 #[derive(Debug)]
 pub struct VsAsComputePipeline {
     cfg: VsAsComputeConfig,
+    empty_bg: wgpu::BindGroup,
     bgl_group3: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
@@ -122,6 +123,13 @@ impl VsAsComputePipeline {
             label: Some("aero-d3d11 VS-as-compute empty bgl"),
             entries: &[],
         });
+        // WebGPU validation requires bind groups to be set for all indices below the maximum used
+        // group, even if those groups are empty. Prepare a shared empty bind group for groups 0..2.
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 VS-as-compute empty bind group"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
         let mut layouts: Vec<&wgpu::BindGroupLayout> =
             vec![&empty_bgl; (VERTEX_PULLING_GROUP as usize).saturating_add(1).max(1)];
         layouts[VERTEX_PULLING_GROUP as usize] = &bgl_group3;
@@ -142,6 +150,7 @@ impl VsAsComputePipeline {
 
         Ok(Self {
             cfg,
+            empty_bg,
             bgl_group3,
             pipeline,
         })
@@ -254,6 +263,9 @@ impl VsAsComputePipeline {
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.empty_bg, &[]);
+        pass.set_bind_group(1, &self.empty_bg, &[]);
+        pass.set_bind_group(2, &self.empty_bg, &[]);
         pass.set_bind_group(VERTEX_PULLING_GROUP, bind_group_group3, &[]);
         pass.dispatch_workgroups(invocations_per_instance, instance_count, 1);
         Ok(())
