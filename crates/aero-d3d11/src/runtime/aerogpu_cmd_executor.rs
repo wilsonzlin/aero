@@ -224,10 +224,11 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     if (primitive_count == 1u) {
-        // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-        out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-        out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-        out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+        // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
+        // Keep it away from the corners so tests can assert untouched pixels.
+        out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
+        out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
+        out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
 
         out_vertices[0].o1 = c;
         out_vertices[1].o1 = c;
@@ -13741,24 +13742,148 @@ mod tests {
                 return;
             }
 
-            // Build a minimal stream that draws using a D3D11 patchlist topology. This should
-            // route through the compute-prepass + indirect draw path.
+            const VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+
+            fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+                let chunk_count: u32 = chunks
+                    .len()
+                    .try_into()
+                    .expect("chunk count should fit in u32");
+
+                let header_size = 4 + 16 + 4 + 4 + 4 + 4 * chunks.len();
+                let mut offsets = Vec::with_capacity(chunks.len());
+                let mut cursor = header_size;
+                for (_fourcc, data) in chunks {
+                    offsets.push(cursor);
+                    cursor += 8 + align4(data.len());
+                }
+
+                let total_size: u32 = cursor.try_into().expect("dxbc size should fit in u32");
+
+                let mut bytes = Vec::with_capacity(cursor);
+                bytes.extend_from_slice(b"DXBC");
+                bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
+                bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
+                bytes.extend_from_slice(&total_size.to_le_bytes());
+                bytes.extend_from_slice(&chunk_count.to_le_bytes());
+                for offset in offsets {
+                    bytes.extend_from_slice(&(offset as u32).to_le_bytes());
+                }
+
+                for (fourcc, data) in chunks {
+                    bytes.extend_from_slice(fourcc);
+                    bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                    bytes.extend_from_slice(data);
+                    bytes.resize(bytes.len() + (align4(data.len()) - data.len()), 0);
+                }
+                bytes
+            }
+
+            #[derive(Clone, Copy)]
+            struct SigParam {
+                semantic_name: &'static str,
+                semantic_index: u32,
+                register: u32,
+                mask: u8,
+            }
+
+            fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
+                // Mirrors `aero_d3d11::signature::parse_signature_chunk` expectations.
+                let mut out = Vec::new();
+                out.extend_from_slice(&(params.len() as u32).to_le_bytes()); // param_count
+                out.extend_from_slice(&8u32.to_le_bytes()); // param_offset
+
+                let entry_size = 24usize;
+                let table_start = out.len();
+                out.resize(table_start + params.len() * entry_size, 0);
+
+                for (i, p) in params.iter().enumerate() {
+                    let semantic_name_offset = out.len() as u32;
+                    out.extend_from_slice(p.semantic_name.as_bytes());
+                    out.push(0);
+                    while out.len() % 4 != 0 {
+                        out.push(0);
+                    }
+
+                    let base = table_start + i * entry_size;
+                    out[base..base + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
+                    out[base + 4..base + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
+                    out[base + 8..base + 12].copy_from_slice(&0u32.to_le_bytes()); // system_value_type
+                    out[base + 12..base + 16].copy_from_slice(&0u32.to_le_bytes()); // component_type
+                    out[base + 16..base + 20].copy_from_slice(&p.register.to_le_bytes());
+                    out[base + 20] = p.mask;
+                    out[base + 21] = p.mask; // read_write_mask
+                    out[base + 22] = 0; // stream
+                    out[base + 23] = 0; // min_precision
+                }
+
+                out
+            }
+
+            fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
+                let mut out = Vec::with_capacity(tokens.len() * 4);
+                for &t in tokens {
+                    out.extend_from_slice(&t.to_le_bytes());
+                }
+                out
+            }
+
+            fn build_ps_solid_green_dxbc() -> Vec<u8> {
+                // ps_4_0: mov o0, l(0,1,0,1); ret
+                let isgn = build_signature_chunk(&[]);
+                let osgn = build_signature_chunk(&[SigParam {
+                    semantic_name: "SV_Target",
+                    semantic_index: 0,
+                    register: 0,
+                    mask: 0x0f,
+                }]);
+
+                let version_token = 0x40u32; // ps_4_0
+                let mov_token = 0x01u32 | (8u32 << 11);
+                let ret_token = 0x3eu32 | (1u32 << 11);
+
+                let dst_o0 = 0x0010_f022u32;
+                let imm_vec4 = 0x0000_f042u32;
+
+                let zero = 0.0f32.to_bits();
+                let one = 1.0f32.to_bits();
+
+                let mut tokens = vec![
+                    version_token,
+                    0, // length patched below
+                    mov_token,
+                    dst_o0,
+                    0, // o0 index
+                    imm_vec4,
+                    zero,
+                    one,
+                    zero,
+                    one,
+                    ret_token,
+                ];
+                tokens[1] = tokens.len() as u32;
+
+                let shdr = tokens_to_bytes(&tokens);
+                build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+            }
+
+            // Draw via the patchlist topology (tessellation input). Real HS/DS emulation isn't
+            // implemented yet, but the executor should route patchlist draws through the compute
+            // prepass plumbing and emit placeholder geometry.
             const RT: u32 = 1;
             const VS: u32 = 2;
             const PS: u32 = 3;
 
-            const DXBC_VS_PASSTHROUGH: &[u8] =
-                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
-            const DXBC_PS_PASSTHROUGH: &[u8] =
-                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
-
+            let w = 64u32;
+            let h = 64u32;
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
                 RT,
                 AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
                 AerogpuFormat::R8G8B8A8Unorm as u32,
-                1,
-                1,
+                w,
+                h,
                 1,
                 1,
                 0,
@@ -13766,25 +13891,37 @@ mod tests {
                 0,
             );
             writer.set_render_targets(&[RT], 0);
-            writer.set_viewport(0.0, 0.0, 1.0, 1.0, 0.0, 1.0);
-            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
-            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
-            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
             writer.bind_shaders(VS, PS, 0);
+
             writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
+            writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
             writer.draw(3, 1, 0, 0);
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
             exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-                .expect("patchlist draw should succeed through emulation path");
+                .expect("execute_cmd_stream should succeed");
             exec.poll_wait();
 
             let pixels = exec
                 .read_texture_rgba8(RT)
                 .await
                 .expect("readback should succeed");
-            assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+            assert_eq!(pixels.len(), (w * h * 4) as usize);
+
+            let px = |x: u32, y: u32| -> [u8; 4] {
+                let idx = ((y * w + x) * 4) as usize;
+                pixels[idx..idx + 4].try_into().unwrap()
+            };
+
+            // Placeholder triangle is centered and does not cover the top-left corner.
+            assert_eq!(px(0, 0), [255, 0, 0, 255]);
+            // The center pixel should be covered by the triangle and shaded green by the PS.
+            assert_eq!(px(w / 2, h / 2), [0, 255, 0, 255]);
 
             assert_eq!(
                 exec.state.primitive_topology,
