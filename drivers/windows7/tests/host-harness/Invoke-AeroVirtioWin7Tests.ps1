@@ -8172,7 +8172,21 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_BINDING_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while -RequireVirtioInputBinding was enabled (guest selftest too old?)"
+      $reason = "unknown"
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      if ($reason -eq "unknown") {
+        Write-Host "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while -RequireVirtioInputBinding was enabled (guest selftest too old?)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP ($reason) while -RequireVirtioInputBinding was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

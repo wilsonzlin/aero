@@ -166,6 +166,19 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("actual=other_service", msg)
         self.assertIn("pnp_id=PCI\\\\VEN_1AF4&DEV_1052", msg)
 
+    def test_virtio_input_binding_skipped_token_includes_reason_when_present(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_binding_required_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP|not_supported",
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_BINDING_SKIPPED:"))
+        self.assertIn("not_supported", msg)
+
     def test_virtio_input_events_extended_failed_token_includes_subtest_and_reason(self) -> None:
         h = self.harness
 

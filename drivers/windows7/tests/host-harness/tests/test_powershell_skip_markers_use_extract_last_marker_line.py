@@ -39,6 +39,12 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|"', body)
         self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
 
+    def test_virtio_input_binding_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_INPUT_BINDING_SKIPPED", r'"VIRTIO_INPUT_BINDING_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP"', body)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
+
     def test_virtio_net_link_flap_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_NET_LINK_FLAP_SKIPPED", r'"VIRTIO_NET_UDP_FAILED"\s*\{')
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)

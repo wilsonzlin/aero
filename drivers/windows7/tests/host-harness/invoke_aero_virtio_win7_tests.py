@@ -3847,6 +3847,16 @@ def _virtio_input_binding_required_failure_message(
         if st == "PASS":
             return None
         if st == "SKIP":
+            fields = _parse_marker_kv_fields(marker_line)
+            reason = (fields.get("reason") or "").strip()
+            if not reason:
+                reason = _try_extract_plain_marker_token(marker_line, "SKIP") or ""
+            if reason:
+                reason_tok = _sanitize_marker_value(reason)
+                return (
+                    "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP "
+                    f"({reason_tok}) while --require-virtio-input-binding was enabled"
+                )
             return (
                 "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while "
                 "--require-virtio-input-binding was enabled (guest selftest too old?)"
@@ -3894,6 +3904,18 @@ def _virtio_input_binding_required_failure_message(
         )
 
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail:
+        marker_line2 = _try_extract_last_marker_line(tail, prefix + b"SKIP")
+        if marker_line2 is not None:
+            fields = _parse_marker_kv_fields(marker_line2)
+            reason = (fields.get("reason") or "").strip()
+            if not reason:
+                reason = _try_extract_plain_marker_token(marker_line2, "SKIP") or ""
+            if reason:
+                reason_tok = _sanitize_marker_value(reason)
+                return (
+                    "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP "
+                    f"({reason_tok}) while --require-virtio-input-binding was enabled"
+                )
         return (
             "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while "
             "--require-virtio-input-binding was enabled (guest selftest too old?)"
