@@ -217,9 +217,11 @@ Notes:
 
 - If Windows requests a direct `RUN → STOP`, perform `PCM_STOP` first (if
   running), then `PCM_RELEASE`.
-- If format negotiation is added later, `PCM_SET_PARAMS` may be re-issued on
-  `STOP → ACQUIRE` when the format changes. For the initial fixed-format design,
-  it is always the same parameters.
+- The driver may re-issue `PCM_SET_PARAMS` on `STOP → ACQUIRE` when the stream
+  format changes (for example when Windows opens a stream with a different
+  WAVEFORMAT). When `PCM_INFO` capabilities are available, the driver can expose
+  multiple formats/rates/channels and updates the `PCM_SET_PARAMS` tuple
+  accordingly.
 
 ## Position reporting
 
