@@ -982,8 +982,9 @@ function Write-JsonUtf8NoBom {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
 
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($Path, ($JsonText + "`n"), $utf8NoBom)
+    Assert-NoUtf8Bom -Path $Path
 }
 
 function Write-IntegrityManifest {
