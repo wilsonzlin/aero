@@ -608,7 +608,8 @@ fn snapshot_restore_preserves_virtio_input_msix_pending_bit_and_delivers_after_u
 }
 
 #[test]
-fn snapshot_restore_preserves_virtio_input_msix_vector_mask_pending_bit_and_delivers_after_unmask() {
+fn snapshot_restore_preserves_virtio_input_msix_vector_mask_pending_bit_and_delivers_after_unmask()
+{
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 4 * 1024 * 1024,
         enable_pc_platform: true,
