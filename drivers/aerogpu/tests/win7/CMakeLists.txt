@@ -411,6 +411,11 @@ aerogpu_add_win7_test(d3d10_triangle
 )
 target_link_libraries(d3d10_triangle PRIVATE user32 gdi32 d3d10 dxgi)
 
+aerogpu_add_win7_test(d3d10_rs_om_state_sanity
+  d3d10_rs_om_state_sanity/main.cpp
+)
+target_link_libraries(d3d10_rs_om_state_sanity PRIVATE d3d10 dxgi)
+
 aerogpu_add_win7_test(d3d10_map_do_not_wait
   d3d10_map_do_not_wait/main.cpp
 )
