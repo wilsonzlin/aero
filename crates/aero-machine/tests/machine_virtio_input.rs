@@ -602,6 +602,139 @@ fn virtio_input_inject_key_syncs_legacy_intx_into_pic() {
 }
 
 #[test]
+fn virtio_input_intx_is_gated_on_pci_command_intx_disable() {
+    let mut m = new_test_machine();
+    enable_a20(&mut m);
+
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+
+    // Enable PCI memory decoding + bus mastering (DMA), but disable legacy INTx delivery via
+    // COMMAND.INTX_DISABLE (bit 10).
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pci config ports should exist when pc platform is enabled");
+    let cmd = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+    };
+    set_pci_command(&m, bdf, cmd | (1 << 1) | (1 << 2) | (1 << 10));
+
+    let bar0_base = read_bar0_base(&m, bdf);
+    assert_ne!(bar0_base, 0);
+
+    // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+
+    // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
+    m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    m.write_physical_u32(bar0_base + COMMON, 0);
+    let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
+    m.write_physical_u32(bar0_base + COMMON, 1);
+    let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 0 with 2 writable event buffers so a single key press (EV_KEY + EV_SYN)
+    // can be delivered.
+    let desc = 0x00d0_0000;
+    let avail = 0x00d1_0000;
+    let used = 0x00d2_0000;
+    let event0 = 0x00d3_0000;
+    let event1 = 0x00d3_1000;
+
+    let zero_page = vec![0u8; 0x1000];
+    m.write_physical(desc, &zero_page);
+    m.write_physical(avail, &zero_page);
+    m.write_physical(used, &zero_page);
+    m.write_physical(event0, &[0u8; 8]);
+    m.write_physical(event1, &[0u8; 8]);
+
+    // Select queue 0 and program ring addresses.
+    m.write_physical_u16(bar0_base + COMMON + 0x16, 0);
+    m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
+    m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
+    m.write_physical_u64(bar0_base + COMMON + 0x30, used);
+    m.write_physical_u16(bar0_base + COMMON + 0x1c, 1);
+
+    write_desc(&mut m, desc, 0, event0, 8, VIRTQ_DESC_F_WRITE);
+    write_desc(&mut m, desc, 1, event1, 8, VIRTQ_DESC_F_WRITE);
+
+    // Post both descriptor chains.
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, 2);
+    m.write_physical_u16(avail + 4, 0);
+    m.write_physical_u16(avail + 6, 1);
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0 so the platform pops and caches the buffers.
+    m.write_physical_u16(bar0_base + NOTIFY, 0);
+    m.process_virtio_input();
+    assert_eq!(m.read_physical_u16(used + 2), 0);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+    let expected_vector = {
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let irq = u8::try_from(gsi).expect("virtio-input gsi must fit in u8");
+        assert!(
+            irq < 16,
+            "expected virtio-input to route to a legacy PIC IRQ (got GSI {gsi})"
+        );
+
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        for i in 0..16 {
+            ints.pic_mut().set_masked(i, true);
+        }
+        ints.pic_mut().set_masked(2, false); // cascade
+        ints.pic_mut().set_masked(irq, false);
+
+        if irq < 8 {
+            0x20u8.wrapping_add(irq)
+        } else {
+            0x28u8.wrapping_add(irq.wrapping_sub(8))
+        }
+    };
+
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // With COMMAND.INTX_DISABLE set, injecting an event should still deliver the event into guest
+    // memory but must not raise a legacy PIC interrupt.
+    m.inject_virtio_key(KEY_A, true);
+    assert_eq!(m.read_physical_u16(used + 2), 2);
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "expected no PIC interrupt while COMMAND.INTX_DISABLE is set"
+    );
+
+    // Clearing COMMAND.INTX_DISABLE should allow the still-pending virtio IRQ latch to assert INTx
+    // on the next poll.
+    set_pci_command(&m, bdf, cmd | (1 << 1) | (1 << 2));
+    m.poll_pci_intx_lines();
+    assert_eq!(interrupts.borrow().get_pending(), Some(expected_vector));
+}
+
+#[test]
 fn virtio_input_eventq_dma_is_gated_on_pci_bus_master_enable() {
     let mut m = new_test_machine();
     enable_a20(&mut m);
