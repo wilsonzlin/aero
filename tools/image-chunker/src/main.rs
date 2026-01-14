@@ -3475,16 +3475,17 @@ mod tests {
 
                             let (status, extra_headers, body) =
                                 (responder)(TestHttpRequest { method, path, headers });
-                            let status_line = match status {
-                                200 => "200 OK",
-                                401 => "401 Unauthorized",
-                                403 => "403 Forbidden",
-                                404 => "404 Not Found",
-                                405 => "405 Method Not Allowed",
-                                408 => "408 Request Timeout",
-                                429 => "429 Too Many Requests",
-                                500 => "500 Internal Server Error",
-                                _ => "500 Internal Server Error",
+                            let reason = match status {
+                                200 => "OK",
+                                400 => "Bad Request",
+                                401 => "Unauthorized",
+                                403 => "Forbidden",
+                                404 => "Not Found",
+                                405 => "Method Not Allowed",
+                                408 => "Request Timeout",
+                                429 => "Too Many Requests",
+                                500 => "Internal Server Error",
+                                _ => "Unknown",
                             };
                             let content_length = extra_headers
                                 .iter()
@@ -3492,7 +3493,7 @@ mod tests {
                                 .map(|(_, v)| v.trim().to_string())
                                 .unwrap_or_else(|| body.len().to_string());
                             let mut headers = format!(
-                                "HTTP/1.1 {status_line}\r\nContent-Length: {content_length}\r\n"
+                                "HTTP/1.1 {status} {reason}\r\nContent-Length: {content_length}\r\n"
                             );
                             for (name, value) in extra_headers {
                                 if name.eq_ignore_ascii_case("content-length")
