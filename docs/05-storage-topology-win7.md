@@ -94,11 +94,11 @@ boot sector / El Torito boot image:
      selection.
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
-Implementation note (Rust): in `aero_machine`, `Machine::set_boot_drive(0xE0)` selects CD-first boot
-for install (plumbed to `firmware::bios::BiosConfig::boot_drive` during `Machine::reset()`), and
-switching back to `Machine::set_boot_drive(0x80)` selects HDD boot for post-install boots. Since the
-BIOS boot drive is re-applied during reset/POST, callers should set the desired boot drive number
-and then invoke `Machine::reset()` before starting the boot.
+Implementation note (Rust): in `aero_machine`, the initial BIOS boot drive can be set up-front via
+`MachineConfig::boot_drive` (for example `MachineConfig::win7_install_defaults(...)` sets
+`boot_drive=0xE0` for CD-first install, while the default is `boot_drive=0x80` for HDD boot). You can
+also switch at runtime via `Machine::set_boot_drive(0xE0|0x80)` and then call `Machine::reset()` to
+re-run BIOS POST with the new `DL` value.
 
 Browser/wasm note: `crates/aero-wasm` exports `Machine` to JS and also exposes
 `machine.set_boot_drive(0xE0|0x80)` alongside `machine.reset()`. The same rule applies: set the boot
