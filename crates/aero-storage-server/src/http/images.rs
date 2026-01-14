@@ -784,7 +784,7 @@ pub(crate) fn insert_cors_headers(
         headers,
         req_headers,
         Some(HeaderValue::from_static(
-            "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length",
+            "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding",
         )),
     );
     headers.insert(

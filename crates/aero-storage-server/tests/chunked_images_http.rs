@@ -240,7 +240,7 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -343,7 +343,7 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -414,7 +414,7 @@ async fn chunked_manifest_with_matching_if_none_match_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -478,7 +478,7 @@ async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -522,7 +522,7 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -635,7 +635,7 @@ async fn versioned_chunked_manifest_with_matching_if_none_match_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -699,7 +699,7 @@ async fn versioned_chunked_manifest_with_matching_if_modified_since_returns_304(
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -941,7 +941,7 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -995,7 +995,7 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -1157,7 +1157,7 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -1281,7 +1281,7 @@ async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -1352,7 +1352,7 @@ async fn chunked_chunk_with_matching_if_none_match_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -1417,7 +1417,7 @@ async fn chunked_chunk_with_matching_if_modified_since_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -1461,7 +1461,7 @@ async fn versioned_chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -1536,7 +1536,7 @@ async fn versioned_chunked_chunk_with_matching_if_none_match_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -1601,7 +1601,7 @@ async fn versioned_chunked_chunk_with_matching_if_modified_since_returns_304() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2024,7 +2024,7 @@ async fn missing_chunked_manifest_returns_404_with_cors_and_cache_headers() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2089,7 +2089,7 @@ async fn missing_chunked_manifest_returns_404_for_versioned_route_with_cors_and_
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2130,7 +2130,7 @@ async fn missing_chunked_chunk_returns_404_with_cors_and_cache_headers() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2171,7 +2171,7 @@ async fn missing_chunked_chunk_returns_404_for_versioned_route_with_cors_and_cac
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2526,7 +2526,7 @@ async fn chunked_symlink_escape_is_blocked_for_chunk_objects() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2593,7 +2593,7 @@ async fn chunked_symlink_escape_is_blocked_for_manifests() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2668,7 +2668,7 @@ async fn chunked_symlink_escape_is_blocked_for_versioned_chunk_objects() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]
@@ -2735,7 +2735,7 @@ async fn chunked_symlink_escape_is_blocked_for_versioned_manifests() {
         resp.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp.headers()["cross-origin-resource-policy"]

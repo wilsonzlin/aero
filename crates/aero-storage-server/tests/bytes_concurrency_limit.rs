@@ -165,7 +165,7 @@ async fn bytes_concurrency_limit_rejects_second_in_flight_request() {
             .unwrap()
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         resp2

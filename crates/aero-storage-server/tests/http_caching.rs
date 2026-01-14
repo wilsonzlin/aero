@@ -156,7 +156,7 @@ async fn get_image_data_with_if_none_match_returns_304() {
         res.headers()["access-control-expose-headers"]
             .to_str()
             .unwrap(),
-        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length, Content-Encoding"
     );
     assert_eq!(
         res.headers()["cross-origin-resource-policy"]

@@ -332,7 +332,7 @@ function applyCorsHeaders(reply: FastifyReply, config: Config): void {
     // Range reads require exposing non-safelisted headers; harmless for non-range endpoints.
     .header(
       "access-control-expose-headers",
-      "accept-ranges,content-range,content-length,etag,last-modified"
+      "accept-ranges,content-range,content-length,content-encoding,etag,last-modified"
     );
 
   if (allowOrigin !== "*") {
