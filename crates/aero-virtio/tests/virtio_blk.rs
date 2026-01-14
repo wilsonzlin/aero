@@ -586,6 +586,7 @@ fn virtio_blk_discard_returns_ok() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
 }
 
 #[test]

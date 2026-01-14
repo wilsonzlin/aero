@@ -989,11 +989,75 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
                                 ranges.push((byte_off, byte_len));
                             }
-                            // Best-effort: discard is advisory; ignore backend failures after
-                            // validation so guests get a consistent SUCCESS path.
+                            // Best-effort: discard is advisory. Prefer backend hole-punching, but
+                            // emulate by writing zeros when the backend doesn't reclaim (common for
+                            // raw disks).
                             if status == VIRTIO_BLK_S_OK {
+                                // Buffer used for chunked zero writes. Use a block-size-aligned
+                                // chunk so backends that care about write alignment are not
+                                // penalized.
+                                let blk_usize = usize::try_from(blk_size).unwrap_or(512);
+                                let max_chunk = 64 * 1024usize;
+                                let mut chunk_size = if blk_usize > max_chunk {
+                                    blk_usize
+                                } else {
+                                    (max_chunk / blk_usize).saturating_mul(blk_usize)
+                                };
+                                chunk_size = chunk_size.max(blk_usize).max(512);
+                                let zero_buf = vec![0u8; chunk_size];
+
                                 for (byte_off, byte_len) in ranges {
-                                    let _ = self.backend.discard_range(byte_off, byte_len);
+                                    if byte_len == 0 {
+                                        continue;
+                                    }
+
+                                    let discard_result =
+                                        self.backend.discard_range(byte_off, byte_len);
+                                    let mut needs_zero_fallback = discard_result.is_err();
+
+                                    if !needs_zero_fallback {
+                                        // If `discard_range` was a no-op, ensure guest-visible
+                                        // semantics by sampling the first sector and falling back
+                                        // to explicit zero writes when the data is still non-zero.
+                                        let sample_len =
+                                            (byte_len.min(VIRTIO_BLK_SECTOR_SIZE)) as usize;
+                                        let mut sample = [0u8; VIRTIO_BLK_SECTOR_SIZE as usize];
+                                        let dst = &mut sample[..sample_len];
+                                        match self.backend.read_at(byte_off, dst) {
+                                            Ok(()) => {
+                                                if !dst.iter().all(|b| *b == 0) {
+                                                    needs_zero_fallback = true;
+                                                }
+                                            }
+                                            Err(_) => needs_zero_fallback = true,
+                                        }
+                                    }
+
+                                    if needs_zero_fallback {
+                                        let mut remaining = byte_len;
+                                        let mut cur_off = byte_off;
+                                        while remaining != 0 {
+                                            let take =
+                                                remaining.min(zero_buf.len() as u64) as usize;
+                                            if self.backend.write_at(cur_off, &zero_buf[..take]).is_err()
+                                            {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break;
+                                            }
+                                            cur_off = match cur_off.checked_add(take as u64) {
+                                                Some(v) => v,
+                                                None => {
+                                                    status = VIRTIO_BLK_S_IOERR;
+                                                    break;
+                                                }
+                                            };
+                                            remaining = remaining.saturating_sub(take as u64);
+                                        }
+                                    }
+
+                                    if status != VIRTIO_BLK_S_OK {
+                                        break;
+                                    }
                                 }
                             }
                         }
