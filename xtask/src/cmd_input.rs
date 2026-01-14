@@ -45,7 +45,7 @@ Usage:
 
 Steps:
   1. cargo test -p aero-devices-input --locked
-  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test hid_builtin_snapshot
+  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
@@ -105,6 +105,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "uhci",
             "--test",
             "uhci_external_hub",
+            "--test",
+            "ehci",
             "--test",
             "hid_builtin_snapshot",
             "--test",

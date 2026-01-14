@@ -224,16 +224,16 @@ The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "i
 ```bash
 # Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
-# Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + HID
-# builtin snapshot + shared HID usage fixtures). Use `--usb-all` if you want to run the full
-# `aero-usb` integration suite (includes EHCI/xHCI).
+# Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + EHCI +
+# HID builtin snapshot + shared HID usage fixtures). Use `--usb-all` if you want to run the full
+# `aero-usb` integration suite (includes xHCI, passthrough, etc).
 cargo xtask input
-
-# Run the full USB stack test suite (all `aero-usb` integration tests, including EHCI/xHCI).
-cargo xtask input --usb-all
 
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
 cargo xtask input --rust-only
+
+# Run the full USB stack test suite (all `aero-usb` integration tests; can be slow).
+cargo xtask input --usb-all
 
 # Also run the canonical machine integration tests (snapshot + USB container wiring).
 cargo xtask input --machine
@@ -280,6 +280,9 @@ AERO_WASM_PACKAGES=core npm -w web run wasm:build
 
 # Rust device-model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
+# Fast focused subset (matches `cargo xtask input` default):
+bash ./scripts/safe-run.sh cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture
+# Full USB suite:
 bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
 
 # WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
