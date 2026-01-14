@@ -3906,10 +3906,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         cursorHotX = 0;
         cursorHotY = 0;
         cursorRenderEnabled = true;
-      hwCursorActive = false;
-      hwCursorLastGeneration = null;
-      hwCursorLastImageKey = null;
-      hwCursorLastVramMissingEventKey = null;
+        hwCursorActive = false;
+        hwCursorLastGeneration = null;
+        hwCursorLastImageKey = null;
+        hwCursorLastVramMissingEventKey = null;
 
         presenterUserOnError = runtimeOptions?.presenter?.onError;
         presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };

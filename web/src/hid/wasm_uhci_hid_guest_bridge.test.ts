@@ -223,6 +223,46 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     expect(webhid_fail_feature_report_request).toHaveBeenCalledWith(1, 7, 3);
   });
 
+  it("supports the legacy UHCI feature-report completion ABI (complete(data) + fail())", () => {
+    const webhid_attach = vi.fn(() => 0);
+    const webhid_detach = vi.fn();
+    const webhid_push_input_report = vi.fn();
+    const webhid_drain_output_reports = vi.fn(() => []);
+    const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 7, reportId: 3 }]);
+    const webhid_complete_feature_report_request = vi.fn();
+    const webhid_fail_feature_report_request = vi.fn();
+
+    const uhci: UhciRuntimeHidApi = {
+      webhid_attach,
+      webhid_detach,
+      webhid_push_input_report,
+      webhid_drain_output_reports,
+      webhid_drain_feature_report_requests,
+      webhid_complete_feature_report_request,
+      webhid_fail_feature_report_request,
+    };
+
+    const host = {
+      sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const guest = new WasmUhciHidGuestBridge({ uhci, host });
+    guest.poll();
+
+    expect(webhid_drain_feature_report_requests).toHaveBeenCalledTimes(1);
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 7, reportId: 3 });
+
+    const data = new Uint8Array([1, 2, 3]);
+    expect(guest.completeFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, data })).toBe(true);
+    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, data);
+
+    expect(guest.failFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, error: "nope" })).toBe(true);
+    expect(webhid_fail_feature_report_request).toHaveBeenCalledWith(1, 7, 3);
+  });
+
   it("caps feature report forwarding per tick", () => {
     const webhid_attach = vi.fn(() => 0);
     const webhid_detach = vi.fn();

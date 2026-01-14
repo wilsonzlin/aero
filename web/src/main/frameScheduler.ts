@@ -139,6 +139,42 @@ export const startFrameScheduler = ({
       return;
     }
 
+    if (typed.type === "events") {
+      // Forward structured GPU worker diagnostics to the console for visibility during dev/testing.
+      // (These events are also useful for telemetry pipelines; keeping them structured avoids
+      // parsing fragile string logs.)
+      const evs = Array.isArray((typed as any).events) ? ((typed as any).events as any[]) : [];
+      if (evs.length > 0) {
+        if (lastTelemetry && typeof lastTelemetry === "object") {
+          lastTelemetry = { ...(lastTelemetry as Record<string, unknown>), gpuEvents: evs };
+        } else {
+          lastTelemetry = { gpuEvents: evs };
+        }
+
+        for (const ev of evs) {
+          const sev = typeof ev?.severity === "string" ? ev.severity : "error";
+          const cat = typeof ev?.category === "string" ? ev.category : "Unknown";
+          const message = typeof ev?.message === "string" ? ev.message : String(ev?.message ?? "gpu event");
+          const details = ev?.details;
+          const prefix = `gpu-worker[${cat}]`;
+          switch (sev) {
+            case "info":
+              console.info(prefix, message, details);
+              break;
+            case "warn":
+              console.warn(prefix, message, details);
+              break;
+            case "fatal":
+            case "error":
+            default:
+              console.error(prefix, message, details);
+              break;
+          }
+        }
+      }
+      return;
+    }
+
     if (typed.type === 'error') {
       console.error(`gpu-worker: ${typed.message}`);
     }
