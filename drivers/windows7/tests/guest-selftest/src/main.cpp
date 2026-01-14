@@ -5971,9 +5971,19 @@ static bool HidWriteWithTimeout(HANDLE h, const uint8_t* buf, DWORD len, DWORD t
   op->ov.hEvent = op->event;
 
   DWORD bytes = 0;
-  BOOL ok = WriteFile(op->handle, op->buf.data(), len, nullptr, &op->ov);
+  BOOL ok = WriteFile(op->handle, op->buf.data(), len, &bytes, &op->ov);
   DWORD err = ok ? ERROR_SUCCESS : GetLastError();
-  if (!ok && err != ERROR_IO_PENDING) {
+
+  if (ok) {
+    cleanup(op);
+    if (bytes != len) {
+      if (err_out) *err_out = ERROR_WRITE_FAULT;
+      return false;
+    }
+    return true;
+  }
+
+  if (err != ERROR_IO_PENDING) {
     cleanup(op);
     if (err_out) *err_out = err;
     return false;
