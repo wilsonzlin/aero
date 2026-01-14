@@ -19,16 +19,16 @@ Defaults:
 
 Examples:
   # From the repo root:
-  ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
+  ./scripts/run-host-tests.sh
 
   # Clean rebuild:
-  ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
+  ./scripts/run-host-tests.sh --clean
 
   # Subset only (tests/host):
-  ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+  ./scripts/run-host-tests.sh --host-only
 
   # Custom build output directory:
-  ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-tests
+  ./scripts/run-host-tests.sh --build-dir out/my-tests
 EOF
 }
 

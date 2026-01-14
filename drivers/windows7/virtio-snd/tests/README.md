@@ -27,7 +27,7 @@ Prerequisites:
 Helper script:
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
+./scripts/run-host-tests.sh
 ```
 
 ### Windows (PowerShell)
@@ -97,7 +97,7 @@ For faster iteration on just the shim-based protocol-engine tests under `host/`:
 ### Linux/macOS (Bash)
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+./scripts/run-host-tests.sh --host-only
 ```
 
 ### Windows (PowerShell)

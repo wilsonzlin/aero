@@ -32,7 +32,7 @@ adds this directory as a subdirectory.
 From the repo root:
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh
+./scripts/run-host-tests.sh
 ```
 
 On Windows:
@@ -46,7 +46,7 @@ Replace `pwsh` with `powershell.exe` if you are using Windows PowerShell.
 To force a clean rebuild:
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --clean
+./scripts/run-host-tests.sh --clean
 ```
 
 ```powershell
@@ -56,7 +56,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scri
 The default build directory is `out/virtiosnd-tests`. Override with:
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
+./scripts/run-host-tests.sh --build-dir out/my-virtiosnd-tests
 ```
 
 ```powershell
@@ -101,7 +101,7 @@ run:
 > `drivers/windows7/virtio-snd/tests/` project).
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
+./scripts/run-host-tests.sh --host-only
 ```
 
 ```powershell
@@ -111,7 +111,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scri
 The default build directory for `--host-only` is `out/virtiosnd-host-tests`. Override with:
 
 ```sh
-./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only --build-dir out/my-virtiosnd-host-tests
+./scripts/run-host-tests.sh --host-only --build-dir out/my-virtiosnd-host-tests
 ```
 
 ```powershell
