@@ -840,10 +840,7 @@ fn validate_latest_v1(
 
 fn validate_sha256_hex(value: &str) -> Result<()> {
     if value.len() != 64 {
-        bail!(
-            "expected 64 lowercase hex chars, got length {}",
-            value.len()
-        );
+        bail!("expected 64 hex chars, got length {}", value.len());
     }
     if !value.chars().all(|c| c.is_ascii_hexdigit()) {
         bail!("expected hex string, got '{value}'");
