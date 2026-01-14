@@ -104,9 +104,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
     - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for non-indexed point-list draws when supported):
-      - Input primitives: `point` and `triangle` (non-adjacency)
-      - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
-      - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`/`min`/`max` + immediate constants + `v#[]` inputs + `emit`/`cut`)
+      - End-to-end execution path: non-indexed `PointList` draws only.
+      - Output (end-to-end): `TriangleStream` (`triangle_strip`) lowered to an indexed triangle list for `draw_indexed_indirect` (stream 0 only).
+      - Shader instructions/operands: a small SM4 subset (see `docs/graphics/geometry-shader-emulation.md`), including `emit`/`cut`, basic ALU, and structured control flow (`if`/`loop`/`break`/`continue`, etc). No resource access.
     - Design notes: [`docs/graphics/geometry-shader-emulation.md`](../../../../docs/graphics/geometry-shader-emulation.md)
   - Known unsupported / not yet implemented:
     - Stream-output (SO):
@@ -114,7 +114,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - D3D10 / D3D10.1 accept `CreateGeometryShaderWithStreamOutput` (the stream-output declaration is ignored; it behaves like `CreateGeometryShader`). Binding real SO targets (`SoSetTargets`) reports `E_NOTIMPL` (unbind is a no-op), so stream-out is not implemented.
     - Multi-stream GS output (`emit_stream` / `cut_stream`); non-zero stream indices are not supported.
     - Adjacency input primitives (`lineadj` / `triangleadj`) are not supported.
-    - Most real-world SM4 GS shaders are not supported yet (control flow, resource access, additional opcodes/operands beyond the translated subset).
+    - Most real-world SM4 GS shaders are not supported yet (resource access, additional opcodes/operands, and IO/system-value coverage beyond the translated subset).
 - Tessellation (HS/DS) and other D3D11 features outside the implemented subset should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.

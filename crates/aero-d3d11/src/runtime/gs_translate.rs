@@ -25,10 +25,15 @@
 //! but draws with that GS bound currently return a clear error (there is not yet a “run synthetic
 //! expansion anyway” fallback for arbitrary untranslatable GS bytecode).
 //!
-//! The initial implementation is intentionally minimal and focuses on the instructions/operands
-//! required by the in-tree GS tests (float ALU ops such as `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`
-//!/`min`/`max`, plus immediate constants + `v#[]` inputs + `cb#[]` constant buffers + `emit`/`cut` on
-//! stream 0).
+//! The initial implementation is intentionally minimal and focuses on a small SM4 subset required
+//! by the in-tree GS tests:
+//! - Primitive emission: `emit` / `cut` / `emitthen_cut` (stream 0 only)
+//! - A small ALU subset (`mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`/`min`/`max`, plus `rcp`/`rsq`,
+//!   bitwise `and`, and a handful of pack/unpack + int/float conversion ops)
+//! - Structured control flow (`if`/`else`/`loop`/`switch` with `break`/`continue`)
+//!
+//! There is no texture sampling, buffer loads/stores, or barriers, and any unsupported instruction
+//! or operand shape is rejected by translation.
 
 use core::fmt;
 use std::collections::{BTreeMap, HashMap};

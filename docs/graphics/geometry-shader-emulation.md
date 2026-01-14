@@ -182,12 +182,12 @@ Supported end-to-end today:
 - `trianglestrip` output, lowered to an indexed **triangle list** for rendering.
   - Note: the executor currently renders expanded output using **TriangleList** unconditionally, so
     non-triangle GS output topologies are not yet meaningful end-to-end.
+- only **stream 0**
 
 Translator support (not yet rendered end-to-end):
 
 - `pointlist` output (indexed **point list**)
 - `linestrip` output, lowered to an indexed **line list**
-- only **stream 0**
 
 Not yet supported:
 
@@ -201,29 +201,36 @@ Supported instructions/opcodes:
   - `EmitVertex` (`emit`)
   - `CutVertex` (`cut`)
   - `EmitVertex` + `CutVertex` (`emitthen_cut`)
-- **Arithmetic subset**
-  - `mov`, `movc`, `add`, `mul`, `mad`, `dp3`, `dp4`, `min`, `max`
 - **Structured control flow**
-  - `if` / `else` / `endif`
-  - `ifc` (compare-based conditional)
+  - `if` (`if_z` / `if_nz`)
+  - `ifc` (`ifc` compare variants, including unsigned comparisons)
+  - `else` / `endif`
   - `loop` / `endloop`
   - `break` / `continue`
   - `breakc` / `continuec`
   - `switch` / `case` / `default` / `endswitch`
-- **Control**
   - `ret`
+- **ALU (subset)**
+  - `mov`, `movc`
+  - `add`, `mul`, `mad`
+  - `dp3`, `dp4`
+  - `min`, `max`
+  - `rcp`, `rsq`
+  - `and` (bitwise AND on raw 32-bit lanes)
+  - conversions: `itof`, `utof`, `ftoi`, `ftou`, `f32tof16`, `f16tof32`
 
 Supported operand surface (initial):
 
-- temp regs (`r#`) and output regs (`o#`)
+- temp regs (`r#`) and output regs (`o#`) (note: only `o0` and `o1` are currently consumed by `emit`)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
-- immediate `f32` constants
+- immediate32 `vec4` constants (treated as raw 32-bit lane values; typically `f32` bit patterns)
+- swizzles, write masks, and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
-  - `SV_GSInstanceID` (currently fixed to 0; GS instancing is not supported yet)
+  - `SV_GSInstanceID` (GS instancing is not supported yet, so this currently always evaluates to 0)
 
-Everything else (other arithmetic ops, texture sampling, SO, etc) is currently rejected by
-translation.
+Everything else (resource access like texture sampling / buffer loads/stores, barriers, most other
+SM4/SM5 opcodes, etc) is currently rejected by translation.
 
 ---
 
@@ -243,7 +250,9 @@ Known limitations include:
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **Limited output topology / payload**
-  - Only `trianglestrip` output is supported, and it is expanded to triangle lists for rendering.
+  - End-to-end, only `trianglestrip` output is supported today (the expanded draw currently renders
+    as a triangle list). Other output topologies may translate but are not wired to a matching render
+    topology yet.
   - Only a minimal output payload is supported (currently `o0` + `o1`).
 - **No layered rendering semantics**
   - No `SV_RenderTargetArrayIndex` / `SV_ViewportArrayIndex` style outputs (future work)
