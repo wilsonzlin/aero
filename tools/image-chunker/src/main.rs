@@ -151,6 +151,12 @@ struct PublishArgs {
 }
 
 #[derive(Debug, Parser)]
+#[command(group(
+    clap::ArgGroup::new("location")
+        .required(true)
+        .args(["prefix", "manifest_key"])
+        .multiple(false)
+))]
 struct VerifyArgs {
     /// Destination bucket name.
     #[arg(long)]
@@ -199,11 +205,15 @@ struct VerifyArgs {
     retries: usize,
 
     /// Safety guard for manifest-reported chunk counts.
-    #[arg(long, default_value_t = MAX_CHUNKS)]
+    #[arg(
+        long,
+        default_value_t = MAX_CHUNKS,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_CHUNKS)
+    )]
     max_chunks: u64,
 
     /// Only verify N random chunks plus the final chunk (useful for quick smoke tests).
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     chunk_sample: Option<u64>,
 }
 
@@ -654,22 +664,14 @@ async fn verify(args: VerifyArgs) -> Result<()> {
 }
 
 fn validate_verify_args(args: &VerifyArgs) -> Result<()> {
-    match (&args.prefix, &args.manifest_key) {
-        (None, None) => bail!("either --prefix or --manifest-key is required"),
-        (Some(_), Some(_)) => bail!("--prefix and --manifest-key are mutually exclusive"),
-        _ => {}
-    }
     if args.concurrency == 0 {
         bail!("--concurrency must be > 0");
     }
     if args.retries == 0 {
         bail!("--retries must be > 0");
     }
-    if args.max_chunks == 0 {
-        bail!("--max-chunks must be > 0");
-    }
-    if args.chunk_sample.is_some_and(|n| n == 0) {
-        bail!("--chunk-sample must be > 0");
+    if args.max_chunks > MAX_CHUNKS {
+        bail!("--max-chunks cannot exceed {MAX_CHUNKS}");
     }
     Ok(())
 }
