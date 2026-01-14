@@ -8,7 +8,19 @@ use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 mod cmd_bios_rom;
 mod cmd_conformance;
 mod cmd_input;
+#[cfg(feature = "shader-opcode-report")]
 mod cmd_shader_opcode_report;
+#[cfg(not(feature = "shader-opcode-report"))]
+mod cmd_shader_opcode_report {
+    use crate::error::{Result, XtaskError};
+
+    pub fn cmd(_args: Vec<String>) -> Result<()> {
+        Err(XtaskError::Message(
+            "`shader-opcode-report` requires building `xtask` with the `shader-opcode-report` feature.\n\nTry:\n  cargo run -p xtask --locked --features shader-opcode-report -- shader-opcode-report [args...]"
+                .to_string(),
+        ))
+    }
+}
 mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_wasm;
@@ -103,7 +115,7 @@ Usage:
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
   cargo xtask snapshot diff <path_a> <path_b> [--deep]
-  cargo xtask shader-opcode-report [--deny-unsupported] <files...>
+  cargo run -p xtask --locked --features shader-opcode-report -- shader-opcode-report [--deny-unsupported] <files...>
   cargo xtask test-all [options] [-- <extra playwright args>]
   cargo xtask wasm [single|threaded|both] [dev|release]
   cargo xtask wasm-check
@@ -117,9 +129,9 @@ Commands:
   snapshot   Inspect/validate/diff an `aero-snapshot` file without loading multi-GB RAM payloads.
   shader-opcode-report
                Report SM2/3 opcode usage and unsupported opcodes for the D3D9 SM2/3 translator.
+               (Requires `--features shader-opcode-report`; see usage above.)
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright). Also validates
              deterministic in-repo fixtures by default (use `cargo xtask test-all --help`).
-              deterministic in-repo fixtures by default (use `cargo xtask test-all --help`).
   wasm       Build the Rust→WASM packages used by the web app.
   wasm-check Compile-check wasm32 compatibility for selected crates (e.g. `aero-devices-gpu`).
   web        Run web (Node/Vite) tasks via npm.

@@ -5,11 +5,20 @@ edition = "2021"
 publish = false
 license = "MIT OR Apache-2.0"
 
+[features]
+# Keep xtask's default build lightweight so common developer commands (`cargo xtask input`,
+# `cargo xtask fixtures`, CI helpers, etc) don't compile the full WebGPU/D3D9 stack.
+#
+# Enable the D3D9 shader opcode reporting command with:
+#   cargo run -p xtask --features shader-opcode-report -- shader-opcode-report ...
+default = []
+shader-opcode-report = ["dep:aero-d3d9", "dep:aero-dxbc"]
+
 [dependencies]
 aero-acpi = { path = "../crates/aero-acpi" }
 aero-pc-constants = { path = "../crates/aero-pc-constants" }
-aero-d3d9 = { path = "../crates/aero-d3d9" }
-aero-dxbc = { path = "../crates/aero-dxbc" }
+aero-d3d9 = { path = "../crates/aero-d3d9", optional = true }
+aero-dxbc = { path = "../crates/aero-dxbc", optional = true }
 aero-snapshot = { path = "../crates/aero-snapshot" }
 firmware = { path = "../crates/firmware" }
 lz4_flex = "0.11.5"
