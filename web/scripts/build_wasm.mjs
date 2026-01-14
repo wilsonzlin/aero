@@ -11,6 +11,9 @@ function usageAndExit() {
             "Options:",
             "  --packages <list>   Comma-separated package list to build (default: all).",
             "                     Known packages: core,gpu,d3d11,jit",
+            "",
+            "Environment:",
+            "  AERO_WASM_PACKAGES  Comma-separated package list to build when --packages is not passed.",
         ].join("\n"),
     );
     process.exit(2);
@@ -69,6 +72,13 @@ function parseArgs(argv) {
             continue;
         }
         die(`Unknown argument: ${arg}`);
+    }
+
+    if (packages === null) {
+        const envValue = (process.env.AERO_WASM_PACKAGES ?? "").trim();
+        if (envValue) {
+            packages = envValue;
+        }
     }
 
     const packagesList =

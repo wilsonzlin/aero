@@ -42,6 +42,7 @@ Steps:
   2. cargo test -p aero-usb --locked
   3. npm -w web run test:unit -- src/input
   4. (optional) npm run test:e2e -- <input-related specs...>
+     (sets AERO_WASM_PACKAGES=core to avoid building unrelated web WASM packages)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
@@ -94,7 +95,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if opts.e2e {
         let mut cmd = build_e2e_cmd(&repo_root, &opts.pw_extra_args);
-        runner.run_step("E2E: npm run test:e2e -- <input specs>", &mut cmd)?;
+        runner.run_step(
+            "E2E: npm run test:e2e (AERO_WASM_PACKAGES=core) -- <input specs>",
+            &mut cmd,
+        )?;
     } else if !opts.pw_extra_args.is_empty() {
         return Err(XtaskError::Message(
             "extra Playwright args after `--` require `--e2e`".to_string(),
@@ -135,6 +139,9 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
 fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
     let mut cmd = tools::npm();
     cmd.current_dir(repo_root).args(["run", "test:e2e", "--"]);
+    // Playwright runs trigger `pretest:e2e`, which builds the web WASM bundles. The input/USB E2E
+    // subset only needs the core `aero-wasm` package, so avoid building unrelated packages.
+    cmd.env("AERO_WASM_PACKAGES", "core");
     cmd.args(INPUT_E2E_SPECS);
     // Developers can add extra Playwright args after `--`.
     cmd.args(pw_extra_args);
