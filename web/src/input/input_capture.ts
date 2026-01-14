@@ -898,9 +898,24 @@ export class InputCapture {
       touchTapToClick = true,
     }: InputCaptureOptions = {}
   ) {
-    this.mouseSensitivity = mouseSensitivity;
-    this.touchSensitivity = touchSensitivity;
-    this.flushHz = flushHz;
+    // Be defensive: these values may come from user config and should not be allowed to create
+    // pathological timer behavior (e.g. `setInterval(NaN)` which can behave like 0ms in browsers).
+    const sanitizeFinite = (value: number, fallback: number): number => (Number.isFinite(value) ? value : fallback);
+    const sanitizeHz = (value: number, fallback: number): number => {
+      const v = sanitizeFinite(value, fallback);
+      return v > 0 ? v : fallback;
+    };
+
+    // Keep defaults in one place so tests can assert behavior without duplicating magic numbers.
+    const defaultFlushHz = 125;
+
+    const sanitizedFlushHz = sanitizeHz(flushHz, defaultFlushHz);
+    const sanitizedMouseSensitivity = sanitizeFinite(mouseSensitivity, 1.0);
+    const sanitizedTouchSensitivity = sanitizeFinite(touchSensitivity, sanitizedMouseSensitivity);
+
+    this.mouseSensitivity = sanitizedMouseSensitivity;
+    this.touchSensitivity = sanitizedTouchSensitivity;
+    this.flushHz = sanitizedFlushHz;
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
     this.recycleBuffers = recycleBuffers;
@@ -911,8 +926,10 @@ export class InputCapture {
     this.flushOpts = { recycle: this.recycleBuffers, onBeforeSend: this.onBeforeSendBatch };
     this.flushOptsNoRecycle = { recycle: false, onBeforeSend: this.onBeforeSendBatch };
 
-    this.gamepad = enableGamepad ? new GamepadCapture({ deadzone: gamepadDeadzone }) : null;
-    const effectivePollHz = Math.max(1, Math.round(gamepadPollHz ?? flushHz));
+    const sanitizedDeadzone = Math.max(0, Math.min(1, sanitizeFinite(gamepadDeadzone, 0.12)));
+    this.gamepad = enableGamepad ? new GamepadCapture({ deadzone: sanitizedDeadzone }) : null;
+    const pollHzInput = gamepadPollHz ?? sanitizedFlushHz;
+    const effectivePollHz = Math.max(1, Math.round(sanitizeHz(pollHzInput, sanitizedFlushHz)));
     this.gamepadPollIntervalMs = Math.max(1, Math.round(1000 / effectivePollHz));
 
     // Ensure the canvas can receive keyboard focus.
