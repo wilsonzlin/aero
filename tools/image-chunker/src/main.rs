@@ -3607,6 +3607,96 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn compute_image_version_sha256_rejects_qcow2_backing_file_without_parent() -> Result<()> {
+        use std::io::Write;
+
+        // Create a minimal QCOW2 v2 header that passes structural validation but declares a backing
+        // file reference. The qcow2 implementation only supports backing files when an explicit
+        // parent disk is provided (`open_with_parent`), so `DiskImage::open_auto` must reject it.
+        let mut header = [0u8; 72];
+        header[0..4].copy_from_slice(b"QFI\xfb");
+        header[4..8].copy_from_slice(&2u32.to_be_bytes()); // version 2
+        header[8..16].copy_from_slice(&72u64.to_be_bytes()); // backing_file_offset
+        header[16..20].copy_from_slice(&8u32.to_be_bytes()); // backing_file_size
+        header[20..24].copy_from_slice(&12u32.to_be_bytes()); // cluster_bits (4096)
+        header[24..32].copy_from_slice(&4096u64.to_be_bytes()); // virtual size
+        header[32..36].copy_from_slice(&0u32.to_be_bytes()); // crypt_method
+        header[36..40].copy_from_slice(&1u32.to_be_bytes()); // l1_size
+        header[40..48].copy_from_slice(&4096u64.to_be_bytes()); // l1_table_offset
+        header[48..56].copy_from_slice(&8192u64.to_be_bytes()); // refcount_table_offset
+        header[56..60].copy_from_slice(&1u32.to_be_bytes()); // refcount_table_clusters
+        // nb_snapshots (0) and snapshots_offset (0) remain zero.
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&header)
+            .context("write qcow2 header")?;
+        tmp.as_file_mut().flush().context("flush qcow2 header")?;
+
+        let err = compute_image_version_sha256(tmp.path(), InputFormat::Auto)
+            .await
+            .expect_err("expected qcow2 backing file rejection");
+        let summary = error_chain_summary(&err);
+        assert!(
+            summary.contains("qcow2 backing file"),
+            "unexpected error: {summary}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_image_version_sha256_rejects_vhd_differencing_without_parent() -> Result<()> {
+        use std::io::Write;
+
+        // Create a minimal VHD footer for a differencing disk (disk_type=4). VHD differencing
+        // disks require an explicit parent disk; the chunker only opens a single file and must
+        // reject these images.
+        let virtual_size = SECTOR_SIZE as u64;
+        let data_offset = SECTOR_SIZE as u64; // dynamic header at offset 512
+        let file_len = data_offset + 1024 + SECTOR_SIZE as u64;
+
+        let mut footer = [0u8; SECTOR_SIZE];
+        footer[0..8].copy_from_slice(b"conectix");
+        footer[8..12].copy_from_slice(&2u32.to_be_bytes()); // features
+        footer[12..16].copy_from_slice(&0x0001_0000u32.to_be_bytes()); // file_format_version
+        footer[16..24].copy_from_slice(&data_offset.to_be_bytes());
+        footer[40..48].copy_from_slice(&virtual_size.to_be_bytes()); // original_size
+        footer[48..56].copy_from_slice(&virtual_size.to_be_bytes()); // current_size
+        footer[60..64].copy_from_slice(&4u32.to_be_bytes()); // disk_type differencing
+
+        let checksum = {
+            let mut sum: u32 = 0;
+            for (i, b) in footer.iter().enumerate() {
+                if (64..68).contains(&i) {
+                    continue;
+                }
+                sum = sum.wrapping_add(*b as u32);
+            }
+            !sum
+        };
+        footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&vec![0u8; (file_len - SECTOR_SIZE as u64) as usize])
+            .context("write vhd body padding")?;
+        tmp.as_file_mut()
+            .write_all(&footer)
+            .context("write vhd footer")?;
+        tmp.as_file_mut().flush().context("flush vhd image")?;
+
+        let err = compute_image_version_sha256(tmp.path(), InputFormat::Auto)
+            .await
+            .expect_err("expected vhd differencing rejection");
+        let summary = error_chain_summary(&err);
+        assert!(
+            summary.contains("differencing") && summary.contains("parent"),
+            "unexpected error: {summary}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn chunk_count_rounds_up() {
         assert_eq!(chunk_count(0, 8), 0);
