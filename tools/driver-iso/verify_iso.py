@@ -207,6 +207,19 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
 def _list_iso_files(iso_path: Path) -> set[str]:
     errors: list[str] = []
 
+    # Prefer the in-tree Rust ISO parser when cargo is available (cross-platform).
+    #
+    # This keeps verification working even in environments where:
+    # - Python packaging is restricted (can't `pip install pycdlib`)
+    # - external tooling like `xorriso` isn't installed
+    if shutil.which("cargo"):
+        try:
+            files = _list_iso_files_with_aero_iso_ls(iso_path)
+            print("Using ISO listing backend: rust (aero_iso_ls)")
+            return files
+        except SystemExit as e:
+            errors.append(str(e))
+
     # Prefer a pure-Python implementation when available so this script works on
     # Linux/macOS without requiring external ISO tooling.
     try:
@@ -235,16 +248,6 @@ def _list_iso_files(iso_path: Path) -> set[str]:
         try:
             files = _list_iso_files_with_powershell_mount(iso_path)
             print("Using ISO listing backend: powershell (Mount-DiskImage)")
-            return files
-        except SystemExit as e:
-            errors.append(str(e))
-
-    # Optional: in-tree Rust ISO parser backend (useful when cargo is available but
-    # pycdlib/xorriso are not installed).
-    if shutil.which("cargo"):
-        try:
-            files = _list_iso_files_with_aero_iso_ls(iso_path)
-            print("Using ISO listing backend: rust (aero_iso_ls)")
             return files
         except SystemExit as e:
             errors.append(str(e))
