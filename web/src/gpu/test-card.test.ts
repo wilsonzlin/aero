@@ -57,6 +57,7 @@ describe("gpu/test-card", () => {
       // Right half: magenta with top->bottom alpha gradient (height=4 => y=0..3 => a=0,1/3,2/3,1).
       expect(getPixelRgba(rgba, width, 4, 0)).toEqual([255, 0, 255, 0]);
       expect(getPixelRgba(rgba, width, 4, 1)).toEqual([255, 0, 255, 85]);
+      expect(getPixelRgba(rgba, width, 4, 2)).toEqual([255, 0, 255, 170]);
       expect(getPixelRgba(rgba, width, 4, 3)).toEqual([255, 0, 255, 255]);
 
       // Corner orientation markers (UV origin top-left).
