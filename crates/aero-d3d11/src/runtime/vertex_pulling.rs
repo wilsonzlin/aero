@@ -27,8 +27,8 @@ use crate::input_layout::{
 /// that need IA buffers, so it must use a disjoint `@binding` range within the group.
 pub const VERTEX_PULLING_GROUP: u32 = 3;
 
-/// First `@binding` number reserved for vertex pulling + compute-expansion internal resources within
-/// [`VERTEX_PULLING_GROUP`].
+/// First `@binding` number reserved for vertex pulling + compute-expansion internal resources
+/// within [`VERTEX_PULLING_GROUP`].
 ///
 /// Bindings below this range are reserved for D3D-style register mappings when `@group(3)` is used
 /// for GS/HS/DS resource bindings (via the `stage_ex` ABI extension).
@@ -356,11 +356,10 @@ impl VertexPullingLayout {
 
         // Vertex buffers.
         for slot in 0..slot_count {
+            let binding = VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot;
             s.push_str(&format!(
                 "@group({}) @binding({}) var<storage, read> aero_vp_vb{}: array<u32>;\n",
-                VERTEX_PULLING_GROUP,
-                VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot,
-                slot
+                VERTEX_PULLING_GROUP, binding, slot
             ));
         }
         s.push_str(&format!(

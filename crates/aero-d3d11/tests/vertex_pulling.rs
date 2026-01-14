@@ -1,8 +1,63 @@
 mod common;
 
 use aero_d3d11::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
-use aero_d3d11::runtime::vertex_pulling::{VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP};
+use aero_d3d11::runtime::vertex_pulling::{
+    VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
+    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
+};
 use anyhow::{anyhow, Context, Result};
+
+#[test]
+fn vertex_pulling_wgsl_uses_reserved_binding_range() -> Result<()> {
+    // ILAY_POS3_COLOR fixture: POSITION0 (float3) + COLOR0 (float4).
+    let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+        .context("parse ILAY")?;
+
+    // Signature locations: POSITION0 -> location0, COLOR0 -> location1.
+    let signature = [
+        VsInputSignatureElement {
+            semantic_name_hash: layout.elements[0].semantic_name_hash,
+            semantic_index: layout.elements[0].semantic_index,
+            input_register: 0,
+            mask: 0xF,
+            shader_location: 0,
+        },
+        VsInputSignatureElement {
+            semantic_name_hash: layout.elements[1].semantic_name_hash,
+            semantic_index: layout.elements[1].semantic_index,
+            input_register: 1,
+            mask: 0xF,
+            shader_location: 1,
+        },
+    ];
+
+    let stride = 28u32; // float3 (12) + float4 (16)
+    let slot_strides = [stride];
+    let binding = InputLayoutBinding::new(&layout, &slot_strides);
+    let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+    assert_eq!(pulling.slot_count(), 1);
+
+    let wgsl = pulling.wgsl_prelude();
+
+    // Vertex pulling bindings must live in the reserved "expansion internal" range so they can
+    // coexist with `stage_ex` GS/HS/DS D3D bindings in the same `@group(3)`.
+    assert!(
+        wgsl.contains(&format!(
+            "@group({}) @binding({}) var<uniform> aero_vp_ia",
+            VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING
+        )),
+        "missing expected vertex pulling uniform binding in WGSL prelude:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({}) @binding({}) var<storage, read> aero_vp_vb0",
+            VERTEX_PULLING_GROUP, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE
+        )),
+        "missing expected vertex pulling vertex-buffer binding in WGSL prelude:\n{wgsl}"
+    );
+
+    Ok(())
+}
 
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
     #[cfg(unix)]
