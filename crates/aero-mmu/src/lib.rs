@@ -906,12 +906,40 @@ impl Mmu {
                 return Ok(entry.translate(vaddr));
             }
 
-            match self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user) {
-                Ok(()) => {
-                    let paddr = entry.translate(vaddr);
-                    let needs_dirty = access.is_write() && !entry.dirty;
+            match access {
+                AccessType::Execute => {
+                    // Fast path for instruction fetches: only U/S and NX can fault.
+                    if is_user && !entry.user {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        self.cr2 = pf.addr;
+                        return Err(TranslateFault::PageFault(pf));
+                    }
+                    if entry.nx {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        self.cr2 = pf.addr;
+                        return Err(TranslateFault::PageFault(pf));
+                    }
+                    return Ok(entry.translate(vaddr));
+                }
+                AccessType::Write => {
+                    // Writes may fault due to U/S or R/W (including CR0.WP semantics).
+                    if is_user {
+                        if !entry.user || !entry.writable {
+                            let pf =
+                                PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                            self.cr2 = pf.addr;
+                            return Err(TranslateFault::PageFault(pf));
+                        }
+                    } else if !entry.writable && self.wp_enabled() {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        self.cr2 = pf.addr;
+                        return Err(TranslateFault::PageFault(pf));
+                    }
 
-                    if needs_dirty {
+                    let paddr = entry.translate(vaddr);
+
+                    // Lazily set D on the first write hit.
+                    if !entry.dirty {
                         let leaf_addr = entry.leaf_addr;
                         let leaf_is_64 = entry.leaf_is_64;
                         let tlb_vbase = entry.vbase();
@@ -929,10 +957,7 @@ impl Mmu {
 
                     return Ok(paddr);
                 }
-                Err(pf) => {
-                    self.cr2 = pf.addr;
-                    return Err(TranslateFault::PageFault(pf));
-                }
+                AccessType::Read => unreachable!("handled above"),
             }
         }
 
@@ -1037,9 +1062,32 @@ impl Mmu {
                 return Ok(entry.translate(vaddr));
             }
 
-            match self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user) {
-                Ok(()) => return Ok(entry.translate(vaddr)),
-                Err(pf) => return Err(TranslateFault::PageFault(pf)),
+            match access {
+                AccessType::Execute => {
+                    if is_user && !entry.user {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        return Err(TranslateFault::PageFault(pf));
+                    }
+                    if entry.nx {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        return Err(TranslateFault::PageFault(pf));
+                    }
+                    return Ok(entry.translate(vaddr));
+                }
+                AccessType::Write => {
+                    if is_user {
+                        if !entry.user || !entry.writable {
+                            let pf =
+                                PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                            return Err(TranslateFault::PageFault(pf));
+                        }
+                    } else if !entry.writable && self.wp_enabled() {
+                        let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
+                        return Err(TranslateFault::PageFault(pf));
+                    }
+                    return Ok(entry.translate(vaddr));
+                }
+                AccessType::Read => unreachable!("handled above"),
             }
         }
 
