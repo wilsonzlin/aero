@@ -5398,6 +5398,7 @@ function renderMicrophonePanel(): HTMLElement {
   const status = el("pre", { text: "" });
   const stateLine = el("div", { class: "mono", text: "state=inactive" });
   const statsLine = el("div", { class: "mono", text: "" });
+  const deviceIdEncoder = new TextEncoder();
 
   const deviceSelect = el("select") as HTMLSelectElement;
   const echoCancellation = el("input", { type: "checkbox", checked: "" }) as HTMLInputElement;
@@ -5415,7 +5416,9 @@ function renderMicrophonePanel(): HTMLElement {
     const devices = await navigator.mediaDevices.enumerateDevices();
     for (const dev of devices) {
       if (dev.kind !== "audioinput") continue;
-      const label = dev.label || `mic (${dev.deviceId.slice(0, 8)}…)`;
+      // Avoid displaying raw `deviceId` values (they can be long stable identifiers).
+      const deviceIdHash = dev.deviceId ? fnv1a32Hex(deviceIdEncoder.encode(dev.deviceId)) : "";
+      const label = dev.label || (deviceIdHash ? `mic (${deviceIdHash})` : "mic");
       deviceSelect.append(el("option", { value: dev.deviceId, text: label }));
     }
   }
@@ -5434,9 +5437,9 @@ function renderMicrophonePanel(): HTMLElement {
 
     const buffered = lastWorkletStats.buffered ?? 0;
     const dropped = lastWorkletStats.dropped ?? 0;
+    const deviceLabel = deviceSelect.value ? fnv1a32Hex(deviceIdEncoder.encode(deviceSelect.value)) : "default";
     statsLine.textContent =
-      `bufferedSamples=${buffered} droppedSamples=${dropped} ` +
-      `device=${deviceSelect.value ? deviceSelect.value.slice(0, 8) + "…" : "default"}`;
+      `bufferedSamples=${buffered} droppedSamples=${dropped} ` + `device=${deviceLabel}`;
   }
 
   const startButton = el("button", {
@@ -5488,21 +5491,20 @@ function renderMicrophonePanel(): HTMLElement {
         await mic.start();
         mic.setMuted(mutedInput.checked);
 
-        const encoder = new TextEncoder();
         const sanitizeTrackInfo = (value: unknown): Record<string, unknown> | null => {
           if (!value || typeof value !== "object") return null;
           const out = { ...(value as Record<string, unknown>) } as Record<string, unknown>;
           for (const key of ["deviceId", "groupId"]) {
             const v = out[key];
             if (typeof v === "string" && v.length) {
-              out[`${key}Hash`] = fnv1a32Hex(encoder.encode(v));
+              out[`${key}Hash`] = fnv1a32Hex(deviceIdEncoder.encode(v));
               delete out[key];
             }
           }
           return out;
         };
         const dbg = mic.getDebugInfo();
-        const deviceIdHash = deviceSelect.value ? fnv1a32Hex(encoder.encode(deviceSelect.value)) : null;
+        const deviceIdHash = deviceSelect.value ? fnv1a32Hex(deviceIdEncoder.encode(deviceSelect.value)) : null;
         micAttachment = {
           ringBuffer: mic.ringBuffer.sab,
           sampleRate: mic.actualSampleRate,
