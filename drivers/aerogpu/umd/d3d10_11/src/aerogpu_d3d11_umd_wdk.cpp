@@ -5684,6 +5684,10 @@ void AEROGPU_APIENTRY IaSetInputLayout11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   dev->current_input_layout = layout ? layout->handle : 0;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->input_layout_handle = dev->current_input_layout;
   cmd->reserved0 = 0;
 }
@@ -5775,7 +5779,11 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   dev->current_ib_format = static_cast<uint32_t>(format);
   dev->current_ib_offset_bytes = offset;
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-  cmd->buffer = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer)->handle : 0;
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->buffer = dev->current_ib ? dev->current_ib->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
   cmd->reserved0 = 0;
@@ -5792,9 +5800,12 @@ void AEROGPU_APIENTRY IaSetTopology11(D3D11DDI_HDEVICECONTEXT hCtx, D3D10_DDI_PR
   if (dev->current_topology == topo) {
     return;
   }
-  dev->current_topology = topo;
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  dev->current_topology = topo;
   cmd->topology = topo;
   cmd->reserved0 = 0;
 }
@@ -6922,7 +6933,6 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_gs = 0;
   dev->current_input_layout = 0;
   dev->current_input_layout_obj = nullptr;
-  dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   dev->current_vb = nullptr;
   dev->current_vb_stride_bytes = 0;
   dev->current_vb_offset_bytes = 0;
@@ -6978,14 +6988,16 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   il_cmd->input_layout_handle = 0;
   il_cmd->reserved0 = 0;
 
+  const uint32_t default_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   auto* topo_cmd =
       dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
   if (!topo_cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
-  topo_cmd->topology = dev->current_topology;
+  topo_cmd->topology = default_topology;
   topo_cmd->reserved0 = 0;
+  dev->current_topology = default_topology;
 
   std::array<aerogpu_vertex_buffer_binding, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> vb_zeros{};
   auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
