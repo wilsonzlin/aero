@@ -1015,16 +1015,21 @@ To maintain broad browser coverage, the GPU presenter should support a **main-th
 
 ### CPU Worker
 
-> Note: The snippet below is illustrative. The current wasm-bindgen entrypoint is `aero_wasm.js`
-> (built from `crates/aero-wasm`). The canonical CPU worker implementation lives in
-> `web/src/workers/cpu.worker.ts` and uses helpers in `web/src/runtime/`.
+> Note: The snippet below is illustrative (legacy runtime, `vmRuntime=legacy`). The current
+> wasm-bindgen entrypoint is `aero_wasm.js` (built from `crates/aero-wasm`). The worker runtime has
+> two CPU worker entrypoints:
+>
+> - `vmRuntime=legacy`: `web/src/workers/cpu.worker.ts` (drives `WasmVm` / `WasmTieredVm`)
+> - `vmRuntime=machine`: `web/src/workers/machine_cpu.worker.ts` (drives the canonical `Machine`)
+>
+> Both use helpers in `web/src/runtime/`.
 >
 > The real runtime may use `WasmTieredVm` (tiered/Tier-1 JIT) in addition to `WasmVm` (Tier-0). For the canonical
 > mapping of `aero-wasm` exports to runtime paths, see [`docs/vm-crate-map.md`](./vm-crate-map.md) and
 > [ADR 0014](./adr/0014-canonical-machine-stack.md).
 
 ```javascript
-// cpu.worker.js (illustrative)
+// cpu.worker.js (illustrative, legacy vmRuntime=legacy)
 import { initWasmForContext } from "/web/src/runtime/wasm_context";
 import {
     CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
@@ -1042,9 +1047,10 @@ let wasm = null;
 // Minimal Tier-0 VM loop (wired to injected shared guest RAM).
 //
 // Note: `crates/aero-wasm` also exports `Machine` (the canonical full-system VM,
-// `aero_machine::Machine`). The CPU worker runtime uses the legacy CPU-only
-// exports (`WasmVm` / `WasmTieredVm`) to execute against the shared guest RAM
-// mapping and forward port I/O + MMIO back to JS.
+// `aero_machine::Machine`). In `vmRuntime=legacy`, the CPU worker runtime uses
+// the CPU-only exports (`WasmVm` / `WasmTieredVm`) and forwards port I/O + MMIO
+// back to JS. In `vmRuntime=machine`, the CPU worker uses `Machine` directly
+// (see `web/src/workers/machine_cpu.worker.ts`).
 let vm = null;
 
 // Optional lightweight demo harness for the CPU worker (threaded build only).

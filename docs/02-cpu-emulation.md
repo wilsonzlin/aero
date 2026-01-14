@@ -132,7 +132,7 @@ WASM modules **inside a worker**:
   - Uses its **own private linear memory** (does not import the emulator's shared memory) to avoid
     undefined behaviour from multiple Rust runtimes aliasing one `WebAssembly.Memory`.
 - **JS glue (web runtime):**
-  - CPU worker: `web/src/workers/cpu.worker.ts` drives the `WasmVm` export (and may use `WasmTieredVm` for tiered/JIT
+  - CPU worker (legacy runtime, `vmRuntime=legacy`): `web/src/workers/cpu.worker.ts` drives the `WasmVm` export (and may use `WasmTieredVm` for tiered/JIT
     execution) and wires up the JS shims used by the runtime (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`,
     and Tier-1 `globalThis.__aero_jit_call`).
   - JIT worker: `web/src/workers/jit.worker.ts` compiles provided WASM bytes into a `WebAssembly.Module` (cached by

@@ -7,6 +7,11 @@ It exists to remove ambiguity between:
 - **Edge-triggered** interrupt sources (e.g. the legacy i8042 PS/2 controller on ISA IRQ1/IRQ12)
 - **Level-triggered** interrupt sources (e.g. PCI INTx devices like UHCI/EHCI/xHCI)
 
+Note: This document currently describes the legacy worker runtime (`vmRuntime=legacy`), where guest device models live in the
+I/O worker and assert/deassert IRQ lines on the CPU worker via shared IPC events. In `vmRuntime=machine`, guest devices live
+inside the canonical `api.Machine` runtime owned by `web/src/workers/machine_cpu.worker.ts`, so IRQ delivery is handled inside
+the machine and this IO→CPU IRQ transport is not used.
+
 ## What `raiseIrq()` / `lowerIrq()` mean
 
 In `web/src`, `IrqSink` models **physical interrupt input line levels**:
@@ -19,8 +24,8 @@ These calls manipulate the *wire* (line level). They do **not** mean "deliver an
 See also:
 
 - `web/src/io/device_manager.ts` (`IrqSink`)
-- `web/src/workers/io.worker.ts` (device IRQ wiring)
-- `web/src/workers/cpu.worker.ts` (IRQ bitmap/refcount)
+- `web/src/workers/io.worker.ts` (legacy device IRQ wiring)
+- `web/src/workers/cpu.worker.ts` (legacy IRQ bitmap/refcount)
 
 ## Shared IRQ lines: refcounted wire-OR
 
@@ -89,7 +94,7 @@ Example:
 
 ## Worker transport (`irqRaise` / `irqLower`)
 
-Between the I/O worker and CPU worker, IRQs are transported as discrete AIPC events:
+In the legacy worker runtime, between the I/O worker and CPU worker, IRQs are transported as discrete AIPC events:
 
 - `irqRaise` (line asserted)
 - `irqLower` (line deasserted)

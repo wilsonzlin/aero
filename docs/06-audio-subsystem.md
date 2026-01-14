@@ -102,12 +102,14 @@ This section describes the *canonical* browser runtime integration.
    - starts `web/src/audio/mic-worklet-processor.js` as the low-latency producer.
 2. The coordinator forwards the mic ring via `SetMicrophoneRingBufferMessage`.
    - The coordinator owns the attachment policy (`RingBufferOwner`) because the mic ring is SPSC (exactly one consumer).
-   - Default policy: CPU worker in demo mode, IO worker in VM mode.
+   - Default policy:
+     - `vmRuntime=legacy`: CPU worker in demo mode, IO worker in VM mode.
+     - `vmRuntime=machine`: CPU worker (canonical Machine) in VM mode.
      - See `WorkerCoordinator.defaultMicrophoneRingBufferOwner()` + `syncMicrophoneRingBufferAttachments()`.
-    - Optional override (use with care): `WorkerCoordinator.setMicrophoneRingBufferOwner("cpu" | "io" | "none" | null)`.
-      - Use `null` to clear an override and return to the default policy.
-      - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
-        violates the SPSC contract (multiple consumers would advance `readPos` and effectively double-consume/drop samples).
+   - Optional override (use with care): `WorkerCoordinator.setMicrophoneRingBufferOwner("cpu" | "io" | "none" | null)`.
+     - Use `null` to clear an override and return to the default policy.
+     - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
+       violates the SPSC contract (multiple consumers would advance `readPos` and effectively double-consume/drop samples).
    - `ringBuffer`: `SharedArrayBuffer | null`
    - `sampleRate`: the *actual* capture graph sample rate
 3. The consumer worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
@@ -116,15 +118,18 @@ This section describes the *canonical* browser runtime integration.
 
 ### Device registration (PCI/MMIO)
 
-Guest-visible devices are registered on the IO worker PCI bus:
+In the legacy worker runtime (`vmRuntime=legacy`), guest-visible devices are registered on the IO worker PCI bus:
 
 - Bus/device plumbing: `web/src/io/device_manager.ts`, `web/src/io/bus/pci.ts`, `web/src/io/bus/mmio.ts`
-- Worker wiring: `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
+- Worker wiring (legacy runtime, `vmRuntime=legacy`): `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
   - HDA PCI function wrapper: `web/src/io/devices/hda.ts` (`HdaPciDevice`, backed by `HdaControllerBridge`).
     - Registration entrypoint: `maybeInitHdaDevice()` in `web/src/workers/io.worker.ts`.
   - virtio-snd PCI function wrapper: `web/src/io/devices/virtio_snd.ts` (`VirtioSndPciDevice`, backed by `VirtioSndPciBridge`).
     - Registration entrypoint: `tryInitVirtioSndDevice()` in `web/src/workers/io_virtio_snd_init.ts` (invoked by `maybeInitVirtioSndDevice()` in `web/src/workers/io.worker.ts`).
   - See `web/src/io/devices/uhci.ts` for a concrete example of a WASM-backed PCI device wrapper (PIO + IRQ + tick scheduling).
+
+Note: In `vmRuntime=machine`, guest audio devices live inside the canonical `api.Machine` runtime owned by
+`web/src/workers/machine_cpu.worker.ts`; the IO worker runs in host-only mode and does not register guest PCI devices.
 
 ### Ring producer/consumer constraints (SPSC)
 
@@ -168,9 +173,14 @@ the repo includes a small demo harness:
    - the ring buffer write index advances over time,
    - underruns stay bounded and overruns remain 0.
 
-Note: this demo is a *test harness* for the HDA audio pipeline; the production VM device stack is owned by the IO worker.
+Note: this demo is a *test harness* for the HDA audio pipeline. In `vmRuntime=legacy`, the production VM device stack is
+owned by the IO worker. In `vmRuntime=machine`, guest audio devices are owned by the Machine CPU worker and the IO worker runs
+in host-only mode.
 
 ### End-to-end IO-worker HDA PCI/MMIO device path
+
+Legacy runtime note: this section applies to `vmRuntime=legacy` (IO-worker-owned guest devices). In `vmRuntime=machine`,
+guest devices are owned by the Machine CPU worker.
 
 The CPU-worker HDA demo above is useful for validating the core HDA audio model + ring-buffer plumbing, but it does **not**
 exercise the *real* worker runtime device stack (PCI config space, BAR0 MMIO, IO-worker-owned HDA PCI function).

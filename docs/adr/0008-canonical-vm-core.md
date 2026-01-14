@@ -83,9 +83,10 @@ The following crates are **not** canonical VM wiring. They are kept under `crate
 - **`Machine`** (canonical): a full-system VM wrapper around `aero_machine::Machine`. This is the
   intended target for new browser integration work (PCI/device wiring, networking, snapshots, …).
 - **`WasmVm` / `WasmTieredVm`** (legacy CPU-worker runtime): CPU-only stepping loops used by
-  `web/src/workers/cpu.worker.ts`. They execute CPU in WASM but forward port I/O + MMIO back to JS
+  `web/src/workers/cpu.worker.ts` (`vmRuntime=legacy`). They execute CPU in WASM but forward port I/O + MMIO back to JS
   via shims (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`), and `WasmTieredVm` also
   calls out to JS for Tier-1 JIT blocks (`globalThis.__aero_jit_call`).
+  - In `vmRuntime=machine`, the CPU worker entrypoint is `web/src/workers/machine_cpu.worker.ts` and it drives `Machine`.
 - **`PcMachine`** (experimental): wasm-bindgen wrapper around `aero_machine::PcMachine` primarily
   intended for experiments/tests; it allocates its own guest RAM and does not use the worker
   runtime `guest_ram_layout` shared-memory contract.
