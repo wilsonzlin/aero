@@ -16,3 +16,6 @@ iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 capstone = "0.12.0"
 proptest = "1.5.0"
+# Needed by `tests/prefixes_against_iced.rs` to query `OpCodeInfo` and recover
+# prefix byte regions in a decoder-independent way.
+iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "encoder", "op_code_info", "std"] }

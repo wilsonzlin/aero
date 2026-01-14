@@ -322,8 +322,8 @@ fn parse_prefixes(
         let b = bytes[i];
         match b {
             0xF0 => {
-                p.lock = true;
                 // Group 1 prefixes are mutually exclusive; "last prefix wins".
+                p.lock = true;
                 p.rep = false;
                 p.repne = false;
                 i += 1;
