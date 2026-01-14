@@ -1,3 +1,5 @@
+mod aerogpu_intx_helpers;
+
 use aero_devices::pci::profile::AEROGPU;
 use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
@@ -5,19 +7,7 @@ use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use pretty_assertions::assert_eq;
 
-fn program_ioapic_entry(
-    ints: &mut aero_platform::interrupts::PlatformInterrupts,
-    gsi: u32,
-    low: u32,
-    high: u32,
-) {
-    let redtbl_low = 0x10u32 + gsi * 2;
-    let redtbl_high = redtbl_low + 1;
-    ints.ioapic_mmio_write(0x00, redtbl_low);
-    ints.ioapic_mmio_write(0x10, low);
-    ints.ioapic_mmio_write(0x00, redtbl_high);
-    ints.ioapic_mmio_write(0x10, high);
-}
+use aerogpu_intx_helpers::{ioapic_default_polarity_low, program_ioapic_entry};
 
 #[test]
 fn aerogpu_intx_is_gated_on_pci_command_intx_disable_in_apic_mode() {
@@ -58,7 +48,7 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable_in_apic_mode() {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
 
-        let polarity_low = gsi == 9 || (10..=13).contains(&gsi) || gsi >= 16;
+        let polarity_low = ioapic_default_polarity_low(gsi);
         let mut low = u32::from(VECTOR) | (1 << 15); // level-triggered
         if polarity_low {
             low |= 1 << 13; // active-low
