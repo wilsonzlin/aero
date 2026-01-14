@@ -54,6 +54,8 @@ Assert-ValidJson -ExpectedCommand "dump-ring" -Args @("--dump-ring", "--ring-id"
 Assert-ValidJson -ExpectedCommand "watch-ring" -Args @("--watch-ring", "--ring-id", "0", "--samples", "1", "--interval-ms", "1")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--cmd-out", "last_cmd_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--count", "2", "--cmd-out", "last_cmd_test_multi.bin")
+Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-submit", "--cmd-out", "last_cmd_submit_test.bin")
+Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--out", "last_cmd_out_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-createalloc" -Args @("--dump-createalloc")
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
 Assert-ValidJson -ExpectedCommand "query-scanline" -Args @("--query-scanline", "--vblank-samples", "1", "--vblank-interval-ms", "0")
