@@ -33,7 +33,7 @@ Network connectivity is important for Windows activation, updates, and general u
 | `crates/aero-l2-proxy/` | L2 tunnel proxy |
 | `proxy/` | Go-based network proxies |
 | `proxy/webrtc-udp-relay/` | WebRTC UDP relay |
-| `net-proxy/` | Local development proxy |
+| `net-proxy/` | Local development proxy (TCP/UDP relay + DoH) |
 | `backend/aero-gateway/` | Production gateway service |
 
 ---
@@ -193,6 +193,13 @@ This provides a local proxy that the emulator (and the browser networking client
 - `GET /healthz`
 - `GET|POST /dns-query` and `GET /dns-json` (DNS-over-HTTPS)
 - `WS /tcp`, `WS /tcp-mux`, `WS /udp`
+
+Notes:
+
+- DoH endpoints are normal `fetch()` calls, so browser clients generally need them to be **same-origin** (or served with
+  permissive CORS). The easiest local-dev approach is proxying `/dns-query` + `/dns-json` through Vite.
+- `net-proxy` DoH endpoints are intentionally lightweight and are **unauthenticated** (no session cookie) and not
+  policy-filtered by `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` (the policy applies to `/tcp`, `/tcp-mux`, `/udp`).
 
 See [`net-proxy/README.md`](../net-proxy/README.md) for full details (allowlist policy, URL formats, and DoH examples).
 
