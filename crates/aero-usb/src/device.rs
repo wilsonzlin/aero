@@ -617,6 +617,24 @@ impl IoSnapshot for AttachedUsbDevice {
             self.control = Some(decode_control_state(buf)?);
         }
         if let Some(model) = r.bytes(ADEV_TAG_MODEL_SNAPSHOT) {
+            let snapshot_model_id = peek_snapshot_device_id(model)?;
+            let current_model_id = usb_device_model_snapshot_device_id(&*self.model);
+
+            // Host integrations may choose to pre-attach device instances before restoring a
+            // controller snapshot (e.g. passthrough devices that require an external host handle).
+            //
+            // The snapshot should never be silently applied to a mismatched device model: doing so
+            // can leave the guest-visible wrapper state restored (address, endpoint-0 control
+            // transfer state, etc.) while the underlying device behaves as a different class of
+            // hardware. Require the model types to match for known snapshot-capable models.
+            if is_known_usb_device_model_device_id(&snapshot_model_id)
+                && current_model_id != Some(snapshot_model_id)
+            {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "usb device model mismatch",
+                ));
+            }
+
             apply_usb_device_model_snapshot(&mut *self.model, model)?;
         }
 
@@ -624,23 +642,57 @@ impl IoSnapshot for AttachedUsbDevice {
     }
 }
 
+fn peek_snapshot_device_id(bytes: &[u8]) -> SnapshotResult<[u8; 4]> {
+    // `SnapshotReader::parse` requires a concrete expected device ID. Peek at the snapshot header
+    // to decide which device-model loader to invoke.
+    if bytes.len() < 16 {
+        return Err(SnapshotError::UnexpectedEof);
+    }
+    if bytes[0..4] != *b"AERO" {
+        return Err(SnapshotError::InvalidMagic);
+    }
+    Ok([bytes[8], bytes[9], bytes[10], bytes[11]])
+}
+
+fn is_known_usb_device_model_device_id(device_id: &[u8; 4]) -> bool {
+    matches!(
+        device_id,
+        b"UHUB" | b"UKBD" | b"UMSE" | b"UGPD" | b"UCMP" | b"HIDP" | b"WUSB"
+    )
+}
+
+fn usb_device_model_snapshot_device_id(model: &dyn UsbDeviceModel) -> Option<[u8; 4]> {
+    // Keep in sync with `save_usb_device_model_snapshot` and
+    // `try_new_usb_device_model_from_snapshot`.
+    let any = model as &dyn Any;
+    if any.is::<UsbHubDevice>() {
+        return Some(UsbHubDevice::DEVICE_ID);
+    }
+    if any.is::<UsbHidKeyboardHandle>() || any.is::<UsbHidKeyboard>() {
+        return Some(UsbHidKeyboard::DEVICE_ID);
+    }
+    if any.is::<UsbHidMouseHandle>() || any.is::<UsbHidMouse>() {
+        return Some(UsbHidMouse::DEVICE_ID);
+    }
+    if any.is::<UsbHidGamepadHandle>() || any.is::<UsbHidGamepad>() {
+        return Some(UsbHidGamepad::DEVICE_ID);
+    }
+    if any.is::<UsbCompositeHidInputHandle>() || any.is::<UsbCompositeHidInput>() {
+        return Some(UsbCompositeHidInput::DEVICE_ID);
+    }
+    if any.is::<UsbHidPassthroughHandle>() || any.is::<UsbHidPassthrough>() {
+        return Some(UsbHidPassthrough::DEVICE_ID);
+    }
+    if any.is::<crate::UsbWebUsbPassthroughDevice>() {
+        return Some(crate::UsbWebUsbPassthroughDevice::DEVICE_ID);
+    }
+    None
+}
+
 fn try_new_usb_device_model_from_snapshot(
     model_snapshot: &[u8],
 ) -> SnapshotResult<Option<Box<dyn UsbDeviceModel>>> {
-    // `SnapshotReader::parse` requires a concrete expected device ID. Peek at the snapshot header
-    // and dispatch to known model types.
-    if model_snapshot.len() < 16 {
-        return Err(SnapshotError::UnexpectedEof);
-    }
-    if model_snapshot[0..4] != *b"AERO" {
-        return Err(SnapshotError::InvalidMagic);
-    }
-    let device_id = [
-        model_snapshot[8],
-        model_snapshot[9],
-        model_snapshot[10],
-        model_snapshot[11],
-    ];
+    let device_id = peek_snapshot_device_id(model_snapshot)?;
 
     match &device_id {
         b"UHUB" => {
@@ -723,15 +775,7 @@ fn apply_usb_device_model_snapshot(
     model: &mut dyn UsbDeviceModel,
     bytes: &[u8],
 ) -> SnapshotResult<()> {
-    // `SnapshotReader::parse` requires a concrete expected device ID. Peek at the snapshot header
-    // and dispatch to known model types.
-    if bytes.len() < 16 {
-        return Err(SnapshotError::UnexpectedEof);
-    }
-    if bytes[0..4] != *b"AERO" {
-        return Err(SnapshotError::InvalidMagic);
-    }
-    let device_id = [bytes[8], bytes[9], bytes[10], bytes[11]];
+    let device_id = peek_snapshot_device_id(bytes)?;
 
     let any = model as &mut dyn Any;
 
@@ -1037,5 +1081,16 @@ mod tests {
         assert_eq!(dev.handle_in(0, 8), UsbInResult::Data((8u8..16).collect()));
         assert_eq!(dev.handle_in(0, 8), UsbInResult::Data(Vec::new()));
         assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+    }
+
+    #[test]
+    fn snapshot_restore_errors_on_usb_device_model_mismatch() {
+        let kb_snapshot = AttachedUsbDevice::new(Box::new(UsbHidKeyboardHandle::new())).save_state();
+        let mut mouse = AttachedUsbDevice::new(Box::new(UsbHidMouseHandle::new()));
+
+        match mouse.load_state(&kb_snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("usb device model mismatch")) => {}
+            other => panic!("expected model mismatch error, got {other:?}"),
+        }
     }
 }
