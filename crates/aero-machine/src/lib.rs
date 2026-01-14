@@ -3913,6 +3913,21 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             // No pending pairs; tags begin immediately.
         } else {
             // Fallback: probe for the raw `(pending_lo, pending_flag_u32)` pair(s).
+            //
+            // As with the v2 sparse snapshot restore path, older snapshots may contain the
+            // deterministic vblank timebase fields but omit all tagged trailing sections. When that
+            // happens, the high 32 bits of `now_ns` are frequently 0 early in VM lifetime and can
+            // be mistaken for the pending-flag u32.
+            //
+            // Only treat a 16-byte tail as pending-pair data when at least one pending flag is set;
+            // otherwise, leave the bytes for the timebase decoder below.
+            let remaining = bytes.len().saturating_sub(off);
+            if remaining == 16
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag == 0)
+                && peek_flag(bytes, off.saturating_add(12)).is_some_and(|flag| flag == 0)
+            {
+                // No pending pairs.
+            } else {
             if bytes.len() >= off.saturating_add(8)
                 && !known_tag(bytes, off)
                 && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
@@ -3926,6 +3941,7 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             {
                 cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
                 cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
             }
         }
     }
@@ -4211,6 +4227,21 @@ fn apply_aerogpu_snapshot_v2(
         } else if pending_pair_count == 0 {
             // No pending pairs; tags begin immediately.
         } else {
+            // If there are exactly 16 trailing bytes remaining, they may be the deterministic vblank
+            // timebase `(now_ns, next_vblank_ns)` rather than two pending pairs. Older snapshots that
+            // lack the tag sections (`DACP`, etc.) can still carry the timebase fields, and their
+            // upper 32 bits frequently remain 0 early in the VM lifetime, which would otherwise
+            // satisfy the "pending flag u32 <= 1" probe.
+            //
+            // Only treat the bytes as pending-pair data when at least one pending flag is set;
+            // otherwise, leave them to be consumed by the timebase decoder below.
+            let remaining = bytes.len().saturating_sub(off);
+            if remaining == 16
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag == 0)
+                && peek_flag(bytes, off.saturating_add(12)).is_some_and(|flag| flag == 0)
+            {
+                // No pending pairs.
+            } else {
             if bytes.len() >= off.saturating_add(8)
                 && !known_tag(bytes, off)
                 && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
@@ -4224,6 +4255,7 @@ fn apply_aerogpu_snapshot_v2(
             {
                 cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
                 cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
             }
         }
     }
@@ -19595,6 +19627,41 @@ mod tests {
         assert_eq!(dst_vram.dac_write_latch, src_vram.dac_write_latch);
         assert_eq!(dst_vram.attr_index, src_vram.attr_index);
         assert_eq!(dst_vram.attr_flip_flop, src_vram.attr_flip_flop);
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_does_not_parse_timebase_as_pending_pairs_when_tags_absent() {
+        // Similar to `*_does_not_parse_timebase_as_vga_tag_*`, but ensures the optional FB_GPA
+        // pending-pair probe does not consume the deterministic vblank timebase fields when the
+        // snapshot has no tags and no pending pairs.
+        //
+        // Use a `now_ns` value whose upper 32 bits are 0 so it could otherwise be mistaken for the
+        // pending-flag u32.
+        let now_ns = 1_000_000_000u64;
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_u32_le(&mut bytes, 4096); // page_size
+        push_u32_le(&mut bytes, 0); // page_count
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+        // No pending pairs, no tags.
+        push_u64_le(&mut bytes, now_ns);
+        push_u64_le(&mut bytes, 0); // next_raw = None
+
+        let mut vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut bar0 = AeroGpuMmioDevice::default();
+        let restored_dac = apply_aerogpu_snapshot_v2(&bytes, &mut vram, &mut bar0)
+            .expect("snapshot v2 should apply");
+        assert!(!restored_dac, "snapshot contains no DACP tag");
+
+        let regs = bar0.snapshot_v1();
+        assert_eq!(regs.scanout0_fb_gpa_pending_lo, 0);
+        assert!(!regs.scanout0_fb_gpa_lo_pending);
+        assert_eq!(regs.cursor_fb_gpa_pending_lo, 0);
+        assert!(!regs.cursor_fb_gpa_lo_pending);
+        assert_eq!(regs.now_ns, now_ns);
+        assert_eq!(regs.next_vblank_ns, None);
     }
 
     #[test]
