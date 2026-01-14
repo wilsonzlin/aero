@@ -862,6 +862,8 @@ impl Mmu {
                     if needs_dirty {
                         let leaf_addr = entry.leaf_addr;
                         let leaf_is_64 = entry.leaf_is_64;
+                        let tlb_vbase = entry.vbase();
+                        let tlb_page_size = entry.page_size();
 
                         if leaf_is_64 {
                             let val = bus.read_u64(leaf_addr);
@@ -870,7 +872,7 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb.set_dirty(vaddr, is_exec, pcid, tlb_page_sizes);
+                        self.tlb.set_dirty(tlb_vbase, tlb_page_size, is_exec, pcid);
                     }
 
                     return Ok(paddr);
