@@ -1539,6 +1539,59 @@ fn wgsl_predicated_texld_avoids_non_uniform_control_flow() {
 }
 
 #[test]
+fn wgsl_predicated_texldd_is_valid_with_non_uniform_predicate() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   setp_gt p0, v0.x, c0.x
+    //   texldd (p0) r0, v0, c1, c2, s0
+    //   mov oC0, r0
+    //   end
+    //
+    // `texldd` maps to WGSL `textureSampleGrad`, which uses explicit gradients. Unlike `texld`
+    // (`textureSample`), this should validate even when predicated on a non-uniform condition.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
+        opcode_token(78, 3) | (0u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // texldd (p0) r0, v0, c1, c2, s0
+        opcode_token(77, 6) | 0x1000_0000, // predicated
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),  // v0
+        src_token(2, 1, 0xE4, 0),  // c1 (ddx)
+        src_token(2, 2, 0xE4, 0),  // c2 (ddy)
+        src_token(10, 0, 0xE4, 0), // s0
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSampleGrad("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texkill_is_conditional() {
     // ps_3_0:
     //   texkill r0
