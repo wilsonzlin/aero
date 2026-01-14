@@ -4692,6 +4692,10 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
       return kD3DErrInvalidCall;
     }
     return S_OK;
+  } else {
+    // Full fixed-function is handled above; remaining cases are:
+    // - shader-stage interop (exactly one stage set), or
+    // - fully programmable (both stages set).
   }
 
   // ---------------------------------------------------------------------------
@@ -4841,6 +4845,7 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
   }
+
   return S_OK;
 }
 
@@ -18284,8 +18289,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(pipeline_hr);
   }
 
-  const bool fixedfunc_active =
-      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
   const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   if (fixedfunc_active) {
@@ -18508,10 +18512,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(device_lost_hresult(dev));
   }
 
-  const bool fixedfunc_active =
-      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-
   const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
   const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * stride_bytes;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
@@ -18525,6 +18525,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   if (FAILED(pipeline_hr)) {
     return trace.ret(pipeline_hr);
   }
+
+  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved = dev->streams[0];
 
@@ -18682,10 +18685,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return device_lost_hresult(dev);
   }
 
-  const bool fixedfunc_active =
-      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-
   const uint32_t vertex_count = vertex_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
   const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * pDraw->VertexStreamZeroStride;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
@@ -18698,6 +18697,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   if (FAILED(pipeline_hr)) {
     return pipeline_hr;
   }
+
+  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved = dev->streams[0];
 
@@ -18816,10 +18818,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return device_lost_hresult(dev);
   }
 
-  const bool fixedfunc_active =
-      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
-  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-
   const uint32_t index_count = index_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
   const uint32_t index_size = (pDraw->IndexDataFormat == kD3dFmtIndex32) ? 4u : 2u;
   const uint64_t ib_size_u64 = static_cast<uint64_t>(index_count) * index_size;
@@ -18840,6 +18838,9 @@ static HRESULT device_draw_indexed_primitive2_locked(
   if (FAILED(pipeline_hr)) {
     return pipeline_hr;
   }
+
+  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   DeviceStateStream saved_stream = dev->streams[0];
   Resource* saved_ib = dev->index_buffer;
@@ -19058,8 +19059,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   if (FAILED(pipeline_hr)) {
     return trace.ret(pipeline_hr);
   }
-  const bool fixedfunc_active =
-      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_active = fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps;
   const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
