@@ -153,4 +153,10 @@ typedef struct _AEROVNET_DIAG_INFO {
  * consumers should always gate reads based on `Size` / returned bytes.
  */
 #define AEROVNET_DIAG_INFO_EXPECTED_SIZE 256u
-typedef char _aerovnet_diag_info_size_check[(sizeof(AEROVNET_DIAG_INFO) == AEROVNET_DIAG_INFO_EXPECTED_SIZE) ? 1 : -1];
+
+/* Prefer a clear error message in C++ (guest selftest), but keep a C89-friendly check for the WDK C build. */
+#ifdef __cplusplus
+static_assert(sizeof(AEROVNET_DIAG_INFO) == AEROVNET_DIAG_INFO_EXPECTED_SIZE, "AEROVNET_DIAG_INFO size");
+#else
+typedef char aerovnet_diag_info_size_check[(sizeof(AEROVNET_DIAG_INFO) == AEROVNET_DIAG_INFO_EXPECTED_SIZE) ? 1 : -1];
+#endif
