@@ -41,6 +41,8 @@ run cargo test -p aero-devices-gpu --locked
 run cargo test -p aero-machine --locked \
   --test aerogpu_pci_enumeration \
   --test aerogpu_bar0_mmio_vblank \
+  --test aerogpu_intx_asserts_on_irq_enable \
+  --test aerogpu_intx_is_gated_on_pci_command_intx_disable \
   --test aerogpu_immediate_backend_completes_fence \
   --test aerogpu_features \
   --test aerogpu_submission_bridge \
