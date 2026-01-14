@@ -1575,4 +1575,71 @@ mod tests {
             "unexpected error: {err:?}"
         );
     }
+
+    #[test]
+    fn redact_url_for_logs_removes_query_fragment_and_credentials() {
+        let url: Url = "https://user:pass@example.com/manifest.json?token=secret#frag"
+            .parse()
+            .expect("parse url");
+        let redacted = redact_url_for_logs(&url);
+        assert_eq!(redacted.query(), None);
+        assert_eq!(redacted.fragment(), None);
+        assert_eq!(redacted.username(), "");
+        assert!(redacted.password().is_none());
+        assert!(!redacted.as_str().contains("token="));
+        assert!(!redacted.as_str().contains("secret"));
+        assert!(!redacted.as_str().contains("user"));
+        assert!(!redacted.as_str().contains("pass"));
+    }
+
+    #[test]
+    fn chunked_streaming_disk_config_debug_redacts_secrets() {
+        let url: Url = "https://user:pass@example.com/manifest.json?token=secret"
+            .parse()
+            .expect("parse url");
+        let mut config = ChunkedStreamingDiskConfig::new(url, "cache-dir");
+        config.request_headers = vec![(
+            "Authorization".to_string(),
+            "Bearer super-secret-token".to_string(),
+        )];
+
+        let dbg = format!("{config:?}");
+        assert!(
+            !dbg.contains("token=secret"),
+            "expected querystring to be redacted; debug was: {dbg}"
+        );
+        assert!(
+            dbg.contains("username: \"\"") && dbg.contains("password: None"),
+            "expected credentials to be redacted; debug was: {dbg}"
+        );
+        assert!(
+            dbg.contains("Authorization") || dbg.to_ascii_lowercase().contains("authorization"),
+            "expected header name to be listed; debug was: {dbg}"
+        );
+        assert!(
+            !dbg.contains("super-secret-token"),
+            "expected header value to be redacted; debug was: {dbg}"
+        );
+    }
+
+    #[test]
+    fn build_header_map_normalizes_names_and_rejects_invalid_values() {
+        let headers = vec![
+            ("Authorization".to_string(), "Bearer ok".to_string()),
+            // Values cannot include newlines.
+            ("X-Test".to_string(), "ok\r\nInjected: bad".to_string()),
+        ];
+        let err = build_header_map(&headers).expect_err("expected invalid header value error");
+        assert!(
+            matches!(&err, ChunkedStreamingDiskError::Protocol(_)),
+            "unexpected error: {err:?}"
+        );
+
+        let ok_headers = vec![("Authorization".to_string(), "Bearer ok".to_string())];
+        let map = build_header_map(&ok_headers).expect("expected header map build to succeed");
+        assert!(
+            map.get("authorization").is_some(),
+            "expected header names to be normalized"
+        );
+    }
 }
