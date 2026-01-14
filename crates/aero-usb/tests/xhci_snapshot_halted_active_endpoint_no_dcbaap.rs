@@ -2,6 +2,7 @@ use std::boxed::Box;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::xhci::context::SlotContext;
+use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
