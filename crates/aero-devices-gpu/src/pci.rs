@@ -727,7 +727,9 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             let b = usize::try_from(addr)
                 .ok()
                 .and_then(|idx| vram.get(idx).copied())
-                .unwrap_or(0);
+                // Out-of-range VRAM accesses should "float high" to match the rest of the
+                // emulator's MMIO semantics (unmapped reads yield 0xFF).
+                .unwrap_or(0xFF);
             out |= (b as u64) << (i * 8);
         }
         out
