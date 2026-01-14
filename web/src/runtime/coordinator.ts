@@ -1058,10 +1058,10 @@ export class WorkerCoordinator {
    * Select which disks the I/O worker should expose as boot media and broadcast the selection
    * to workers that need to know whether a "real VM" is active.
    *
-   * Runtime selection is explicit via `config.vmRuntime`.
+   * Note: `config.vmRuntime` is the runtime selector ("machine" vs legacy). Within the legacy
+   * runtime, boot-disk presence is treated as an activity signal ("VM active" vs demo loops).
    *
-   * - legacy: the I/O worker opens disks; boot-disk presence is additionally used as an activity
-   *   signal ("VM active" vs demo loops) by the legacy CPU worker (`cpu.worker.ts`).
+   * - legacy: the I/O worker opens disks.
    * - machine: the CPU worker is `machine_cpu.worker.ts` and owns OPFS disk handles; the I/O worker
    *   only needs mount IDs, so we omit disk metadata to avoid competing SyncAccessHandles.
    */
