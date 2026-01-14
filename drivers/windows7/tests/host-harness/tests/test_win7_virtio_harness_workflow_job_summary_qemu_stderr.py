@@ -21,8 +21,10 @@ class Win7VirtioHarnessWorkflowJobSummaryQemuStderrTests(unittest.TestCase):
         self.assertIn("qemu_stderr_log", self.text)
         self.assertIn(".qemu.stderr.log", self.text)
         self.assertIn("QEMU stderr (last line)", self.text)
+        self.assertIn("qemu_cmdline", self.text)
+        self.assertIn("Launching QEMU:", self.text)
+        self.assertIn("QEMU command:", self.text)
 
 
 if __name__ == "__main__":
     unittest.main()
-

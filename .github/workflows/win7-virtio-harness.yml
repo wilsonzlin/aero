@@ -895,6 +895,7 @@ jobs:
           blk_reset_host_marker=""
           blk_reset_recovery_host_marker=""
           qemu_stderr_line=""
+          qemu_cmdline=""
           if [[ -f "${serial_log}" ]]; then
             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -974,6 +975,7 @@ jobs:
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
              # Fallback: last explicit "ERROR:" line.
              error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
+             qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
            fi
           if [[ -f "${qemu_stderr_log}" ]]; then
             qemu_stderr_line="$(tail -n 1 "${qemu_stderr_log}" | tr -d '\r' || true)"
@@ -1035,6 +1037,9 @@ jobs:
             fi
             if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
               echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
+            fi
+            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_cmdline}" ]]; then
+              echo "- QEMU command: \`${qemu_cmdline}\`"
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: ${result_marker}"
