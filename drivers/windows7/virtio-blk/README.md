@@ -157,3 +157,6 @@ understand the original v1 layout can request/consume just the first 16 bytes (t
 For robustness testing, the driver also supports a reset trigger IOCTL:
 
 - `SRB_IO_CONTROL.ControlCode = 0x8000A002` (force a device/queue reset)
+
+This IOCTL is intended as a **debug-only stress hook** and returns `STATUS_NOT_SUPPORTED`
+in free builds (unless the driver is compiled with `DBG=1`).

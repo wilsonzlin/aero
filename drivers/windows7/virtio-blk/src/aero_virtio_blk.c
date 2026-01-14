@@ -1133,6 +1133,17 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   }
 
   if (ctrl->ControlCode == AEROVBLK_IOCTL_FORCE_RESET) {
+#if !DBG
+    /*
+     * Debug-only stress path: disabled in free builds unless explicitly enabled
+     * by recompiling with DBG=1.
+     */
+    ctrl->ReturnCode = (ULONG)STATUS_NOT_SUPPORTED;
+    ctrl->Length = 0;
+    srb->DataTransferLength = sizeof(SRB_IO_CONTROL);
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
+    return;
+#else
     InterlockedIncrement(&devExt->IoctlResetCount);
 
     ctrl->ReturnCode = 0;
@@ -1157,6 +1168,7 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
 
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return;
+#endif
   }
 
   ctrl->ReturnCode = (ULONG)STATUS_NOT_SUPPORTED;
