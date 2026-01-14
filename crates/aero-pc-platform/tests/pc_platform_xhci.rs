@@ -190,11 +190,12 @@ fn pc_platform_gates_xhci_mmio_on_pci_command_mem_bit() {
     // Use CRCR (command ring control register) as a scratch register. Unlike USBCMD, CRCR does not
     // have write-sensitive bits like HCRST, so it's safe to write test values.
     //
-    // Note: xHCI masks CRCR reserved bits 4..=5 to zero (see `sync_command_ring_from_crcr`), so use
-    // a marker value with those bits clear to get stable readback.
+    // Note: xHCI forces CRCR bits 3..=5 to 0 (CRR is read-only; bits 4..=5 are reserved) and masks
+    // the ring pointer to 64-byte alignment (see `sync_command_ring_from_crcr`). Use a marker value
+    // with those bits already clear so we can assert stable readback.
     let usbcmd_addr = xhci_usbcmd_addr(&mut pc, bar0_base);
     let crcr_addr = usbcmd_addr + 0x18;
-    const CRCR_MARKER: u64 = 0xDEAD_BEEF_F00D_CACE;
+    const CRCR_MARKER: u64 = 0xDEAD_BEEF_F00D_CAC0;
     pc.memory.write_u64(crcr_addr, CRCR_MARKER);
     assert_eq!(pc.memory.read_u64(crcr_addr), CRCR_MARKER);
 
@@ -228,9 +229,9 @@ fn pc_platform_routes_xhci_mmio_after_bar_reprogramming() {
     let crcr_addr_old = usbcmd_addr_old + 0x18;
 
     // Write a recognizable value via the initial BAR.
-    // Bits 4..=5 are masked to zero by the controller model; use a value with those bits already
-    // clear so we can assert stable readback.
-    const CRCR_MARKER: u64 = 0xA5A5_5A5A_1234_5648;
+    // Bits 3..=5 are forced to 0 by the controller model (CRR + reserved bits), so use a value with
+    // those bits already clear so we can assert stable readback.
+    const CRCR_MARKER: u64 = 0xA5A5_5A5A_1234_5640;
     pc.memory.write_u64(crcr_addr_old, CRCR_MARKER);
     assert_eq!(pc.memory.read_u64(crcr_addr_old), CRCR_MARKER);
 
