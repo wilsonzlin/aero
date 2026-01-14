@@ -4234,10 +4234,13 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
 
     if (supported) {
         /*
-         * If the source mode set contains mode entries, ensure they are all
-         * within our supported whitelist. This keeps IsSupportedVidPn aligned
-         * with EnumVidPnCofuncModality and avoids the OS selecting unsupported
-         * modes that happen to be present in a proposed VidPN.
+         * Collect all supported source-mode dimensions.
+         *
+         * Be tolerant: during intermediate VidPN construction, dxgkrnl can
+         * temporarily populate the source mode set with modes we will later
+         * prune in EnumVidPnCofuncModality. We only require that at least one
+         * supported mode exists (or a supported pinned mode), not that every
+         * entry is supported.
          */
         if (sms.pfnAcquireFirstModeInfo && sms.pfnAcquireNextModeInfo) {
             const D3DKMDT_VIDPN_SOURCE_MODE* mode = NULL;
@@ -4260,31 +4263,21 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                     sms.pfnReleaseModeInfo(hSourceModeSet, mode);
                 } else {
                     for (;;) {
-                        BOOLEAN ok = FALSE;
-                    if (mode->Type == D3DKMDT_RMT_GRAPHICS) {
-                        const ULONG w = mode->Format.Graphics.PrimSurfSize.cx;
-                        const ULONG h = mode->Format.Graphics.PrimSurfSize.cy;
-                        const D3DDDIFORMAT fmt = mode->Format.Graphics.PixelFormat;
-                        const LONG stride = mode->Format.Graphics.Stride;
-                        if (stride < 0) {
-                            ok = FALSE;
-                        } else if (stride > 0 && w != 0 && w <= (0xFFFFFFFFu / 4u) && (ULONG)stride < (w * 4u)) {
-                            ok = FALSE;
-                        } else if (AeroGpuIsSupportedVidPnPixelFormat(fmt) && AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
-                            ok = TRUE;
-                            AeroGpuModeListAddUnique(sourceDims,
-                                                     &sourceDimCount,
-                                                     (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
-                                                     w,
-                                                     h);
-                        }
-                    }
+                        if (mode->Type == D3DKMDT_RMT_GRAPHICS) {
+                            const ULONG w = mode->Format.Graphics.PrimSurfSize.cx;
+                            const ULONG h = mode->Format.Graphics.PrimSurfSize.cy;
+                            const D3DDDIFORMAT fmt = mode->Format.Graphics.PixelFormat;
+                            const LONG stride = mode->Format.Graphics.Stride;
 
-                        if (!ok) {
-                            supported = FALSE;
-                            sms.pfnReleaseModeInfo(hSourceModeSet, mode);
-                            mode = NULL;
-                            break;
+                            if (stride >= 0 &&
+                                (stride == 0 || (w != 0 && w <= (0xFFFFFFFFu / 4u) && (ULONG)stride >= (w * 4u))) &&
+                                AeroGpuIsSupportedVidPnPixelFormat(fmt) && AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
+                                AeroGpuModeListAddUnique(sourceDims,
+                                                         &sourceDimCount,
+                                                         (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
+                                                         w,
+                                                         h);
+                            }
                         }
 
                         const D3DKMDT_VIDPN_SOURCE_MODE* next = NULL;
@@ -4377,7 +4370,6 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                     tms.pfnReleaseModeInfo(hTargetModeSet, mode);
                 } else {
                     for (;;) {
-                        BOOLEAN ok = FALSE;
                         const ULONG w = mode->VideoSignalInfo.ActiveSize.cx;
                         const ULONG h = mode->VideoSignalInfo.ActiveSize.cy;
                         const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = mode->VideoSignalInfo.ScanLineOrdering;
@@ -4385,19 +4377,11 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                             (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
                             AeroGpuIsSupportedVidPnVSyncFrequency(mode->VideoSignalInfo.VSyncFreq.Numerator,
                                                                  mode->VideoSignalInfo.VSyncFreq.Denominator)) {
-                            ok = TRUE;
                             AeroGpuModeListAddUnique(targetDims,
                                                      &targetDimCount,
                                                      (UINT)(sizeof(targetDims) / sizeof(targetDims[0])),
                                                      w,
                                                      h);
-                        }
-
-                        if (!ok) {
-                            supported = FALSE;
-                            tms.pfnReleaseModeInfo(hTargetModeSet, mode);
-                            mode = NULL;
-                            break;
                         }
 
                         const D3DKMDT_VIDPN_TARGET_MODE* next = NULL;
