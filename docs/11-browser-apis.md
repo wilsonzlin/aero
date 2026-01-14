@@ -351,8 +351,11 @@ function initializeMemory() {
     // `segments` contains:
     // - `control`: SharedArrayBuffer for status + per-worker command/event rings
     // - `guestMemory`: shared WebAssembly.Memory for guest RAM
+    // - `vram`: optional SharedArrayBuffer backing the AeroGPU BAR1/VRAM aperture (for shared MMIO + scanout)
     // - `ioIpc`: SharedArrayBuffer for high-frequency CPU<->IO IPC
     // - `sharedFramebuffer`: demo/legacy display buffer
+    // - `scanoutState`: SharedArrayBuffer for the shared ScanoutState descriptor (legacy/VBE ↔ WDDM handoff)
+    // - `cursorState`: SharedArrayBuffer for the shared hardware cursor descriptor (WDDM cursor regs)
     return { segments, shared, guestToLinear: guestToLinearAddr };
 }
 ```
@@ -885,7 +888,10 @@ class WorkerCoordinator {
         // The canonical web runtime allocation is:
         // - `controlSab`: a small SharedArrayBuffer holding status + command/event rings per worker
         // - `guestMemory`: shared WebAssembly.Memory holding guest RAM
+        // - `vram`: optional SharedArrayBuffer backing the VRAM/BAR1 aperture (outside guest RAM)
         // - `ioIpcSab`: separate AIPC rings for high-frequency CPU<->IO ops
+        // - `scanoutState`: shared scanout descriptor (legacy/VBE ↔ WDDM handoff)
+        // - `cursorState`: shared hardware cursor descriptor (WDDM cursor regs)
         const segments = allocateSharedMemorySegments();
         this.shared = createSharedMemoryViews(segments);
         this.statusFlags = this.shared.status;
@@ -906,9 +912,19 @@ class WorkerCoordinator {
                 role,
                 controlSab: segments.control,
                 guestMemory: segments.guestMemory,
+                // Shared VRAM aperture (BAR1 backing). Optional in some test harnesses.
+                vram: segments.vram,
+                // Current web runtime contract: VRAM lives at `PCI_MMIO_BASE = 0xE000_0000`.
+                // See `web/src/arch/guest_phys.ts`.
+                vramBasePaddr: segments.vram ? 0xE000_0000 : undefined,
+                vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
                 ioIpcSab: segments.ioIpc,
                 sharedFramebuffer: segments.sharedFramebuffer,
                 sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+                scanoutState: segments.scanoutState,
+                scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+                cursorState: segments.cursorState,
+                cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
             });
         });
     }
