@@ -211,6 +211,7 @@ fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struc
             parameters: vec![sig_param("SV_Position", 0, 0, 0b1111)],
         }),
         psgn: None,
+        pcsg: None,
     };
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)

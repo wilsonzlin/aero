@@ -1,5 +1,6 @@
 //! Parsing and representation of DXBC signature chunks (`ISGN`/`OSGN`/`PSGN` and
-//! `ISG1`/`OSG1`/`PSG1`).
+//! `ISG1`/`OSG1`/`PSG1`, plus tessellation patch-constant signatures
+//! `PCSG`/`PCG1`).
 //!
 //! The signature chunks provide the semantic ↔ register mapping used by D3D10+
 //! shaders. The WGSL translator uses them to generate vertex input/output
@@ -36,6 +37,8 @@ pub struct ShaderSignatures {
     pub isgn: Option<DxbcSignature>,
     pub osgn: Option<DxbcSignature>,
     pub psgn: Option<DxbcSignature>,
+    /// Patch-constant signature (`PCSG` / `PCG1`) used by HS/DS tessellation stages.
+    pub pcsg: Option<DxbcSignature>,
 }
 
 #[derive(Debug)]
@@ -74,14 +77,18 @@ pub fn parse_signatures(dxbc: &DxbcFile<'_>) -> Result<ShaderSignatures, Signatu
     const ISG1: FourCC = FourCC(*b"ISG1");
     const OSG1: FourCC = FourCC(*b"OSG1");
     const PSG1: FourCC = FourCC(*b"PSG1");
+    const PCG1: FourCC = FourCC(*b"PCG1");
 
     Ok(ShaderSignatures {
         // Prefer the `*SG1` variants but accept `*SGN` when needed. Real-world
         // DXBC can contain duplicate signature chunks; we iterate in file order
-        // and take the first one that parses successfully.
+        // and take the first one that parses successfully. Patch-constant
+        // signatures follow a similar pattern (`PCG1` preferred with `PCSG`
+        // fallback).
         isgn: parse_signature_from_dxbc(dxbc, ISG1)?,
         osgn: parse_signature_from_dxbc(dxbc, OSG1)?,
         psgn: parse_signature_from_dxbc(dxbc, PSG1)?,
+        pcsg: parse_signature_from_dxbc(dxbc, PCG1)?,
     })
 }
 
@@ -93,6 +100,7 @@ fn parse_signature_from_dxbc(
         [b'I', b'S', b'G', b'1'] => Some(FourCC(*b"ISGN")),
         [b'O', b'S', b'G', b'1'] => Some(FourCC(*b"OSGN")),
         [b'P', b'S', b'G', b'1'] => Some(FourCC(*b"PSGN")),
+        [b'P', b'C', b'G', b'1'] => Some(FourCC(*b"PCSG")),
         _ => None,
     };
 

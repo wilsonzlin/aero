@@ -112,3 +112,31 @@ fn parse_signatures_prefers_v1_chunk_id_when_both_exist() {
     assert_eq!(sig.parameters[0].semantic_name, "V1");
     assert_eq!(sig.parameters[0].register, 1);
 }
+
+#[test]
+fn parse_signatures_parses_pcsg_patch_constant_signature_chunk() {
+    // Minimal signature chunk: zero entries, param_offset points past header.
+    let pcsg = [0u8, 0, 0, 0, 8, 0, 0, 0];
+
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &pcsg)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sigs = parse_signatures(&dxbc).expect("signature parse should succeed");
+    assert!(sigs.pcsg.is_some(), "expected pcsg signature to be parsed");
+}
+
+#[test]
+fn parse_signatures_malformed_pcsg_mentions_fourcc() {
+    // Truncated signature chunk payload (must be >= 8 bytes).
+    let pcsg = [0u8, 0, 0, 0];
+
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &pcsg)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let err = parse_signatures(&dxbc).expect_err("expected malformed PCSG to error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("PCSG"),
+        "expected error message to mention PCSG FourCC, got: {msg}"
+    );
+}
