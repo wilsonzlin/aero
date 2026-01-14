@@ -9,47 +9,26 @@ from pathlib import Path
 
 
 class PsHarnessHttpLogPathParamTests(unittest.TestCase):
-    def test_http_log_path_param_exists_and_default_empty(self) -> None:
+    def test_http_log_path_logging_is_single_line_per_request(self) -> None:
         ps_path = Path(__file__).resolve().parents[1] / "Invoke-AeroVirtioWin7Tests.ps1"
         text = ps_path.read_text(encoding="utf-8", errors="replace")
 
-        # Extract the top-level script param() block (avoid matching function-level param blocks).
-        m = re.search(
-            r"\[CmdletBinding\(\)\]\s*param\((?P<body>.*?)\)\s*Set-StrictMode",
-            text,
-            flags=re.S,
+        # Guardrail: the harness should append exactly one log line per request.
+        # We enforce this by checking there is only one AppendAllText($HttpLogPath, ...) site in the script.
+        appends = re.findall(r"AppendAllText\(\$HttpLogPath\b", text)
+        self.assertEqual(
+            len(appends),
+            1,
+            "expected exactly one AppendAllText($HttpLogPath, ...) call (avoid duplicate log lines per request)",
         )
-        self.assertIsNotNone(m, f"failed to locate top-level param() block in {ps_path}")
-        body = m.group("body")
 
-        lines = body.splitlines()
-        for i, line in enumerate(lines):
-            if re.search(r"\[string\]\$HttpLogPath\b", line):
-                default_m = re.search(r"\$HttpLogPath\s*=\s*(?P<default>\"\"|\$null)", line)
-                self.assertIsNotNone(default_m, f"failed to parse $HttpLogPath default in: {line!r}")
-                self.assertEqual(default_m.group("default"), '""', "default $HttpLogPath must be empty (no logging)")
-
-                # Ensure the parameter stays optional (not Mandatory=$true).
-                j = i - 1
-                while j >= 0:
-                    prev = lines[j].strip()
-                    if not prev or prev.startswith("#"):
-                        j -= 1
-                        continue
-                    self.assertIn(
-                        "Mandatory = $false",
-                        prev,
-                        "expected [Parameter(Mandatory = $false)] for $HttpLogPath",
-                    )
-                    break
-                else:
-                    self.fail("missing [Parameter(...)] attribute for $HttpLogPath")
-
-                return
-
-        self.fail("missing [string]$HttpLogPath parameter in PowerShell harness param() block")
+        # Ensure the log line has the expected field order: method path status_code bytes.
+        self.assertRegex(
+            text,
+            r'\$line\s*=\s*"\$logMethod \$logPath \$statusCode \$bytesSent',
+            "expected HTTP log line to contain: $logMethod $logPath $statusCode $bytesSent",
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-
