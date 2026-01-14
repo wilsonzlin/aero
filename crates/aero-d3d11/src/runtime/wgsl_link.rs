@@ -74,32 +74,68 @@ pub(crate) fn declared_ps_output_locations(wgsl: &str) -> Result<BTreeSet<u32>> 
 }
 
 pub(crate) fn referenced_ps_input_locations(wgsl: &str) -> BTreeSet<u32> {
+    use std::collections::HashMap;
+
+    // Parse `struct PsIn` so we can map field names back to their declared `@location`s.
+    // This lets us handle both translator-style `input.vN` accesses and hand-authored field names
+    // like `input.uv` (as long as the entry point parameter is named `input`).
+    let mut ps_in_fields: HashMap<&str, u32> = HashMap::new();
+    let mut in_ps_in = false;
+    for line in wgsl.lines() {
+        let trimmed = line.trim();
+        if !in_ps_in {
+            if trimmed == "struct PsIn {" {
+                in_ps_in = true;
+            }
+            continue;
+        }
+        if trimmed == "};" {
+            break;
+        }
+        let Some(loc) = parse_location_attr(line) else {
+            continue;
+        };
+        let Some(name) = parse_struct_member_name(line) else {
+            continue;
+        };
+        ps_in_fields.insert(name, loc);
+    }
+
     let bytes = wgsl.as_bytes();
     let mut out = BTreeSet::new();
     let mut i = 0usize;
-    while i + 7 <= bytes.len() {
-        if &bytes[i..i + 7] != b"input.v" {
+    while i + 6 <= bytes.len() {
+        if &bytes[i..i + 6] != b"input." {
             i += 1;
             continue;
         }
-        let mut j = i + 7;
-        let mut value: u32 = 0;
-        let mut has_digit = false;
+        let mut j = i + 6;
+        let start = j;
         while j < bytes.len() {
             let b = bytes[j];
-            if b.is_ascii_digit() {
-                has_digit = true;
-                value = value.saturating_mul(10).saturating_add((b - b'0') as u32);
+            if b.is_ascii_alphanumeric() || b == b'_' {
                 j += 1;
             } else {
                 break;
             }
         }
-        if has_digit {
-            out.insert(value);
+
+        if j > start {
+            // Safety: identifiers are ASCII, so UTF-8.
+            let ident = std::str::from_utf8(&bytes[start..j]).unwrap_or_default();
+            if let Some(&loc) = ps_in_fields.get(ident) {
+                out.insert(loc);
+            } else if let Some(rest) = ident.strip_prefix('v') {
+                // Backward-compat: allow translator-style `input.vN` even if `PsIn` parsing failed.
+                if let Ok(loc) = rest.parse::<u32>() {
+                    out.insert(loc);
+                }
+            }
         }
+
         i = j;
     }
+
     out
 }
 
@@ -107,8 +143,34 @@ pub(crate) fn trim_vs_outputs_to_locations(
     vs_wgsl: &str,
     keep_locations: &BTreeSet<u32>,
 ) -> String {
+    // First pass: collect names of trimmed `@location` members so we can remove assignments.
+    let mut in_vs_out = false;
+    let mut removed_member_names = std::collections::HashSet::<String>::new();
+    for line in vs_wgsl.lines() {
+        let trimmed = line.trim();
+        if !in_vs_out {
+            if trimmed == "struct VsOut {" {
+                in_vs_out = true;
+            }
+            continue;
+        }
+        if trimmed == "};" {
+            break;
+        }
+        let Some(loc) = parse_location_attr(line) else {
+            continue;
+        };
+        let Some(name) = parse_struct_member_name(line) else {
+            continue;
+        };
+        if !keep_locations.contains(&loc) {
+            removed_member_names.insert(name.to_owned());
+        }
+    }
+
     let mut out = String::with_capacity(vs_wgsl.len());
     let mut in_vs_out = false;
+    let mut trim_tmp_counter = 0usize;
 
     for line in vs_wgsl.lines() {
         let trimmed = line.trim();
@@ -138,16 +200,29 @@ pub(crate) fn trim_vs_outputs_to_locations(
             continue;
         }
 
-        // Drop return-struct assignments to trimmed varyings.
+        // Drop return-struct assignments to trimmed varyings, but preserve RHS evaluation in case
+        // it has side effects (e.g. calls that write storage buffers).
         let line_trimmed_start = line.trim_start();
-        if let Some(rest) = line_trimmed_start.strip_prefix("out.o") {
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if !digits.is_empty() {
-                if let Ok(loc) = digits.parse::<u32>() {
-                    if !keep_locations.contains(&loc) {
-                        continue;
-                    }
+        if let Some(rest) = line_trimmed_start.strip_prefix("out.") {
+            let ident: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if !ident.is_empty() && removed_member_names.contains(&ident) {
+                if let Some((_, rhs)) = rest.split_once('=') {
+                    let rhs = rhs.trim().trim_end_matches(';').trim();
+                    let indent_len = line.len().saturating_sub(line_trimmed_start.len());
+                    let indent = &line[..indent_len];
+                    let tmp_name = format!("_aero_trim_tmp{trim_tmp_counter}");
+                    trim_tmp_counter += 1;
+                    out.push_str(indent);
+                    out.push_str("let ");
+                    out.push_str(&tmp_name);
+                    out.push_str(" = ");
+                    out.push_str(rhs);
+                    out.push_str(";\n");
                 }
+                continue;
             }
         }
 
@@ -587,6 +662,33 @@ mod tests {
     }
 
     #[test]
+    fn trims_vs_outputs_with_non_translator_field_names() {
+        let wgsl = r#"
+            struct VsOut {
+                @builtin(position) pos: vec4<f32>,
+                @location(1) uv: vec2<f32>,
+                @location(2) color: vec4<f32>,
+            };
+
+            @vertex
+            fn vs_main() -> VsOut {
+                var out: VsOut;
+                out.pos = vec4<f32>(0.0);
+                out.uv = vec2<f32>(1.0);
+                out.color = vec4<f32>(2.0);
+                return out;
+            }
+        "#;
+
+        let keep = BTreeSet::from([2u32]);
+        let trimmed = trim_vs_outputs_to_locations(wgsl, &keep);
+        assert!(!trimmed.contains("@location(1)"));
+        assert!(trimmed.contains("@location(2)"));
+        assert!(!trimmed.contains("out.uv ="));
+        assert!(trimmed.contains("out.color ="));
+    }
+
+    #[test]
     fn missing_struct_is_treated_as_empty_locations() {
         let wgsl = r#"
             @fragment
@@ -608,6 +710,25 @@ mod tests {
         "#;
         let refs = referenced_ps_input_locations(wgsl);
         assert_eq!(refs.iter().copied().collect::<Vec<_>>(), vec![1, 10]);
+    }
+
+    #[test]
+    fn finds_referenced_ps_locations_with_non_translator_field_names() {
+        let wgsl = r#"
+            struct PsIn {
+                @location(1) uv: vec2<f32>,
+                @location(10) color: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                // Only read `uv` (location 1); `color` should not be reported as used.
+                let a = input.uv;
+                return vec4<f32>(a, 0.0, 1.0);
+            }
+        "#;
+        let refs = referenced_ps_input_locations(wgsl);
+        assert_eq!(refs.iter().copied().collect::<Vec<_>>(), vec![1]);
     }
 
     #[test]
