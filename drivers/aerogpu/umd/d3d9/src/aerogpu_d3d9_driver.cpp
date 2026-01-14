@@ -4192,6 +4192,7 @@ constexpr uint32_t kD3dTssAlphaArg2 = 6u;  // D3DTSS_ALPHAARG2
 
 constexpr uint32_t kD3dTopDisable = 1u;     // D3DTOP_DISABLE
 constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
+constexpr uint32_t kD3dTopSelectArg2 = 3u;  // D3DTOP_SELECTARG2
 constexpr uint32_t kD3dTopModulate = 4u;    // D3DTOP_MODULATE
 
 constexpr uint32_t kD3dTaSelectMask = 0xFu;  // D3DTA_SELECTMASK
@@ -4235,6 +4236,8 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
       return FixedfuncStage0Src::Diffuse;
     case kD3dTopSelectArg1:
       return fixedfunc_decode_arg_src(arg1);
+    case kD3dTopSelectArg2:
+      return fixedfunc_decode_arg_src(arg2);
     case kD3dTopModulate: {
       const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
       const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
