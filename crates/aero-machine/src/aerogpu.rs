@@ -2893,6 +2893,88 @@ mod tests {
         );
     }
 
+    #[test]
+    fn snapshot_restore_preserves_wddm_ownership_when_scanout_disabled() {
+        let mut dev = AeroGpuMmioDevice::default();
+
+        // Claim WDDM scanout, then disable it (visibility toggle).
+        let fb_gpa = 0x1234_5678u64;
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, 320);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, 200);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64, 320 * 4);
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
+            pci::AerogpuFormat::B8G8R8X8Unorm as u32,
+        );
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64,
+            fb_gpa as u32,
+        );
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64,
+            (fb_gpa >> 32) as u32,
+        );
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 1);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
+
+        let state_before = dev.scanout0_state();
+        assert!(state_before.wddm_scanout_active);
+        assert!(!state_before.enable);
+
+        let snap = dev.snapshot_v1();
+        let mut restored = AeroGpuMmioDevice::default();
+        restored.restore_snapshot_v1(&snap);
+
+        let state_after = restored.scanout0_state();
+        assert!(
+            state_after.wddm_scanout_active,
+            "snapshot restore should preserve WDDM ownership while scanout is disabled"
+        );
+        assert!(!state_after.enable);
+    }
+
+    #[test]
+    fn iosnapshot_load_state_preserves_wddm_ownership_when_scanout_disabled() {
+        let mut dev = AeroGpuMmioDevice::default();
+
+        // Claim WDDM scanout, then disable it (visibility toggle).
+        let fb_gpa = 0x1234_5678u64;
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, 640);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, 480);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64, 640 * 4);
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
+            pci::AerogpuFormat::B8G8R8X8Unorm as u32,
+        );
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64,
+            fb_gpa as u32,
+        );
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64,
+            (fb_gpa >> 32) as u32,
+        );
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 1);
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
+
+        let state_before = dev.scanout0_state();
+        assert!(state_before.wddm_scanout_active);
+        assert!(!state_before.enable);
+
+        let bytes = dev.save_state();
+        let mut restored = AeroGpuMmioDevice::default();
+        restored
+            .load_state(&bytes)
+            .expect("load_state should succeed");
+
+        let state_after = restored.scanout0_state();
+        assert!(
+            state_after.wddm_scanout_active,
+            "load_state should preserve WDDM ownership while scanout is disabled"
+        );
+        assert!(!state_after.enable);
+    }
+
     #[derive(Default)]
     struct TestMem {
         bytes: Vec<u8>,
