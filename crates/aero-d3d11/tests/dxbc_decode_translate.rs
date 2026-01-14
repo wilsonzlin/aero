@@ -1661,6 +1661,79 @@ fn decodes_and_translates_breakc_in_loop() {
 }
 
 #[test]
+fn decodes_and_translates_continuec_in_loop() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // loop
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    // continuec eq, l(0.0), l(1.0) (false, but exercises codegen)
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(1.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_CONTINUEC,
+        (1 + a.len() as u32 + b.len() as u32) as u32,
+        2, // `eq` in D3D10_SB_INSTRUCTION_TEST encoding.
+    ));
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // break (exit the loop)
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // endloop
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    // mov o0, l(0.0, 0.0, 0.0, 1.0)
+    let out = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + out.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&out);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::ContinueC { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("loop {") && translated.wgsl.contains("continue;"),
+        "expected loop+continue in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn ret_inside_if_does_not_break_brace_balancing() {
     let mut body = Vec::<u32>::new();
 
