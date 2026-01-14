@@ -1603,18 +1603,18 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 width,
                 offset,
                 src,
-            }
-            | Sm4Inst::Ibfe {
-                dst: _,
-                width,
-                offset,
+             }
+             | Sm4Inst::Ibfe {
+                 dst: _,
+                 width,
+                 offset,
                 src,
             } => {
                 scan_src(width);
                 scan_src(offset);
                 scan_src(src);
-            }
-            Sm4Inst::Rcp { dst: _, src }
+             }
+             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
             | Sm4Inst::Not { dst: _, src }
             | Sm4Inst::Clip { src }
