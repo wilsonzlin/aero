@@ -37,6 +37,7 @@ pub mod feature_bits {
     pub const CURSOR: u64 = pci::AEROGPU_FEATURE_CURSOR;
     pub const SCANOUT: u64 = pci::AEROGPU_FEATURE_SCANOUT;
     pub const VBLANK: u64 = pci::AEROGPU_FEATURE_VBLANK;
+    pub const ERROR_INFO: u64 = pci::AEROGPU_FEATURE_ERROR_INFO;
     pub const TRANSFER: u64 = pci::AEROGPU_FEATURE_TRANSFER;
 }
 
