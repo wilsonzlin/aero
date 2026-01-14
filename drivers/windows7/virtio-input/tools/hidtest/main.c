@@ -3406,6 +3406,7 @@ static int list_hid_devices_json(int quiet)
     for (;;) {
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        SP_DEVINFO_DATA dev_data;
         HANDLE handle = INVALID_HANDLE_VALUE;
         DWORD desired_access = 0;
         HIDD_ATTRIBUTES attr;
@@ -3431,6 +3432,8 @@ static int list_hid_devices_json(int quiet)
         int manufacturer_valid = 0;
         int product_valid = 0;
         int serial_valid = 0;
+        WCHAR instance_id[512];
+        int instance_id_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -3459,12 +3462,19 @@ static int list_hid_devices_json(int quiet)
         }
 
         detail->cbSize = sizeof(*detail);
-        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+        ZeroMemory(&dev_data, sizeof(dev_data));
+        dev_data.cbSize = sizeof(dev_data);
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, &dev_data)) {
             fprint_last_error_w(stderr, L"SetupDiGetDeviceInterfaceDetail");
             free(detail);
             ok = 0;
             iface_index++;
             continue;
+        }
+
+        if (SetupDiGetDeviceInstanceIdW(devinfo, &dev_data, instance_id, (DWORD)(sizeof(instance_id) / sizeof(instance_id[0])), NULL)) {
+            instance_id[(sizeof(instance_id) / sizeof(instance_id[0])) - 1] = L'\0';
+            instance_id_valid = 1;
         }
 
         handle = open_hid_path(detail->DevicePath, &desired_access);
@@ -3547,6 +3557,12 @@ static int list_hid_devices_json(int quiet)
         wprintf(L"\"index\":%lu,", iface_index);
         wprintf(L"\"path\":");
         json_print_string_w(detail->DevicePath);
+        wprintf(L",\"instanceId\":");
+        if (instance_id_valid) {
+            json_print_string_w(instance_id);
+        } else {
+            wprintf(L"null");
+        }
         wprintf(L",\"vid\":");
         if (attr_valid) {
             wprintf(L"%u", (unsigned)attr.VendorID);

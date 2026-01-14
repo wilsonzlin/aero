@@ -120,7 +120,7 @@ Tip: add `--quiet` to suppress per-device `CreateFile` errors on stderr (open fa
 
 The JSON output is a single array on stdout. Each entry has:
 
-- `index`, `path`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`, `openErr`
+- `index`, `path`, `instanceId`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`, `openErr`
 
 If the interface could not be opened, most fields will be `null` and `openErr` will contain the Win32 error code from
 `CreateFile`.
