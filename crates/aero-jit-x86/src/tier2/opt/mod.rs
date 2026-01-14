@@ -30,6 +30,7 @@ pub struct OptResult {
     pub regalloc: RegAllocPlan,
 }
 
+#[track_caller]
 pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
     #[cfg(debug_assertions)]
     {
@@ -94,4 +95,34 @@ pub fn optimize_trace(trace: &mut TraceIr, cfg: &OptConfig) -> OptResult {
     }
 
     OptResult { regalloc }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+    use crate::tier2::ir::{Instr, Operand, TraceIr, ValueId};
+
+    #[test]
+    fn optimize_trace_panics_at_call_site_on_invalid_ir() {
+        // A trace that uses an undefined value should fail verification in debug builds.
+        let mut trace = TraceIr {
+            prologue: vec![Instr::StoreReg {
+                reg: aero_types::Gpr::Rax,
+                src: Operand::Value(ValueId(123)),
+            }],
+            body: Vec::new(),
+            kind: Default::default(),
+        };
+
+        let cfg = OptConfig::default();
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = optimize_trace(&mut trace, &cfg);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
 }
