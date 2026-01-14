@@ -535,7 +535,10 @@ fn virtio_input_snapshot_roundtrip_preserves_leds_mask() {
     restored.load_state(&snap).unwrap();
 
     let caps2 = parse_caps(&mut restored);
-    assert_eq!(bar_read_u8(&mut restored, caps2.device), VIRTIO_INPUT_CFG_ID_NAME);
+    assert_eq!(
+        bar_read_u8(&mut restored, caps2.device),
+        VIRTIO_INPUT_CFG_ID_NAME
+    );
     assert_eq!(bar_read_u8(&mut restored, caps2.device + 1), 7);
 
     let restored_leds = restored.device_mut::<VirtioInput>().unwrap().leds_mask();
