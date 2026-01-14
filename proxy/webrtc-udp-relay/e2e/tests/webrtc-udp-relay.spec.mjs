@@ -536,6 +536,12 @@ async function spawnRelayServer(extraEnv = {}) {
          AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT: "",
          AERO_WEBRTC_UDP_RELAY_LOG_FORMAT: "",
          AERO_WEBRTC_UDP_RELAY_MODE: "",
+         // Prevent TURN REST config from leaking into localhost runs (these are
+         // parsed/validated at startup even if unused by the tests).
+         TURN_REST_SHARED_SECRET: "",
+         TURN_REST_TTL_SECONDS: "",
+         TURN_REST_USERNAME_PREFIX: "",
+         TURN_REST_REALM: "",
          // Clear WebRTC ICE/network env vars that can break localhost connectivity
          // when a developer shell carries production NAT/listen settings.
          WEBRTC_NAT_1TO1_IPS: "",
