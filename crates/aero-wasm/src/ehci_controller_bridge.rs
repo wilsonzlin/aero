@@ -345,8 +345,8 @@ impl EhciControllerBridge {
         // snapshot. Reset any restored passthrough device state so guest retries re-emit actions.
         let hub = self.ctrl.hub_mut();
         for port in 0..hub.num_ports() {
-            if let Some(dev) = hub.port_device_mut(port) {
-                reset_webusb_host_state_for_restore(dev);
+            if let Some(mut dev) = hub.port_device_mut(port) {
+                reset_webusb_host_state_for_restore(&mut dev);
             }
         }
 
@@ -365,4 +365,3 @@ impl EhciControllerBridge {
         self.load_state(bytes)
     }
 }
-
