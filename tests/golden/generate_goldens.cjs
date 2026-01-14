@@ -131,6 +131,17 @@ function main() {
   if (writePng(path.join(outDir, 'gpu_trace_aerogpu_a3a0_clear_red_64.png'), 64, 64, traceRed64)) {
     wrote++;
   }
+  // Trace replay fixtures using the AeroGPU command stream ABI v2 are expected to render solid colors.
+  // - `aerogpu_cmd_depth_test.aerogputrace`: depth test rejects the far red triangle; output is green.
+  const traceGreen64 = generateSolidColorRGBA(64, 64, 0, 255, 0, 255);
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_depth_test_64.png'), 64, 64, traceGreen64)) {
+    wrote++;
+  }
+  // - `aerogpu_cmd_textured_bc1_triangle.aerogputrace`: BC1 block encodes opaque blue.
+  const traceBlue64 = generateSolidColorRGBA(64, 64, 0, 0, 255, 255);
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_textured_bc1_triangle_64.png'), 64, 64, traceBlue64)) {
+    wrote++;
+  }
 
   // Depth test fixture should result in a solid green frame (near triangle passes, far triangle rejected).
   const traceGreen64 = generateSolidColorRGBA(64, 64, 0, 255, 0, 255);
