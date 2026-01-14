@@ -53,13 +53,27 @@ single `StorageBackend`.
 
 ## Using `aero-storage` disks with device models
 
-Device models such as NVMe and virtio-blk live in separate crates and generally use their own
-disk traits. To avoid duplicating disk abstractions, the workspace provides adapters in
-`crates/aero-storage-adapters/` so an [`aero_storage::VirtualDisk`] can be used as a backend for:
+Device models such as NVMe and virtio-blk live in separate crates and may use their own disk/backend
+traits. To avoid duplicating disk abstractions, the workspace provides adapters so an
+[`aero_storage::VirtualDisk`] can be used consistently across controllers:
 
 - `aero-devices-nvme` (`DiskBackend`)
-- `aero-devices` virtio-blk (`storage::DiskBackend`)
+- `aero-devices` device backends (`storage::DiskBackend`)
+- `aero-virtio` virtio-blk (`devices::blk::BlockBackend`)
 - legacy `emulator` storage models (`io::storage::disk::DiskBackend`)
+
+Notes:
+
+- The shared adapter wrapper *types* live in `crates/aero-storage-adapters/` and are typically
+  re-exported as `AeroStorageDiskAdapter` by device crates.
+- `aero-virtio` additionally supports wiring a boxed `VirtualDisk` directly as a virtio-blk backend
+  (see `aero_virtio::devices::blk::VirtioBlkDisk`).
+- If you need the reverse direction (wrapping an existing device/backend trait object as an
+  `aero_storage::VirtualDisk` so you can layer `aero-storage` disk wrappers like caches/overlays on
+  top), see the reverse adapters in the corresponding device crates (e.g.
+  `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`,
+  `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
+  `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`).
 
 ## Aero Sparse (`AEROSPAR`) format (v1)
 

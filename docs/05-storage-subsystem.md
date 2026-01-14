@@ -278,7 +278,8 @@ pub trait DiskBackend: Send + Sync {
 Note: in the current codebase, the canonical traits live in `crates/aero-storage/`:
 `aero_storage::VirtualDisk` (byte-addressed with sector helpers) and
 `aero_storage::StorageBackend` (resizable byte storage). Device models that use their own
-disk traits typically consume an `aero_storage::VirtualDisk` via `crates/aero-storage-adapters/`.
+disk traits typically consume an `aero_storage::VirtualDisk` via `crates/aero-storage-adapters/`
+(or accept a boxed `VirtualDisk` directly, as in `aero-virtio`’s `VirtioBlkDisk`).
 See also: [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 **Implementation status (reference implementation):**
