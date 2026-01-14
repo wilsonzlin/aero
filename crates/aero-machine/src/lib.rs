@@ -3007,6 +3007,16 @@ impl IoSnapshot for AeroGpuDevice {
         const TAG_VRAM: u16 = 100;
         const TAG_VBE_MODE_ACTIVE: u16 = 130;
         const TAG_VBE_BANK: u16 = 131;
+        const TAG_VBE_DISPI_INDEX: u16 = 132;
+        const TAG_VBE_DISPI_XRES: u16 = 133;
+        const TAG_VBE_DISPI_YRES: u16 = 134;
+        const TAG_VBE_DISPI_BPP: u16 = 135;
+        const TAG_VBE_DISPI_ENABLE: u16 = 136;
+        const TAG_VBE_DISPI_VIRT_WIDTH: u16 = 137;
+        const TAG_VBE_DISPI_VIRT_HEIGHT: u16 = 138;
+        const TAG_VBE_DISPI_X_OFFSET: u16 = 139;
+        const TAG_VBE_DISPI_Y_OFFSET: u16 = 140;
+        const TAG_VBE_DISPI_GUEST_OWNED: u16 = 141;
 
         const TAG_VGA_MISC_OUTPUT: u16 = 101;
         const TAG_VGA_SEQ_INDEX: u16 = 102;
@@ -3037,6 +3047,16 @@ impl IoSnapshot for AeroGpuDevice {
 
         w.field_bool(TAG_VBE_MODE_ACTIVE, self.vbe_mode_active);
         w.field_u32(TAG_VBE_BANK, u32::from(self.vbe_bank));
+        w.field_u16(TAG_VBE_DISPI_INDEX, self.vbe_dispi_index);
+        w.field_u16(TAG_VBE_DISPI_XRES, self.vbe_dispi_xres);
+        w.field_u16(TAG_VBE_DISPI_YRES, self.vbe_dispi_yres);
+        w.field_u16(TAG_VBE_DISPI_BPP, self.vbe_dispi_bpp);
+        w.field_u16(TAG_VBE_DISPI_ENABLE, self.vbe_dispi_enable);
+        w.field_u16(TAG_VBE_DISPI_VIRT_WIDTH, self.vbe_dispi_virt_width);
+        w.field_u16(TAG_VBE_DISPI_VIRT_HEIGHT, self.vbe_dispi_virt_height);
+        w.field_u16(TAG_VBE_DISPI_X_OFFSET, self.vbe_dispi_x_offset);
+        w.field_u16(TAG_VBE_DISPI_Y_OFFSET, self.vbe_dispi_y_offset);
+        w.field_bool(TAG_VBE_DISPI_GUEST_OWNED, self.vbe_dispi_guest_owned);
 
         w.field_u8(TAG_VGA_MISC_OUTPUT, self.misc_output);
         w.field_u8(TAG_VGA_SEQ_INDEX, self.seq_index);
@@ -3069,6 +3089,16 @@ impl IoSnapshot for AeroGpuDevice {
         const TAG_VRAM: u16 = 100;
         const TAG_VBE_MODE_ACTIVE: u16 = 130;
         const TAG_VBE_BANK: u16 = 131;
+        const TAG_VBE_DISPI_INDEX: u16 = 132;
+        const TAG_VBE_DISPI_XRES: u16 = 133;
+        const TAG_VBE_DISPI_YRES: u16 = 134;
+        const TAG_VBE_DISPI_BPP: u16 = 135;
+        const TAG_VBE_DISPI_ENABLE: u16 = 136;
+        const TAG_VBE_DISPI_VIRT_WIDTH: u16 = 137;
+        const TAG_VBE_DISPI_VIRT_HEIGHT: u16 = 138;
+        const TAG_VBE_DISPI_X_OFFSET: u16 = 139;
+        const TAG_VBE_DISPI_Y_OFFSET: u16 = 140;
+        const TAG_VBE_DISPI_GUEST_OWNED: u16 = 141;
 
         const TAG_VGA_MISC_OUTPUT: u16 = 101;
         const TAG_VGA_SEQ_INDEX: u16 = 102;
@@ -3102,6 +3132,16 @@ impl IoSnapshot for AeroGpuDevice {
 
         self.vbe_mode_active = r.bool(TAG_VBE_MODE_ACTIVE)?.unwrap_or(false);
         self.vbe_bank = r.u32(TAG_VBE_BANK)?.unwrap_or(0).min(u32::from(u16::MAX)) as u16;
+        self.vbe_dispi_index = r.u16(TAG_VBE_DISPI_INDEX)?.unwrap_or(0);
+        self.vbe_dispi_xres = r.u16(TAG_VBE_DISPI_XRES)?.unwrap_or(0);
+        self.vbe_dispi_yres = r.u16(TAG_VBE_DISPI_YRES)?.unwrap_or(0);
+        self.vbe_dispi_bpp = r.u16(TAG_VBE_DISPI_BPP)?.unwrap_or(0);
+        self.vbe_dispi_enable = r.u16(TAG_VBE_DISPI_ENABLE)?.unwrap_or(0);
+        self.vbe_dispi_virt_width = r.u16(TAG_VBE_DISPI_VIRT_WIDTH)?.unwrap_or(0);
+        self.vbe_dispi_virt_height = r.u16(TAG_VBE_DISPI_VIRT_HEIGHT)?.unwrap_or(0);
+        self.vbe_dispi_x_offset = r.u16(TAG_VBE_DISPI_X_OFFSET)?.unwrap_or(0);
+        self.vbe_dispi_y_offset = r.u16(TAG_VBE_DISPI_Y_OFFSET)?.unwrap_or(0);
+        self.vbe_dispi_guest_owned = r.bool(TAG_VBE_DISPI_GUEST_OWNED)?.unwrap_or(false);
 
         self.misc_output = r.u8(TAG_VGA_MISC_OUTPUT)?.unwrap_or(0);
         self.seq_index = r.u8(TAG_VGA_SEQ_INDEX)?.unwrap_or(0);
@@ -3468,6 +3508,28 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     // Deterministic vblank timebase. Stored as trailing fields so older decoders can ignore them.
     out.extend_from_slice(&regs.now_ns.to_le_bytes());
     out.extend_from_slice(&regs.next_vblank_ns.unwrap_or(0).to_le_bytes());
+
+    // Optional trailing Bochs VBE_DISPI register state.
+    //
+    // Some guests program VBE modes via the Bochs/QEMU VBE_DISPI ports (`0x01CE/0x01CF`) rather
+    // than via BIOS INT 10h. Preserve this register file so snapshot/restore is deterministic for
+    // those guests.
+    //
+    // Keep this *after* the fixed-size vblank timebase fields so older decoders (which stop after
+    // reading the timebase) remain forward-compatible.
+    out.extend_from_slice(b"BVBE");
+    out.push(vram.vbe_dispi_guest_owned as u8);
+    out.push(0); // reserved
+    out.extend_from_slice(&vram.vbe_dispi_index.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_xres.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_yres.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_bpp.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_enable.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_bank.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_virt_width.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_virt_height.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_x_offset.to_le_bytes());
+    out.extend_from_slice(&vram.vbe_dispi_y_offset.to_le_bytes());
 
     out
 }
@@ -3943,6 +4005,41 @@ fn apply_aerogpu_snapshot_v2(
             next_vblank_ns = Some(scanout0_vblank_time_ns.saturating_add(period_ns));
         }
     }
+    // Optional trailing Bochs VBE_DISPI register file.
+    //
+    // This is stored after the vblank timebase fields so older decoders can ignore it.
+    if bytes.get(off..off.saturating_add(4)) == Some(b"BVBE".as_slice()) {
+        const PAYLOAD_LEN: usize = 2 + 10 * 2;
+        const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+        if bytes.len() >= off.saturating_add(TOTAL_LEN) {
+            if let Some(payload) = bytes.get((off + 4)..(off + 4 + PAYLOAD_LEN)) {
+                let mut idx = 0usize;
+                vram.vbe_dispi_guest_owned = payload[idx] != 0;
+                idx += 2; // guest_owned + reserved
+
+                let mut read_u16 = || -> u16 {
+                    if idx + 1 >= payload.len() {
+                        return 0;
+                    }
+                    let v = u16::from_le_bytes([payload[idx], payload[idx + 1]]);
+                    idx += 2;
+                    v
+                };
+
+                vram.vbe_dispi_index = read_u16();
+                vram.vbe_dispi_xres = read_u16();
+                vram.vbe_dispi_yres = read_u16();
+                vram.vbe_dispi_bpp = read_u16();
+                vram.vbe_dispi_enable = read_u16();
+                vram.vbe_bank = read_u16();
+                vram.vbe_dispi_virt_width = read_u16();
+                vram.vbe_dispi_virt_height = read_u16();
+                vram.vbe_dispi_x_offset = read_u16();
+                vram.vbe_dispi_y_offset = read_u16();
+            }
+        }
+    }
+
     // Forward-compatible: ignore trailing bytes from future versions (including unknown tags).
 
     bar0.reset();
