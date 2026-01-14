@@ -153,4 +153,11 @@ describe("disk_worker import_file aerospar handling", () => {
     expect(String(resp.error?.message ?? "")).toMatch(/hdd/i);
     expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
   });
+
+  it("rejects empty files", async () => {
+    const file = new File([new Uint8Array()], "empty.img");
+    const resp = await sendImportFile({ file });
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/file size/i);
+  });
 });

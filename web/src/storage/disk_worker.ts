@@ -929,6 +929,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     case "import_file": {
       const file = hasOwnProp(payload, "file") ? (payload.file as File | undefined) : undefined;
       if (!file) throw new Error("Missing file");
+      if (typeof file.size !== "number" || !Number.isFinite(file.size) || !Number.isSafeInteger(file.size) || file.size <= 0) {
+        throw new Error("File size must be a positive safe integer");
+      }
 
       const fileNameOverride = hasOwnProp(payload, "name") ? payload.name : undefined;
       const name = fileNameOverride ? String(fileNameOverride) : file.name;
@@ -1019,6 +1022,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       const file = hasOwnProp(payload, "file") ? (payload.file as File | undefined) : undefined;
       if (!file) throw new Error("Missing file");
+      if (typeof file.size !== "number" || !Number.isFinite(file.size) || !Number.isSafeInteger(file.size) || file.size <= 0) {
+        throw new Error("File size must be a positive safe integer");
+      }
 
       const fileNameOverride = hasOwnProp(payload, "name") ? payload.name : undefined;
       const name = fileNameOverride ? String(fileNameOverride) : file.name;
