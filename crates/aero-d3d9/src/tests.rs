@@ -1792,6 +1792,37 @@ fn translate_entrypoint_sm3_remaps_unused_declared_semantics() {
 }
 
 #[test]
+fn translate_sm3_vertex_input_semantic_locations_are_exposed() {
+    let vs_bytes = to_bytes(&assemble_vs_passthrough_with_dcl_sm3_decoder());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&vs_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+    assert!(translated.uses_semantic_locations);
+
+    // Ensure semantic-based remapping is surfaced for host-side executors (vertex attribute
+    // bindings must match the WGSL @location mapping).
+    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
+        usage: crate::vertex::DeclUsage::Position,
+        usage_index: 0,
+        location: 0,
+    }));
+    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
+        usage: crate::vertex::DeclUsage::TexCoord,
+        usage_index: 0,
+        location: 8,
+    }));
+    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
+        usage: crate::vertex::DeclUsage::Color,
+        usage_index: 0,
+        location: 6,
+    }));
+}
+
+#[test]
 fn translate_entrypoint_falls_back_on_unsupported_opcode() {
     // Include an unknown opcode that the strict SM3 decoder rejects, but the legacy translator
     // skips (to support incremental bring-up).
