@@ -117,6 +117,8 @@ Notes:
   but `XhciControllerBridge` does not yet expose the required topology mutation APIs
   (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
   expected to attach via UHCI in the current web runtime.
+- WebUSB passthrough is also currently UHCI-focused; high-speed passthrough via EHCI/xHCI remains
+  planned. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
