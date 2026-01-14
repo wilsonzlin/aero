@@ -343,8 +343,11 @@ Producers (the driver) must:
 
 Some packets are extended over time by **appending** new fields after a stable prefix. Readers must
 use `aerogpu_cmd_hdr.size_bytes` for skipping and ignore any trailing bytes they do not understand.
-One example is `BIND_SHADERS`, which has a stable 24-byte prefix and may append `{gs, hs, ds}` shader
-handles in newer streams (see `aerogpu_cmd_bind_shaders` in `aerogpu_cmd.h`).
+One example is `BIND_SHADERS`, which has a stable 24-byte prefix (including the legacy `reserved0`
+field). Newer streams may append `{gs, hs, ds}` shader handles when `hdr.size_bytes >= 36`. When
+appended handles are present they are authoritative; `reserved0` should be treated as
+reserved/ignored (though producers may optionally mirror `gs` into `reserved0` for best-effort
+compatibility with legacy hosts). See `aerogpu_cmd_bind_shaders` in `aerogpu_cmd.h`.
 
 ### Minimal opcode set
 
