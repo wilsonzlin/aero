@@ -45,7 +45,7 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     assert!(matches!(resp, ControlResponse::Ack));
     assert!(m.usb_hid_keyboard_configured());
 
-    let usb_mouse = m
+    let mut usb_mouse = m
         .debug_inner()
         .usb_hid_mouse_handle()
         .expect("mouse handle should exist when synthetic USB HID is enabled");
@@ -59,7 +59,19 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         "USB mouse state should change after injection"
     );
 
-    let usb_gamepad = m
+    // Mark the mouse configured and validate the public configured helper.
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = usb_mouse.handle_control_request(setup, None);
+    assert!(matches!(resp, ControlResponse::Ack));
+    assert!(m.usb_hid_mouse_configured());
+
+    let mut usb_gamepad = m
         .debug_inner()
         .usb_hid_gamepad_handle()
         .expect("gamepad handle should exist when synthetic USB HID is enabled");
@@ -72,6 +84,18 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         before, after,
         "USB gamepad state should change after injection"
     );
+
+    // Mark the gamepad configured and validate the public configured helper.
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = usb_gamepad.handle_control_request(setup, None);
+    assert!(matches!(resp, ControlResponse::Ack));
+    assert!(m.usb_hid_gamepad_configured());
 
     let mut usb_consumer = m
         .debug_inner()
