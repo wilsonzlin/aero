@@ -1263,8 +1263,12 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
                     &buf[offset..offset + chunk_len],
                 );
 
-                // Detect IPIs issued via the LAPIC ICR. The LAPIC device model treats ICR as
-                // register state only; IPI delivery is handled by the machine integration layer.
+                // Detect IPIs issued via the LAPIC ICR so the machine can model INIT/SIPI effects
+                // on vCPU architectural state (resetting/starting APs).
+                //
+                // Note: The platform interrupt fabric also registers an ICR notifier on each
+                // `LocalApic` so fixed vectors are injected into destination LAPICs and LAPIC
+                // register reset semantics are applied. That path does not touch vCPU state.
                 const ICR_LOW_OFF: u64 = 0x300;
                 const ICR_HIGH_OFF: u64 = 0x310;
                 let end_off = lapic_offset.wrapping_add(chunk_len as u64);
