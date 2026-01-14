@@ -484,6 +484,8 @@ Pragmatic approach for early bring-up:
 
 Guest-side validation:
 
+Canonical `share_token` contract and rationale: `docs/graphics/win7-shared-surfaces-share-token.md`.
+
 * `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` exercises the cross-process “create shared → open shared” path.
   * Validates cross-process pixel sharing via readback by default.
   * Pass `--no-validate-sharing` to focus on open + minimal submit (`ColorFill` + `Flush`) only (`--dump` always validates).
