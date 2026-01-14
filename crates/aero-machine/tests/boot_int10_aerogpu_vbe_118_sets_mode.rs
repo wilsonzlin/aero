@@ -1,12 +1,6 @@
-use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
-
-fn enable_a20(m: &mut Machine) {
-    // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(A20_GATE_PORT, 1, 0x02);
-}
 
 fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -44,16 +38,21 @@ fn run_until_halt(m: &mut Machine) {
 }
 
 #[test]
-fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
+fn boot_int10_aerogpu_vbe_118_sets_mode_and_lfb_is_visible_via_bar1() {
     let boot = build_int10_vbe_set_mode_boot_sector();
 
     let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
         enable_aerogpu: true,
         enable_vga: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
         ..Default::default()
     })
     .unwrap();
@@ -61,8 +60,6 @@ fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
     run_until_halt(&mut m);
-
-    enable_a20(&mut m);
 
     let bar1_base = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
@@ -78,10 +75,7 @@ fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
     assert_eq!(m.vbe_lfb_base(), lfb_base);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    m.write_physical_u8(lfb_base, 0x00); // B
-    m.write_physical_u8(lfb_base + 1, 0x00); // G
-    m.write_physical_u8(lfb_base + 2, 0xFF); // R
-    m.write_physical_u8(lfb_base + 3, 0x00); // X
+    m.write_physical_u32(lfb_base, 0x00FF_0000);
 
     m.display_present();
     assert_eq!(m.display_resolution(), (1024, 768));
