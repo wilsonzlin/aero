@@ -157,10 +157,7 @@ import {
   type AeroGpuCpuTexture,
   type AerogpuCpuExecutorState,
 } from "./aerogpu-acmd-executor.ts";
-import {
-  AerogpuCmdStreamIter,
-  cmdPacketHasVsyncPresent,
-} from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
+import { AerogpuCmdStreamIter } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
 import { AerogpuFormat, aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "./scanout_swizzle.ts";
@@ -483,16 +480,11 @@ async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<Aer
 let aerogpuSubmitChain: Promise<void> = Promise.resolve();
 let aerogpuSubmitInFlight: Promise<void> | null = null;
 
-type AerogpuSubmitCompletionKind = "immediate" | "vsync";
-
 type PendingAerogpuSubmitComplete = {
   requestId: number;
   completedFence: bigint;
   presentCount?: bigint;
-  kind: AerogpuSubmitCompletionKind;
 };
-
-const aerogpuPendingSubmitComplete: PendingAerogpuSubmitComplete[] = [];
 
 const postAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void => {
   postToMain({
@@ -501,57 +493,6 @@ const postAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void =>
     completedFence: entry.completedFence,
     ...(entry.presentCount !== undefined ? { presentCount: entry.presentCount } : {}),
   });
-};
-
-const enqueueAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void => {
-  // Preserve the current immediate-completion behavior unless a vsync-paced present has
-  // introduced a completion barrier.
-  if (entry.kind === "immediate" && aerogpuPendingSubmitComplete.length === 0) {
-    postAerogpuSubmitComplete(entry);
-    return;
-  }
-  aerogpuPendingSubmitComplete.push(entry);
-};
-
-const flushAerogpuSubmitCompleteOnTick = (): void => {
-  if (aerogpuPendingSubmitComplete.length === 0) return;
-
-  // When WDDM disables scanout (publishing the all-zero "disabled descriptor"), vblank pacing is
-  // stopped/undefined. Mirror the device-side behavior (see `aerogpu.rs`): ensure any queued
-  // vsync-delayed completions are flushed rather than waiting for future ticks that may never
-  // arrive.
-  const scanoutDisabled = (() => {
-    if (snapshotPaused) return false;
-    const words = scanoutState;
-    if (!words) return false;
-    try {
-      return isWddmDisabledScanoutState(words);
-    } catch {
-      return false;
-    }
-  })();
-  if (scanoutDisabled) {
-    while (aerogpuPendingSubmitComplete.length > 0) {
-      postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
-    }
-    return;
-  }
-
-  const first = aerogpuPendingSubmitComplete[0]!;
-  if (first.kind === "vsync") {
-    // Complete at most one vsync-paced submission per tick, then release any immediate
-    // submissions queued behind it.
-    postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
-    while (aerogpuPendingSubmitComplete[0]?.kind === "immediate") {
-      postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
-    }
-    return;
-  }
-
-  // No vsync barrier at the head; flush any immediate completions.
-  while (aerogpuPendingSubmitComplete[0]?.kind === "immediate") {
-    postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
-  }
 };
 
 let framesReceived = 0;
@@ -3347,33 +3288,32 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   lastPresentUploadKind = "full";
 };
 
-type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; requiresD3d9: boolean };
+type AerogpuCmdStreamAnalysis = { requiresD3d9: boolean };
 
 const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalysis => {
   try {
     const iter = new AerogpuCmdStreamIter(cmdStream);
-    let vsyncPaced = false;
     let requiresD3d9 = false;
 
     for (const packet of iter) {
       const opcode = packet.hdr.opcode;
-      if (!vsyncPaced && cmdPacketHasVsyncPresent(packet)) vsyncPaced = true;
-
-      if (!requiresD3d9 && !aerogpuCpuExecutorSupportsOpcode(opcode)) requiresD3d9 = true;
-      if (vsyncPaced && requiresD3d9) break;
+      if (!aerogpuCpuExecutorSupportsOpcode(opcode)) {
+        requiresD3d9 = true;
+        break;
+      }
     }
 
-    return { vsyncPaced, requiresD3d9 };
+    return { requiresD3d9 };
   } catch {
-    // Malformed streams should not gate completion on tick (avoid deadlocks) and should not
-    // force a wasm executor path selection.
-    return { vsyncPaced: false, requiresD3d9: false };
+    // Malformed streams should not force a wasm executor path selection. (Execution will still
+    // proceed via the lightweight CPU executor, which is expected to surface errors without
+    // wedging the runtime.)
+    return { requiresD3d9: false };
   }
 };
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
   const cmdAnalysis = analyzeAerogpuCmdStream(req.cmdStream);
-  const vsyncPaced = cmdAnalysis.vsyncPaced;
   const rawContextId = (req as unknown as { contextId?: unknown }).contextId;
   const contextId = typeof rawContextId === "number" && Number.isFinite(rawContextId) ? rawContextId >>> 0 : 0;
   const aerogpuState = getAerogpuContextState(contextId);
@@ -3494,26 +3434,10 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
     sendError(err);
   }
 
-  enqueueAerogpuSubmitComplete({
+  postAerogpuSubmitComplete({
     requestId: req.requestId,
     completedFence: signalFence,
     ...(presentCount !== undefined ? { presentCount } : {}),
-    kind:
-      submitOk &&
-      vsyncPaced &&
-      (() => {
-        const words = scanoutState;
-        if (!words) return true;
-        try {
-          // If scanout is disabled, treat vsync-paced completions as immediate so callers don't
-          // deadlock waiting for ticks that the scheduler will (correctly) stop producing.
-          return !isWddmDisabledScanoutState(words);
-        } catch {
-          return true;
-        }
-      })()
-        ? "vsync"
-        : "immediate",
   });
 };
 
@@ -4337,7 +4261,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         }
         aerogpuSubmitChain = Promise.resolve();
         aerogpuSubmitInFlight = null;
-        aerogpuPendingSubmitComplete.length = 0;
         cursorImage = null;
         cursorWidth = 0;
         cursorHeight = 0;
@@ -4413,7 +4336,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
     case "tick": {
       void (msg as { frameTimeMs?: unknown }).frameTimeMs;
-      flushAerogpuSubmitCompleteOnTick();
       if (!snapshotPaused) {
         void handleTick();
       }
@@ -5568,7 +5490,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           // Ignore.
         }
       }
-      aerogpuPendingSubmitComplete.length = 0;
       ctx.close();
       break;
     }

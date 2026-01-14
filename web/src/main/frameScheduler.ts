@@ -231,8 +231,8 @@ export const startFrameScheduler = ({
     if (status === FRAME_DIRTY) return true;
 
     // When scanout is WDDM-owned (or being updated), keep the tick loop running so
-    // the GPU worker can flush vsync-paced completions and/or poll the scanout
-    // source even if the legacy shared framebuffer is idle.
+    // the GPU worker can poll/present the scanout source even if the legacy shared
+    // framebuffer is idle.
     if (scanoutWords) {
       const gen = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
       if ((gen & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) return true;

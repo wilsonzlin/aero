@@ -76,6 +76,49 @@ can locate the most relevant outputs without additional heuristics.
 If you prefer `--dbgctl=aerogpu_dbgctl.exe`, copy the tool next to `bin\\aerogpu_test_runner.exe`.
 Use `--dbgctl-timeout-ms=NNNN` to bound how long the suite runner will wait for the dbgctl process itself (default: 5000ms).
 
+### 0.2 AGPU-WIRE-004 — vblank + vsynced present pacing validation (canonical browser runtime)
+
+This repo’s canonical *browser* runtime uses:
+
+- a CPU worker running the Rust `Machine` (including the AeroGPU device model), and
+- a GPU worker executing AeroGPU command streams out-of-process via the “submission bridge”.
+
+For Win7/WDDM stability, **vsync-paced present fences must complete on vblank**, and `D3DKMTWaitForVerticalBlankEvent`
+must reliably block until the *next* vblank.
+
+#### Repro (Win7 guest)
+
+Build and run the focused pacing tests:
+
+```bat
+cd drivers\aerogpu\tests\win7
+build_all_vs2010.cmd
+
+wait_vblank_pacing\bin\wait_vblank_pacing.exe --samples=120 --wait-timeout-ms=2000
+vblank_state_sanity\bin\vblank_state_sanity.exe --samples=10 --interval-ms=100
+dwm_flush_pacing\bin\dwm_flush_pacing.exe --samples=120
+```
+
+Or run the full suite:
+
+```bat
+run_all.cmd
+```
+
+#### Results (fill in when validating on a Win7 VM)
+
+| Test | PASS/FAIL | avg (ms) | min (ms) | max (ms) | Notes |
+|---|---:|---:|---:|---:|---|
+| `wait_vblank_pacing` | TBD | TBD | TBD | TBD | `D3DKMTWaitForVerticalBlankEvent` cadence |
+| `vblank_state_sanity` | TBD | TBD | TBD | TBD | vblank seq/time monotonicity + period sanity |
+| `dwm_flush_pacing` | TBD | TBD | TBD | TBD | end-to-end DWM vsync pacing |
+
+#### Implementation note (why this matters in the browser runtime)
+
+In the browser runtime, do **not** rely on the GPU worker’s `requestAnimationFrame`-driven tick loop to “fake vsync” by
+delaying `submit_complete`. The AeroGPU device model has a free-running vblank clock; vsync pacing should be keyed to
+that clock so it remains correct even when host ticks are jittery or throttled.
+
 ---
 
 ## 1) Bring-up checklist (smoke tests in strict order)

@@ -18,7 +18,8 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
+    cmd_stream_has_vsync_present_bytes, cmd_stream_has_vsync_present_reader,
+    decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
 use aero_protocol::aerogpu::aerogpu_pci as pci;
@@ -1863,9 +1864,20 @@ impl AeroGpuMmioDevice {
         // value. Some guest drivers may submit best-effort internal work with `signal_fence=0` (or
         // duplicate fences) that still carries important side effects (e.g. shared-surface release).
         let mut queued_for_external = false;
+        let mut queued_for_external_has_vsync_present = false;
         if self.backend.is_none() && desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
             let cmd_stream = capture_cmd_stream(mem, desc);
             if !cmd_stream.is_empty() {
+                // If the submission bridge is enabled, we already capture the command stream bytes
+                // to forward to the out-of-process executor (browser GPU worker). Use the captured
+                // bytes to detect vsync PRESENT packets so the device model can apply Win7/WDDM
+                // vblank pacing without re-reading guest memory.
+                //
+                // This keeps the pacing contract keyed to the machine's vblank timebase (not to a
+                // host-side tick loop).
+                queued_for_external_has_vsync_present = self.vblank_pacing_active()
+                    && cmd_stream_has_vsync_present_bytes(&cmd_stream).unwrap_or(false);
+
                 let alloc_table = capture_alloc_table(mem, self.abi_version, desc);
                 let sub = AerogpuSubmission {
                     flags: desc.flags,
@@ -1929,22 +1941,24 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        let kind = if self.submission_bridge_enabled {
-            // When the submission bridge is enabled, fence completion timing is driven by the
-            // out-of-process executor (e.g. browser GPU worker) via `complete_fence_from_backend`.
-            // Treat all fences as immediate so the host can decide whether/when to apply any
-            // presentation pacing (vsync, etc) before reporting completion.
-            PendingFenceKind::Immediate
-        } else if self.vblank_pacing_active()
+        let kind = if self.vblank_pacing_active()
             && desc.cmd_gpa != 0
             && desc.cmd_size_bytes != 0
-            && desc.cmd_size_bytes <= MAX_CMD_STREAM_SIZE_BYTES
-            && cmd_stream_has_vsync_present_reader(
-                |gpa, buf| mem.read_physical(gpa, buf),
-                desc.cmd_gpa,
-                desc.cmd_size_bytes,
-            )
-            .unwrap_or(false)
+            && if self.submission_bridge_enabled {
+                // In submission-bridge mode, only use the captured-bytes result. If capture failed
+                // (e.g. due to malformed descriptors or OOM), fall back to immediate completion so
+                // the guest cannot deadlock itself waiting for a fence the host will never see.
+                queued_for_external && queued_for_external_has_vsync_present
+            } else {
+                // Non-bridge mode: scan the guest command stream directly.
+                desc.cmd_size_bytes <= MAX_CMD_STREAM_SIZE_BYTES
+                    && cmd_stream_has_vsync_present_reader(
+                        |gpa, buf| mem.read_physical(gpa, buf),
+                        desc.cmd_gpa,
+                        desc.cmd_size_bytes,
+                    )
+                    .unwrap_or(false)
+            }
         {
             PendingFenceKind::Vblank
         } else {

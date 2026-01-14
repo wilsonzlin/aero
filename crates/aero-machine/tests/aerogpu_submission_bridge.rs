@@ -626,7 +626,7 @@ fn aerogpu_submission_bridge_duplicate_fence_merges_no_irq_semantics() {
 }
 
 #[test]
-fn aerogpu_submission_bridge_vsync_present_fence_completes_on_host_completion() {
+fn aerogpu_submission_bridge_vsync_present_fence_completes_on_next_vblank() {
     let cfg = MachineConfig {
         ram_size_bytes: 16 * 1024 * 1024,
         enable_pc_platform: true,
@@ -715,9 +715,24 @@ fn aerogpu_submission_bridge_vsync_present_fence_completes_on_host_completion() 
     m.process_aerogpu();
     assert_eq!(m.aerogpu_drain_submissions().len(), 1);
 
-    // Host reports completion. With the submission bridge enabled, vsync pacing is the host's
-    // responsibility; the device model should complete the fence as soon as the host reports it.
+    // Host reports completion. With the submission bridge enabled, the device model still applies
+    // vblank pacing for vsync PRESENTs; the fence must not complete until the next vblank edge.
     m.aerogpu_complete_fence(signal_fence);
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, 0, "vsync fence must not complete immediately");
+
+    // Advance to the next vblank; the vsync fence becomes eligible and completes.
+    let period_ns = u64::from(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    );
+    m.tick_platform(period_ns);
+    m.process_aerogpu();
+
     let completed_fence = read_mmio_u64(
         &mut m,
         bar0,
@@ -760,8 +775,8 @@ fn aerogpu_submission_bridge_duplicate_fence_does_not_block_later_fences() {
     let cmd2_gpa = 0x32000u64;
 
     // Two command streams that reuse the same signal fence. The first present is not vsynced; the
-    // second is. With the submission bridge enabled, vsync pacing is the host's responsibility,
-    // but the device model must still merge duplicate fence semantics so later fences are not
+    // second is. With the submission bridge enabled, the device model still applies vblank pacing
+    // for vsync PRESENTs, and must merge duplicate fence semantics so later fences are not
     // permanently blocked.
     let cmd0 = {
         let mut writer = AerogpuCmdWriter::new();
@@ -869,8 +884,23 @@ fn aerogpu_submission_bridge_duplicate_fence_does_not_block_later_fences() {
     m.process_aerogpu();
     assert_eq!(m.aerogpu_drain_submissions().len(), 3);
 
-    // Host reports completion for the duplicated fence.
+    // Host reports completion for the duplicated fence. The duplicate fence is upgraded to
+    // vsync-paced completion semantics, so it must not complete until the next vblank tick.
     m.aerogpu_complete_fence(signal_fence);
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, 0);
+
+    let period_ns = u64::from(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    );
+    m.tick_platform(period_ns);
+    m.process_aerogpu();
+
     let completed_fence = read_mmio_u64(
         &mut m,
         bar0,
