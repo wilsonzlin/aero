@@ -132,6 +132,84 @@ async fn setup_versioned_app() -> (axum::Router, tempfile::TempDir, String) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_endpoints_do_not_require_raw_image_file() {
+    let dir = tempdir().expect("tempdir");
+
+    // Image catalog manifest.json references `disk.img`, but we intentionally do NOT create the
+    // backing raw file. Chunked endpoints should still work as long as chunked artifacts exist.
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": true }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+
+    let chunk_root = dir.path().join("chunked").join(IMAGE_ID);
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+
+    let expected_manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "imageId": IMAGE_ID,
+        "version": "v1",
+        "mimeType": "application/octet-stream",
+        "totalSize": 2,
+        "chunkSize": 2,
+        "chunkCount": 1,
+        "chunkIndexWidth": 8,
+        "chunks": [
+            { "size": 2 }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        expected_manifest.as_bytes(),
+    )
+    .await
+    .expect("write chunked manifest.json");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"ab")
+        .await
+        .expect("write chunk0");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"ab");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chunked_manifest_endpoint_has_expected_headers() {
     let (app, _dir, expected_manifest) = setup_app(None).await;
 

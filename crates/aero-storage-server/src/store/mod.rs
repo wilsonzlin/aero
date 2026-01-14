@@ -76,6 +76,14 @@ pub trait ImageStore: Send + Sync {
     /// Fetch catalog information for a single image.
     async fn get_image(&self, image_id: &str) -> Result<ImageCatalogEntry, StoreError>;
 
+    /// Fetch the `public` flag for a single image.
+    ///
+    /// This is used by chunked disk image endpoints to determine cacheability without requiring
+    /// access to the underlying raw image file.
+    async fn get_image_public(&self, image_id: &str) -> Result<bool, StoreError> {
+        Ok(self.get_image(image_id).await?.public)
+    }
+
     /// Fetch core byte-stream metadata for a single image.
     async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError>;
 

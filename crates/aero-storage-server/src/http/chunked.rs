@@ -204,8 +204,8 @@ async fn serve_manifest(
     };
 
     let response = (async move {
-        let image_public = match state.store().get_image(&image_id).await {
-            Ok(img) => img.public,
+        let image_public = match state.store().get_image_public(&image_id).await {
+            Ok(public) => public,
             Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
                 return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
             }
@@ -301,8 +301,8 @@ async fn serve_manifest_version(
     };
 
     let response = (async move {
-        let image_public = match state.store().get_image(&image_id).await {
-            Ok(img) => img.public,
+        let image_public = match state.store().get_image_public(&image_id).await {
+            Ok(public) => public,
             Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
                 return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
             }
@@ -466,8 +466,8 @@ async fn serve_chunk(
             return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
         }
 
-        let image_public = match state.store().get_image(&image_id).await {
-            Ok(img) => img.public,
+        let image_public = match state.store().get_image_public(&image_id).await {
+            Ok(public) => public,
             Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
                 return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
             }
@@ -580,8 +580,8 @@ async fn serve_chunk_version(
             return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
         }
 
-        let image_public = match state.store().get_image(&image_id).await {
-            Ok(img) => img.public,
+        let image_public = match state.store().get_image_public(&image_id).await {
+            Ok(public) => public,
             Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
                 return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
             }

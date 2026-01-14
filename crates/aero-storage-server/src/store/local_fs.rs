@@ -285,6 +285,11 @@ impl ImageStore for LocalFsImageStore {
         })
     }
 
+    async fn get_image_public(&self, image_id: &str) -> Result<bool, StoreError> {
+        let resolved = self.resolve_image(image_id).await?;
+        Ok(resolved.public)
+    }
+
     async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError> {
         let resolved = self.resolve_image(image_id).await?;
         self.meta_from_path(
