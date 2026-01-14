@@ -240,7 +240,8 @@ impl AeroGpuScanoutConfig {
             return None;
         }
 
-        let mut out = vec![0u8; width * height * 4];
+        let out_len = width.checked_mul(height)?.checked_mul(4)?;
+        let mut out = vec![0u8; out_len];
         let mut row_buf = vec![0u8; row_bytes];
 
         for y in 0..height {
@@ -383,7 +384,8 @@ impl AeroGpuCursorConfig {
             .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
         last_row_gpa.checked_add(row_bytes_u64)?;
 
-        let mut out = vec![0u8; width * height * 4];
+        let out_len = width.checked_mul(height)?.checked_mul(4)?;
+        let mut out = vec![0u8; out_len];
         let mut row_buf = vec![0u8; row_bytes];
 
         for y in 0..height {
