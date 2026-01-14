@@ -105,18 +105,20 @@ pub struct AerogpuD3d9Executor {
 
     dummy_texture_view: wgpu::TextureView,
     dummy_cube_texture_view: wgpu::TextureView,
+    dummy_1d_texture_view: wgpu::TextureView,
+    dummy_3d_texture_view: wgpu::TextureView,
     downlevel_flags: wgpu::DownlevelFlags,
     bc_copy_to_buffer_supported: bool,
 
     constants_bind_group_layout: wgpu::BindGroupLayout,
-    samplers_bind_group_layouts_vs: HashMap<u16, wgpu::BindGroupLayout>,
-    samplers_bind_group_layouts_ps: HashMap<u16, wgpu::BindGroupLayout>,
-    pipeline_layouts: HashMap<u32, wgpu::PipelineLayout>,
+    samplers_bind_group_layouts_vs: HashMap<u32, wgpu::BindGroupLayout>,
+    samplers_bind_group_layouts_ps: HashMap<u32, wgpu::BindGroupLayout>,
+    pipeline_layouts: HashMap<u64, wgpu::PipelineLayout>,
     constants_bind_group: wgpu::BindGroup,
     samplers_bind_group_vs: Option<wgpu::BindGroup>,
     samplers_bind_group_ps: Option<wgpu::BindGroup>,
-    samplers_bind_group_key_vs: u16,
-    samplers_bind_group_key_ps: u16,
+    samplers_bind_group_key_vs: u32,
+    samplers_bind_group_key_ps: u32,
     samplers_bind_groups_dirty: bool,
     samplers_vs: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_vs: [D3d9SamplerState; MAX_SAMPLERS],
@@ -178,8 +180,8 @@ struct ContextState {
     constants_bind_group: wgpu::BindGroup,
     samplers_bind_group_vs: Option<wgpu::BindGroup>,
     samplers_bind_group_ps: Option<wgpu::BindGroup>,
-    samplers_bind_group_key_vs: u16,
-    samplers_bind_group_key_ps: u16,
+    samplers_bind_group_key_vs: u32,
+    samplers_bind_group_key_ps: u32,
     samplers_bind_groups_dirty: bool,
     half_pixel_uniform_buffer: Option<wgpu::Buffer>,
     half_pixel_bind_group: Option<wgpu::BindGroup>,
@@ -416,7 +418,14 @@ struct Shader {
     /// `StandardLocationMap` for the common semantics.
     semantic_locations: Vec<shader::SemanticLocation>,
     used_samplers_mask: u16,
-    cube_samplers_mask: u16,
+    /// Per-stage sampler texture type requirements packed into a 2-bit-per-slot key.
+    ///
+    /// Encoding per sampler slot `s` (bits `2*s..2*s+1`):
+    /// - 0: 2D (`texture_2d`)
+    /// - 1: Cube (`texture_cube`)
+    /// - 2: 3D (`texture_3d`)
+    /// - 3: 1D (`texture_1d`)
+    sampler_dim_key: u32,
 }
 
 /// Persisted shader reflection metadata stored alongside cached WGSL.
@@ -424,7 +433,7 @@ struct Shader {
 /// This is intentionally minimal: it includes only the fields the D3D9 executor needs to bind
 /// vertex inputs and select the correct entry point without re-parsing DXBC on cache hit.
 #[cfg(target_arch = "wasm32")]
-const PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION: u32 = 1;
+const PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION: u32 = 2;
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,8 +449,9 @@ struct PersistentShaderReflection {
     entry_point: String,
     uses_semantic_locations: bool,
     used_samplers_mask: u16,
+    /// Packed 2-bit-per-slot sampler dimension key (see `Shader::sampler_dim_key`).
     #[serde(default)]
-    cube_samplers_mask: u16,
+    sampler_dim_key: u32,
     #[serde(default)]
     semantic_locations: Vec<shader::SemanticLocation>,
 }
@@ -737,7 +747,7 @@ fn create_constants_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
 fn create_samplers_bind_group_layout(
     device: &wgpu::Device,
     visibility: wgpu::ShaderStages,
-    cube_mask: u16,
+    sampler_dim_key: u32,
 ) -> wgpu::BindGroupLayout {
     // Matches `aero-d3d9` token stream shader translation binding contract:
     // - group(1): VS samplers
@@ -750,10 +760,12 @@ fn create_samplers_bind_group_layout(
     for slot in 0..MAX_SAMPLERS {
         let tex_binding = slot as u32 * 2;
         let samp_binding = tex_binding + 1;
-        let view_dimension = if (cube_mask & (1u16 << slot)) != 0 {
-            wgpu::TextureViewDimension::Cube
-        } else {
-            wgpu::TextureViewDimension::D2
+        let dim_code = (sampler_dim_key >> (slot as u32 * 2)) & 0b11;
+        let view_dimension = match dim_code {
+            1 => wgpu::TextureViewDimension::Cube,
+            2 => wgpu::TextureViewDimension::D3,
+            3 => wgpu::TextureViewDimension::D1,
+            _ => wgpu::TextureViewDimension::D2,
         };
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: tex_binding,
@@ -795,8 +807,8 @@ fn create_half_pixel_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroup
     })
 }
 
-fn sampler_layout_key(vs_cube_mask: u16, ps_cube_mask: u16) -> u32 {
-    u32::from(vs_cube_mask) | (u32::from(ps_cube_mask) << 16)
+fn sampler_layout_key(vs_sampler_dim_key: u32, ps_sampler_dim_key: u32) -> u64 {
+    u64::from(vs_sampler_dim_key) | (u64::from(ps_sampler_dim_key) << 32)
 }
 
 fn create_constants_bind_group(
@@ -1006,8 +1018,8 @@ struct PipelineCacheKey {
     ps: u64,
     /// Encodes the bind group layout requirements for vertex+pixel sampler slots.
     ///
-    /// Layout key = (vs_cube_mask as u32) | ((ps_cube_mask as u32) << 16)
-    samplers_layout_key: u32,
+    /// Layout key = (vs_sampler_dim_key as u64) | ((ps_sampler_dim_key as u64) << 32)
+    samplers_layout_key: u64,
     alpha_test_enable: bool,
     alpha_test_func: u32,
     alpha_test_ref: u8,
@@ -1270,6 +1282,82 @@ impl AerogpuD3d9Executor {
                 ..Default::default()
             });
 
+        let dummy_1d_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu-d3d9.dummy_1d_texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D1,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &dummy_1d_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0xFF, 0xFF, 0xFF, 0xFF],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let dummy_1d_texture_view = dummy_1d_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D1),
+            ..Default::default()
+        });
+
+        let dummy_3d_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu-d3d9.dummy_3d_texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &dummy_3d_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0xFF, 0xFF, 0xFF, 0xFF],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let dummy_3d_texture_view = dummy_3d_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D3),
+            ..Default::default()
+        });
+
         let bc_copy_to_buffer_supported = bc_copy_to_buffer_supported(&device, &queue);
 
         let constants_bind_group_layout = create_constants_bind_group_layout(&device);
@@ -1280,9 +1368,9 @@ impl AerogpuD3d9Executor {
         let mut samplers_bind_group_layouts_vs = HashMap::new();
         let mut samplers_bind_group_layouts_ps = HashMap::new();
         let vs_bgl0 =
-            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX, 0u16);
+            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX, 0);
         let ps_bgl0 =
-            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT, 0u16);
+            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT, 0);
 
         let mut pipeline_layouts = HashMap::new();
         let pipeline_layout0 = if let Some(half_pixel_layout) = half_pixel_bind_group_layout.as_ref()
@@ -1397,6 +1485,8 @@ impl AerogpuD3d9Executor {
             half_pixel_last_viewport_dims: None,
             dummy_texture_view,
             dummy_cube_texture_view,
+            dummy_1d_texture_view,
+            dummy_3d_texture_view,
             downlevel_flags,
             bc_copy_to_buffer_supported,
             constants_bind_group_layout,
@@ -2437,15 +2527,22 @@ impl AerogpuD3d9Executor {
         });
 
         let mut used_samplers_mask = 0u16;
-        let mut cube_samplers_mask = 0u16;
+        let mut sampler_dim_key = 0u32;
         for &s in &cached.used_samplers {
             if (s as usize) < MAX_SAMPLERS {
                 used_samplers_mask |= 1u16 << s;
-                if cached.sampler_texture_types.get(&s).copied()
-                    == Some(TextureType::TextureCube)
+                let dim_code = match cached
+                    .sampler_texture_types
+                    .get(&s)
+                    .copied()
+                    .unwrap_or(TextureType::Texture2D)
                 {
-                    cube_samplers_mask |= 1u16 << s;
-                }
+                    TextureType::TextureCube => 1,
+                    TextureType::Texture3D => 2,
+                    TextureType::Texture1D => 3,
+                    _ => 0,
+                };
+                sampler_dim_key |= dim_code << (u32::from(s) * 2);
             } else {
                 debug!(
                     shader_handle,
@@ -2467,7 +2564,7 @@ impl AerogpuD3d9Executor {
                     && bytecode_stage == shader::ShaderStage::Vertex,
                 semantic_locations: cached.semantic_locations.clone(),
                 used_samplers_mask,
-                cube_samplers_mask,
+                sampler_dim_key,
             },
         );
         Ok(())
@@ -2509,15 +2606,22 @@ impl AerogpuD3d9Executor {
                     }
 
                     let mut used_samplers_mask = 0u16;
-                    let mut cube_samplers_mask = 0u16;
+                    let mut sampler_dim_key = 0u32;
                     for &s in &translated.used_samplers {
                         if (s as usize) < MAX_SAMPLERS {
                             used_samplers_mask |= 1u16 << s;
-                            if translated.sampler_texture_types.get(&s).copied()
-                                == Some(TextureType::TextureCube)
+                            let dim_code = match translated
+                                .sampler_texture_types
+                                .get(&s)
+                                .copied()
+                                .unwrap_or(TextureType::Texture2D)
                             {
-                                cube_samplers_mask |= 1u16 << s;
-                            }
+                                TextureType::TextureCube => 1,
+                                TextureType::Texture3D => 2,
+                                TextureType::Texture1D => 3,
+                                _ => 0,
+                            };
+                            sampler_dim_key |= dim_code << (u32::from(s) * 2);
                         } else {
                             debug!(
                                 shader_handle,
@@ -2533,7 +2637,7 @@ impl AerogpuD3d9Executor {
                         entry_point: translated.entry_point.to_string(),
                         uses_semantic_locations: translated.uses_semantic_locations,
                         used_samplers_mask,
-                        cube_samplers_mask,
+                        sampler_dim_key,
                         semantic_locations: translated.semantic_locations.clone(),
                     };
                     let reflection = serde_json::to_value(reflection).map_err(|e| e.to_string())?;
@@ -2771,7 +2875,7 @@ impl AerogpuD3d9Executor {
                         && bytecode_stage == shader::ShaderStage::Vertex,
                     semantic_locations: reflection.semantic_locations.clone(),
                     used_samplers_mask: reflection.used_samplers_mask,
-                    cube_samplers_mask: reflection.cube_samplers_mask,
+                    sampler_dim_key: reflection.sampler_dim_key,
                 },
             );
             return Ok(());
@@ -7281,8 +7385,8 @@ impl AerogpuD3d9Executor {
             vs_semantic_locations,
             vs_used_mask,
             ps_used_mask,
-            vs_cube_mask,
-            ps_cube_mask,
+            vs_sampler_dim_key,
+            ps_sampler_dim_key,
         ) = {
             let vs = self
                 .shaders
@@ -7313,8 +7417,8 @@ impl AerogpuD3d9Executor {
                 vs.semantic_locations.clone(),
                 vs.used_samplers_mask,
                 ps.used_samplers_mask,
-                vs.cube_samplers_mask,
-                ps.cube_samplers_mask,
+                vs.sampler_dim_key,
+                ps.sampler_dim_key,
             )
         };
         for slot in 0..MAX_SAMPLERS {
@@ -7332,7 +7436,7 @@ impl AerogpuD3d9Executor {
                 }
             }
         }
-        self.ensure_sampler_bind_groups(vs_cube_mask, ps_cube_mask);
+        self.ensure_sampler_bind_groups(vs_sampler_dim_key, ps_sampler_dim_key);
         let (color_formats, color_is_opaque_alpha, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
@@ -7403,7 +7507,7 @@ impl AerogpuD3d9Executor {
         let pipeline_key = PipelineCacheKey {
             vs: vs_key,
             ps: ps_key,
-            samplers_layout_key: sampler_layout_key(vs_cube_mask, ps_cube_mask),
+            samplers_layout_key: sampler_layout_key(vs_sampler_dim_key, ps_sampler_dim_key),
             alpha_test_enable: pipeline_alpha_enable,
             alpha_test_func: pipeline_alpha_func,
             alpha_test_ref: pipeline_alpha_ref,
@@ -7442,8 +7546,8 @@ impl AerogpuD3d9Executor {
                 None
             };
 
-            self.ensure_pipeline_layout(vs_cube_mask, ps_cube_mask);
-            let layout_key = sampler_layout_key(vs_cube_mask, ps_cube_mask);
+            self.ensure_pipeline_layout(vs_sampler_dim_key, ps_sampler_dim_key);
+            let layout_key = sampler_layout_key(vs_sampler_dim_key, ps_sampler_dim_key);
 
             let pipeline = {
                 let pipeline_layout = self
@@ -8152,33 +8256,33 @@ impl AerogpuD3d9Executor {
         Ok(module)
     }
 
-    fn ensure_pipeline_layout(&mut self, vs_cube_mask: u16, ps_cube_mask: u16) {
+    fn ensure_pipeline_layout(&mut self, vs_sampler_dim_key: u32, ps_sampler_dim_key: u32) {
         if !self
             .samplers_bind_group_layouts_vs
-            .contains_key(&vs_cube_mask)
+            .contains_key(&vs_sampler_dim_key)
         {
             let layout = create_samplers_bind_group_layout(
                 &self.device,
                 wgpu::ShaderStages::VERTEX,
-                vs_cube_mask,
+                vs_sampler_dim_key,
             );
             self.samplers_bind_group_layouts_vs
-                .insert(vs_cube_mask, layout);
+                .insert(vs_sampler_dim_key, layout);
         }
         if !self
             .samplers_bind_group_layouts_ps
-            .contains_key(&ps_cube_mask)
+            .contains_key(&ps_sampler_dim_key)
         {
             let layout = create_samplers_bind_group_layout(
                 &self.device,
                 wgpu::ShaderStages::FRAGMENT,
-                ps_cube_mask,
+                ps_sampler_dim_key,
             );
             self.samplers_bind_group_layouts_ps
-                .insert(ps_cube_mask, layout);
+                .insert(ps_sampler_dim_key, layout);
         }
 
-        let key = sampler_layout_key(vs_cube_mask, ps_cube_mask);
+        let key = sampler_layout_key(vs_sampler_dim_key, ps_sampler_dim_key);
         if self.pipeline_layouts.contains_key(&key) {
             return;
         }
@@ -8186,11 +8290,11 @@ impl AerogpuD3d9Executor {
         let pipeline_layout = {
             let vs_bgl = self
                 .samplers_bind_group_layouts_vs
-                .get(&vs_cube_mask)
+                .get(&vs_sampler_dim_key)
                 .expect("VS sampler bind group layout should be present");
             let ps_bgl = self
                 .samplers_bind_group_layouts_ps
-                .get(&ps_cube_mask)
+                .get(&ps_sampler_dim_key)
                 .expect("PS sampler bind group layout should be present");
 
             if let Some(half_pixel_layout) = self.half_pixel_bind_group_layout.as_ref() {
@@ -8217,18 +8321,18 @@ impl AerogpuD3d9Executor {
         self.pipeline_layouts.insert(key, pipeline_layout);
     }
 
-    fn ensure_sampler_bind_groups(&mut self, vs_cube_mask: u16, ps_cube_mask: u16) {
-        // If the shader's sampler type requirements changed (2D vs cube), we must recreate the
-        // bind groups with a matching bind group layout.
-        if self.samplers_bind_group_key_vs != vs_cube_mask {
+    fn ensure_sampler_bind_groups(&mut self, vs_sampler_dim_key: u32, ps_sampler_dim_key: u32) {
+        // If the shader's sampler type requirements changed (2D vs cube vs 3D vs 1D), we must
+        // recreate the bind groups with a matching bind group layout.
+        if self.samplers_bind_group_key_vs != vs_sampler_dim_key {
             self.samplers_bind_group_vs = None;
             self.samplers_bind_groups_dirty = true;
-            self.samplers_bind_group_key_vs = vs_cube_mask;
+            self.samplers_bind_group_key_vs = vs_sampler_dim_key;
         }
-        if self.samplers_bind_group_key_ps != ps_cube_mask {
+        if self.samplers_bind_group_key_ps != ps_sampler_dim_key {
             self.samplers_bind_group_ps = None;
             self.samplers_bind_groups_dirty = true;
-            self.samplers_bind_group_key_ps = ps_cube_mask;
+            self.samplers_bind_group_key_ps = ps_sampler_dim_key;
         }
 
         if !self.samplers_bind_groups_dirty
@@ -8256,89 +8360,98 @@ impl AerogpuD3d9Executor {
 
         if !self
             .samplers_bind_group_layouts_vs
-            .contains_key(&vs_cube_mask)
+            .contains_key(&vs_sampler_dim_key)
         {
             let layout = create_samplers_bind_group_layout(
                 &self.device,
                 wgpu::ShaderStages::VERTEX,
-                vs_cube_mask,
+                vs_sampler_dim_key,
             );
             self.samplers_bind_group_layouts_vs
-                .insert(vs_cube_mask, layout);
+                .insert(vs_sampler_dim_key, layout);
         }
         if !self
             .samplers_bind_group_layouts_ps
-            .contains_key(&ps_cube_mask)
+            .contains_key(&ps_sampler_dim_key)
         {
             let layout = create_samplers_bind_group_layout(
                 &self.device,
                 wgpu::ShaderStages::FRAGMENT,
-                ps_cube_mask,
+                ps_sampler_dim_key,
             );
             self.samplers_bind_group_layouts_ps
-                .insert(ps_cube_mask, layout);
+                .insert(ps_sampler_dim_key, layout);
         }
 
         let samplers_bind_group_vs = {
             let layout = self
                 .samplers_bind_group_layouts_vs
-                .get(&vs_cube_mask)
+                .get(&vs_sampler_dim_key)
                 .expect("layout was inserted above");
 
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(MAX_SAMPLERS * 2);
             for slot in 0..MAX_SAMPLERS {
                 let tex_binding = slot as u32 * 2;
                 let samp_binding = tex_binding + 1;
-                let requires_cube = (vs_cube_mask & (1u16 << slot)) != 0;
+                let dim_code = (vs_sampler_dim_key >> (slot as u32 * 2)) & 0b11;
 
                 let tex_handle = self.state.textures_vs[slot];
                 let srgb_texture = srgb_enabled(&self.state.sampler_states_vs[slot]);
                 let sampler = self.samplers_vs[slot].as_ref();
 
-                let view: &wgpu::TextureView = if tex_handle == 0 {
-                    if requires_cube {
-                        &self.dummy_cube_texture_view
-                    } else {
-                        &self.dummy_texture_view
-                    }
-                } else {
-                    let underlying = self.resolve_resource_handle(tex_handle).ok();
-                    match underlying.and_then(|h| self.resources.get(&h)) {
-                        Some(Resource::Texture2d {
-                            view,
-                            view_srgb,
-                            view_cube,
-                            view_cube_srgb,
-                            array_layers,
-                            ..
-                        }) => {
-                            if requires_cube {
-                                if srgb_texture {
-                                    view_cube_srgb
-                                        .as_ref()
-                                        .or_else(|| view_cube.as_ref())
-                                        .unwrap_or(&self.dummy_cube_texture_view)
-                                } else {
-                                    view_cube.as_ref().unwrap_or(&self.dummy_cube_texture_view)
-                                }
-                            } else {
-                                // A cube texture's default view is `D2Array`, which cannot be
-                                // bound to a `texture_2d<f32>` binding. Treat mismatched bindings
-                                // as unbound.
-                                if *array_layers != 1 {
-                                    &self.dummy_texture_view
-                                } else if srgb_texture {
-                                    view_srgb.as_ref().unwrap_or(view)
-                                } else {
-                                    view
-                                }
-                            }
-                        }
-                        _ => {
+                let view: &wgpu::TextureView = match dim_code {
+                    2 => &self.dummy_3d_texture_view,
+                    3 => &self.dummy_1d_texture_view,
+                    _ => {
+                        let requires_cube = dim_code == 1;
+                        if tex_handle == 0 {
                             if requires_cube {
                                 &self.dummy_cube_texture_view
                             } else {
                                 &self.dummy_texture_view
+                            }
+                        } else {
+                            let underlying = self.resolve_resource_handle(tex_handle).ok();
+                            match underlying.and_then(|h| self.resources.get(&h)) {
+                                Some(Resource::Texture2d {
+                                    view,
+                                    view_srgb,
+                                    view_cube,
+                                    view_cube_srgb,
+                                    array_layers,
+                                    ..
+                                }) => {
+                                    if requires_cube {
+                                        if srgb_texture {
+                                            view_cube_srgb
+                                                .as_ref()
+                                                .or_else(|| view_cube.as_ref())
+                                                .unwrap_or(&self.dummy_cube_texture_view)
+                                        } else {
+                                            view_cube
+                                                .as_ref()
+                                                .unwrap_or(&self.dummy_cube_texture_view)
+                                        }
+                                    } else {
+                                        // A cube texture's default view is `D2Array`, which cannot be
+                                        // bound to a `texture_2d<f32>` binding. Treat mismatched bindings
+                                        // as unbound.
+                                        if *array_layers != 1 {
+                                            &self.dummy_texture_view
+                                        } else if srgb_texture {
+                                            view_srgb.as_ref().unwrap_or(view)
+                                        } else {
+                                            view
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    if requires_cube {
+                                        &self.dummy_cube_texture_view
+                                    } else {
+                                        &self.dummy_texture_view
+                                    }
+                                }
                             }
                         }
                     }
@@ -8364,60 +8477,69 @@ impl AerogpuD3d9Executor {
         let samplers_bind_group_ps = {
             let layout = self
                 .samplers_bind_group_layouts_ps
-                .get(&ps_cube_mask)
+                .get(&ps_sampler_dim_key)
                 .expect("layout was inserted above");
 
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(MAX_SAMPLERS * 2);
             for slot in 0..MAX_SAMPLERS {
                 let tex_binding = slot as u32 * 2;
                 let samp_binding = tex_binding + 1;
-                let requires_cube = (ps_cube_mask & (1u16 << slot)) != 0;
+                let dim_code = (ps_sampler_dim_key >> (slot as u32 * 2)) & 0b11;
 
                 let tex_handle = self.state.textures_ps[slot];
                 let srgb_texture = srgb_enabled(&self.state.sampler_states_ps[slot]);
                 let sampler = self.samplers_ps[slot].as_ref();
 
-                let view: &wgpu::TextureView = if tex_handle == 0 {
-                    if requires_cube {
-                        &self.dummy_cube_texture_view
-                    } else {
-                        &self.dummy_texture_view
-                    }
-                } else {
-                    let underlying = self.resolve_resource_handle(tex_handle).ok();
-                    match underlying.and_then(|h| self.resources.get(&h)) {
-                        Some(Resource::Texture2d {
-                            view,
-                            view_srgb,
-                            view_cube,
-                            view_cube_srgb,
-                            array_layers,
-                            ..
-                        }) => {
-                            if requires_cube {
-                                if srgb_texture {
-                                    view_cube_srgb
-                                        .as_ref()
-                                        .or_else(|| view_cube.as_ref())
-                                        .unwrap_or(&self.dummy_cube_texture_view)
-                                } else {
-                                    view_cube.as_ref().unwrap_or(&self.dummy_cube_texture_view)
-                                }
-                            } else {
-                                if *array_layers != 1 {
-                                    &self.dummy_texture_view
-                                } else if srgb_texture {
-                                    view_srgb.as_ref().unwrap_or(view)
-                                } else {
-                                    view
-                                }
-                            }
-                        }
-                        _ => {
+                let view: &wgpu::TextureView = match dim_code {
+                    2 => &self.dummy_3d_texture_view,
+                    3 => &self.dummy_1d_texture_view,
+                    _ => {
+                        let requires_cube = dim_code == 1;
+                        if tex_handle == 0 {
                             if requires_cube {
                                 &self.dummy_cube_texture_view
                             } else {
                                 &self.dummy_texture_view
+                            }
+                        } else {
+                            let underlying = self.resolve_resource_handle(tex_handle).ok();
+                            match underlying.and_then(|h| self.resources.get(&h)) {
+                                Some(Resource::Texture2d {
+                                    view,
+                                    view_srgb,
+                                    view_cube,
+                                    view_cube_srgb,
+                                    array_layers,
+                                    ..
+                                }) => {
+                                    if requires_cube {
+                                        if srgb_texture {
+                                            view_cube_srgb
+                                                .as_ref()
+                                                .or_else(|| view_cube.as_ref())
+                                                .unwrap_or(&self.dummy_cube_texture_view)
+                                        } else {
+                                            view_cube
+                                                .as_ref()
+                                                .unwrap_or(&self.dummy_cube_texture_view)
+                                        }
+                                    } else {
+                                        if *array_layers != 1 {
+                                            &self.dummy_texture_view
+                                        } else if srgb_texture {
+                                            view_srgb.as_ref().unwrap_or(view)
+                                        } else {
+                                            view
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    if requires_cube {
+                                        &self.dummy_cube_texture_view
+                                    } else {
+                                        &self.dummy_texture_view
+                                    }
+                                }
                             }
                         }
                     }
