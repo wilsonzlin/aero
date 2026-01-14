@@ -218,11 +218,16 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
      `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
 5. **Error reporting (ABI 1.3+)**
    - If `AEROGPU_IRQ_ERROR` is set in `AEROGPU_MMIO_REG_IRQ_STATUS`, treat this as a fatal device error.
+   - The Win7 KMD will **latch** this state and (as a robustness measure) mask off further **ERROR interrupt delivery**
+     by clearing `AEROGPU_IRQ_ERROR` in `AEROGPU_MMIO_REG_IRQ_ENABLE` (to avoid IRQ storms from a sticky/level-triggered
+     error bit). This does **not** disable vblank/fence delivery; the KMD preserves other enabled bits.
+     - ERROR delivery is not re-enabled until the adapter is restarted (PnP stop/start) or recovered via TDR
+       (`RestartFromTimeout`).
    - When `AEROGPU_FEATURE_ERROR_INFO` is set in `AEROGPU_MMIO_REG_FEATURES_LO/HI`, the device also latches a structured
      error payload into:
-     - `AEROGPU_MMIO_REG_ERROR_CODE` (`enum aerogpu_error_code`)
-     - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (submission fence associated with the error, if known)
-     - `AEROGPU_MMIO_REG_ERROR_COUNT` (monotonically increasing error counter)
+      - `AEROGPU_MMIO_REG_ERROR_CODE` (`enum aerogpu_error_code`)
+      - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (submission fence associated with the error, if known)
+      - `AEROGPU_MMIO_REG_ERROR_COUNT` (monotonically increasing error counter)
    - Note: acknowledging/clearing `AEROGPU_IRQ_ERROR` via `AEROGPU_MMIO_REG_IRQ_ACK` does **not** clear the latched
      error payload; it remains valid until overwritten by a subsequent error.
 
