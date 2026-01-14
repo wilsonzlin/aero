@@ -20,7 +20,7 @@ describe("runtime/machine_snapshot_disks", () => {
       ];
     });
 
-    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string) => {
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSize: number) => {
       events.push("primary");
     });
     const attach_install_media_opfs_iso = vi.fn(async (_path: string) => {
@@ -46,7 +46,7 @@ describe("runtime/machine_snapshot_disks", () => {
 
     expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
     expect(take_restored_disk_overlays).toHaveBeenCalledTimes(1);
-    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay", 0);
     expect(attach_install_media_opfs_iso).toHaveBeenCalledWith("aero/isos/win7.iso");
     expect(events).toEqual(["restore", "take", "primary", "iso"]);
     expect(warn).toHaveBeenCalled();
@@ -160,7 +160,7 @@ describe("runtime/machine_snapshot_disks", () => {
     await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
 
     expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
-    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay", 0);
     expect(attach_install_media_opfs_iso).toHaveBeenCalledWith("aero/isos/win7.iso");
     expect(events).toEqual(["restore", "take", "primary", "iso"]);
   });
@@ -203,7 +203,7 @@ describe("runtime/machine_snapshot_disks", () => {
     await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
 
     expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
-    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay", 0);
     expect(attach_install_media_iso_opfs_existing).toHaveBeenCalledWith("aero/isos/win7.iso");
     expect(events).toEqual(["restore", "take", "primary", "iso"]);
   });
@@ -290,7 +290,7 @@ describe("runtime/machine_snapshot_disks", () => {
       return [{ disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "aero/disks/win7.overlay" }];
     });
 
-    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string) => {
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSize: number) => {
       events.push("primary");
     });
 
@@ -311,7 +311,7 @@ describe("runtime/machine_snapshot_disks", () => {
     await restoreMachineSnapshotAndReattachDisks({ api, machine, bytes, logPrefix: "test" });
 
     expect(restore_snapshot).toHaveBeenCalledWith(bytes);
-    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay", 0);
     expect(events).toEqual(["restore", "take", "primary"]);
   });
 
@@ -351,17 +351,13 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "ide"]);
   });
 
-  it("supplies overlay block size when set_primary_hdd_opfs_cow requires it (legacy wasm signature)", async () => {
+  it("passes block size 0 to set_primary_hdd_opfs_cow to infer it from the overlay header", async () => {
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
 
     const take_restored_disk_overlays = vi.fn(() => [
       { disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "aero/disks/win7.overlay" },
     ]);
 
-    // Older wasm-bindgen exports require a third `overlayBlockSizeBytes` argument.
-    //
-    // NOTE: Do not use `vi.fn` here: Vitest mock fns have `.length === 0`, but the runtime
-    // detection uses `fn.length >= 3` to decide whether it must supply the block size.
     const calls: Array<[string, string, number]> = [];
     async function set_primary_hdd_opfs_cow(base: string, overlay: string, blockSizeBytes: number): Promise<void> {
       calls.push([base, overlay, blockSizeBytes]);
@@ -383,6 +379,6 @@ describe("runtime/machine_snapshot_disks", () => {
 
     await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
 
-    expect(calls).toEqual([["aero/disks/win7.base", "aero/disks/win7.overlay", 1024 * 1024]]);
+    expect(calls).toEqual([["aero/disks/win7.base", "aero/disks/win7.overlay", 0]]);
   });
 });

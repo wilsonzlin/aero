@@ -3252,12 +3252,6 @@ where
     // on wasm32 (OPFS/JS-backed storage is often `!Send`). `VirtualDiskSend` captures that policy.
     OverlayBackend: aero_storage::StorageBackend + aero_storage::VirtualDiskSend,
 {
-    if overlay_block_size_bytes == 0 {
-        return Err(aero_storage::DiskError::Io(
-            "overlay_block_size_bytes must be non-zero".to_string(),
-        ));
-    }
-
     let base_size = base.capacity_bytes();
     if base_size == 0 {
         return Err(aero_storage::DiskError::Io(
@@ -3273,6 +3267,11 @@ where
 
     let overlay_len = overlay_backend.len()?;
     if overlay_len == 0 {
+        if overlay_block_size_bytes == 0 {
+            return Err(aero_storage::DiskError::Io(
+                "overlay_block_size_bytes must be non-zero when creating a new overlay".to_string(),
+            ));
+        }
         return aero_storage::AeroCowDisk::create(base, overlay_backend, overlay_block_size_bytes);
     }
 
@@ -3292,7 +3291,7 @@ where
             header.disk_size_bytes
         )));
     }
-    if header.block_size_bytes != overlay_block_size_bytes {
+    if overlay_block_size_bytes != 0 && header.block_size_bytes != overlay_block_size_bytes {
         return Err(aero_storage::DiskError::Io(format!(
             "overlay block_size_bytes ({}) does not match expected block size ({overlay_block_size_bytes})",
             header.block_size_bytes
@@ -4764,7 +4763,10 @@ impl Machine {
     /// still supporting writable disks and snapshot/restore flows.
     ///
     /// The overlay file is created if it does not exist. If it already exists, its aerosparse
-    /// header must match both the base disk size and `overlay_block_size_bytes`.
+    /// header must match the base disk size. If `overlay_block_size_bytes` is non-zero, it must
+    /// also match the header's block size. Pass `0` to infer the block size from an existing
+    /// overlay header (useful for snapshot restore flows where the host does not persist the block
+    /// size separately).
     ///
     /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
     /// a dedicated worker (not the main thread).
@@ -6589,7 +6591,7 @@ mod machine_primary_hdd_cow_disk_tests {
             RawDisk::open(MemBackend::from_vec(base_bytes_after)).expect("RawDisk::open base2");
         let overlay_backend2 = MemBackend::from_vec(overlay_bytes);
         let mut cow2 =
-            open_or_create_cow_disk(base_disk2, overlay_backend2, 4096).expect("open cow disk");
+            open_or_create_cow_disk(base_disk2, overlay_backend2, 0).expect("open cow disk");
         let mut read = [0u8; SECTOR_SIZE];
         cow2.read_sectors(0, &mut read).unwrap();
         assert_eq!(read, [0x55; SECTOR_SIZE]);
@@ -6615,6 +6617,21 @@ mod machine_primary_hdd_cow_disk_tests {
             .expect("expected block size mismatch error");
         assert!(
             err.to_string().contains("block_size_bytes"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn create_rejects_zero_block_size() {
+        let base_size = 1024 * 1024u64;
+        let base_disk =
+            RawDisk::open(MemBackend::with_len(base_size).unwrap()).expect("RawDisk::open base");
+        let overlay_backend = MemBackend::new();
+        let err = open_or_create_cow_disk(base_disk, overlay_backend, 0)
+            .err()
+            .expect("expected missing block size error");
+        assert!(
+            err.to_string().contains("overlay_block_size_bytes"),
             "unexpected error: {err}"
         );
     }

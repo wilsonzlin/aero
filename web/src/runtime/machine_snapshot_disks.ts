@@ -138,7 +138,6 @@ export async function reattachMachineSnapshotDisks(opts: {
     // Back-compat shim: some builds may expose a different spelling; keep this list small and
     // update alongside the wasm-bindgen surface.
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
-  const setPrimaryNeedsBlockSize = typeof setPrimary === "function" && setPrimary.length >= 3;
 
   const setPrimaryExisting =
     (machine as unknown as { set_primary_hdd_opfs_existing?: unknown }).set_primary_hdd_opfs_existing ??
@@ -254,13 +253,8 @@ export async function reattachMachineSnapshotDisks(opts: {
           "Snapshot restore requires Machine.set_disk_cow_opfs_open(base_image, overlay_image) or Machine.set_primary_hdd_opfs_cow(base_image, overlay_image) but none are available in this WASM build.",
         );
       }
-      const args: unknown[] = [base, overlay];
-      if (setPrimaryNeedsBlockSize) {
-        const blockSizeBytes =
-          (await tryReadAerosparseBlockSizeBytesFromOpfs(overlay, prefix)) ?? DEFAULT_COW_OVERLAY_BLOCK_SIZE_BYTES;
-        args.push(blockSizeBytes);
-      }
-      await callMaybeAsync(setPrimary as (...args: unknown[]) => unknown, machine, args);
+      // Pass `0` for the block size to indicate "infer from the existing overlay header".
+      await callMaybeAsync(setPrimary as (...args: unknown[]) => unknown, machine, [base, overlay, 0]);
       continue;
     }
 
