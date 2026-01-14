@@ -243,7 +243,7 @@ Protocol references:
 
 Canonical machine note:
 
-- `MachineConfig::enable_aerogpu` wires BAR1 VRAM + legacy VGA aliasing and a minimal BAR0 register block sufficient for detection/bring-up.
+- `MachineConfig::enable_aerogpu` wires BAR1 VRAM + VRAM-backed legacy VGA/VBE decode and a minimal BAR0 register block sufficient for detection/bring-up.
   Full AeroGPU command execution is not implemented in `aero-machine` yet (see the `MachineConfig::enable_aerogpu` docs in `crates/aero-machine/src/lib.rs`).
 - A more complete AeroGPU PCI device model exists in the emulator crate (`crates/emulator/src/devices/pci/aerogpu.rs`) and is not the canonical browser machine today.
 
