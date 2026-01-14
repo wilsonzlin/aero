@@ -13,6 +13,8 @@
 ;   byte-for-byte identical to `aero_virtio_input.inf` (only the leading
 ;   banner/comments may differ).
 ; - Because it is identical, it does not change HWID matching behavior.
+; - Install only one of the two basenames at a time (`aero_virtio_input.inf` or
+;   `virtio-input.inf`).
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
