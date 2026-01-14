@@ -504,6 +504,17 @@ bool TestCreateSrvNotImplIsSafeToDestroy() {
     return false;
   }
 
+  // Force an older device ABI so texture-view opcodes are disabled. This keeps
+  // the test deterministic even if the portable UMD defaults to a newer ABI
+  // (where mip/array slicing is supported and MostDetailedMip != 0 would no
+  // longer be an E_NOTIMPL condition).
+  auto* adapter = reinterpret_cast<aerogpu::d3d10_11::Adapter*>(dev.hAdapter.pDrvPrivate);
+  if (!Check(adapter != nullptr, "adapter private pointer")) {
+    return false;
+  }
+  adapter->umd_private_valid = true;
+  adapter->umd_private.device_abi_version_u32 = (AEROGPU_ABI_MAJOR << 16) | 3; // ABI 1.3 (no texture views)
+
   // Create a valid shader-resource texture.
   TestResource tex{};
   if (!CreateTexture2D(&dev, kD3D11BindShaderResource, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &tex)) {
