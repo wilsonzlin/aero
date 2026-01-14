@@ -284,6 +284,13 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
    */
   flags?: number;
   /**
+   * Optional engine selector (`aerogpu_submit_desc.engine_id` / u32).
+   *
+   * This is currently unused by the GPU worker executor, but is forwarded for debugging and
+   * forward-compatible extensions.
+   */
+  engineId?: number;
+  /**
    * Guest-provided fence value to report as completed once the submission finishes.
    *
    * Uses BigInt to preserve full u64 fidelity across JS/worker IPC.

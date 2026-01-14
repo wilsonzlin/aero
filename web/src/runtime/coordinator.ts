@@ -2807,6 +2807,7 @@ export class WorkerCoordinator {
     const cmdStream = sub.cmdStream;
     const allocTable = sub.allocTable;
     const flags = typeof sub.flags === "number" && Number.isFinite(sub.flags) ? sub.flags >>> 0 : undefined;
+    const engineId = typeof sub.engineId === "number" && Number.isFinite(sub.engineId) ? sub.engineId >>> 0 : undefined;
 
     const requestId = this.nextAerogpuRequestId++;
     if (typeof sub.signalFence === "bigint" && sub.signalFence !== 0n) {
@@ -2821,6 +2822,7 @@ export class WorkerCoordinator {
       cmdStream,
       ...(allocTable ? { allocTable } : {}),
       ...(flags !== undefined ? { flags } : {}),
+      ...(engineId !== undefined ? { engineId } : {}),
     };
 
     const transfer: Transferable[] = [cmdStream];

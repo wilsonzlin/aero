@@ -212,71 +212,6 @@ describe("runtime/coordinator", () => {
     coordinator.stop();
   });
 
-  it("forwards drained AeroGPU submissions to the GPU worker and routes fence completions back to the CPU worker", () => {
-    const coordinator = new WorkerCoordinator();
-    const segments = allocateTestSegments();
-    const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-
-    // Spawn CPU + GPU workers with mock Worker stubs.
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
-    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
-    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
-    expect(cpuInfo).toBeTruthy();
-    expect(gpuInfo).toBeTruthy();
-
-    const cmdStream = new ArrayBuffer(4);
-    new Uint8Array(cmdStream).set([1, 2, 3, 4]);
-    const allocTable = new ArrayBuffer(2);
-    new Uint8Array(allocTable).set([5, 6]);
-
-    // Simulate the CPU worker draining a submission from the in-process AeroGPU ring.
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
-      kind: "aerogpu.submit",
-      contextId: 7,
-      signalFence: 42n,
-      cmdStream,
-      flags: 0,
-      allocTable,
-    });
-
-    // GPU worker isn't READY yet, so submissions are queued until we receive READY.
-    expect(gpuInfo.worker.posted.some((p) => (p.message as any)?.type === "submit_aerogpu")).toBe(false);
-
-    // Mark the GPU worker READY to flush queued submissions.
-    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, { type: MessageType.READY, role: "gpu" });
-
-    const submit = gpuInfo.worker.posted.find((p) => (p.message as any)?.type === "submit_aerogpu");
-    expect(submit).toBeTruthy();
-    expect(submit?.transfer?.includes(cmdStream)).toBe(true);
-    expect(submit?.transfer?.includes(allocTable)).toBe(true);
-
-    const submitMsg = submit?.message as any;
-    expect(submitMsg.protocol).toBe(GPU_PROTOCOL_NAME);
-    expect(submitMsg.protocolVersion).toBe(GPU_PROTOCOL_VERSION);
-    expect(submitMsg.contextId).toBe(7);
-    expect(submitMsg.signalFence).toBe(42n);
-    expect(submitMsg.cmdStream).toBe(cmdStream);
-    expect(submitMsg.allocTable).toBe(allocTable);
-    expect(submitMsg.flags).toBe(0);
-    expect(typeof submitMsg.requestId).toBe("number");
-
-    const requestId = submitMsg.requestId as number;
-
-    // Simulate the GPU worker completing the submission.
-    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, {
-      protocol: GPU_PROTOCOL_NAME,
-      protocolVersion: GPU_PROTOCOL_VERSION,
-      type: "submit_complete",
-      requestId,
-      completedFence: 42n,
-    });
-
-    const complete = cpuInfo.worker.posted.find((p) => (p.message as any)?.kind === "aerogpu.complete_fence");
-    expect(complete?.message).toEqual({ kind: "aerogpu.complete_fence", fence: 42n });
-  });
-
   it("preserves the machine CPU worker entrypoint across full restarts", () => {
     vi.useFakeTimers();
     const coordinator = new WorkerCoordinator();
@@ -1269,6 +1204,8 @@ describe("runtime/coordinator", () => {
     (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
       kind: "aerogpu.submit",
       contextId: 1,
+      engineId: 9,
+      flags: 0x1234,
       signalFence: 5n,
       cmdStream: new Uint8Array([1, 2, 3, 4]).buffer,
     });
@@ -1277,11 +1214,21 @@ describe("runtime/coordinator", () => {
     // Mark GPU worker READY; coordinator should flush the buffered submit.
     gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
     const submitMsg = lastMessageOfType(gpuWorker, "submit_aerogpu") as
-      | { protocol?: unknown; protocolVersion?: unknown; requestId?: unknown; contextId?: unknown; signalFence?: unknown }
+      | {
+          protocol?: unknown;
+          protocolVersion?: unknown;
+          requestId?: unknown;
+          contextId?: unknown;
+          signalFence?: unknown;
+          engineId?: unknown;
+          flags?: unknown;
+        }
       | undefined;
     expect(submitMsg?.protocol).toBe(GPU_PROTOCOL_NAME);
     expect(submitMsg?.protocolVersion).toBe(GPU_PROTOCOL_VERSION);
     expect(submitMsg?.contextId).toBe(1);
+    expect(submitMsg?.engineId).toBe(9);
+    expect(submitMsg?.flags).toBe(0x1234);
     expect(submitMsg?.signalFence).toBe(5n);
     expect(typeof submitMsg?.requestId).toBe("number");
 
