@@ -237,7 +237,7 @@ fn upload_resource_b5_formats_expand_to_rgba8() -> Result<()> {
                 pixels,
                 vec![
                     255, 0, 0, 255, // red
-                    0, 0, 0, 255,   // black (patched)
+                    0, 0, 0, 255, // black (patched)
                     0, 0, 255, 255, // blue
                     255, 255, 255, 255, // white
                 ]
@@ -344,7 +344,7 @@ fn upload_resource_b5_formats_expand_to_rgba8() -> Result<()> {
                 pixels,
                 vec![
                     255, 0, 0, 255, // red, a=1
-                    0, 255, 0, 0,   // green, a=0
+                    0, 255, 0, 0, // green, a=0
                     0, 0, 255, 255, // blue, a=1
                     255, 255, 255, 255, // white, a=1 (patched)
                 ]

@@ -717,20 +717,14 @@ fn virtio_input_input_batch_syncs_legacy_intx_into_pic() {
 
     // InputEventQueue batch: HID keyboard usage 0x04 (A) pressed.
     let words: [u32; 6] = [
-        1,
-        0,
-        6, // InputEventType.KeyHidUsage
-        0,
-        0x0104, // usage=0x04 | (pressed=1 << 8)
+        1, 0, 6, // InputEventType.KeyHidUsage
+        0, 0x0104, // usage=0x04 | (pressed=1 << 8)
         0,
     ];
     m.inject_input_batch(&words);
 
     assert_eq!(m.read_physical_u16(used + 2), 2);
-    assert_eq!(
-        m.read_physical_bytes(event0, 8),
-        &[1, 0, 30, 0, 1, 0, 0, 0]
-    );
+    assert_eq!(m.read_physical_bytes(event0, 8), &[1, 0, 30, 0, 1, 0, 0, 0]);
     assert_eq!(m.read_physical_bytes(event1, 8), &[0u8; 8]);
 
     assert_eq!(interrupts.borrow().get_pending(), Some(expected_vector));
