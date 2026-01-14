@@ -30,7 +30,7 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
         let mut uhci = uhci.borrow_mut();
         let root = uhci.controller_mut().hub_mut();
         let mut root0 = root
-            .port_device_mut(0)
+            .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
             .expect("root port 0 should have external hub attached");
         assert!(
             root0.as_hub().is_some(),
@@ -38,13 +38,13 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
         );
         assert_eq!(
             root0.model().hub_port_count(),
-            Some(16),
+            Some(Machine::UHCI_EXTERNAL_HUB_PORT_COUNT),
             "external hub should have 16 downstream ports"
         );
 
         let kbd_dev = root0
             .model_mut()
-            .hub_port_device_mut(1)
+            .hub_port_device_mut(Machine::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT)
             .expect("hub port 1 should have synthetic keyboard attached");
         let kbd = (kbd_dev.model() as &dyn std::any::Any)
             .downcast_ref::<UsbHidKeyboardHandle>()
@@ -53,7 +53,7 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
 
         let mouse_dev = root0
             .model_mut()
-            .hub_port_device_mut(2)
+            .hub_port_device_mut(Machine::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT)
             .expect("hub port 2 should have synthetic mouse attached");
         let mouse = (mouse_dev.model() as &dyn std::any::Any)
             .downcast_ref::<UsbHidMouseHandle>()
@@ -62,7 +62,7 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
 
         let gamepad_dev = root0
             .model_mut()
-            .hub_port_device_mut(3)
+            .hub_port_device_mut(Machine::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT)
             .expect("hub port 3 should have synthetic gamepad attached");
         let gamepad = (gamepad_dev.model() as &dyn std::any::Any)
             .downcast_ref::<UsbHidGamepadHandle>()
@@ -123,13 +123,13 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
         let mut uhci = uhci.borrow_mut();
         let root = uhci.controller_mut().hub_mut();
         let mut root0 = root
-            .port_device_mut(0)
+            .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
             .expect("root port 0 should remain occupied after restore");
         assert!(root0.as_hub().is_some());
 
         let kbd_dev = root0
             .model_mut()
-            .hub_port_device_mut(1)
+            .hub_port_device_mut(Machine::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT)
             .expect("hub port 1 should remain occupied after restore");
         (kbd_dev.model() as &dyn std::any::Any)
             .downcast_ref::<UsbHidKeyboardHandle>()
