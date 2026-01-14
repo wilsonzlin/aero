@@ -3013,6 +3013,9 @@ impl Machine {
     /// Recommended values:
     /// - `0x80`: primary HDD (normal boot)
     /// - `0xE0`: ATAPI CD-ROM (El Torito install media)
+    ///
+    /// Note: this selection is consumed during BIOS POST/boot. Call [`Machine::reset`] after
+    /// changing it to re-run POST with the new `DL` value.
     pub fn set_boot_drive(&mut self, drive: u32) -> Result<(), JsValue> {
         if drive == 0 {
             return Err(JsValue::from_str(

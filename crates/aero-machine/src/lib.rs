@@ -3238,6 +3238,9 @@ impl Machine {
     /// sector.
     ///
     /// Defaults to `0x80` (first hard disk) to preserve existing tests and behavior.
+    ///
+    /// Note: the selected boot drive is consumed during BIOS POST/boot. If you change it after the
+    /// machine has already booted, call [`Machine::reset`] to re-run POST with the new `DL` value.
     pub fn set_boot_drive(&mut self, boot_drive: u8) {
         self.boot_drive = boot_drive;
         // Keep the current BIOS config in sync so snapshots capture the selected boot drive and so
