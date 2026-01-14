@@ -189,7 +189,7 @@ DXBC chunk list plus the raw SM4/SM5 token stream with opcode IDs/lengths and be
 instructions:
 
 ```bash
-cargo run -p aero-d3d11 --bin dxbc_dump -- gs_emit_cut.dxbc
+cargo run -p aero-d3d11 --bin dxbc_dump -- gs_cut.dxbc
 ```
 
 ## ILAY input-layout blobs
