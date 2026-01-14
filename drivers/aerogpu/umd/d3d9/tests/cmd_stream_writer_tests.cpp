@@ -75,6 +75,26 @@ bool Check(bool cond, const char* msg) {
   return true;
 }
 
+// Tests often bind `Device::cmd` to a span-backed buffer owned by the test (e.g. a
+// local `std::vector<uint8_t>`). Driver cleanup paths may emit additional packets
+// (e.g. DESTROY_RESOURCE) from RAII destructors after the local buffer has been
+// freed, which would turn into a use-after-free if the command writer still points
+// at the span.
+//
+// Ensure span-backed writers are always returned to vector mode before RAII
+// teardown runs, even on early-return error paths.
+struct ScopedDeviceCmdVectorReset {
+  explicit ScopedDeviceCmdVectorReset(Device* d) : dev(d) {}
+  ScopedDeviceCmdVectorReset(const ScopedDeviceCmdVectorReset&) = delete;
+  ScopedDeviceCmdVectorReset& operator=(const ScopedDeviceCmdVectorReset&) = delete;
+  ~ScopedDeviceCmdVectorReset() {
+    if (dev) {
+      dev->cmd.set_vector();
+    }
+  }
+  Device* dev = nullptr;
+};
+
 size_t AlignUp(size_t v, size_t a) {
   return (v + (a - 1)) & ~(a - 1);
 }
@@ -1643,6 +1663,7 @@ bool TestCreateResourceRejectsNon2dDepth() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can assert that no CREATE_TEXTURE2D
   // packets are emitted when CreateResource fails validation.
@@ -1747,6 +1768,7 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
@@ -1888,6 +1910,7 @@ bool TestCreateResourceMipmappedTextureEmitsMipLevels() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
@@ -2005,6 +2028,7 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
@@ -2137,6 +2161,7 @@ bool TestCreateResourceArrayTextureEmitsArrayLayers() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
@@ -2469,6 +2494,7 @@ bool TestCreateResourceComputes16BitTexturePitchAndFormat() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
@@ -3028,6 +3054,7 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
@@ -3440,6 +3467,7 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   std::vector<uint8_t> dma(64 * 1024, 0);
   dev->cmd.set_span(dma.data(), dma.size());
@@ -3632,6 +3660,7 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Use a span-backed buffer so we can inspect the exact packets emitted for
   // shared-surface create/open. Note: CreateResource(shared) forces an immediate
@@ -12203,6 +12232,7 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
   // Small span-backed DMA buffer: PresentEx fits, but the post-submit render-target
   // rebind used by flip-style backbuffer rotation does not.
   uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 32] = {};
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
   dev->cmd.set_span(small_dma, sizeof(small_dma));
 
   hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
@@ -12454,6 +12484,7 @@ bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   // Small span-backed DMA buffer. PresentEx itself fits, and SET_RENDER_TARGETS
   // fits, but SET_RENDER_TARGETS + the required SET_TEXTURE rebind does not.
   uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 64] = {};
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
   dev->cmd.set_span(small_dma, sizeof(small_dma));
 
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex);
@@ -12720,6 +12751,7 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   auto* res0 = reinterpret_cast<Resource*>(cleanup.resources[0].pDrvPrivate);
   auto* res1 = reinterpret_cast<Resource*>(cleanup.resources[1].pDrvPrivate);
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   const aerogpu_handle_t h0 = res0->handle;
   const aerogpu_handle_t h1 = res1->handle;
@@ -14582,6 +14614,7 @@ bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
   if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);

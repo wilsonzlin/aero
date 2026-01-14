@@ -7901,8 +7901,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       requested_mip_levels == 0 &&
       create_size_bytes == 0 &&
       create_width != 0 &&
-      create_height != 0 &&
-      create_depth == 1) {
+      create_height != 0) {
     // D3D9 CreateTexture semantics: MipLevels=0 means "create the full mip chain".
     mip_levels = calc_full_mip_chain_levels_2d(create_width, create_height);
   }
@@ -7918,9 +7917,24 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // Portable build heuristic: allow array textures by interpreting depth>1 for
   // D3DRTYPE_TEXTURE as an array layer count. For other non-buffer resources,
   // reject depth>1 to avoid silently treating volume/cube resources as 2D arrays.
-  if (create_size_bytes == 0 && create_depth > 1) {
-    constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRESOURCETYPE::D3DRTYPE_TEXTURE
-    if (create_type_u32 != kD3dRTypeTexture) {
+  if (create_size_bytes == 0) {
+    // D3DRESOURCETYPE numeric values (from d3d9types.h). Keep local constants so
+    // portable builds don't require the Windows SDK/WDK.
+    constexpr uint32_t kD3dRTypeVolume = 2u;
+    constexpr uint32_t kD3dRTypeTexture = 3u;
+    constexpr uint32_t kD3dRTypeVolumeTexture = 4u;
+    constexpr uint32_t kD3dRTypeCubeTexture = 5u;
+
+    // Reject resources that cannot be represented by the CREATE_TEXTURE2D protocol.
+    if (create_type_u32 == kD3dRTypeVolume ||
+        create_type_u32 == kD3dRTypeVolumeTexture ||
+        create_type_u32 == kD3dRTypeCubeTexture) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+
+    // For 2D textures, the D3D9 DDI uses `Depth` to carry array layers.
+    // For all other resource kinds we expect depth==1.
+    if (create_depth > 1 && create_type_u32 != kD3dRTypeTexture) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
   }
@@ -7941,7 +7955,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   auto res = std::make_unique<Resource>();
   res->handle = allocate_global_handle(dev->adapter);
-  res->type = d3d9_resource_type(*pCreateResource);
+  res->type = create_type_u32;
   res->format = d3d9_resource_format(*pCreateResource);
   res->width = create_width;
   res->height = create_height;
@@ -7995,7 +8009,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     res->slice_pitch = 0;
   } else if (res->width && res->height) {
     // Surface/Texture2D share the same storage layout for now.
-    res->kind = (res->mip_levels > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
+    res->kind = (res->mip_levels > 1 || res->depth > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
 
     Texture2dLayout layout{};
     if (!calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &layout)) {
