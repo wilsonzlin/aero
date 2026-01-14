@@ -357,6 +357,16 @@ function Get-RelativePathForZipEntry {
     return $pathFull.Substring($prefix.Length) -replace "\\", "/"
 }
 
+function Test-IsReparsePoint {
+    param([Parameter(Mandatory = $true)] $Item)
+
+    try {
+        return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+    } catch {
+        return $false
+    }
+}
+
 function Test-IsExcludedArtifactRelPath {
     param(
         [Parameter(Mandatory = $true)][string] $RelPath,
@@ -396,6 +406,9 @@ function Get-DeterministicZipEntriesFromFolder {
 
     $dirs = @(Get-ChildItem -LiteralPath $folderFull -Recurse -Directory -Force -ErrorAction SilentlyContinue)
     foreach ($d in $dirs) {
+        if (Test-IsReparsePoint -Item $d) {
+            throw "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($d.FullName)"
+        }
         $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $d.FullName
         if (Test-IsExcludedArtifactRelPath -RelPath $rel -IsDirectory) {
             continue
@@ -412,6 +425,9 @@ function Get-DeterministicZipEntriesFromFolder {
 
     $files = @(Get-ChildItem -LiteralPath $folderFull -Recurse -File -Force -ErrorAction SilentlyContinue)
     foreach ($f in $files) {
+        if (Test-IsReparsePoint -Item $f) {
+            throw "Refusing to package reparse-point/symlink file (nondeterministic/unsafe): $($f.FullName)"
+        }
         $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $f.FullName
         if (Test-IsExcludedArtifactRelPath -RelPath $rel) {
             continue
@@ -436,6 +452,17 @@ function Get-DeterministicZipEntriesFromFolder {
         return [System.StringComparer]::Ordinal.Compare($a.EntryName, $b.EntryName)
     })
     $entries.Sort($comparer)
+
+    # Validate there are no case-insensitive path collisions; these can be produced on Linux/macOS
+    # but will collide when extracted on Windows and can cause ambiguous packaging outcomes.
+    $seen = @{}
+    foreach ($e in $entries) {
+        $key = $e.EntryName.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            throw "Case-insensitive path collision in '$folderFull': '$($seen[$key])' vs '$($e.EntryName)'. Rename one of the entries to avoid collisions on Windows."
+        }
+        $seen[$key] = $e.EntryName
+    }
 
     return $entries
 }
