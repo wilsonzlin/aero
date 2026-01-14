@@ -1050,8 +1050,17 @@ function Wait-AeroSelftestResult {
         [Console]::Out.Write($chunk)
       }
 
-      $tail += $chunk
-      if ($tail.Length -gt 131072) { $tail = $tail.Substring($tail.Length - 131072) }
+      # Keep a rolling tail buffer for marker parsing without truncating away the newly read chunk.
+      # If we truncate *after* appending, we can drop the start of the new chunk when the tail is near
+      # the cap; instead, trim the existing tail first so the full new chunk is retained.
+      $maxTailLen = 131072
+      if ($chunk.Length -ge $maxTailLen) {
+        $tail = $chunk.Substring($chunk.Length - $maxTailLen)
+      } else {
+        $maxOld = $maxTailLen - $chunk.Length
+        if ($tail.Length -gt $maxOld) { $tail = $tail.Substring($tail.Length - $maxOld) }
+        $tail += $chunk
+      }
 
       if ($RequireExpectBlkMsi -and (-not $sawConfigExpectBlkMsi)) {
         # Parse the guest selftest CONFIG marker to ensure the image was provisioned
