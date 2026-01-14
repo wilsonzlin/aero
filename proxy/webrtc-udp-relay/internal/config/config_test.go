@@ -2,9 +2,12 @@ package config
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
 func lookupMap(m map[string]string) func(string) (string, bool) {
@@ -519,7 +522,7 @@ func TestWebRTCSCTPMaxReceiveBufferBytes_RejectsBelow1500(t *testing.T) {
 		envVarAPIKey:                           "secret",
 		envVarMaxDatagramPayloadBytes:          "1",
 		envVarL2MaxMessageBytes:                "1",
-		envVarWebRTCDataChannelMaxMessageBytes: "25",   // MAX_DATAGRAM_PAYLOAD_BYTES+24
+		envVarWebRTCDataChannelMaxMessageBytes: strconv.Itoa(1 + udpproto.MaxFrameOverheadBytes),
 		envVarWebRTCSCTPMaxReceiveBufferBytes:  "1000", // < 1500
 	}), nil)
 	if err == nil {
