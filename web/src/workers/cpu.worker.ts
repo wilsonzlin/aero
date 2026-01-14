@@ -312,6 +312,10 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 // Latest boot disk selection (DiskManager mounts + resolved metadata). This replaces legacy
 // `activeDiskImage`-based mode detection.
+//
+// In the legacy runtime (this worker), boot-disk presence is used as an activity signal ("VM
+// active" vs demo loops). Runtime selection is explicit via `config.vmRuntime`; machine runtime
+// uses `machine_cpu.worker.ts` and does not run this worker.
 let bootDisks: SetBootDisksMessage | null = null;
 
 type MicRingBufferView = MicRingBuffer & { sampleRate: number };
