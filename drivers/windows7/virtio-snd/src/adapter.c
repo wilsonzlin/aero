@@ -489,6 +489,7 @@ static NTSTATUS VirtIoSndDiagCreate(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 static VOID VirtIoSndDiagDestroy(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     UNICODE_STRING symLink;
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diagExt;
 
     if (Dx == NULL) {
         return;
@@ -496,6 +497,17 @@ static VOID VirtIoSndDiagDestroy(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     if (Dx->DiagDeviceObject == NULL) {
         return;
+    }
+
+    /*
+     * If a user-mode handle is still open, IoDeleteDevice() will defer final
+     * deletion until the last reference goes away. Ensure any late IOCTLs do
+     * not dereference a freed adapter device extension by nulling out the
+     * pointer first.
+     */
+    diagExt = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)Dx->DiagDeviceObject->DeviceExtension;
+    if (diagExt != NULL && diagExt->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+        diagExt->TargetDx = NULL;
     }
 
     RtlInitUnicodeString(&symLink, L"\\DosDevices\\aero_virtio_snd_diag");
