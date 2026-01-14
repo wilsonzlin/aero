@@ -8,7 +8,7 @@ use aero_d3d11::FourCC;
 const DXBC_GS_EMIT_STREAM1: &[u8] = include_bytes!("fixtures/gs_emit_stream1.dxbc");
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 
-fn build_sm5_gs_emitthen_cut_stream(stream: u32) -> Vec<u8> {
+fn build_sm5_gs_stream_op(stream_opcode: u32, stream: u32) -> Vec<u8> {
     fn opcode_token(opcode: u32, len: u32) -> u32 {
         opcode | (len << OPCODE_LEN_SHIFT)
     }
@@ -58,7 +58,7 @@ fn build_sm5_gs_emitthen_cut_stream(stream: u32) -> Vec<u8> {
     let version = ((2u32) << 16) | (5u32 << 4);
     let stream_op = imm32_scalar(stream);
     let body = [
-        opcode_token(OPCODE_EMITTHENCUT_STREAM, 1 + stream_op.len() as u32),
+        opcode_token(stream_opcode, 1 + stream_op.len() as u32),
         stream_op[0],
         stream_op[1],
         opcode_token(OPCODE_RET, 1),
@@ -83,10 +83,12 @@ fn aerogpu_cmd_runtime_rejects_nonzero_emit_stream_index() {
             }
         };
 
-        let emit_then_cut = build_sm5_gs_emitthen_cut_stream(1);
+        let emit_then_cut = build_sm5_gs_stream_op(OPCODE_EMITTHENCUT_STREAM, 1);
+        let cut_stream = build_sm5_gs_stream_op(OPCODE_CUT_STREAM, 1);
         for (handle, dxbc, op_name) in [
             (1u32, DXBC_GS_EMIT_STREAM1, "emit_stream"),
             (2u32, emit_then_cut.as_slice(), "emitthen_cut_stream"),
+            (3u32, cut_stream.as_slice(), "cut_stream"),
         ] {
             let err = rt
                 .create_shader_dxbc(handle, dxbc)
