@@ -1217,6 +1217,74 @@ fn tier2_inline_tlb_prefilled_ram_entry_bumps_physical_code_page_version() {
 }
 
 #[test]
+fn tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_load() {
+    // If a cached entry is missing the required permission flag, the inline-TLB path calls
+    // `mmu_translate` and must use the updated `tlb_data` for subsequent checks (including the
+    // `TLB_FLAG_IS_RAM` fast-path check).
+    //
+    // To catch bugs where the post-translate `tlb_data` isn't used, prefill an entry that:
+    // - matches the tag
+    // - is missing READ permission
+    // - is missing `TLB_FLAG_IS_RAM`
+    //
+    // Correct behavior: call `mmu_translate` once, then take the RAM fast path (no slow helper).
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let tlb_data = (0x1000u64 & PAGE_BASE_MASK) | (TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let (_ret, _got_ram, gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1000, tlb_data)]);
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1122_3344);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_store() {
+    // Like `tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_load`, but for stores.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1000),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    let tlb_data = (0x1000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC);
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1000, tlb_data)]);
+
+    assert_eq!(got_ram[0x1000], 0xAB);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_load_permission_miss_on_prefilled_entry_calls_translate() {
     // If a cached TLB entry lacks the required permission flag, the inline-TLB permission check
     // should call `mmu_translate` and retry using the updated entry.
