@@ -52,6 +52,15 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         IMCD = (Arg0 & One)
     }
 
+    Method (_PTS, 1, NotSerialized)
+    {
+    }
+
+    Method (_WAK, 1, NotSerialized)
+    {
+        Return (Package (0x02) { Zero, Zero })
+    }
+
     Scope (\_SB_)
     {
         /*
@@ -80,6 +89,20 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 // Reset port used by the FADT ResetReg.
                 IO (Decode16, 0x0CF9, 0x0CF9, 0x01, 0x01)
             })
+        }
+
+        Device (PWRB)
+        {
+            Name (_HID, EisaId ("PNP0C0C"))
+            Name (_UID, Zero)
+            Name (_STA, 0x0F)
+        }
+
+        Device (SLPB)
+        {
+            Name (_HID, EisaId ("PNP0C0E"))
+            Name (_UID, Zero)
+            Name (_STA, 0x0F)
         }
 
         Device (PCI0)
@@ -319,5 +342,8 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         }
     }
 
+    Name (_S1, Package (0x02) { One, One })
+    Name (_S3, Package (0x02) { 0x03, 0x03 })
+    Name (_S4, Package (0x02) { 0x04, 0x04 })
     Name (_S5, Package (0x02) { 0x05, 0x05 })
 }

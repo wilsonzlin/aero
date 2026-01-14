@@ -38,8 +38,13 @@ dd if="${aml_expected}" of="${aml_generated}" bs=1 skip=9 count=1 seek=9 conv=no
 if ! cmp -s "${aml_expected}" "${aml_generated}"; then
   echo "error: ACPI DSDT drift detected: ${asl_rel} does not match ${aml_rel}" >&2
   echo "" >&2
-  echo "Regenerate the shipped AML fixture from the Rust generator:" >&2
+  echo "Regenerate deterministic in-repo fixtures (preferred):" >&2
+  echo "  (cd \"${ROOT_DIR}\" && cargo xtask fixtures)" >&2
+  echo "" >&2
+  echo "Or regenerate just the checked-in DSDT fixture:" >&2
   echo "  (cd \"${ROOT_DIR}\" && cargo run -p firmware --bin gen_dsdt --locked)" >&2
+  echo "" >&2
+  echo "If you intended to change the ACPI DSDT, update ${asl_rel} to match the regenerated fixture." >&2
   echo "" >&2
   echo "If you need a decompiled baseline to compare against, you can also run:" >&2
   echo "  (cd \"${ROOT_DIR}\" && iasl -d ${aml_rel})  # emits dsdt.dsl in the current directory" >&2
