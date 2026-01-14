@@ -413,3 +413,30 @@ Forward-compat rules (from `aerogpu_cmd.h`):
 - Unknown opcodes must be **skipped** using `size_bytes` (do not treat as fatal).
 
 The full opcode list and packet payload layouts live in `aerogpu_cmd.h`.
+
+### 4.3 Extended shader stage selector (`stage_ex`)
+
+The legacy `enum aerogpu_shader_stage` only encodes VS/PS/CS (and later `GEOMETRY=3`). To support
+additional programmable stages used by D3D11 (GS/HS/DS) without breaking older hosts, some packets
+reuse their trailing `reserved0` field as an **extended stage selector** when
+`shader_stage == COMPUTE`.
+
+Encoding invariant (must be enforced by writers and hosts):
+
+- If `shader_stage != COMPUTE`, then `reserved0` **must** be `0` and is ignored.
+- If `shader_stage == COMPUTE`:
+  - `reserved0 == 0` means the real Compute stage (legacy behavior).
+  - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
+    `enum aerogpu_shader_stage_ex`.
+
+`enum aerogpu_shader_stage_ex` values intentionally match DXBC program type values for **non-zero**
+types:
+
+- `1=vs`, `2=gs`, `3=hs`, `4=ds`, `5=cs`
+
+Pixel shaders are intentionally not representable via this extension because `0` is reserved for
+legacy compute packets; pixel shaders must use the legacy `shader_stage = PIXEL` encoding.
+
+See `drivers/aerogpu/protocol/aerogpu_cmd.h` for the authoritative definition and which packets
+carry a `reserved0(stage_ex)` field. See `docs/16-d3d10-11-translation.md` for motivation and
+examples.
