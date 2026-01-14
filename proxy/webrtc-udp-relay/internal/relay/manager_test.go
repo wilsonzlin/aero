@@ -126,3 +126,27 @@ func TestSessionManager_CreateSessionWithKey_DoesNotTrimKey(t *testing.T) {
 		t.Fatalf("CreateSessionWithKey err=%v, want %v", err, ErrSessionAlreadyActive)
 	}
 }
+
+func TestSessionManager_CreateSessionWithKey_AllowsDifferentKeys(t *testing.T) {
+	m := metrics.New()
+	sm := NewSessionManager(config.Config{}, m, nil)
+
+	s1, err := sm.CreateSessionWithKey("sid_a")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey(sid_a): %v", err)
+	}
+	t.Cleanup(s1.Close)
+
+	s2, err := sm.CreateSessionWithKey("sid_b")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey(sid_b): %v", err)
+	}
+	t.Cleanup(s2.Close)
+
+	if s1.ID() == s2.ID() {
+		t.Fatalf("expected distinct public session IDs, got %q", s1.ID())
+	}
+	if got := sm.ActiveSessions(); got != 2 {
+		t.Fatalf("ActiveSessions=%d, want 2", got)
+	}
+}
