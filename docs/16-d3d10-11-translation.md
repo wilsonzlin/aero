@@ -607,8 +607,11 @@ A draw uses compute expansion when **any** of the following are true:
 
 - A **GS** shader is bound (`gs != 0`).
 - A **HS** or **DS** shader is bound (`hs != 0` or `ds != 0`).
-- The IA primitive topology is an **adjacency** topology.
-- The IA primitive topology is a **patchlist** topology (33–64).
+
+In the fully-general design, adjacency and patchlist topologies also route through this path even
+if GS/HS/DS are unbound (so the runtime can surface deterministic validation/errors and implement
+fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
+`SET_PRIMITIVE_TOPOLOGY` but rejected at draw time until the emulation kernels land.
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
