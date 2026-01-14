@@ -259,6 +259,7 @@ wasm-pack test --node crates/aero-wasm --test uhci_controller_topology --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_webusb_drain_actions --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_topology --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_external_hub --locked
+wasm-pack test --node crates/aero-wasm --test uhci_runtime_snapshot_roundtrip --locked
 wasm-pack test --node crates/aero-wasm --test ehci_controller_bridge_snapshot_roundtrip --locked
 wasm-pack test --node crates/aero-wasm --test ehci_controller_topology --locked
 wasm-pack test --node crates/aero-wasm --test webusb_ehci_passthrough_harness --locked
@@ -305,6 +306,7 @@ bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test uhci_runtime_webusb_drain_actions \
   --test uhci_runtime_topology \
   --test uhci_runtime_external_hub \
+  --test uhci_runtime_snapshot_roundtrip \
   --test ehci_controller_bridge_snapshot_roundtrip \
   --test ehci_controller_topology \
   --test webusb_ehci_passthrough_harness \
@@ -336,6 +338,7 @@ AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-w
   --test uhci_runtime_webusb_drain_actions \
   --test uhci_runtime_topology \
   --test uhci_runtime_external_hub \
+  --test uhci_runtime_snapshot_roundtrip \
   --test ehci_controller_bridge_snapshot_roundtrip \
   --test ehci_controller_topology \
   --test webusb_ehci_passthrough_harness \

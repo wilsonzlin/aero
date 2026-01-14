@@ -128,6 +128,7 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         "uhci_runtime_webusb_drain_actions",
         "uhci_runtime_topology",
         "uhci_runtime_external_hub",
+        "uhci_runtime_snapshot_roundtrip",
     ] {
         assert!(
             wasm_pack.iter().any(|arg| arg == expected),

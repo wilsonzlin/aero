@@ -84,6 +84,7 @@ fn input_help_mentions_flags_and_steps() {
         ))
         .stdout(predicate::str::contains("uhci_runtime_topology"))
         .stdout(predicate::str::contains("uhci_runtime_external_hub"))
+        .stdout(predicate::str::contains("uhci_runtime_snapshot_roundtrip"))
         .stdout(predicate::str::contains(
             "ehci_controller_bridge_snapshot_roundtrip",
         ))
