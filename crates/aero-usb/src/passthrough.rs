@@ -398,7 +398,9 @@ impl UsbPassthroughDevice {
                 ));
             }
             *total = next_total;
-            Ok(d.bytes(len)?.to_vec())
+            // Use `bytes_vec` so allocation failures are surfaced as SnapshotError::OutOfMemory
+            // instead of aborting.
+            d.bytes_vec(len)
         }
 
         let mut d = Decoder::new(bytes);
