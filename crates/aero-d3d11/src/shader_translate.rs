@@ -775,6 +775,19 @@ fn translate_hs(
     let mut io_cp = build_io_maps(module, isgn, osgn)?;
     let mut io_pc = build_io_maps(module, isgn, pcsg)?;
 
+    // Hull patch-constant code can index either:
+    // - input control points (from ISGN), or
+    // - output control points (from OSGN) when using `OutputPatch` in HLSL.
+    //
+    // Both are encoded as `SrcKind::GsInput` in our IR, so keep register sets around for
+    // disambiguation during WGSL emission.
+    let hs_input_regs: BTreeSet<u32> = isgn.parameters.iter().map(|p| p.register).collect();
+    let hs_cp_output_regs: BTreeSet<u32> = osgn.parameters.iter().map(|p| p.register).collect();
+    io_cp.hs_input_regs = hs_input_regs.clone();
+    io_cp.hs_cp_output_regs = hs_cp_output_regs.clone();
+    io_pc.hs_input_regs = hs_input_regs;
+    io_pc.hs_cp_output_regs = hs_cp_output_regs;
+
     // Map HS system values (`SV_PrimitiveID`, `SV_OutputControlPointID`) onto synthetic variables
     // derived from the compute invocation IDs.
     let mut hs_inputs = BTreeMap::<u32, HullSysValue>::new();
@@ -830,6 +843,9 @@ fn translate_hs(
     let used_inputs = scan_used_input_registers(module);
     let max_non_siv_input = used_inputs
         .iter()
+        // Ignore indexed `OutputPatch` reads (encoded as `SrcKind::GsInput`) when they refer to
+        // HS control-point outputs rather than true HS inputs.
+        .filter(|r| io_cp.hs_input_regs.contains(r))
         .filter(|r| !io_cp.hs_inputs.contains_key(r))
         .max()
         .copied();
@@ -838,8 +854,16 @@ fn translate_hs(
     let max_cp_out = io_cp.outputs.keys().max().copied();
     let hs_cp_out_stride = max_cp_out.map(|m| m.saturating_add(1)).unwrap_or(1);
 
-    let max_pc_out = io_pc.outputs.keys().max().copied();
-    let hs_pc_out_stride = max_pc_out.map(|m| m.saturating_add(1)).unwrap_or(1);
+    // Patch-constant output buffers exclude tess factors; those are written to a separate compact
+    // scalar buffer consumed by the tessellator.
+    let hs_pc_layout = build_hs_patch_constant_layout(pcsg);
+    io_pc.hs_is_patch_constant_phase = true;
+    io_pc.hs_pc_patch_constant_reg_masks = hs_pc_layout.patch_constant_reg_masks.clone();
+    io_pc.hs_pc_tess_factor_writes = hs_pc_layout.tess_factor_writes.clone();
+    io_pc.hs_pc_tess_factor_stride = hs_pc_layout.tess_factor_stride;
+    let hs_pc_out_stride = hs_pc_layout
+        .patch_constant_reg_count
+        .max(1);
 
     let mut outputs_reflection = io_cp.outputs_reflection_vertex();
     outputs_reflection.extend(io_pc.outputs_reflection_vertex());
@@ -862,9 +886,11 @@ fn translate_hs(
     // - Patch constant outputs are indexed as:
     //     (primitive_id * STRIDE + reg_index)
     w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
+    w.line("struct HsF32Buffer { data: array<f32> };");
     w.line("@group(0) @binding(0) var<storage, read> hs_in: HsRegBuffer;");
     w.line("@group(0) @binding(1) var<storage, read_write> hs_out_cp: HsRegBuffer;");
-    w.line("@group(0) @binding(2) var<storage, read_write> hs_out_pc: HsRegBuffer;");
+    w.line("@group(0) @binding(2) var<storage, read_write> hs_patch_constants_buf: HsRegBuffer;");
+    w.line("@group(0) @binding(3) var<storage, read_write> hs_tess_factors: HsF32Buffer;");
     w.line("");
     // Bounds-checked accessors for runtime-sized HS scratch buffers.
     //
@@ -879,6 +905,14 @@ fn translate_hs(
     w.dedent();
     w.line("}");
     w.line("");
+    w.line("fn hs_load_out_cp(idx: u32) -> vec4<f32> {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_out_cp.data);");
+    w.line("if (idx >= len) { return vec4<f32>(0.0); }");
+    w.line("return hs_out_cp.data[idx];");
+    w.dedent();
+    w.line("}");
+    w.line("");
     w.line("fn hs_store_out_cp(idx: u32, value: vec4<f32>) {");
     w.indent();
     w.line("let len = arrayLength(&hs_out_cp.data);");
@@ -887,11 +921,19 @@ fn translate_hs(
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("fn hs_store_out_pc(idx: u32, value: vec4<f32>) {");
+    w.line("fn hs_store_patch_constants(idx: u32, value: vec4<f32>) {");
     w.indent();
-    w.line("let len = arrayLength(&hs_out_pc.data);");
+    w.line("let len = arrayLength(&hs_patch_constants_buf.data);");
     w.line("if (idx >= len) { return; }");
-    w.line("hs_out_pc.data[idx] = value;");
+    w.line("hs_patch_constants_buf.data[idx] = value;");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_tess_factor(idx: u32, value: f32) {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_tess_factors.data);");
+    w.line("if (idx >= len) { return; }");
+    w.line("hs_tess_factors.data[idx] = value;");
     w.dedent();
     w.line("}");
     w.line("");
@@ -904,6 +946,10 @@ fn translate_hs(
     ));
     w.line(&format!(
         "const HS_PC_OUT_STRIDE: u32 = {hs_pc_out_stride}u;"
+    ));
+    w.line(&format!(
+        "const HS_TESS_FACTOR_STRIDE: u32 = {}u;",
+        hs_pc_layout.tess_factor_stride
     ));
     w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
     if let Some(count) = output_control_points {
@@ -938,9 +984,7 @@ fn translate_hs(
     emit_instructions(&mut w, &module_cp, &ctx)?;
 
     w.line("");
-    for &reg in io_cp.outputs.keys() {
-        w.line(&format!("hs_store_out_cp(hs_out_base + {reg}u, o{reg});"));
-    }
+    io_cp.emit_hs_commit_outputs(&mut w);
     w.dedent();
     w.line("}");
     w.line("");
@@ -966,9 +1010,7 @@ fn translate_hs(
     emit_instructions(&mut w, &module_pc, &ctx)?;
 
     w.line("");
-    for &reg in io_pc.outputs.keys() {
-        w.line(&format!("hs_store_out_pc(hs_out_base + {reg}u, o{reg});"));
-    }
+    io_pc.emit_hs_commit_outputs(&mut w);
     w.dedent();
     w.line("}");
 
@@ -977,6 +1019,101 @@ fn translate_hs(
         stage: ShaderStage::Hull,
         reflection,
     })
+}
+
+#[derive(Debug, Clone)]
+struct HsTessFactorWrite {
+    dst_index: u32,
+    src_reg: u32,
+    src_component: u8,
+}
+
+#[derive(Debug, Clone)]
+struct HsPatchConstantLayout {
+    /// Combined component masks for non-tess patch constants keyed by output register.
+    patch_constant_reg_masks: BTreeMap<u32, u8>,
+    /// Register-file stride for patch constants (max used register + 1).
+    patch_constant_reg_count: u32,
+    /// Scalar writes for the compact tess-factor buffer.
+    tess_factor_writes: Vec<HsTessFactorWrite>,
+    /// Stride (in scalars) of the compact tess-factor buffer per patch.
+    tess_factor_stride: u32,
+}
+
+fn build_hs_patch_constant_layout(pcsg: &DxbcSignature) -> HsPatchConstantLayout {
+    // Patch-constant signatures can pack both tess factors and user patch constants into the same
+    // output register file. We split them into two buffers:
+    // - `hs_patch_constants`: vec4 register file for user patch constants (by output register index)
+    // - `hs_tess_factors`: compact scalar buffer (outer factors first, then inside factors)
+    let mut patch_constant_reg_masks = BTreeMap::<u32, u8>::new();
+    let mut outer_writes = Vec::<HsTessFactorWrite>::new();
+    let mut inner_writes = Vec::<HsTessFactorWrite>::new();
+    let mut outer_count = 0u32;
+    let mut inner_count = 0u32;
+
+    for p in &pcsg.parameters {
+        if is_sv_tess_factor(&p.semantic_name) {
+            let mut lane = 0u32;
+            for (component, bit) in [(0u8, 1u8), (1, 2), (2, 4), (3, 8)] {
+                if (p.mask & bit) == 0 {
+                    continue;
+                }
+                let dst_index = p.semantic_index + lane;
+                outer_count = outer_count.max(dst_index.saturating_add(1));
+                outer_writes.push(HsTessFactorWrite {
+                    dst_index,
+                    src_reg: p.register,
+                    src_component: component,
+                });
+                lane += 1;
+            }
+            continue;
+        }
+        if is_sv_inside_tess_factor(&p.semantic_name) {
+            let mut lane = 0u32;
+            for (component, bit) in [(0u8, 1u8), (1, 2), (2, 4), (3, 8)] {
+                if (p.mask & bit) == 0 {
+                    continue;
+                }
+                let dst_index = p.semantic_index + lane;
+                inner_count = inner_count.max(dst_index.saturating_add(1));
+                inner_writes.push(HsTessFactorWrite {
+                    dst_index,
+                    src_reg: p.register,
+                    src_component: component,
+                });
+                lane += 1;
+            }
+            continue;
+        }
+
+        patch_constant_reg_masks
+            .entry(p.register)
+            .and_modify(|m| *m |= p.mask)
+            .or_insert(p.mask);
+    }
+
+    let patch_constant_reg_count = patch_constant_reg_masks
+        .keys()
+        .max()
+        .map(|r| r.saturating_add(1))
+        .unwrap_or(0);
+
+    // Apply the outer-factor offset to inside tess factors and combine.
+    let tess_factor_stride = outer_count + inner_count;
+    let mut tess_factor_writes = Vec::<HsTessFactorWrite>::new();
+    tess_factor_writes.extend(outer_writes.into_iter());
+    tess_factor_writes.extend(inner_writes.into_iter().map(|mut w| {
+        w.dst_index += outer_count;
+        w
+    }));
+
+    HsPatchConstantLayout {
+        patch_constant_reg_masks,
+        patch_constant_reg_count,
+        tess_factor_writes,
+        tess_factor_stride,
+    }
 }
 
 fn translate_ds(
@@ -1062,8 +1199,10 @@ fn translate_ds(
 
     // DS stage interface buffers for compute emulation.
     w.line("struct DsRegBuffer { data: array<vec4<f32>> };");
+    w.line("struct DsF32Buffer { data: array<f32> };");
     w.line("@group(0) @binding(0) var<storage, read> ds_in_cp: DsRegBuffer;");
     w.line("@group(0) @binding(1) var<storage, read> ds_in_pc: DsRegBuffer;");
+    w.line("@group(0) @binding(3) var<storage, read> ds_tess_factors: DsF32Buffer;");
     w.line("");
 
     // Output struct mirrors `VsOut`, but without stage I/O attributes (written to a storage buffer).
@@ -1088,6 +1227,8 @@ fn translate_ds(
 
     w.line(&format!("const DS_CP_IN_STRIDE: u32 = {cp_in_stride}u;"));
     w.line(&format!("const DS_PC_IN_STRIDE: u32 = {pc_in_stride}u;"));
+    // Compact tess factors buffer: outer[3] + inner[1] for tri-domain.
+    w.line("const DS_TESS_FACTOR_STRIDE: u32 = 4u;");
     w.line("const DS_MAX_CONTROL_POINTS: u32 = 32u;");
     w.line("");
 
@@ -1127,11 +1268,12 @@ fn translate_ds(
     w.line("let patch_id: u32 = id.y;");
     w.line("let vert_in_patch: u32 = id.x;");
     w.line("let pc_base: u32 = patch_id * DS_PC_IN_STRIDE;");
+    w.line("let tf_base: u32 = patch_id * DS_TESS_FACTOR_STRIDE;");
     w.line("");
 
-    // For now, derive a single tess level from patch constant register 0.x (integer partition).
+    // For now, derive a single tess level from outer tess factor 0 (integer partition).
     // Clamp to at least 1 to avoid division-by-zero.
-    w.line("let tess_f: f32 = ds_in_pc.data[pc_base + 0u].x;");
+    w.line("let tess_f: f32 = ds_tess_factors.data[tf_base + 0u];");
     w.line("let tess: u32 = max(1u, u32(round(tess_f)));");
     w.line("let verts_per_patch: u32 = (tess + 1u) * (tess + 2u) / 2u;");
     w.line("if (vert_in_patch >= verts_per_patch) { return; }");
@@ -1557,6 +1699,12 @@ fn build_io_maps(
         ps_front_facing_register: ps_front_facing_reg,
         cs_inputs: BTreeMap::new(),
         hs_inputs: BTreeMap::new(),
+        hs_input_regs: BTreeSet::new(),
+        hs_cp_output_regs: BTreeSet::new(),
+        hs_is_patch_constant_phase: false,
+        hs_pc_patch_constant_reg_masks: BTreeMap::new(),
+        hs_pc_tess_factor_writes: Vec::new(),
+        hs_pc_tess_factor_stride: 0,
     })
 }
 
@@ -1731,6 +1879,12 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         ps_front_facing_register: None,
         cs_inputs,
         hs_inputs: BTreeMap::new(),
+        hs_input_regs: BTreeSet::new(),
+        hs_cp_output_regs: BTreeSet::new(),
+        hs_is_patch_constant_phase: false,
+        hs_pc_patch_constant_reg_masks: BTreeMap::new(),
+        hs_pc_tess_factor_writes: Vec::new(),
+        hs_pc_tess_factor_stride: 0,
     }
 }
 
@@ -2323,6 +2477,24 @@ struct IoMaps {
     ps_front_facing_register: Option<u32>,
     cs_inputs: BTreeMap<u32, ComputeSysValue>,
     hs_inputs: BTreeMap<u32, HullSysValue>,
+    /// Registers declared in the HS input signature (ISGN).
+    ///
+    /// Used to disambiguate indexed hull inputs (`SrcKind::GsInput`) between input and output
+    /// patches.
+    hs_input_regs: BTreeSet<u32>,
+    /// Registers declared in the HS control-point output signature (OSGN).
+    ///
+    /// When the patch-constant phase reads an `OutputPatch` in HLSL, FXC encodes those reads as a
+    /// 2D-indexed input operand (`SrcKind::GsInput`) where the register index matches the OSGN
+    /// output register.
+    hs_cp_output_regs: BTreeSet<u32>,
+
+    /// True when this `IoMaps` instance is used for HS patch-constant phase emission.
+    hs_is_patch_constant_phase: bool,
+    /// Patch-constant outputs (non tess-factor) keyed by output register index -> combined mask.
+    hs_pc_patch_constant_reg_masks: BTreeMap<u32, u8>,
+    hs_pc_tess_factor_writes: Vec<HsTessFactorWrite>,
+    hs_pc_tess_factor_stride: u32,
 }
 
 impl IoMaps {
@@ -2565,6 +2737,38 @@ impl IoMaps {
         }
         w.line("return out;");
         Ok(())
+    }
+
+    fn emit_hs_commit_outputs(&self, w: &mut WgslWriter) {
+        if !self.hs_is_patch_constant_phase {
+            for &reg in self.outputs.keys() {
+                w.line(&format!("hs_store_out_cp(hs_out_base + {reg}u, o{reg});"));
+            }
+            return;
+        }
+
+        // Patch constants (exclude tess factors).
+        for (&reg, &mask) in &self.hs_pc_patch_constant_reg_masks {
+            let expr = apply_sig_mask_to_vec4(&format!("o{reg}"), mask);
+            w.line(&format!(
+                "hs_store_patch_constants(hs_out_base + {reg}u, {expr});"
+            ));
+        }
+        if !self.hs_pc_patch_constant_reg_masks.is_empty() && self.hs_pc_tess_factor_stride != 0 {
+            w.line("");
+        }
+
+        // Tess factors (compact scalar buffer).
+        if self.hs_pc_tess_factor_stride != 0 {
+            w.line("let tf_base: u32 = hs_primitive_id * HS_TESS_FACTOR_STRIDE;");
+            for wri in &self.hs_pc_tess_factor_writes {
+                let comp = component_char(wri.src_component);
+                w.line(&format!(
+                    "hs_store_tess_factor(tf_base + {}u, o{}.{});",
+                    wri.dst_index, wri.src_reg, comp
+                ));
+            }
+        }
     }
 
     fn read_input_vec4(
@@ -2948,6 +3152,15 @@ fn is_sv_primitive_id(name: &str) -> bool {
 
 fn is_sv_domain_location(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_DomainLocation") || name.eq_ignore_ascii_case("SV_DOMAINLOCATION")
+}
+
+fn is_sv_tess_factor(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_TessFactor") || name.eq_ignore_ascii_case("SV_TESSFACTOR")
+}
+
+fn is_sv_inside_tess_factor(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_InsideTessFactor")
+        || name.eq_ignore_ascii_case("SV_INSIDETESSFACTOR")
 }
 
 fn is_sv_instance_id(name: &str) -> bool {
@@ -4426,8 +4639,15 @@ fn emit_temp_and_output_decls(
 }
 
 fn scan_src_regs(src: &crate::sm4_ir::SrcOperand, f: &mut impl FnMut(RegisterRef)) {
-    if let SrcKind::Register(r) = src.kind {
-        f(r);
+    match &src.kind {
+        SrcKind::Register(r) => f(*r),
+        // Indexed inputs (`v#[]`) are represented as `SrcKind::GsInput` in the IR. For register
+        // scanning purposes treat them as reads from the input register file.
+        SrcKind::GsInput { reg, .. } => f(RegisterRef {
+            file: RegFile::Input,
+            index: *reg,
+        }),
+        _ => {}
     }
 }
 
@@ -6434,8 +6654,15 @@ fn emit_instructions(
                 match ctx.stage {
                     ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
                     ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
-                    ShaderStage::Compute | ShaderStage::Hull => {
+                    ShaderStage::Compute => {
                         // Compute entry points return `()`.
+                        w.line("return;");
+                    }
+                    ShaderStage::Hull => {
+                        // Hull shaders are executed via compute emulation. Ensure we commit output
+                        // registers into the stage interface buffers before returning early from a
+                        // structured control-flow block.
+                        ctx.io.emit_hs_commit_outputs(w);
                         w.line("return;");
                     }
                     other => {
@@ -6482,6 +6709,27 @@ fn emit_src_vec4(
             ShaderStage::Domain => format!(
                 "ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
             ),
+            ShaderStage::Hull => {
+                // Hull shaders can index both input patch control points and output patch control
+                // points (when using `OutputPatch` in HLSL). Both are encoded as 2D-indexed input
+                // operands; disambiguate by comparing against the HS input/output signature
+                // register sets.
+                let base = if ctx.io.hs_cp_output_regs.contains(reg)
+                    && !ctx.io.hs_input_regs.contains(reg)
+                {
+                    "hs_load_out_cp"
+                } else {
+                    "hs_load_in"
+                };
+                let stride = if base == "hs_load_out_cp" {
+                    "HS_CP_OUT_STRIDE"
+                } else {
+                    "HS_IN_STRIDE"
+                };
+                format!(
+                    "{base}((hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * {stride} + {reg}u)"
+                )
+            }
             _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         },
         SrcKind::ConstantBuffer { slot, reg } => {
@@ -6585,6 +6833,23 @@ fn emit_src_vec4_u32(
             ShaderStage::Domain => format!(
                 "bitcast<vec4<u32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
             ),
+            ShaderStage::Hull => {
+                let base = if ctx.io.hs_cp_output_regs.contains(reg)
+                    && !ctx.io.hs_input_regs.contains(reg)
+                {
+                    "hs_load_out_cp"
+                } else {
+                    "hs_load_in"
+                };
+                let stride = if base == "hs_load_out_cp" {
+                    "HS_CP_OUT_STRIDE"
+                } else {
+                    "HS_IN_STRIDE"
+                };
+                format!(
+                    "bitcast<vec4<u32>>({base}((hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * {stride} + {reg}u))"
+                )
+            }
             _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         },
         SrcKind::ConstantBuffer { slot, reg } => {
@@ -6675,6 +6940,23 @@ fn emit_src_vec4_i32(
             ShaderStage::Domain => format!(
                 "bitcast<vec4<i32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
             ),
+            ShaderStage::Hull => {
+                let base = if ctx.io.hs_cp_output_regs.contains(reg)
+                    && !ctx.io.hs_input_regs.contains(reg)
+                {
+                    "hs_load_out_cp"
+                } else {
+                    "hs_load_in"
+                };
+                let stride = if base == "hs_load_out_cp" {
+                    "HS_CP_OUT_STRIDE"
+                } else {
+                    "HS_IN_STRIDE"
+                };
+                format!(
+                    "bitcast<vec4<i32>>({base}((hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * {stride} + {reg}u))"
+                )
+            }
             _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         },
         SrcKind::ConstantBuffer { slot, reg } => {
