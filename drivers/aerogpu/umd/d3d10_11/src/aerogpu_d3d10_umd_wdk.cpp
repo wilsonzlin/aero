@@ -2774,6 +2774,23 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
 
+    if (res->width == 0 || res->height == 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid dimensions %ux%u",
+                           static_cast<unsigned>(res->width),
+                           static_cast<unsigned>(res->height));
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+
+    const uint32_t max_mips = aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
+    if (res->mip_levels == 0 || res->mip_levels > max_mips) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid mip_levels=%u (max=%u)",
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(max_mips));
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+
     if (res->sample_count == 0) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0");
       res->~AeroGpuResource();
