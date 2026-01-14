@@ -2963,6 +2963,12 @@ mod tests {
         let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
+        let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
+        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
+        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
+        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
+        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+
         let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
         let got = read_primary_sector0_via_pio(&mut ctl);
         assert_eq!(got, vec![0x11u8; SECTOR_SIZE]);
@@ -3004,6 +3010,12 @@ mod tests {
 
         let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
+        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
+        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
+        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
+        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
 
         let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
         let got = read_primary_sector0_via_pio(&mut ctl);
