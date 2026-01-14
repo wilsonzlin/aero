@@ -79,7 +79,7 @@ type Config struct {
 
 	// WebRTCDataChannelMaxMessageBytes bounds inbound WebRTC DataChannel messages.
 	// It should match the pion SettingEngine SCTP max message size configuration
-	// (see webrtcpeer.NewAPI/ApplyNetworkSettings).
+	// (see webrtcpeer.NewAPI).
 	WebRTCDataChannelMaxMessageBytes int
 }
 

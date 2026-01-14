@@ -13,7 +13,7 @@ import (
 
 func NewAPI(cfg config.Config) (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
-	if err := ApplyNetworkSettings(&se, cfg); err != nil {
+	if err := applyNetworkSettings(&se, cfg); err != nil {
 		return nil, err
 	}
 
@@ -29,7 +29,7 @@ func NewAPI(cfg config.Config) (*webrtc.API, error) {
 	return api, nil
 }
 
-func ApplyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
+func applyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
 	if cfg.WebRTCUDPPortRange != nil {
 		if err := se.SetEphemeralUDPPortRange(cfg.WebRTCUDPPortRange.Min, cfg.WebRTCUDPPortRange.Max); err != nil {
 			return fmt.Errorf("set ephemeral udp port range: %w", err)
