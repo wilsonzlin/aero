@@ -37,6 +37,11 @@ static NTSTATUS AerovNetDiagDispatchCreateClose(_In_ PDEVICE_OBJECT DeviceObject
 static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
 static NTSTATUS AerovNetDiagDispatchDefault(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
 
+static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _Out_ PBOOLEAN QueueDefaultInterruptDpc,
+                                   _Out_ PULONG TargetProcessors);
+static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_ PVOID MiniportDpcContext, _In_ PULONG NdisReserved1,
+                                 _In_ PULONG NdisReserved2);
+
 static VOID AerovNetDiagDetachAdapter(_In_ AEROVNET_ADAPTER* Adapter);
 static VOID AerovNetDiagAttachAdapter(_In_ AEROVNET_ADAPTER* Adapter);
 
@@ -1585,6 +1590,51 @@ static NTSTATUS AerovNetProgramMsixVectorsInternal(_Inout_ AEROVNET_ADAPTER* Ada
   return STATUS_SUCCESS;
 }
 
+static NDIS_STATUS AerovNetReregisterInterruptsIntx(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS Intr;
+  NDIS_STATUS Status;
+  NDIS_HANDLE OldHandle;
+
+  if (!Adapter) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  OldHandle = Adapter->InterruptHandle;
+  Adapter->InterruptHandle = NULL;
+
+  if (OldHandle) {
+    NdisMDeregisterInterruptEx(OldHandle);
+  }
+
+  /*
+   * Register legacy INTx interrupts only.
+   *
+   * We keep `Header.Revision=REVISION_2` for broad WDK compatibility, but leave
+   * all message interrupt handlers NULL so NDIS will not connect MSI/MSI-X even
+   * if the resource list contains message interrupts.
+   *
+   * This is critical for the contract v1 fallback path: when the PCI MSI-X
+   * Enable bit is set, contract devices suppress INTx. If MSI-X vector
+   * programming fails we must ensure Windows falls back to INTx at the PCI
+   * layer (by not registering message interrupts) before proceeding.
+   */
+  RtlZeroMemory(&Intr, sizeof(Intr));
+  Intr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_INTERRUPT;
+  Intr.Header.Revision = NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_2;
+#ifdef NDIS_SIZEOF_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_2
+  Intr.Header.Size = NDIS_SIZEOF_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_2;
+#else
+  Intr.Header.Size = sizeof(Intr);
+#endif
+  Intr.InterruptHandler = AerovNetInterruptIsr;
+  Intr.InterruptDpcHandler = AerovNetInterruptDpc;
+  Intr.MessageInterruptHandler = NULL;
+  Intr.MessageInterruptDpcHandler = NULL;
+
+  Status = NdisMRegisterInterruptEx(Adapter->MiniportAdapterHandle, Adapter, &Intr, &Adapter->InterruptHandle);
+  return Status;
+}
+
 static NDIS_STATUS AerovNetProgramInterruptVectors(_Inout_ AEROVNET_ADAPTER* Adapter) {
   NTSTATUS NtStatus;
   USHORT ConfigVector;
@@ -1636,7 +1686,7 @@ static NDIS_STATUS AerovNetProgramInterruptVectors(_Inout_ AEROVNET_ADAPTER* Ada
     (VOID)VirtioPciSetConfigMsixVector(&Adapter->Vdev, VIRTIO_PCI_MSI_NO_VECTOR);
     (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 0, VIRTIO_PCI_MSI_NO_VECTOR);
     (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 1, VIRTIO_PCI_MSI_NO_VECTOR);
-    return NDIS_STATUS_SUCCESS;
+    return AerovNetReregisterInterruptsIntx(Adapter);
   }
 
   DbgPrintEx(DPFLTR_IHVDRIVER_ID,
@@ -1674,7 +1724,7 @@ static NDIS_STATUS AerovNetProgramInterruptVectors(_Inout_ AEROVNET_ADAPTER* Ada
   (VOID)VirtioPciSetConfigMsixVector(&Adapter->Vdev, VIRTIO_PCI_MSI_NO_VECTOR);
   (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 0, VIRTIO_PCI_MSI_NO_VECTOR);
   (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 1, VIRTIO_PCI_MSI_NO_VECTOR);
-  return NDIS_STATUS_SUCCESS;
+  return AerovNetReregisterInterruptsIntx(Adapter);
 }
 
 static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_VQ* Vq, _In_ USHORT QueueIndex,
@@ -5063,7 +5113,10 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Info.GuestFeatures = Adapter->GuestFeatures;
 
   Info.InterruptMode = Adapter->UseMsix ? AEROVNET_INTERRUPT_MODE_MSI : AEROVNET_INTERRUPT_MODE_INTX;
-  Info.MessageCount = Adapter->UseMsix ? (ULONG)Adapter->MsixMessageCount : 0;
+  // `MessageCount` reflects how many message interrupts Windows granted, not
+  // necessarily whether the driver ended up using MSI-X (we can fall back to
+  // INTx if vector programming fails).
+  Info.MessageCount = (ULONG)Adapter->MsixMessageCount;
   Info.MsixConfigVector = Adapter->MsixConfigVector;
   Info.MsixRxVector = Adapter->MsixRxVector;
   Info.MsixTxVector = Adapter->MsixTxVector;
