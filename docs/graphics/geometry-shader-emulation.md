@@ -256,7 +256,8 @@ Supported operand surface (initial):
 - system values:
   - `SV_PrimitiveID`
   - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`; the translated prepass loops
-    `0..GS_INSTANCE_COUNT` per input primitive, values 0..n-1, default 0)
+    `0..GS_INSTANCE_COUNT` per input primitive, values `0..(n-1)`; default is `n=1`, so the ID is
+    always `0`)
 
 Unsupported today (non-exhaustive): resource writes/stores/UAVs, barrier/synchronization opcodes
 (`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a clear
