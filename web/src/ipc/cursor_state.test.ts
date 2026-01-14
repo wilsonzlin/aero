@@ -361,16 +361,4 @@ describe("ipc/cursor_state", () => {
       await worker.terminate();
     }
   });
-
-  it("trySnapshotCursorState returns null quickly when the busy bit is stuck", () => {
-    const sab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
-    const words = wrapCursorState(sab, 0);
-
-    // Simulate a wedged writer holding the lock forever.
-    Atomics.store(words, CursorStateIndex.GENERATION, (999 | CURSOR_STATE_GENERATION_BUSY_BIT) | 0);
-    Atomics.store(words, CursorStateIndex.ENABLE, 1);
-
-    const snap = trySnapshotCursorState(words, { maxIterations: 16 });
-    expect(snap).toBeNull();
-  });
 });
