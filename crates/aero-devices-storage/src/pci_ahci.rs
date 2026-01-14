@@ -452,4 +452,42 @@ mod tests {
             "size-0 MMIO write must not change IRQ level"
         );
     }
+
+    #[test]
+    fn mmio_write_byte_enable_rmw_preserves_unwritten_bytes_for_normal_register() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // PxIE is a normal read/write register (not W1C). Sub-dword accesses should behave like
+        // byte-enable semantics: read-modify-write so unwritten bytes are preserved.
+        let px_ie_off = 0x100 + 0x14; // PxIE for port 0.
+        let initial = 0xA1B2_C3D4u32;
+        dev.mmio_write(px_ie_off, 4, initial as u64);
+        assert_eq!(dev.mmio_read(px_ie_off, 4), initial as u64);
+
+        // Overwrite only byte lane 1 (bits 8..15).
+        dev.mmio_write(px_ie_off + 1, 1, 0xEE);
+        let expected = (initial & !0x0000_FF00) | (0xEEu32 << 8);
+        assert_eq!(dev.mmio_read(px_ie_off, 4), expected as u64);
+    }
+
+    #[test]
+    fn mmio_write_byte_enable_w1c_unwritten_bytes_are_noop() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Seed PxIS with bits set across multiple bytes, then clear only a single bit via a
+        // sub-dword write. Unwritten bytes must be treated as zero (no-op), not as a preserved
+        // value (RMW) or as 0xFF.
+        let px_is_off = 0x100 + 0x10; // PxIS for port 0.
+        let mut state = dev.controller.snapshot_state();
+        state.ports[0].is = 0x0101_0101;
+        dev.controller.restore_state(&state);
+
+        assert_eq!(dev.mmio_read(px_is_off, 4), 0x0101_0101);
+
+        // Clear only bit8 (byte lane 1) with a 2-byte write, leaving bit0 and higher bytes intact.
+        dev.mmio_write(px_is_off, 2, 0x0100);
+        assert_eq!(dev.mmio_read(px_is_off, 4), 0x0101_0001);
+    }
 }
