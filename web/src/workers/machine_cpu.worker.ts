@@ -71,15 +71,49 @@ type MachineSnapshotRestoredMessage =
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultOk)
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultErr);
 
+type VmSnapshotPauseMessage = {
+  kind: "vm.snapshot.pause";
+  requestId: number;
+};
+
+type VmSnapshotResumeMessage = {
+  kind: "vm.snapshot.resume";
+  requestId: number;
+};
+
+type VmSnapshotSaveToOpfsMessage = {
+  kind: "vm.snapshot.saveToOpfs";
+  requestId: number;
+  path: string;
+};
+
+type VmSnapshotRestoreFromOpfsMessage = {
+  kind: "vm.snapshot.restoreFromOpfs";
+  requestId: number;
+  path: string;
+};
+
+type VmSnapshotPausedMessage = { kind: "vm.snapshot.paused"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
+type VmSnapshotResumedMessage = { kind: "vm.snapshot.resumed"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
+type VmSnapshotSavedMessage = { kind: "vm.snapshot.saved"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
+type VmSnapshotRestoredMessage =
+  | ({ kind: "vm.snapshot.restored"; requestId: number } & MachineSnapshotResultErr)
+  | { kind: "vm.snapshot.restored"; requestId: number; ok: true; cpu: ArrayBuffer; mmu: ArrayBuffer; devices?: unknown[] };
+
 let wasmApi: WasmApi | null = null;
 let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
 let snapshotOpChain: Promise<void> = Promise.resolve();
+let vmSnapshotPaused = false;
 
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
   ctx.postMessage(msg);
 }
 
 function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
+  ctx.postMessage(msg);
+}
+
+function postVmSnapshot(msg: VmSnapshotPausedMessage | VmSnapshotResumedMessage | VmSnapshotSavedMessage | VmSnapshotRestoredMessage): void {
   ctx.postMessage(msg);
 }
 
@@ -124,6 +158,94 @@ function enqueueSnapshotOp(op: () => Promise<void>): void {
 
 ctx.onmessage = (ev) => {
   const msg = ev.data as unknown;
+
+  const vmSnapshot = msg as Partial<
+    VmSnapshotPauseMessage | VmSnapshotResumeMessage | VmSnapshotSaveToOpfsMessage | VmSnapshotRestoreFromOpfsMessage
+  >;
+  if (typeof vmSnapshot.kind === "string" && vmSnapshot.kind.startsWith("vm.snapshot.")) {
+    const requestId = typeof vmSnapshot.requestId === "number" ? vmSnapshot.requestId : -1;
+    if (requestId < 0) return;
+
+    switch (vmSnapshot.kind) {
+      case "vm.snapshot.pause": {
+        vmSnapshotPaused = true;
+        postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+        return;
+      }
+      case "vm.snapshot.resume": {
+        vmSnapshotPaused = false;
+        postVmSnapshot({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+        return;
+      }
+      case "vm.snapshot.saveToOpfs": {
+        const path = typeof (vmSnapshot as Partial<VmSnapshotSaveToOpfsMessage>).path === "string" ? vmSnapshot.path : "";
+        if (!path) {
+          postVmSnapshot({
+            kind: "vm.snapshot.saved",
+            requestId,
+            ok: false,
+            error: serializeError(new Error("vm.snapshot.saveToOpfs requires a non-empty path.")),
+          } satisfies VmSnapshotSavedMessage);
+          return;
+        }
+
+        enqueueSnapshotOp(async () => {
+          try {
+            const { machine } = ensureWasmMachine();
+            const fn = (machine as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs;
+            if (typeof fn !== "function") {
+              throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
+            }
+            await Promise.resolve((fn as (path: string) => unknown).call(machine, path));
+            postVmSnapshot({ kind: "vm.snapshot.saved", requestId, ok: true } satisfies VmSnapshotSavedMessage);
+          } catch (err) {
+            postVmSnapshot({ kind: "vm.snapshot.saved", requestId, ok: false, error: serializeError(err) } satisfies VmSnapshotSavedMessage);
+          }
+        });
+        return;
+      }
+      case "vm.snapshot.restoreFromOpfs": {
+        const path =
+          typeof (vmSnapshot as Partial<VmSnapshotRestoreFromOpfsMessage>).path === "string" ? vmSnapshot.path : "";
+        if (!path) {
+          postVmSnapshot({
+            kind: "vm.snapshot.restored",
+            requestId,
+            ok: false,
+            error: serializeError(new Error("vm.snapshot.restoreFromOpfs requires a non-empty path.")),
+          } satisfies VmSnapshotRestoredMessage);
+          return;
+        }
+
+        enqueueSnapshotOp(async () => {
+          try {
+            const { api, machine } = ensureWasmMachine();
+            // Snapshot restore intentionally drops host-side disk backends (OPFS handles) and only
+            // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
+            //
+            // After restoring, re-open those OPFS images and reattach them to the canonical machine.
+            await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+            postVmSnapshot({
+              kind: "vm.snapshot.restored",
+              requestId,
+              ok: true,
+              // Machine runtime owns full snapshot restore; coordinator should ignore cpu/mmu fields.
+              cpu: new ArrayBuffer(0),
+              mmu: new ArrayBuffer(0),
+            } satisfies VmSnapshotRestoredMessage);
+          } catch (err) {
+            postVmSnapshot({
+              kind: "vm.snapshot.restored",
+              requestId,
+              ok: false,
+              error: serializeError(err),
+            } satisfies VmSnapshotRestoredMessage);
+          }
+        });
+        return;
+      }
+    }
+  }
 
   const snapshot = msg as Partial<MachineSnapshotRestoreFromOpfsMessage | MachineSnapshotRestoreMessage>;
   if (snapshot?.kind === "machine.snapshot.restoreFromOpfs") {
