@@ -310,10 +310,10 @@ fn gs_opcode_constants_match_d3d10_tokenized_format() {
     assert_eq!(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 0x10e);
     assert_eq!(OPCODE_EMIT_STREAM, 0x41);
     assert_eq!(OPCODE_CUT_STREAM, 0x42);
-    assert_eq!(OPCODE_EMIT, 0x43);
-    assert_eq!(OPCODE_CUT, 0x44);
-    assert_eq!(OPCODE_EMITTHENCUT, 0x3f);
-    assert_eq!(OPCODE_EMITTHENCUT_STREAM, 0x40);
+    assert_eq!(OPCODE_EMIT, 0x3f);
+    assert_eq!(OPCODE_CUT, 0x40);
+    assert_eq!(OPCODE_EMITTHENCUT, 0x43);
+    assert_eq!(OPCODE_EMITTHENCUT_STREAM, 0x44);
 }
 
 #[test]

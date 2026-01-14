@@ -103,8 +103,8 @@ pub const OPCODE_IBFE: u32 = 0x69;
 // These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
 // Numeric values are verified by `tests/sm4_decode.rs`.
 //
-// Keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on unique
-// opcode IDs.
+// Note: keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on
+// unique opcode IDs.
 pub const OPCODE_IEQ: u32 = 0x4d;
 pub const OPCODE_IGE: u32 = 0x4e;
 pub const OPCODE_ILT: u32 = 0x4f;
@@ -195,16 +195,16 @@ pub const OPCODE_RET: u32 = 0x3e;
 // Geometry shader stream emission / cutting.
 //
 // Values from the D3D10+ tokenized shader format opcode table:
-// `D3D10_SB_OPCODE_TYPE_EMITTHENCUT`, `D3D10_SB_OPCODE_TYPE_EMITTHENCUT_STREAM`,
 // `D3D10_SB_OPCODE_TYPE_EMIT`, `D3D10_SB_OPCODE_TYPE_CUT`,
-// `D3D10_SB_OPCODE_TYPE_EMIT_STREAM`, `D3D10_SB_OPCODE_TYPE_CUT_STREAM`
+// `D3D10_SB_OPCODE_TYPE_EMIT_STREAM`, `D3D10_SB_OPCODE_TYPE_CUT_STREAM`,
+// `D3D10_SB_OPCODE_TYPE_EMITTHENCUT`, `D3D10_SB_OPCODE_TYPE_EMITTHENCUT_STREAM`
 // in the Windows SDK header `d3d10tokenizedprogramformat.h`.
-pub const OPCODE_EMITTHENCUT: u32 = 0x3f;
-pub const OPCODE_EMITTHENCUT_STREAM: u32 = 0x40;
+pub const OPCODE_EMIT: u32 = 0x3f;
+pub const OPCODE_CUT: u32 = 0x40;
 pub const OPCODE_EMIT_STREAM: u32 = 0x41;
 pub const OPCODE_CUT_STREAM: u32 = 0x42;
-pub const OPCODE_EMIT: u32 = 0x43;
-pub const OPCODE_CUT: u32 = 0x44;
+pub const OPCODE_EMITTHENCUT: u32 = 0x43;
+pub const OPCODE_EMITTHENCUT_STREAM: u32 = 0x44;
 
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
@@ -792,6 +792,9 @@ mod tests {
         //
         // Parse *all* `pub const OPCODE_*: u32 = <literal>;` definitions directly from this source
         // file so we don't need to manually keep a list up to date as more opcodes are added.
+        //
+        // Some constants are aliases for readability (e.g. `OPCODE_IFC = OPCODE_IF`); those do not
+        // use numeric literals and are intentionally ignored here.
         //
         // Exclude bitfield/metadata constants like `OPCODE_MASK`/`OPCODE_LEN_SHIFT` which are not
         // actual opcode IDs.
