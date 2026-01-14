@@ -76,6 +76,28 @@ let running = false;
 let started = false;
 let vmSnapshotPaused = false;
 let machineBusy = false;
+const machineIdleWaiters: Array<() => void> = [];
+
+function setMachineBusy(busy: boolean): void {
+  machineBusy = busy;
+  if (busy) return;
+  if (machineIdleWaiters.length === 0) return;
+  const waiters = machineIdleWaiters.splice(0, machineIdleWaiters.length);
+  for (const resolve of waiters) {
+    try {
+      resolve();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function waitForMachineIdle(): Promise<void> {
+  if (!machineBusy) return Promise.resolve();
+  return new Promise((resolve) => {
+    machineIdleWaiters.push(resolve);
+  });
+}
 
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
@@ -606,7 +628,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
     return;
   }
 
-  machineBusy = true;
+  setMachineBusy(true);
   detachMachineNetwork();
 
   try {
@@ -652,7 +674,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: false, error } satisfies MachineSnapshotRestoredMessage);
     }
   } finally {
-    machineBusy = false;
+    setMachineBusy(false);
     if (networkWanted) {
       attachMachineNetwork();
     }
@@ -717,17 +739,17 @@ async function runLoop(): Promise<void> {
       }
 
       // Boot disks.
-      if (pendingBootDisks && machine && !machineBusy) {
+      if (!vmSnapshotPaused && pendingBootDisks && machine && !machineBusy) {
         const msg = pendingBootDisks;
         pendingBootDisks = null;
-        machineBusy = true;
+        setMachineBusy(true);
         try {
           await applyBootDisks(msg);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           pushEvent({ kind: "log", level: "warn", message: `[machine_cpu] setBootDisks failed: ${message}` });
         } finally {
-          machineBusy = false;
+          setMachineBusy(false);
         }
 
         await new Promise((resolve) => {
@@ -927,7 +949,13 @@ ctx.onmessage = (ev) => {
     switch (vmSnapshot.kind) {
       case "vm.snapshot.pause": {
         vmSnapshotPaused = true;
-        postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+        if (!machineBusy) {
+          postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+          return;
+        }
+        void waitForMachineIdle().then(() => {
+          postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+        });
         return;
       }
       case "vm.snapshot.resume": {
