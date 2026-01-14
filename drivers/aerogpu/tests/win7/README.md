@@ -198,6 +198,11 @@ build (`AEROGPU_WIN7_BUILD_WOW64_CONSUMER`, enabled by default on 64-bit MSVC ho
 1. Add a new directory containing `main.cpp` and a `build_vs2010.cmd` that outputs `bin\<test_name>.exe`.
 2. Add `<test_name>` to `tests_manifest.txt` at the desired position.
 3. For the CMake build, add the new test target to `CMakeLists.txt` (linking the appropriate system libraries).
+4. Add an `Expected results` bullet for `<test_name>` in this README (the suite manifest is treated as the canonical list of tests; CI enforces that docs include a corresponding entry).
+5. Keep the suite runner fallback list (`test_runner/main.cpp` `kFallbackTests[]`) in sync with `tests_manifest.txt` (CI enforces set + order equality). You can update it by running:
+   ```bash
+   python3 scripts/sync-aerogpu-win7-test-runner-fallback-tests.py
+   ```
 
 ### Legacy build scripts
 
