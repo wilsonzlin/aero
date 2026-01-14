@@ -813,6 +813,159 @@ bool TestFixedfuncUnboundStage1TextureDoesNotTruncateWhenStage1DoesNotSample() {
   return true;
 }
 
+bool TestFixedfuncUnboundStage1TextureTruncatesWhenStage1UsesTextureInAlphaOnly() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Stage0: CURRENT = tex0 (both color and alpha).
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  // Ensure stage1/2/3 are disabled initially so we can capture the baseline
+  // stage0-only PS handle.
+  for (uint32_t stage = 1; stage <= 3; ++stage) {
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorOp, kD3dTopDisable);
+    if (!Check(hr == S_OK, "TSS stageN COLOROP=DISABLE")) {
+      return false;
+    }
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage0 baseline)")) {
+    return false;
+  }
+
+  const aerogpu::Shader* ps_ptr_stage0 = nullptr;
+  aerogpu_handle_t ps_stage0 = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "baseline => PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "baseline => PS texld uses sampler s0")) {
+      return false;
+    }
+    ps_ptr_stage0 = dev->ps;
+    ps_stage0 = dev->ps->handle;
+  }
+  if (!Check(ps_stage0 != 0, "baseline bound non-zero PS handle")) {
+    return false;
+  }
+
+  // Configure stage1 so it would sample texture1 only in the alpha path:
+  // COLOR = CURRENT, ALPHA = TEXTURE.
+  //
+  // Set ALPHAOP/ALPHAARG1 first while stage1 COLOROP is still DISABLE to avoid
+  // creating intermediate PS variants during state setup.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAARG1=TEXTURE (alpha-only sampling)")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorArg1, kD3dTaCurrent);
+  if (!Check(hr == S_OK, "TSS stage1 COLORARG1=CURRENT")) {
+    return false;
+  }
+
+  // Now enable stage1. Since stage1's texture is unbound but stage1 uses TEXTURE
+  // in the alpha path, this must still truncate the chain back to stage0-only.
+  dev->cmd.reset();
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=SELECTARG1")) {
+    return false;
+  }
+
+  const aerogpu::Shader* ps_ptr_after = nullptr;
+  aerogpu_handle_t ps_after = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "stage1 alpha-only missing => PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "stage1 alpha-only missing => PS texld uses sampler s0")) {
+      return false;
+    }
+    ps_ptr_after = dev->ps;
+    ps_after = dev->ps->handle;
+  }
+  if (!Check(ps_ptr_after == ps_ptr_stage0, "stage1 alpha-only missing => PS pointer matches stage0 baseline")) {
+    return false;
+  }
+  if (!Check(ps_after == ps_stage0, "stage1 alpha-only missing => PS handle matches stage0 baseline")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  size_t ps_creates = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+    const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+    if (cs->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      ++ps_creates;
+    }
+  }
+  if (!Check(ps_creates == 0, "stage1 alpha-only missing => stage1 enable emits no CREATE_SHADER_DXBC")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncBindUnbindStage1TextureRebindsPixelShader() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -2572,6 +2725,9 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncUnboundStage1TextureDoesNotTruncateWhenStage1DoesNotSample()) {
+    return 1;
+  }
+  if (!TestFixedfuncUnboundStage1TextureTruncatesWhenStage1UsesTextureInAlphaOnly()) {
     return 1;
   }
   if (!TestFixedfuncBindUnbindStage1TextureRebindsPixelShader()) {
