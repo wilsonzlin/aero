@@ -31,14 +31,14 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
     let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
     let bar0_base = {
         let mut pci_cfg = pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(profile::AEROGPU.bdf)
+            .expect("aerogpu PCI config missing");
 
-        bus.write_config(profile::AEROGPU.bdf, 0x04, 2, (1 << 1) | (1 << 2));
+        cfg.set_command((1 << 1) | (1 << 2));
 
-        bus.device_config(profile::AEROGPU.bdf)
-            .and_then(|cfg| cfg.bar_range(0))
-            .map(|range| range.base)
-            .unwrap_or(0)
+        cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
     assert_ne!(
         bar0_base, 0,
@@ -57,9 +57,12 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
         lo | (hi << 32)
     };
 
-    // Advance deterministic platform time by ~20ms; this should cross at least one 60 Hz vblank
-    // period and increment the counter.
-    m.tick_platform(20_000_000);
+    let period_ns = u64::from(m.read_physical_u32(reg(mmio::SCANOUT0_VBLANK_PERIOD_NS)));
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
+
+    // Advance deterministic platform time by one vblank period; this should cross one vblank edge
+    // and increment the counter.
+    m.tick_platform(period_ns);
 
     let seq_after = {
         let lo = m.read_physical_u32(reg(mmio::SCANOUT0_VBLANK_SEQ_LO)) as u64;

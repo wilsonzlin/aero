@@ -128,8 +128,12 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
     // 2) Advance vblank state so VBLANK_SEQ/VBLANK_TIME become non-zero.
     // ---------------------------------------------------------------------
     vm.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
-    // Advance enough time to cross at least one 60Hz vblank interval (~16.6ms).
-    vm.tick_platform(20_000_000);
+    let vblank_period_before =
+        vm.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS));
+    assert!(vblank_period_before > 0);
+
+    // Advance enough time to cross one vblank interval.
+    vm.tick_platform(u64::from(vblank_period_before));
 
     let vblank_seq_before = read_mmio_u64(
         &mut vm,
@@ -146,10 +150,6 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
         pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI,
     );
     assert!(vblank_time_before > 0);
-
-    let vblank_period_before =
-        vm.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS));
-    assert!(vblank_period_before > 0);
 
     // ---------------------------------------------------------------------
     // Snapshot + restore.
