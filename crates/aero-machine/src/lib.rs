@@ -11964,8 +11964,10 @@ impl Machine {
     }
 
     fn legacy_vga_device_config(&self) -> VgaConfig {
-        let mut cfg = VgaConfig::default();
-        cfg.vram_size = self.legacy_vga_vram_size_bytes();
+        let mut cfg = VgaConfig {
+            vram_size: self.legacy_vga_vram_size_bytes(),
+            ..Default::default()
+        };
         if let Some(lfb_offset) = self.cfg.vga_lfb_offset {
             // Avoid panicking on invalid configuration; clamp to the allocated VRAM size so the
             // VGA device model's invariants hold.

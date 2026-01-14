@@ -11430,34 +11430,43 @@ impl AerogpuD3d11Executor {
                 .try_into()
                 .map_err(|_| anyhow!("COPY_BUFFER: dst_offset_bytes out of range"))?;
 
-            let src_bytes: Option<Vec<u8>> = if let Some(src_shadow) = self
-                .resources
-                .buffers
-                .get(&src_buffer)
-                .and_then(|src| src.host_shadow.as_deref())
-            {
+            let src_bytes: Option<Vec<u8>> = {
+                let src = self
+                    .resources
+                    .buffers
+                    .get(&src_buffer)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: unknown src buffer {src_buffer}"))?;
+
                 let end = src_offset_usize
                     .checked_add(size_usize)
-                    .ok_or_else(|| anyhow!("COPY_BUFFER: src shadow range overflows usize"))?;
-                src_shadow.get(src_offset_usize..end).map(|s| s.to_vec())
-            } else if let Some(src_backing) = self
-                .resources
-                .buffers
-                .get(&src_buffer)
-                .and_then(|src| src.backing)
-            {
-                allocs.validate_range(
-                    src_backing.alloc_id,
-                    src_backing.offset_bytes + src_offset_bytes,
-                    size_bytes,
-                )?;
-                let gpa =
-                    allocs.gpa(src_backing.alloc_id)? + src_backing.offset_bytes + src_offset_bytes;
-                let mut tmp = vec![0u8; size_usize];
-                guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
-                Some(tmp)
-            } else {
-                None
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows usize"))?;
+
+                if let Some(src_shadow) = src.host_shadow.as_deref() {
+                    let src_size_usize: usize = src
+                        .size
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: src size out of range"))?;
+                    if src_shadow.len() != src_size_usize {
+                        None
+                    } else {
+                        src_shadow.get(src_offset_usize..end).map(|s| s.to_vec())
+                    }
+                } else if let Some(src_backing) = src.backing {
+                    let backing_offset = src_backing
+                        .offset_bytes
+                        .checked_add(src_offset_bytes)
+                        .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflows u64"))?;
+                    allocs.validate_range(src_backing.alloc_id, backing_offset, size_bytes)?;
+                    let gpa = allocs
+                        .gpa(src_backing.alloc_id)?
+                        .checked_add(backing_offset)
+                        .ok_or_else(|| anyhow!("COPY_BUFFER: src backing GPA overflows u64"))?;
+                    let mut tmp = vec![0u8; size_usize];
+                    guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
+                    Some(tmp)
+                } else {
+                    None
+                }
             };
 
             match src_bytes {
@@ -11496,21 +11505,24 @@ impl AerogpuD3d11Executor {
             });
 
             if dst_is_index {
+                let size_usize: usize = size_bytes
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
+                let src_offset_usize: usize = src_offset_bytes
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_BUFFER: src_offset out of range"))?;
+                let dst_offset_usize: usize = dst_offset_bytes
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_BUFFER: dst_offset out of range"))?;
+
                 // Copy the source bytes out of the shadow / guest backing first so we can mutably
                 // borrow the destination entry.
                 let src_bytes: Option<Vec<u8>> = if let Some(src) =
                     self.resources.buffers.get(&src_buffer)
                 {
-                    let size_usize: usize = size_bytes
-                        .try_into()
-                        .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
-                    let src_offset_usize: usize = src_offset_bytes
-                        .try_into()
-                        .map_err(|_| anyhow!("COPY_BUFFER: src_offset out of range"))?;
                     let end = src_offset_usize
                         .checked_add(size_usize)
                         .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows usize"))?;
-
                     if let Some(shadow) = src.host_shadow.as_ref() {
                         let src_size_usize: usize = src
                             .size
@@ -11533,7 +11545,6 @@ impl AerogpuD3d11Executor {
                             .gpa(src_backing.alloc_id)?
                             .checked_add(backing_offset)
                             .ok_or_else(|| anyhow!("COPY_BUFFER: src backing GPA overflows u64"))?;
-
                         let mut tmp = vec![0u8; size_usize];
                         guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
                         Some(tmp)
@@ -11562,13 +11573,6 @@ impl AerogpuD3d11Executor {
                             dst.host_shadow = Some(vec![0u8; dst_size_usize]);
                         }
                         let dst_shadow = dst.host_shadow.as_mut().expect("allocated above");
-
-                        let size_usize: usize = size_bytes
-                            .try_into()
-                            .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
-                        let dst_offset_usize: usize = dst_offset_bytes
-                            .try_into()
-                            .map_err(|_| anyhow!("COPY_BUFFER: dst_offset out of range"))?;
 
                         dst_shadow[dst_offset_usize..dst_offset_usize + size_usize]
                             .copy_from_slice(&src_bytes);
