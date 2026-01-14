@@ -1650,7 +1650,7 @@ ctx.onmessage = (ev) => {
     const nextCdId = typeof (bootDisks.cd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.cd!.id : "";
     const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
 
-    const explicitBootDevice = (bootDisks as Partial<SetBootDisksMessage>).bootDevice;
+    const explicitBootDevice = bootDisks.bootDevice;
     if (explicitBootDevice === "cdrom" && bootDisks.cd) {
       pendingBootDevice = "cdrom";
     } else if (explicitBootDevice === "hdd" && bootDisks.hdd) {
