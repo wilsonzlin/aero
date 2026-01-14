@@ -69,7 +69,11 @@ still-unimplemented firmware stack, treat those as outdated.
 This repo keeps a handful of **tiny, deterministic, in-repo** firmware blobs for tests and CI:
 
 - `assets/bios.bin` (BIOS ROM image; generated from `firmware::bios::build_bios_rom()`)
-- `crates/firmware/acpi/dsdt.aml` (ACPI DSDT AML; generated from `aero-acpi`)
+- `crates/firmware/acpi/dsdt.aml` (ACPI DSDT AML; legacy PCI root bridge; generated from `aero-acpi`)
+- `crates/firmware/acpi/dsdt_pcie.aml` (ACPI DSDT AML; PCIe ECAM/MMCONFIG-enabled variant; generated from `aero-acpi`)
+
+Human-readable references live alongside as `crates/firmware/acpi/dsdt*.asl` and are kept in sync
+with the shipped AML blobs (see `scripts/verify_dsdt.sh`).
 
 Regenerate or verify all in-repo fixtures with:
 
@@ -197,12 +201,14 @@ High-level contract:
 - The BIOS also reports the reclaimable + NVS regions so the E820 map can mark them with the correct
   types (ACPI reclaimable vs ACPI NVS).
 
-### Regenerating the checked-in DSDT fixture
+### Regenerating the checked-in DSDT fixtures
 
-The runtime uses the **Rust generator**; the repo also keeps a checked-in DSDT AML blob for
+The runtime uses the **Rust generator**; the repo also keeps checked-in DSDT AML blobs for
 validation/diffing:
 
-- Fixture: `crates/firmware/acpi/dsdt.aml` (used by tests and `scripts/validate-acpi.sh`)
+- Fixtures (used by tests and `scripts/validate-acpi.sh`):
+  - `crates/firmware/acpi/dsdt.aml` (legacy PCI root bridge; ECAM/MMCONFIG disabled)
+  - `crates/firmware/acpi/dsdt_pcie.aml` (PCIe root bridge + ECAM/MMCONFIG enabled)
 
 Regenerate the repo fixtures (recommended; this also refreshes `assets/bios.bin`):
 
@@ -210,11 +216,13 @@ Regenerate the repo fixtures (recommended; this also refreshes `assets/bios.bin`
 cargo xtask fixtures
 ```
 
-Or regenerate just the DSDT fixture directly:
+Or regenerate just the legacy `dsdt.aml` fixture directly:
 
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked
 ```
+
+Note: `gen_dsdt` only regenerates `dsdt.aml`. To refresh `dsdt_pcie.aml`, use `cargo xtask fixtures`.
 
 ---
 
