@@ -1537,6 +1537,22 @@ impl XhciController {
         cmd_paddr: u64,
         trb: Trb,
     ) {
+        // Slot Context contains several xHC-owned fields that software must not modify:
+        // - DW0 bits 0..=19: Route String (used by the controller to bind slot -> topology)
+        // - DW0 bits 20..=23: Speed
+        // - DW1 bits 16..=23: Root Hub Port Number (used by the controller to bind slot -> topology)
+        // - DW3 bits 0..=7: USB Device Address
+        // - DW3 bits 27..=31: Slot State
+        //
+        // Preserve those fields from controller-local state so Configure Endpoint does not
+        // accidentally clear the slot's topology binding. This is especially important in unit
+        // tests that use the host-side `address_device()` harness (which does not write the output
+        // Slot Context into guest memory).
+        const SLOT_ROUTE_STRING_MASK_DWORD0: u32 = 0x000f_ffff;
+        const SLOT_SPEED_MASK_DWORD0: u32 = 0x00f0_0000;
+        const SLOT_ROOT_HUB_PORT_MASK_DWORD1: u32 = 0x00ff_0000;
+        const SLOT_STATE_ADDR_MASK_DWORD3: u32 = 0xf800_00ff;
+
         let slot_id = trb.slot_id();
         let slot_idx = usize::from(slot_id);
 
@@ -1614,29 +1630,25 @@ impl XhciController {
             }
 
             // Reflect EP0-only configuration in the Slot Context.
+            let preserved = self.slots[slot_idx].slot_context;
             let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr);
             // Some harnesses bind slots via the host-side `address_device()` helper without writing
             // an output Device Context into guest memory. If the Slot Context in guest memory is
             // still zeroed, preserve the controller-local topology binding fields so the slot
             // remains routable after deconfigure.
             if slot_ctx.root_hub_port_number() == 0 {
-                let shadow = self.slots[slot_idx].slot_context;
-                const SLOT_ROUTE_STRING_MASK_DWORD0: u32 = 0x000f_ffff;
-                const SLOT_SPEED_MASK_DWORD0: u32 = 0x00f0_0000;
-                const SLOT_ROOT_HUB_PORT_MASK_DWORD1: u32 = 0x00ff_0000;
-                const SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3: u32 = 0x0000_00ff;
-
                 let merged_dw0 = (slot_ctx.dword(0)
                     & !(SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0))
-                    | (shadow.dword(0) & (SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0));
+                    | (preserved.dword(0)
+                        & (SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0));
                 slot_ctx.set_dword(0, merged_dw0);
 
                 let merged_dw1 = (slot_ctx.dword(1) & !SLOT_ROOT_HUB_PORT_MASK_DWORD1)
-                    | (shadow.dword(1) & SLOT_ROOT_HUB_PORT_MASK_DWORD1);
+                    | (preserved.dword(1) & SLOT_ROOT_HUB_PORT_MASK_DWORD1);
                 slot_ctx.set_dword(1, merged_dw1);
 
-                let merged_dw3 = (slot_ctx.dword(3) & !SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3)
-                    | (shadow.dword(3) & SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3);
+                let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_ADDR_MASK_DWORD3)
+                    | (preserved.dword(3) & SLOT_STATE_ADDR_MASK_DWORD3);
                 slot_ctx.set_dword(3, merged_dw3);
             }
             slot_ctx.set_context_entries(1);
@@ -1686,24 +1698,11 @@ impl XhciController {
 
         // Slot Context (bit0) is optional.
         if icc.add_context(0) {
-            // Slot Context contains several xHC-owned fields that software must not modify:
-            // - DW0 bits 0..=19: Route String (used by the controller to bind slot -> topology)
-            // - DW0 bits 20..=23: Speed
-            // - DW1 bits 16..=23: Root Hub Port Number (used by the controller to bind slot -> topology)
-            // - DW3 bits 0..=7: USB Device Address
-            // - DW3 bits 27..=31: Slot State
-            //
-            // Preserve those fields from the existing output Slot Context so Configure Endpoint
-            // updates cannot accidentally clear the assigned device address or speed.
-            const SLOT_ROUTE_STRING_MASK_DWORD0: u32 = 0x000f_ffff;
-            const SLOT_SPEED_MASK_DWORD0: u32 = 0x00f0_0000;
-            const SLOT_ROOT_HUB_PORT_MASK_DWORD1: u32 = 0x00ff_0000;
-            const SLOT_STATE_ADDR_MASK_DWORD3: u32 = 0xf800_00ff;
-
+            let preserved = self.slots[slot_idx].slot_context;
             let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
             let mut out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
             if out_slot.root_hub_port_number() == 0 {
-                out_slot = self.slots[slot_idx].slot_context;
+                out_slot = preserved;
             }
 
             let merged_dw0 = (slot_ctx.dword(0)
@@ -1795,28 +1794,23 @@ impl XhciController {
         }
 
         // Configure Endpoint transitions the slot to the Configured state (xHCI 1.2 §6.4.3.5).
+        let preserved = self.slots[slot_idx].slot_context;
         let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr);
         // Like the deconfigure path, avoid clobbering controller-local topology state if the guest
         // Slot Context has not been initialised in memory (common in host-side harnesses that call
         // `address_device()` directly).
         if slot_ctx.root_hub_port_number() == 0 {
-            let shadow = self.slots[slot_idx].slot_context;
-            const SLOT_ROUTE_STRING_MASK_DWORD0: u32 = 0x000f_ffff;
-            const SLOT_SPEED_MASK_DWORD0: u32 = 0x00f0_0000;
-            const SLOT_ROOT_HUB_PORT_MASK_DWORD1: u32 = 0x00ff_0000;
-            const SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3: u32 = 0x0000_00ff;
-
             let merged_dw0 = (slot_ctx.dword(0)
                 & !(SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0))
-                | (shadow.dword(0) & (SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0));
+                | (preserved.dword(0) & (SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0));
             slot_ctx.set_dword(0, merged_dw0);
 
             let merged_dw1 = (slot_ctx.dword(1) & !SLOT_ROOT_HUB_PORT_MASK_DWORD1)
-                | (shadow.dword(1) & SLOT_ROOT_HUB_PORT_MASK_DWORD1);
+                | (preserved.dword(1) & SLOT_ROOT_HUB_PORT_MASK_DWORD1);
             slot_ctx.set_dword(1, merged_dw1);
 
-            let merged_dw3 = (slot_ctx.dword(3) & !SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3)
-                | (shadow.dword(3) & SLOT_USB_DEVICE_ADDRESS_MASK_DWORD3);
+            let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_ADDR_MASK_DWORD3)
+                | (preserved.dword(3) & SLOT_STATE_ADDR_MASK_DWORD3);
             slot_ctx.set_dword(3, merged_dw3);
         }
         slot_ctx.set_slot_state(SLOT_STATE_CONFIGURED);
