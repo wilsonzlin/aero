@@ -119,6 +119,7 @@ Test pointers:
 - [`crates/aero-machine/tests/boot_int10_aerogpu_vbe_115_sets_mode.rs`](../../crates/aero-machine/tests/boot_int10_aerogpu_vbe_115_sets_mode.rs)
 - [`crates/aero-machine/tests/aerogpu_text_mode_scanout.rs`](../../crates/aero-machine/tests/aerogpu_text_mode_scanout.rs)
 - [`crates/aero-machine/tests/aerogpu_vbe_lfb_base_bar1.rs`](../../crates/aero-machine/tests/aerogpu_vbe_lfb_base_bar1.rs)
+- [`crates/aero-machine/tests/aerogpu_vbe_clear_fastpath.rs`](../../crates/aero-machine/tests/aerogpu_vbe_clear_fastpath.rs) (VBE clear/no-clear semantics + preserve pre-LFB VRAM)
 
 ### Missing / still required (boot → WDDM)
 
