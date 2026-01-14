@@ -229,10 +229,28 @@ static BOOLEAN AeroGpuModeListContains(_In_reads_(Count) const AEROGPU_DISPLAY_M
     return FALSE;
 }
 
+static BOOLEAN AeroGpuModeListContainsApprox(_In_reads_(Count) const AEROGPU_DISPLAY_MODE* Modes,
+                                            _In_ UINT Count,
+                                            _In_ ULONG Width,
+                                            _In_ ULONG Height,
+                                            _In_ ULONG TolerancePixels)
+{
+    for (UINT i = 0; i < Count; ++i) {
+        const ULONG mw = Modes[i].Width;
+        const ULONG mh = Modes[i].Height;
+        const ULONG diffW = (mw > Width) ? (mw - Width) : (Width - mw);
+        const ULONG diffH = (mh > Height) ? (mh - Height) : (Height - mh);
+        if (diffW <= TolerancePixels && diffH <= TolerancePixels) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static VOID AeroGpuModeListAddUnique(_Inout_updates_(Capacity) AEROGPU_DISPLAY_MODE* Modes,
-                                    _Inout_ UINT* Count,
-                                    _In_ UINT Capacity,
-                                    _In_ ULONG Width,
+                                     _Inout_ UINT* Count,
+                                     _In_ UINT Capacity,
+                                     _In_ ULONG Width,
                                     _In_ ULONG Height)
 {
     if (!Modes || !Count) {
@@ -4956,7 +4974,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     if (!AeroGpuIsSupportedVidPnPixelFormat(fmt)) {
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_SUCCESS;
+        return STATUS_NOT_SUPPORTED;
     }
 
     if (width == 0 || height == 0 || width > 16384u || height > 16384u || width > (0xFFFFFFFFu / 4u)) {
@@ -4965,11 +4983,15 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
         return STATUS_SUCCESS;
     }
 
-    if (!AeroGpuModeWithinMax(width, height)) {
-        /* Respect max-resolution caps for bring-up safety. */
+    if (!AeroGpuIsSupportedVidPnModeDimensions(width, height)) {
+        /*
+         * Enforce the same supported-mode predicate used by our VidPN mode-set
+         * enumeration. This prevents Win7 from committing an arbitrary
+         * resolution even if it falls within the max caps.
+         */
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_SUCCESS;
+        return STATUS_NOT_SUPPORTED;
     }
 
     adapter->CurrentWidth = width;
@@ -5266,8 +5288,17 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
 
     AEROGPU_DISPLAY_MODE modes[16];
     UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
-    const ULONG pinW = (modeCount > 0) ? modes[0].Width : 0;
-    const ULONG pinH = (modeCount > 0) ? modes[0].Height : 0;
+    ULONG pinW = 0;
+    ULONG pinH = 0;
+    for (UINT i = 0; i < modeCount; ++i) {
+        const ULONG w = modes[i].Width;
+        const ULONG h = modes[i].Height;
+        if (AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
+            pinW = w;
+            pinH = h;
+            break;
+        }
+    }
     BOOLEAN pinned = FALSE;
 
     /* Avoid failing on duplicates if dxgkrnl already populated the set from EDID. */
@@ -5279,6 +5310,18 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
         const D3DKMDT_MONITOR_SOURCE_MODE* cur = NULL;
         NTSTATUS st = msi->pfnAcquireFirstModeInfo(pRecommend->hMonitorSourceModeSet, &cur);
         while (NT_SUCCESS(st) && cur) {
+            if (!pinned && msi->pfnPinMode && pinW != 0 && pinH != 0) {
+                const ULONG cw = cur->VideoSignalInfo.ActiveSize.cx;
+                const ULONG ch = cur->VideoSignalInfo.ActiveSize.cy;
+                const ULONG diffW = (cw > pinW) ? (cw - pinW) : (pinW - cw);
+                const ULONG diffH = (ch > pinH) ? (ch - pinH) : (pinH - ch);
+                if (diffW <= 2u && diffH <= 2u) {
+                    /* Pin the preferred mode if it already exists in the mode set (common when dxgkrnl parsed EDID). */
+                    (void)msi->pfnPinMode(pRecommend->hMonitorSourceModeSet, (D3DKMDT_MONITOR_SOURCE_MODE*)cur);
+                    pinned = TRUE;
+                }
+            }
+
             AeroGpuModeListAddUnique(existing,
                                      &existingCount,
                                      (UINT)(sizeof(existing) / sizeof(existing[0])),
@@ -5295,11 +5338,11 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
     for (UINT i = 0; i < modeCount; ++i) {
         const ULONG w = modes[i].Width;
         const ULONG h = modes[i].Height;
-        if (w == 0 || h == 0) {
+        if (!AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
             continue;
         }
 
-        if (AeroGpuModeListContains(existing, existingCount, w, h)) {
+        if (AeroGpuModeListContainsApprox(existing, existingCount, w, h, 2u)) {
             continue;
         }
 
