@@ -9063,14 +9063,13 @@ impl Machine {
             };
 
             if let Some(update) = dev.take_scanout0_state_update() {
-                // Once WDDM scanout has been claimed, `AeroGpuMmioDevice` publishes a WDDM "disabled"
-                // descriptor (all zeros) when `SCANOUT0_ENABLE=0`.
-                //
-                // Preserve that disabled WDDM state rather than falling back to a legacy scanout.
+                // Publish WDDM scanout updates derived from BAR0 scanout registers once the guest
+                // has claimed WDDM ownership.
                 scanout_state.publish(update);
             } else {
                 // If the shared scanout descriptor currently indicates WDDM scanout but the device
-                // itself has not claimed WDDM ownership (e.g. after a reset/restore mismatch),
+                // itself has not claimed WDDM ownership (e.g. after `SCANOUT0_ENABLE=0` or a
+                // reset/restore mismatch),
                 // revert the shared scanout descriptor back to the legacy BIOS source.
                 //
                 // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
