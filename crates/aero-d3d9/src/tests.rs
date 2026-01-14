@@ -138,26 +138,18 @@ fn assemble_vs3_generic_output_texcoord3_constant_sm3_decoder() -> Vec<u32> {
     let mut out = vec![0xFFFE0300];
 
     // dcl_position v0
-    out.extend(enc_inst_with_extra_sm3(
-        0x001F,
-        (0u32 << 16) | (0u32 << 20),
-        &[enc_dst(1, 0, 0xF)],
-    ));
+    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
     // dcl_position oPos
-    out.extend(enc_inst_with_extra_sm3(
-        0x001F,
-        (0u32 << 16) | (0u32 << 20),
-        &[enc_dst(4, 0, 0xF)],
-    ));
+    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(4, 0, 0xF)]));
     // dcl_texcoord3 o0
-    out.extend(enc_inst_with_extra_sm3(
+    out.extend(enc_inst_with_extra(
         0x001F,
         (5u32 << 16) | (3u32 << 20),
         &[enc_dst(6, 0, 0xF)],
     ));
 
     // def c0, 0.25, 0.5, 0.0, 1.0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -169,12 +161,12 @@ fn assemble_vs3_generic_output_texcoord3_constant_sm3_decoder() -> Vec<u32> {
     ));
 
     // mov oPos, v0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
     ));
     // mov o0, c0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(6, 0, 0xF), enc_src(2, 0, 0xE4)],
     ));
@@ -188,13 +180,13 @@ fn assemble_ps3_input_texcoord3_passthrough_sm3_decoder() -> Vec<u32> {
     let mut out = vec![0xFFFF0300];
 
     // dcl_texcoord3 v0
-    out.extend(enc_inst_with_extra_sm3(
+    out.extend(enc_inst_with_extra(
         0x001F,
         (5u32 << 16) | (3u32 << 20),
         &[enc_dst(1, 0, 0xF)],
     ));
     // mov oC0, v0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)],
     ));
@@ -993,7 +985,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, -2.0, -2.0, -2.0, -2.0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -1004,7 +996,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c1, 2.0, 2.0, 2.0, 2.0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -1015,7 +1007,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c2, 0.25, 0.25, 0.25, 0.25
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -1026,7 +1018,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c3, 2.0, 2.0, 2.0, 2.0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 3, 0xF),
@@ -1038,44 +1030,44 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     ));
 
     // exp r0, c0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x000E,
         &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
     ));
     // log r1, c1
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x000F,
         &[enc_dst(0, 1, 0xF), enc_src(2, 1, 0xE4)],
     ));
     // pow r2, c2, c3
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0020,
         &[enc_dst(0, 2, 0xF), enc_src(2, 2, 0xE4), enc_src(2, 3, 0xE4)],
     ));
 
     // mov r3, r0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
     ));
     // mov r3.y, r1.x
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
     ));
     // mov r3.z, r2.x
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
     ));
     // mov r3.w, r1.x
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(0, 3, 0x8), enc_src(0, 1, 0x00)],
     ));
 
     // mov oC0, r3
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)],
     ));
@@ -2035,7 +2027,7 @@ fn sm3_predicated_mov_pixel_compare() {
 
 #[test]
 fn sm3_exp_log_pow_pixel_compare() {
-    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3_decoder());
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3());
     let ps = build_sm3_ir(&assemble_ps3_exp_log_pow());
 
     let decl = build_vertex_decl_pos_tex_color();
