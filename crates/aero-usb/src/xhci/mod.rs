@@ -1378,9 +1378,15 @@ impl XhciController {
         cmd_paddr: u64,
         trb: Trb,
     ) {
-        // Slot Context dword3 bits 31:27 contain xHC-owned Slot State fields. Preserve them when the
-        // guest requests a Slot Context update.
-        const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_0000;
+        // Slot Context contains several xHC-owned fields that software must not modify:
+        // - DW0 bits 20..=23: Speed
+        // - DW3 bits 0..=7: USB Device Address
+        // - DW3 bits 27..=31: Slot State
+        //
+        // Preserve those fields from the existing output Slot Context so Evaluate Context cannot
+        // accidentally clear the assigned device address or speed.
+        const SLOT_SPEED_MASK_DWORD0: u32 = 0x00f0_0000;
+        const SLOT_STATE_ADDR_MASK_DWORD3: u32 = 0xf800_00ff;
 
         let slot_id = trb.slot_id();
         let slot_idx = usize::from(slot_id);
@@ -1443,8 +1449,13 @@ impl XhciController {
         if icc.add_context(0) {
             let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
             let out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
-            let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_MASK_DWORD3)
-                | (out_slot.dword(3) & SLOT_STATE_MASK_DWORD3);
+
+            let merged_dw0 = (slot_ctx.dword(0) & !SLOT_SPEED_MASK_DWORD0)
+                | (out_slot.dword(0) & SLOT_SPEED_MASK_DWORD0);
+            slot_ctx.set_dword(0, merged_dw0);
+
+            let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_ADDR_MASK_DWORD3)
+                | (out_slot.dword(3) & SLOT_STATE_ADDR_MASK_DWORD3);
             slot_ctx.set_dword(3, merged_dw3);
             slot_ctx.write_to(mem, dev_ctx_ptr);
             let slot_state = &mut self.slots[slot_idx];
