@@ -260,6 +260,11 @@ hidtest.exe --keyboard --interrupt-info
 hidtest.exe --keyboard --interrupt-info-json
 ```
 
+`--state` prints basic driver/PnP state plus the keyboard LED/statusq fields:
+
+- `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
+- `StatusQActive` — whether the driver is currently sending LED events on statusq
+
 ### Counters interpretation
 
 The virtio-input Win7 minidriver maintains a set of best-effort counters that track:
