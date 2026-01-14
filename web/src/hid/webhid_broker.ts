@@ -119,6 +119,7 @@ export type WebHidOutputSendStats = Readonly<{
 }>;
 
 type HidDeviceSendTask = () => Promise<void>;
+type HidDeviceSendTaskFactory = () => HidDeviceSendTask;
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
   const stack = [...collections];
@@ -547,7 +548,7 @@ export class WebHidBroker {
     this.#warnOutputSendDrop(deviceId);
   }
 
-  #enqueueDeviceSend(deviceId: number, task: HidDeviceSendTask): boolean {
+  #enqueueDeviceSend(deviceId: number, createTask: HidDeviceSendTaskFactory): boolean {
     const queueLen = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
     // Drop policy: drop newest when at/over the cap. This preserves FIFO ordering for already-queued
     // reports and keeps memory bounded when the guest spams reports or `sendReport()` hangs.
@@ -561,7 +562,9 @@ export class WebHidBroker {
       queue = [];
       this.#pendingDeviceSends.set(deviceId, queue);
     }
-    queue.push(task);
+    // Create the task only after we know it will be queued so we don't eagerly copy payload
+    // buffers (e.g. SharedArrayBuffer-backed ring payloads) just to immediately drop them.
+    queue.push(createTask());
     this.#pendingDeviceSendTotal += 1;
     if (this.#deviceSendTokenById.has(deviceId)) return true;
     const token = this.#nextDeviceSendToken++;
@@ -655,29 +658,34 @@ export class WebHidBroker {
         // `hid.attachResult`. This avoids dropping output reports produced during the attach
         // handshake while still ensuring we don't send reports for failed attaches.
         const attachPromise = pendingAttach?.promise;
-        const data = ensureArrayBufferBacked(rec.payload);
+        const payload = rec.payload;
         const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
         const reportId = rec.reportId >>> 0;
-        this.#enqueueDeviceSend(deviceId, async () => {
-          if (attachPromise) {
+        this.#enqueueDeviceSend(deviceId, () => {
+          // Copy the report payload out of the ring immediately so it can't be overwritten by
+          // subsequent producer writes while we are awaiting an in-flight WebHID send.
+          const data = ensureArrayBufferBacked(payload);
+          return async () => {
+            if (attachPromise) {
+              try {
+                await attachPromise;
+              } catch {
+                return;
+              }
+            }
+            const device = this.#deviceById.get(deviceId);
+            if (!device) return;
             try {
-              await attachPromise;
-            } catch {
-              return;
+              if (reportType === "output") {
+                await device.sendReport(reportId, data);
+              } else {
+                await device.sendFeatureReport(reportId, data);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
             }
-          }
-          const device = this.#deviceById.get(deviceId);
-          if (!device) return;
-          try {
-            if (reportType === "output") {
-              await device.sendReport(reportId, data);
-            } else {
-              await device.sendFeatureReport(reportId, data);
-            }
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
-          }
+          };
         });
       }
     } catch (err) {
@@ -1058,27 +1066,30 @@ export class WebHidBroker {
     const attachPromise = pendingAttach?.promise;
     const reportType = msg.reportType;
     const reportId = msg.reportId >>> 0;
-    const data = ensureArrayBufferBacked(msg.data);
-    this.#enqueueDeviceSend(deviceId, async () => {
-      if (attachPromise) {
+    const payload = msg.data;
+    this.#enqueueDeviceSend(deviceId, () => {
+      const data = ensureArrayBufferBacked(payload);
+      return async () => {
+        if (attachPromise) {
+          try {
+            await attachPromise;
+          } catch {
+            return;
+          }
+        }
+        const device = this.#deviceById.get(deviceId);
+        if (!device) return;
         try {
-          await attachPromise;
-        } catch {
-          return;
+          if (reportType === "output") {
+            await device.sendReport(reportId, data);
+          } else {
+            await device.sendFeatureReport(reportId, data);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
         }
-      }
-      const device = this.#deviceById.get(deviceId);
-      if (!device) return;
-      try {
-        if (reportType === "output") {
-          await device.sendReport(reportId, data);
-        } else {
-          await device.sendFeatureReport(reportId, data);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
-      }
+      };
     });
   }
 
@@ -1102,7 +1113,7 @@ export class WebHidBroker {
     };
     // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
     // requests are serialized relative to any queued report I/O for that device.
-    const ok = this.#enqueueDeviceSend(deviceId, async () => {
+    const ok = this.#enqueueDeviceSend(deviceId, () => async () => {
       if (attachPromise) {
         try {
           await attachPromise;
