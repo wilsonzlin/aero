@@ -13,7 +13,9 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::{anyhow, bail, Result};
 
-use crate::binding_model::{BINDING_BASE_INTERNAL, BIND_GROUP_INTERNAL_EMULATION};
+use crate::binding_model::{
+    BINDING_BASE_INTERNAL, BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
+};
 
 use super::layout_pass;
 use super::tessellator;
@@ -51,18 +53,21 @@ struct VsAsComputePipelineKey {
 
 #[derive(Debug)]
 pub(crate) struct HsPassthroughPipeline {
+    empty_bg: wgpu::BindGroup,
     bgl_group3: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
 #[derive(Debug)]
 pub(crate) struct LayoutPassPipeline {
+    empty_bg: wgpu::BindGroup,
     bgl_group3: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
 #[derive(Debug)]
 pub(crate) struct DsPassthroughPipeline {
+    empty_bg: wgpu::BindGroup,
     bgl_group3: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
@@ -150,13 +155,13 @@ fn create_empty_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 
 fn create_pipeline_layout_group3_only(
     device: &wgpu::Device,
+    empty_bgl: &wgpu::BindGroupLayout,
     bgl_group3: &wgpu::BindGroupLayout,
     label: &'static str,
 ) -> wgpu::PipelineLayout {
     // Group indices 0..2 are reserved for VS/PS/CS resources. Tessellation emulation uses only the
     // internal/emulation group (3) for now, so insert empty layouts for 0..2.
-    let empty = create_empty_bgl(device);
-    let layouts: [&wgpu::BindGroupLayout; 4] = [&empty, &empty, &empty, bgl_group3];
+    let layouts: [&wgpu::BindGroupLayout; 4] = [empty_bgl, empty_bgl, empty_bgl, bgl_group3];
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: &layouts,
@@ -185,7 +190,10 @@ var<uniform> params: HsParams;
 
 // VS outputs, packed as `[patch][control_point][reg]`.
 @group({group}) @binding({vs_out_binding})
-var<storage, read> vs_out_regs: array<vec4<u32>>;
+// NOTE: This is bound as `read_write` even though we only read it. wgpu tracks buffer usage at the
+// whole-buffer granularity (not per binding range), so mixing `read` and `read_write` storage views
+// of the same scratch buffer within a single dispatch triggers validation errors on some backends.
+var<storage, read_write> vs_out_regs: array<vec4<u32>>;
 
 // HS outputs, packed as `[patch][control_point][reg]`.
 @group({group}) @binding({hs_out_binding})
@@ -251,7 +259,7 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                     binding: HS_VS_OUT_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(16),
                     },
@@ -280,8 +288,18 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             ],
         });
 
+        // WebGPU requires bind groups to be set for all indices below the maximum used group. The
+        // HS pass uses only `@group(3)`, so prepare a shared empty bind group for groups 0..2.
+        let empty_bgl = create_empty_bgl(device);
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 tessellation HS passthrough empty bind group"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
+
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
+            &empty_bgl,
             &bgl_group3,
             "aero-d3d11 tessellation HS passthrough pipeline layout",
         );
@@ -294,6 +312,7 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         });
 
         Ok(Self {
+            empty_bg,
             bgl_group3,
             pipeline,
         })
@@ -301,6 +320,10 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     pub fn pipeline(&self) -> &wgpu::ComputePipeline {
         &self.pipeline
+    }
+
+    pub fn empty_bind_group(&self) -> &wgpu::BindGroup {
+        &self.empty_bg
     }
 
     pub fn create_bind_group_group3(
@@ -397,7 +420,7 @@ impl LayoutPassPipeline {
                     binding: LAYOUT_HS_TESS_FACTORS_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(16),
                     },
@@ -436,8 +459,18 @@ impl LayoutPassPipeline {
             ],
         });
 
+        // WebGPU requires bind groups to be set for all indices below the maximum used group. The
+        // layout pass uses only `@group(3)`, so prepare a shared empty bind group for groups 0..2.
+        let empty_bgl = create_empty_bgl(device);
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 tessellation layout pass empty bind group"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
+
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
+            &empty_bgl,
             &bgl_group3,
             "aero-d3d11 tessellation layout pass pipeline layout",
         );
@@ -450,6 +483,7 @@ impl LayoutPassPipeline {
         });
 
         Ok(Self {
+            empty_bg,
             bgl_group3,
             pipeline,
         })
@@ -457,6 +491,10 @@ impl LayoutPassPipeline {
 
     pub fn pipeline(&self) -> &wgpu::ComputePipeline {
         &self.pipeline
+    }
+
+    pub fn empty_bind_group(&self) -> &wgpu::BindGroup {
+        &self.empty_bg
     }
 
     pub fn create_bind_group_group3(
@@ -542,15 +580,22 @@ impl DsPassthroughPipeline {
 
         // For P0, restrict to the common "triangle patch" case:
         // - 3 control points
-        // - 2 output registers (pos + o1), matching `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL`.
+        // - expanded vertex record matching `runtime::wgsl_link::generate_passthrough_vs_wgsl`
+        //   (pos + `EXPANDED_VERTEX_MAX_VARYINGS` varyings).
         //
         // Future work can extend this to higher-order patches by teaching the placeholder DS how
         // to evaluate additional control points (or by linking the translated DS WGSL).
+        let out_reg_count: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
         let wgsl = format!(
             r#"
 {tess_lib}
 
 // ---- Aero tessellation DS expansion (placeholder) ----
+struct ExpandedVertex {{
+    pos: vec4<f32>,
+    varyings: array<vec4<f32>, {max_varyings}>,
+}};
+
 struct PatchMeta {{
     tess_level: u32,
     vertex_base: u32,
@@ -560,30 +605,38 @@ struct PatchMeta {{
 }};
 
 @group({group}) @binding({hs_out_binding})
-var<storage, read> hs_out_regs: array<vec4<u32>>;
+var<storage, read_write> hs_out_regs: array<vec4<u32>>;
 
 @group({group}) @binding({patch_meta_binding})
-var<storage, read> patch_meta: array<PatchMeta>;
+var<storage, read_write> patch_meta: array<PatchMeta>;
 
 @group({group}) @binding({out_vertices_binding})
-var<storage, read_write> out_vertices: array<vec4<u32>>;
+var<storage, read_write> out_vertices: array<ExpandedVertex>;
 
 @group({group}) @binding({out_indices_binding})
 var<storage, read_write> out_indices: array<u32>;
 
 const CONTROL_POINT_COUNT: u32 = 3u;
-const OUT_REG_COUNT: u32 = 2u;
+const OUT_REG_COUNT: u32 = {out_reg_count}u;
 
 fn load_cp_reg(patch_id: u32, cp_id: u32, reg: u32) -> vec4<f32> {{
     let idx = (patch_id * CONTROL_POINT_COUNT + cp_id) * OUT_REG_COUNT + reg;
     return bitcast<vec4<f32>>(hs_out_regs[idx]);
 }}
 
+fn write_varyings(vid: u32, v: vec4<f32>) {{
+    // Keep placeholder DS output location-agnostic by filling every varying slot. The expanded-draw
+    // passthrough VS will only read the subset of locations actually used by the current PS.
+    for (var i: u32 = 0u; i < {max_varyings}u; i = i + 1u) {{
+        out_vertices[vid].varyings[i] = v;
+    }}
+}}
+
 @compute @workgroup_size(1)
 fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     let patch_id = gid.x;
-    let meta = patch_meta[patch_id];
-    if (meta.tess_level == 0u) {{
+    let pmeta = patch_meta[patch_id];
+    if (pmeta.tess_level == 0u) {{
         return;
     }}
 
@@ -598,42 +651,44 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     // Emit vertices.
     var local_v: u32 = 0u;
     loop {{
-        if (local_v >= meta.vertex_count) {{
+        if (local_v >= pmeta.vertex_count) {{
             break;
         }}
-        let bary = tri_vertex_domain_location(meta.tess_level, local_v);
+        let bary = tri_vertex_domain_location(pmeta.tess_level, local_v);
         let pos = p0 * bary.x + p1 * bary.y + p2 * bary.z;
         let col = c0 * bary.x + c1 * bary.y + c2 * bary.z;
 
-        let out_base = (meta.vertex_base + local_v) * OUT_REG_COUNT;
-        out_vertices[out_base + 0u] = bitcast<vec4<u32>>(pos);
-        out_vertices[out_base + 1u] = bitcast<vec4<u32>>(col);
+        let out_vid = pmeta.vertex_base + local_v;
+        out_vertices[out_vid].pos = pos;
+        write_varyings(out_vid, col);
 
         local_v = local_v + 1u;
     }}
 
     // Emit indices (triangle list).
-    let tri_count: u32 = meta.index_count / 3u;
+    let tri_count: u32 = pmeta.index_count / 3u;
     var t: u32 = 0u;
     loop {{
         if (t >= tri_count) {{
             break;
         }}
-        let tri = tri_index_to_vertex_indices(meta.tess_level, t);
-        let base_i = meta.index_base + t * 3u;
-        out_indices[base_i + 0u] = meta.vertex_base + tri.x;
-        out_indices[base_i + 1u] = meta.vertex_base + tri.y;
-        out_indices[base_i + 2u] = meta.vertex_base + tri.z;
+        let tri = tri_index_to_vertex_indices(pmeta.tess_level, t);
+        let base_i = pmeta.index_base + t * 3u;
+        out_indices[base_i + 0u] = pmeta.vertex_base + tri.x;
+        out_indices[base_i + 1u] = pmeta.vertex_base + tri.y;
+        out_indices[base_i + 2u] = pmeta.vertex_base + tri.z;
         t = t + 1u;
     }}
 }}
 "#,
             tess_lib = tess_lib,
             group = GROUP_INTERNAL,
+            max_varyings = EXPANDED_VERTEX_MAX_VARYINGS,
             hs_out_binding = DS_HS_OUT_BINDING,
             patch_meta_binding = DS_PATCH_META_BINDING,
             out_vertices_binding = DS_OUT_VERTICES_BINDING,
             out_indices_binding = DS_OUT_INDICES_BINDING,
+            out_reg_count = out_reg_count,
         );
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -648,7 +703,7 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                     binding: DS_HS_OUT_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(16),
                     },
@@ -658,7 +713,7 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                     binding: DS_PATCH_META_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(20),
                     },
@@ -670,7 +725,11 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(16),
+                        // One `ExpandedVertex` record:
+                        // `pos: vec4<f32>` + `varyings: array<vec4<f32>, EXPANDED_VERTEX_MAX_VARYINGS>`.
+                        min_binding_size: wgpu::BufferSize::new(
+                            u64::from(1 + EXPANDED_VERTEX_MAX_VARYINGS) * 16,
+                        ),
                     },
                     count: None,
                 },
@@ -687,8 +746,18 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             ],
         });
 
+        // WebGPU requires bind groups to be set for all indices below the maximum used group. The
+        // DS pass uses only `@group(3)`, so prepare a shared empty bind group for groups 0..2.
+        let empty_bgl = create_empty_bgl(device);
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 tessellation DS passthrough empty bind group"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
+
         let pipeline_layout = create_pipeline_layout_group3_only(
             device,
+            &empty_bgl,
             &bgl_group3,
             "aero-d3d11 tessellation DS passthrough pipeline layout",
         );
@@ -701,6 +770,7 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         });
 
         Ok(Self {
+            empty_bg,
             bgl_group3,
             pipeline,
         })
@@ -708,6 +778,10 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     pub fn pipeline(&self) -> &wgpu::ComputePipeline {
         &self.pipeline
+    }
+
+    pub fn empty_bind_group(&self) -> &wgpu::BindGroup {
+        &self.empty_bg
     }
 
     pub fn create_bind_group_group3(

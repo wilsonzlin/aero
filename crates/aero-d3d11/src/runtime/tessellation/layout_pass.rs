@@ -102,7 +102,11 @@ var<uniform> params: LayoutParams;
 // Output of HS patch-constant phase:
 // per patch: (edge0, edge1, edge2, inside).
 @group({group}) @binding({hs_tess_factors_binding})
-var<storage, read> hs_tess_factors: array<vec4<f32>>;
+// NOTE: Bound as `read_write` even though the layout pass only reads it. wgpu tracks usage at the
+// whole-buffer granularity, and the tessellation prepass allocates all scratch buffers from a
+// single backing buffer. Treating scratch inputs as `read_write` avoids mixing read-only and
+// read-write storage views of the same buffer in one dispatch.
+var<storage, read_write> hs_tess_factors: array<vec4<f32>>;
 
 @group({group}) @binding({out_patch_meta_binding})
 var<storage, read_write> out_patch_meta: array<PatchMeta>;
