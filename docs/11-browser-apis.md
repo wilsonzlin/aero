@@ -133,6 +133,9 @@ WebHID (`navigator.hid`) enables direct access to HID-class devices from the bro
 - **Secure context:** requires `https://` (or `http://localhost`).
 - **User activation:** requesting a device requires a user gesture on the main thread (similar to WebUSB).
 - **Report descriptor access:** WebHID does **not** expose the raw HID report descriptor bytes. It only provides a structured view (collections/reports/items), so Aero must synthesize a report descriptor when it needs byte-accurate HID descriptors for a Windows 7 guest.
+- **Main↔worker proxying (Aero runtime):** WebHID handles are main-thread-only, so the production runtime forwards report traffic to the I/O worker:
+  - Default path: typed `postMessage` (`hid.inputReport`, `hid.sendReport`, `hid.getFeatureReport`, `hid.featureReportResult`).
+  - Fast path (when `crossOriginIsolated` and SAB/Atomics are available): SharedArrayBuffer rings (`hid.ring.init` for input reports, `hid.ringAttach` for output/feature reports). On detected ring corruption either side can send `hid.ringDetach` to disable the SAB fast paths and fall back to `postMessage`.
 
 See: [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
 See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
