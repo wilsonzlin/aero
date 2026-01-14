@@ -185,6 +185,11 @@ let machine: InstanceType<WasmApi["Machine"]> | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 250;
 const RUN_SLICE_MAX_INSTS = 50_000;
+// `Machine::run_slice` advances guest time by 1ms when the CPU is halted (`HLT`) so timer
+// interrupts can make progress. If we immediately re-enter `run_slice` in a tight loop, we'd
+// effectively advance guest time far faster than real time while idle. Throttle halted loops to
+// ~1kHz to keep guest wallclock/timeout behavior sane.
+const HALTED_RUN_SLICE_DELAY_MS = 1;
 
 const BIOS_DRIVE_HDD0 = 0x80;
 const BIOS_DRIVE_CD0 = 0xe0;
@@ -1162,6 +1167,8 @@ async function runLoop(): Promise<void> {
       }
 
       const exit = machine.run_slice(RUN_SLICE_MAX_INSTS);
+      const exitKind = (exit as unknown as { kind?: unknown }).kind;
+      const exitKindNum = typeof exitKind === "number" ? (exitKind | 0) : -1;
       handleRunExit(exit);
       drainSerialOutput();
       try {
@@ -1170,10 +1177,14 @@ async function runLoop(): Promise<void> {
         // ignore
       }
 
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 0);
-        (timer as unknown as { unref?: () => void }).unref?.();
-      });
+      if (exitKindNum === 1) {
+        await Promise.race([ring.waitForDataAsync(HALTED_RUN_SLICE_DELAY_MS), runLoopWakePromise]);
+      } else {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 0);
+          (timer as unknown as { unref?: () => void }).unref?.();
+        });
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
