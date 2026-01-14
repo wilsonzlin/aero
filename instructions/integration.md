@@ -58,11 +58,13 @@ This is the **coordination hub**. You wire together the work from all other work
   SMBIOS** for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology
   validation even before AP bring-up (INIT/SIPI/IPIs) + multi-vCPU execution land.
 - **Virtio MSI-X is implemented but not wired in the canonical machine/platform**:
-  `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`), but
-  the canonical integration layers currently use a `NoopVirtioInterruptSink` and only support
-  **legacy INTx** (`crates/aero-machine/src/lib.rs`, `crates/aero-pc-platform/src/lib.rs`).
-- **NVMe MSI/MSI-X is intentionally omitted**:
-  `aero-devices-nvme` models **legacy INTx only** (see `crates/aero-devices-nvme/README.md`).
+  `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`) and
+  the canonical integration layers (`crates/aero-machine`, `crates/aero-pc-platform`) provide an
+  MSI sink so virtio devices can deliver MSI-X messages into `aero_platform::interrupts`.
+  Virtio devices still preserve legacy INTx semantics as a fallback when MSI-X is disabled.
+- **NVMe MSI/MSI-X is implemented**:
+  `aero-devices-nvme` exposes MSI + MSI-X capabilities and delivers message-signaled interrupts when
+  enabled (see `crates/aero-devices-nvme/README.md`, plus `pc_platform_nvme` tests).
 
 ---
 
@@ -171,18 +173,17 @@ relevant crates/tests.
 | VTP-003 | Virtio PCI legacy transport | Implemented | P0 | VTP-001, DM-007 | High | `crates/aero-virtio/src/pci.rs` |
 | VTP-004 | Virtio PCI transitional device | Implemented | P0 | VTP-002, VTP-003 | Medium | `VirtioPciDevice::new_transitional` |
 | VTP-005 | Legacy INTx wiring | Implemented | P0 | VTP-003 | Medium | `VirtioPciDevice::irq_level()` + platform INTx routers |
-| VTP-006 | MSI-X support | Transport implemented; **platform wiring missing** | P1 | VTP-002, DM-007 | High | MSI-X logic in `crates/aero-virtio/src/pci.rs`, but canonical machine uses `NoopVirtioInterruptSink` |
+| VTP-006 | MSI-X support | Implemented (transport + platform wiring) | P1 | VTP-002, DM-007 | High | MSI-X logic in `crates/aero-virtio/src/pci.rs`; canonical sinks: `VirtioMsixInterruptSink` (`aero-machine`) / `VirtioPlatformInterruptSink` (`aero-pc-platform`) |
 | VTP-007 | Unit tests | Implemented | P0 | VTP-003 | Medium | `cargo test -p aero-virtio` (see `crates/aero-virtio/tests/*`) |
 | VTP-008 | Config option: disable modern | Implemented | P1 | VTP-004 | Low | `VirtioPciOptions::{modern_only,legacy_only,transitional}` |
-| VTP-009 | **Wire virtio MSI/MSI-X into canonical machine/platform** | Open | P1 | VTP-006 | High | Start at `NoopVirtioInterruptSink` in `crates/aero-machine/src/lib.rs` / `crates/aero-pc-platform/src/lib.rs`; deliver `MsiMessage` into `aero_platform::interrupts` |
+| VTP-009 | **Wire virtio MSI/MSI-X into canonical machine/platform** | Implemented | P1 | VTP-006 | High | See `VirtioMsixInterruptSink` (`crates/aero-machine/src/lib.rs`) and `VirtioPlatformInterruptSink` (`crates/aero-pc-platform/src/lib.rs`) |
 
 ### Canonical machine/platform gaps (actionable)
 
 | ID | Task | Priority | Complexity | Notes / entry points |
 |----|------|----------|------------|----------------------|
 | MP-001 | SMP: run multiple vCPUs (scheduler + AP bring-up) | P0 | Very High | `cpu_count > 1` is already accepted and published for guest enumeration via **ACPI MADT + SMBIOS**, but the canonical machine loops still execute only the BSP. Remaining work is AP startup (INIT/SIPI), multi-vCPU scheduling/execution, per-vCPU interrupt delivery/IPI plumbing, and snapshot/time integration. |
-| MP-002 | MSI/MSI-X plumbing in canonical PCI integration | P1 | High | `aero_platform::interrupts::msi::MsiMessage` exists; the missing piece is routing PCI MSI/MSI-X config + message delivery through the canonical `PlatformInterrupts` used by `Machine`/`PcPlatform`. |
-| MP-003 | NVMe MSI/MSI-X (if/when desired) | P2 | High | Intentionally omitted today (see `crates/aero-devices-nvme/README.md`). Do not start without agreement on scope. |
+| MP-002 | MSI/MSI-X plumbing in canonical PCI integration | P1 | High | Message interrupts are now wired for key PCI devices (NVMe MSI/MSI-X, virtio MSI-X). Remaining work is to generalize MSI/MSI-X routing patterns and extend coverage to other PCI devices as needed. |
 
 If you are looking for impactful integration/boot work today, focus on:
 
