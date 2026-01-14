@@ -567,3 +567,23 @@ fn virtio_snd_pci_bridge_deferred_worklet_ring_restore_is_applied_on_attach_and_
     assert_eq!(got.write_pos, 20);
     assert_eq!(bridge3.buffer_level_frames(), 20);
 }
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_clamps_host_sample_rates_to_avoid_oom() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x4000);
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+
+    bridge.set_host_sample_rate_hz(u32::MAX).unwrap();
+    bridge.set_capture_sample_rate_hz(u32::MAX).unwrap();
+
+    let snap = bridge.save_state();
+    let mut decoded = VirtioSndPciState::default();
+    decoded.load_state(&snap).unwrap();
+
+    assert_eq!(decoded.snd.host_sample_rate_hz, aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+    assert_eq!(
+        decoded.snd.capture_sample_rate_hz,
+        aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+    );
+}

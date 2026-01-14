@@ -17,13 +17,13 @@ pub(crate) use aero_guest_phys::{
     translate_guest_paddr_range,
 };
 
+// Re-exported for tests and legacy call sites; the core translation helpers do not need it.
+#[allow(unused_imports)]
+pub(crate) use aero_guest_phys::PCIE_ECAM_BASE;
+
 /// Compatibility alias used by older call sites/tests in this crate.
 #[allow(dead_code)]
 pub(crate) const HIGH_RAM_BASE: u64 = aero_guest_phys::HIGH_RAM_START;
-
-// Keep the ECAM base constant available for tests/debug helpers, but not all builds need it.
-#[allow(unused_imports)]
-pub(crate) use aero_guest_phys::PCIE_ECAM_BASE;
 
 #[cfg(test)]
 mod tests {

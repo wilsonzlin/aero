@@ -2180,8 +2180,21 @@ const LEGACY_VGA_WINDOW_SIZE: usize =
 #[allow(dead_code)]
 pub const VBE_LFB_OFFSET: usize = LEGACY_VGA_WINDOW_SIZE;
 
-/// Total VRAM size exposed via AeroGPU BAR1.
-const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
+// Allocated VRAM backing store size.
+//
+// The canonical PCI profile exposes a 64MiB prefetchable BAR for AeroGPU VRAM (large enough for a
+// 4K scanout). In wasm32 builds, the runtime heap is deliberately capped to the runtime-reserved
+// region (`crates/aero-wasm/src/runtime_alloc.rs`), which can make eagerly allocating the full
+// 64MiB VRAM backing store (and then taking snapshots that copy portions of it) exceed the
+// available heap during wasm-bindgen tests.
+//
+// The current AeroGPU legacy VGA/VBE compatibility path only requires the low portion of VRAM
+// (legacy window + VBE LFB). Allocate a smaller backing store on wasm32 to keep the canonical
+// browser `Machine::new` usable in constrained test environments.
+#[cfg(target_arch = "wasm32")]
+const AEROGPU_VRAM_ALLOC_SIZE: usize = 32 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
+const AEROGPU_VRAM_ALLOC_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
 
 /// Minimal AeroGPU runtime state required for VRAM-backed legacy VGA/VBE compatibility.
 ///
@@ -2233,7 +2246,7 @@ struct AeroGpuDevice {
 impl AeroGpuDevice {
     fn new() -> Self {
         Self {
-            vram: vec![0u8; AEROGPU_VRAM_SIZE],
+            vram: vec![0u8; AEROGPU_VRAM_ALLOC_SIZE],
             vbe_mode_active: false,
             vbe_bank: 0,
             misc_output: 0,
