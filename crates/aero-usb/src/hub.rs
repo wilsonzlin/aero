@@ -1897,6 +1897,7 @@ mod tests {
         struct WakeState {
             suspended: bool,
             wake_pending: bool,
+            polls: u32,
         }
 
         #[derive(Clone)]
@@ -1913,6 +1914,10 @@ mod tests {
 
             fn wake_pending(&self) -> bool {
                 self.0.borrow().wake_pending
+            }
+
+            fn polls(&self) -> u32 {
+                self.0.borrow().polls
             }
         }
 
@@ -1931,6 +1936,7 @@ mod tests {
 
             fn poll_remote_wakeup(&mut self) -> bool {
                 let mut st = self.0.borrow_mut();
+                st.polls += 1;
                 if st.suspended && st.wake_pending {
                     st.wake_pending = false;
                     true
@@ -1955,6 +1961,7 @@ mod tests {
 
         wake.request_wake();
         assert!(wake.wake_pending(), "expected wake request to be pending");
+        assert_eq!(wake.polls(), 0);
 
         // Hub remote wake is disabled, so the wake must not propagate upstream...
         assert!(
@@ -1967,6 +1974,15 @@ mod tests {
             !wake.wake_pending(),
             "expected hub to drain downstream wake request even when propagation is disabled"
         );
+        assert_eq!(wake.polls(), 1);
+
+        // After enabling hub remote wakeup, a stale wake event should not be replayed.
+        hub.remote_wakeup_enabled = true;
+        assert!(
+            !hub.poll_remote_wakeup_internal(),
+            "unexpected wake propagation after enabling hub remote wake without a new event"
+        );
+        assert_eq!(wake.polls(), 2);
     }
 
     #[test]
