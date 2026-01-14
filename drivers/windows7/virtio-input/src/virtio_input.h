@@ -35,6 +35,9 @@ struct virtio_input_report {
   uint8_t data[VIRTIO_INPUT_REPORT_MAX_SIZE];
 };
 
+/* `len` is a byte; ensure report sizes never silently truncate. */
+C_ASSERT(VIRTIO_INPUT_REPORT_MAX_SIZE <= 0xFFu);
+
 struct virtio_input_report_ring {
   struct virtio_input_report reports[VIRTIO_INPUT_REPORT_RING_CAPACITY];
   uint32_t head;
