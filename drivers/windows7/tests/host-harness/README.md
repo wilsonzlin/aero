@@ -816,26 +816,21 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
    (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
-   - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
-     HID interface.
-     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
-       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-     - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the canonical INFs
-       (`aero_virtio_input.inf` / `aero_virtio_tablet.inf`) will not bind. In that case you must either:
-       - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-         `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-       - Opt into the legacy alias INF by renaming
-         `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → `virtio-input.inf` and installing that INF,
-         which provides the revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`).
-         - When binding via the generic fallback entry, Device Manager will show the generic
-           **Aero VirtIO Input Device** name.
-         - Caveat: do not ship/install overlapping virtio-input INFs; the alias INF is intended only for compatibility
-           with non-contract devices.
-     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
-   - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass an
-     explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want to
-     exercise the contract tablet binding specifically). If you are intentionally using the opt-in legacy alias INF for
-     generic fallback binding, include `virtio-input.inf` instead.
+    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+      HID interface.
+      - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
+        `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+      - If your QEMU/device does **not** expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not bind
+        (it is SUBSYS-qualified). In that case you must either:
+        - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+          `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
+        - Bind via the revision-gated fallback match in `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`
+          (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+          - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
+      - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+    - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
+      an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+      to exercise the contract tablet binding specifically).
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
     `-WithTabletEvents`, `-EnableTabletEvents`) /
     `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
@@ -1359,9 +1354,8 @@ To attach a virtio-tablet device without enabling the tablet events selftest/inj
 `with_virtio_tablet=true`. This passes `--with-virtio-tablet` to the Python harness and attaches `virtio-tablet-pci`
 in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed (for the in-tree stack:
 `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01`). If the device does not expose the Aero contract subsystem IDs,
-either emulate the subsystem IDs to the contract values or opt into the legacy alias INF
-(under `drivers/windows7/virtio-input/inf/`; the `*.inf.disabled` file; drop the `.disabled` suffix to enable) for generic
-fallback binding.
+either emulate the subsystem IDs to the contract values (so it binds to `aero_virtio_tablet.inf`) or rely on the
+revision-gated fallback match in `aero_virtio_input.inf` (`PCI\VEN_1AF4&DEV_1052&REV_01`) for generic binding.
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
@@ -1513,7 +1507,7 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS/FAIL/INFO|tx_csum=...|rx_csum
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS/FAIL/SKIP|...
-AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|PASS/FAIL/SKIP|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|PASS/FAIL/SKIP|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|PASS/FAIL/SKIP|...
