@@ -308,6 +308,7 @@ When notifying dxgkrnl of DMA completion/fault, the KMD must still report a 32-b
 
 Guest drivers may also emit **duplicate** `signal_fence` values (for example, internal KMD submissions that reuse the most recent fence and suppress IRQ delivery via `AEROGPU_SUBMIT_FLAG_NO_IRQ`).
 Host/device implementations must tolerate duplicate fences without losing metadata: a fence should still raise `IRQ_FENCE` if *any* submission using that fence requested an IRQ, and any `PRESENT`/writeback metadata for that fence must be preserved.
+Duplicate-fence submissions may also arrive with `signal_fence <= completed_fence` (for example when reusing the most recently submitted fence while the GPU is idle). Such submissions may still carry required side effects (e.g. `RELEASE_SHARED_SURFACE`) and must still be executed even though they do not advance the fence.
 
 ## Command stream (“AeroGPU IR”)
 
