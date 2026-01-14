@@ -2015,31 +2015,23 @@ const presentOnce = async (): Promise<boolean> => {
     }
     if (isDeviceLost) return false;
 
-    const sharedFramebufferSeqForClear = (() => {
-      if (!sharedFramebufferViews) return null;
-      // If the current frame comes from the legacy shared framebuffer, use the
-      // frame's published sequence number.
-      if (frame?.sharedLayout) return frame.frameSeq;
-      // Otherwise (e.g. WDDM scanout), we still clear the legacy `FRAME_DIRTY`
-      // flag under WDDM ownership so that stale legacy frames cannot "flash back"
-      // later (docs/16-aerogpu-vga-vesa-compat.md §5). Capture the shared
-      // framebuffer sequence number now and only clear if it stays stable.
-      return Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.FRAME_SEQ);
-    })();
+    const wddmOwnsScanout =
+      scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
 
     const clearSharedFramebufferDirty = () => {
-      const expectedSeq = sharedFramebufferSeqForClear;
-      if (expectedSeq === null) return;
       if (!sharedFramebufferViews) return;
       // `frame_dirty` is a producer->consumer "new frame" flag. Clearing it is
       // optional, but doing so allows producers to detect consumer liveness (and
       // some implementations may wait for it).
       //
-      // Avoid clearing a newer frame: only clear if we still observe the same
-      // published sequence number after the upload/present work completes.
       const header = sharedFramebufferViews.header;
-      const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
-      if (seqNow !== expectedSeq) return;
+      if (frame?.sharedLayout) {
+        // Normal legacy shared-framebuffer present: avoid clearing a newer frame.
+        const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+        if (seqNow !== frame.frameSeq) return;
+      } else if (!wddmOwnsScanout) {
+        return;
+      }
       Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
       Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_DIRTY);
     };
@@ -2061,8 +2053,6 @@ const presentOnce = async (): Promise<boolean> => {
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
         // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
         // does not clobber the active scanout with a stale shared framebuffer upload.
-        const wddmOwnsScanout =
-          scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
         const hasBasePaddr =
           !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
         aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr ? "wddm_scanout" : "aerogpu") : "framebuffer";
@@ -2079,8 +2069,6 @@ const presentOnce = async (): Promise<boolean> => {
       // If scanoutState indicates WDDM owns scanout and we have a most-recent AeroGPU frame,
       // prefer that over the legacy shared framebuffer. This prevents "flash back" to legacy
       // output after WDDM has claimed scanout, matching `docs/16-aerogpu-vga-vesa-compat.md` §5.
-      const wddmOwnsScanout =
-        scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
       if (wddmOwnsScanout) {
         const hasBasePaddr =
           !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
