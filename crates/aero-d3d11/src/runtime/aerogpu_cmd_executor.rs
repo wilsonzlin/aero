@@ -52,10 +52,14 @@ use crate::{
 use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampler, ShaderStage};
 use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
 use super::indirect_args::DrawIndexedIndirectArgs;
+use super::index_pulling::{
+    IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
+};
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
 use super::vertex_pulling::{
     VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
+    VERTEX_PULLING_UNIFORM_BINDING,
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
@@ -2508,11 +2512,38 @@ impl AerogpuD3d11Executor {
                         cmd_bytes.len()
                     );
                 }
+                let mut first_index = read_u32_le(cmd_bytes, 16)?;
+                // Fold the IASetIndexBuffer byte offset into `first_index` so compute-based index
+                // pulling can bind the full index buffer at offset 0 (storage buffer bindings
+                // typically require 256-byte alignment, which D3D11 does not guarantee).
+                if let Some(ib) = self.state.index_buffer {
+                    let stride = match ib.format {
+                        wgpu::IndexFormat::Uint16 => 2u64,
+                        wgpu::IndexFormat::Uint32 => 4u64,
+                    };
+                    if (ib.offset_bytes % stride) != 0 {
+                        bail!(
+                            "index buffer offset {} is not aligned to index stride {}",
+                            ib.offset_bytes,
+                            stride
+                        );
+                    }
+                    let offset_indices_u64 = ib.offset_bytes / stride;
+                    let offset_indices: u32 = offset_indices_u64.try_into().map_err(|_| {
+                        anyhow!(
+                            "index buffer offset {} is too large for u32 index math",
+                            ib.offset_bytes
+                        )
+                    })?;
+                    first_index = first_index.checked_add(offset_indices).ok_or_else(|| {
+                        anyhow!("DRAW_INDEXED first_index overflows after applying index buffer offset")
+                    })?;
+                }
                 VertexPullingDrawParams {
                     first_vertex: 0,
                     first_instance: read_u32_le(cmd_bytes, 24)?,
                     base_vertex: read_i32_le(cmd_bytes, 20)?,
-                    first_index: read_u32_le(cmd_bytes, 16)?,
+                    first_index,
                 }
             }
             _ => unreachable!(),
@@ -2772,17 +2803,106 @@ impl AerogpuD3d11Executor {
             }
             uniform_buffer.unmap();
 
-            let vp_bgl_entries = pulling.bind_group_layout_entries();
+            let mut vp_bgl_entries = pulling.bind_group_layout_entries();
+            let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+                Vec::with_capacity(buffers.len() + 3);
+            for (slot, buf) in buffers.iter().enumerate() {
+                vp_bg_entries.push(wgpu::BindGroupEntry {
+                    binding: slot as u32,
+                    resource: buf.as_entire_binding(),
+                });
+            }
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: VERTEX_PULLING_UNIFORM_BINDING,
+                resource: uniform_buffer.as_entire_binding(),
+            });
+
+            let mut vp_cs_prelude = pulling.wgsl_prelude();
+            let index_pulling_setup = if opcode == OPCODE_DRAW_INDEXED {
+                let ib = self.state.index_buffer.expect("checked above");
+                let ib_buf = self
+                    .resources
+                    .buffers
+                    .get(&ib.buffer)
+                    .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+
+                let index_format = match ib.format {
+                    wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                    wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+                };
+                let params = IndexPullingParams {
+                    first_index: vertex_pulling_draw.first_index,
+                    base_vertex: vertex_pulling_draw.base_vertex,
+                    index_format,
+                    _pad0: 0,
+                };
+
+                let params_bytes = params.to_le_bytes();
+                let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("aerogpu_cmd index pulling params"),
+                    size: params_bytes.len() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: true,
+                });
+                {
+                    let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
+                    mapped.copy_from_slice(&params_bytes);
+                }
+                params_buffer.unmap();
+
+                vp_cs_prelude.push_str(&super::index_pulling::wgsl_index_pulling_lib(
+                    VERTEX_PULLING_GROUP,
+                    INDEX_PULLING_PARAMS_BINDING,
+                    INDEX_PULLING_BUFFER_BINDING,
+                ));
+                Some((params_buffer, &ib_buf.buffer))
+            } else {
+                None
+            };
+
+            if let Some((params_buffer, ib_buffer)) = index_pulling_setup.as_ref() {
+                vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: INDEX_PULLING_PARAMS_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                });
+                vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: INDEX_PULLING_BUFFER_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                });
+
+                vp_bg_entries.push(wgpu::BindGroupEntry {
+                    binding: INDEX_PULLING_PARAMS_BINDING,
+                    resource: params_buffer.as_entire_binding(),
+                });
+                vp_bg_entries.push(wgpu::BindGroupEntry {
+                    binding: INDEX_PULLING_BUFFER_BINDING,
+                    resource: ib_buffer.as_entire_binding(),
+                });
+            }
+
             let vp_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &vp_bgl_entries);
-            let vp_bg = pulling.create_bind_group(
-                &self.device,
-                vp_bgl.layout.as_ref(),
-                &buffers,
-                &uniform_buffer,
-            );
-            vertex_pulling_cs_wgsl = Some(format!("{}\n{}", pulling.wgsl_prelude(), GEOMETRY_PREPASS_CS_WGSL));
+
+            let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd vertex pulling bind group"),
+                layout: vp_bgl.layout.as_ref(),
+                entries: &vp_bg_entries,
+            });
+
+            vertex_pulling_cs_wgsl = Some(format!("{vp_cs_prelude}\n{GEOMETRY_PREPASS_CS_WGSL}"));
             vertex_pulling_bgl = Some(vp_bgl);
             vertex_pulling_bg = Some(vp_bg);
         }

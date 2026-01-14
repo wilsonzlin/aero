@@ -21,6 +21,18 @@ pub const INDEX_FORMAT_U16: u32 = 0;
 /// `IndexPullingParams.index_format` value for 32-bit indices.
 pub const INDEX_FORMAT_U32: u32 = 1;
 
+/// Canonical `@binding` number (within the chosen bind group) for [`IndexPullingParams`].
+///
+/// When used alongside [`crate::runtime::vertex_pulling`], this is intended to live in
+/// [`crate::runtime::vertex_pulling::VERTEX_PULLING_GROUP`] immediately after the vertex pulling
+/// uniform binding (`VERTEX_PULLING_UNIFORM_BINDING = 32`).
+pub const INDEX_PULLING_PARAMS_BINDING: u32 = 33;
+
+/// Canonical `@binding` number (within the chosen bind group) for the index buffer (`array<u32>`).
+///
+/// See [`INDEX_PULLING_PARAMS_BINDING`] for the intended pairing with vertex pulling.
+pub const INDEX_PULLING_BUFFER_BINDING: u32 = 34;
+
 /// Uniform payload for compute-based index pulling.
 ///
 /// Layout is WGSL-compatible and padded to 16 bytes so it can be bound as a WebGPU uniform buffer.
@@ -92,4 +104,3 @@ fn index_pulling_resolve_vertex_id(index_in_draw: u32) -> i32 {{
 "#
     )
 }
-
