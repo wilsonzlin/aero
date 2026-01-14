@@ -496,11 +496,11 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
       - you are installing the correct architecture (x86 vs x64).
     - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`,
       `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`). That match is more specific than the generic fallback, so it wins when
-      both packages are installed and it matches. If the tablet INF is not installed, the generic fallback entry can also bind to
-      tablet devices (but will use the generic device name).
-    - Legacy INF basename note: `virtio-input.inf.disabled` is a disabled-by-default **filename alias** for
+      both driver packages are installed and it matches. If the tablet INF is not installed, the generic fallback entry can also
+      bind to tablet devices (but will use the generic device name).
+    - Legacy INF basename note: `virtio-input.inf.disabled` is a disabled-by-default **filename-only alias** for
       `aero_virtio_input.inf`. You may locally rename it to `virtio-input.inf` if a workflow/tool expects that basename.
-      - Sync policy: from the first section header (`[Version]`) onward it must be byte-for-byte identical to
+      - Sync policy: from the first section header (`[Version]`) onward it must be strictly byte-for-byte identical to
         `aero_virtio_input.inf` (banner/comments may differ). See `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
       - Because it is identical, enabling the alias does **not** change HWID matching behavior (and is not required for
         fallback binding).
