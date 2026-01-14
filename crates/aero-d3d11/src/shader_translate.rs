@@ -5475,12 +5475,10 @@ fn emit_instructions(
                     "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
                 );
 
-                let format = ctx
-                    .resources
-                    .uav_textures
-                    .get(&uav.slot)
-                    .copied()
-                    .ok_or(ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot })?;
+                let format =
+                    ctx.resources.uav_textures.get(&uav.slot).copied().ok_or(
+                        ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot },
+                    )?;
 
                 let value = match format.store_value_type() {
                     StorageTextureValueType::F32 => {

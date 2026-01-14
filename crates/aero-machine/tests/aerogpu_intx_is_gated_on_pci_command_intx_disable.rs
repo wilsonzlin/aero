@@ -28,7 +28,9 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    let pci_intx = m.pci_intx_router().expect("pc platform should provide PCI INTx router");
+    let pci_intx = m
+        .pci_intx_router()
+        .expect("pc platform should provide PCI INTx router");
     let interrupts = m
         .platform_interrupts()
         .expect("pc platform should provide PlatformInterrupts");
@@ -40,7 +42,11 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable() {
         "expected AeroGPU INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
     );
     let irq = u8::try_from(gsi).unwrap();
-    let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let vector = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
 
     // Configure the PIC for deterministic vectors and unmask only the routed IRQ (and cascade).
     {
@@ -57,7 +63,9 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable() {
 
     // Enable PCI MMIO decode + bus mastering but also set COMMAND.INTX_DISABLE.
     let bar0_base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should provide PCI config ports");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should provide PCI config ports");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -145,7 +153,9 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable() {
     // Clear COMMAND.INTX_DISABLE and poll again; the still-pending fence IRQ should now assert the
     // legacy INTx line.
     {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should provide PCI config ports");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should provide PCI config ports");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -161,4 +171,3 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable() {
         "expected AeroGPU INTx to pend PIC vector {vector:#x} after clearing INTX_DISABLE"
     );
 }
-

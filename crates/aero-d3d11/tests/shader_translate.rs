@@ -1802,7 +1802,9 @@ fn translates_store_uav_typed_uint_format_uses_u32_value() {
         "@group(1) @binding({BINDING_BASE_UAV}) var u0: texture_storage_2d<rgba32uint, write>;"
     )));
     assert!(
-        translated.wgsl.contains("vec4<u32>(0x00000001u, 0x00000002u, 0x00000003u, 0x00000004u)"),
+        translated
+            .wgsl
+            .contains("vec4<u32>(0x00000001u, 0x00000002u, 0x00000003u, 0x00000004u)"),
         "{}",
         translated.wgsl
     );
@@ -1811,13 +1813,15 @@ fn translates_store_uav_typed_uint_format_uses_u32_value() {
         .reflection
         .bindings
         .iter()
-        .find(|b| matches!(
-            b.kind,
-            BindingKind::UavTexture2DWriteOnly {
-                slot: 0,
-                format: StorageTextureFormat::Rgba32Uint
-            }
-        ))
+        .find(|b| {
+            matches!(
+                b.kind,
+                BindingKind::UavTexture2DWriteOnly {
+                    slot: 0,
+                    format: StorageTextureFormat::Rgba32Uint
+                }
+            )
+        })
         .expect("missing uav binding");
     assert_eq!(uav_binding.group, 1);
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);

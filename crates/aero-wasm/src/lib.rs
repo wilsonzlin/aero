@@ -3618,7 +3618,11 @@ impl Machine {
             // actually enables wasm atomics (shared memory). Keep the `wasm-threaded` feature
             // buildable even when the target is compiled without `-C target-feature=+atomics`
             // (BUILD-002 runs `cargo check --target wasm32-unknown-unknown --features wasm-threaded`).
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded", target_feature = "atomics"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
             {
                 let cursor_state = Self::cursor_state_ref();
                 inner.set_scanout_state_static(Some(scanout_state));
@@ -3913,7 +3917,11 @@ impl Machine {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded", target_feature = "atomics"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
             {
                 let cursor_state = Self::cursor_state_ref();
                 inner.set_scanout_state_static(Some(scanout_state));

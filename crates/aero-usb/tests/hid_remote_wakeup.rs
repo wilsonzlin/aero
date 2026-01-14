@@ -1,10 +1,10 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::uhci::regs::{
     REG_PORTSC1, REG_USBINTR, REG_USBSTS, USBINTR_RESUME, USBSTS_RESUMEDETECT,
 };
 use aero_usb::uhci::UhciController;
+use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
 mod util;
@@ -339,7 +339,10 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
         (cur_portsc | PORTSC_PED | PORTSC_SUSP) as u32,
     );
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert!(portsc & PORTSC_SUSP != 0, "expected root port to be suspended");
+    assert!(
+        portsc & PORTSC_SUSP != 0,
+        "expected root port to be suspended"
+    );
     assert_eq!(
         portsc & PORTSC_RD,
         0,

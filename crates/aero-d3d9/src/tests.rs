@@ -2833,7 +2833,11 @@ fn translate_entrypoint_rejects_setp_with_result_modifiers() {
     words.extend(enc_inst_with_extra(
         0x005E,
         (2u32 << 16) | (1u32 << 20),
-        &[enc_dst(19, 0, 0x1), enc_src(2, 0, 0xE4), enc_src(2, 1, 0xE4)],
+        &[
+            enc_dst(19, 0, 0x1),
+            enc_src(2, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+        ],
     ));
     words.push(0x0000_FFFF);
 

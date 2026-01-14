@@ -112,7 +112,12 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
         }
     }
 
-    if let IrOp::Abs { dst, src, modifiers } = op {
+    if let IrOp::Abs {
+        dst,
+        src,
+        modifiers,
+    } = op
+    {
         if is_int_reg_file(dst.reg.file)
             && is_int_reg_file(src.reg.file)
             && (modifiers.saturate || modifiers.shift != ResultShift::None)

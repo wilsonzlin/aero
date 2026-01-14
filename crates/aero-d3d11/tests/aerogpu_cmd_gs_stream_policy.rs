@@ -53,13 +53,7 @@ fn build_sm5_gs_stream_op_implicit_zero_then(stream_opcode: u32, stream: u32) ->
 
     fn imm32_scalar(value: u32) -> [u32; 2] {
         [
-            operand_token(
-                OPERAND_TYPE_IMMEDIATE32,
-                1,
-                OPERAND_SEL_SELECT1,
-                0,
-                0,
-            ),
+            operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0),
             value,
         ]
     }

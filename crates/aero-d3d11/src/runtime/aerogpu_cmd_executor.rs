@@ -15223,7 +15223,9 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
                 if operand_pos >= inst_end {
                     break;
                 }
-                let Some(ext) = toks.get(operand_pos).copied() else { break };
+                let Some(ext) = toks.get(operand_pos).copied() else {
+                    break;
+                };
                 operand_pos += 1;
                 extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
             }
@@ -15254,7 +15256,9 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
                     if operand_pos >= inst_end {
                         break;
                     }
-                    let Some(ext) = toks.get(operand_pos).copied() else { break };
+                    let Some(ext) = toks.get(operand_pos).copied() else {
+                        break;
+                    };
                     operand_pos += 1;
                     operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
                 }
@@ -16669,7 +16673,9 @@ mod tests {
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
-            let _ = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+            let _ = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .unwrap_err();
 
             assert!(
                 exec.destroyed_buffers.is_empty() && exec.destroyed_textures.is_empty(),
@@ -17757,7 +17763,10 @@ fn main() {{
             // SRV buffers are modeled as storage buffers in WGSL/WebGPU. Downlevel backends without
             // compute/storage buffer support cannot exercise this path.
             if !exec.caps.supports_compute {
-                skip_or_panic(module_path!(), "backend does not support compute/storage buffers");
+                skip_or_panic(
+                    module_path!(),
+                    "backend does not support compute/storage buffers",
+                );
                 return;
             }
 
@@ -17883,16 +17892,14 @@ fn main() {{
                 )];
 
                 // `mov o0, l(0,1,0,1)` (same encoding as SM4 tests).
-                let mov_token =
-                    sm4_opcode::OPCODE_MOV | (8u32 << sm4_opcode::OPCODE_LEN_SHIFT);
+                let mov_token = sm4_opcode::OPCODE_MOV | (8u32 << sm4_opcode::OPCODE_LEN_SHIFT);
                 let dst_o0 = 0x0010_f022u32;
                 let imm_vec4 = 0x0000_f042u32;
 
                 let zero = 0.0f32.to_bits();
                 let one = 1.0f32.to_bits();
 
-                let ret_token =
-                    sm4_opcode::OPCODE_RET | (1u32 << sm4_opcode::OPCODE_LEN_SHIFT);
+                let ret_token = sm4_opcode::OPCODE_RET | (1u32 << sm4_opcode::OPCODE_LEN_SHIFT);
 
                 let mut tokens = Vec::new();
                 tokens.push(version_token);
@@ -17939,13 +17946,7 @@ fn main() {{
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
 
-            writer.create_buffer(
-                BUF,
-                AEROGPU_RESOURCE_USAGE_STORAGE,
-                BUF_SIZE,
-                ALLOC_ID,
-                0,
-            );
+            writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
 
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
             writer.create_shader_dxbc(
@@ -17977,7 +17978,9 @@ fn main() {{
             guest_mem
                 .write(
                     0,
-                    &[0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                    &[
+                        0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                    ],
                 )
                 .expect("guest buffer write");
 

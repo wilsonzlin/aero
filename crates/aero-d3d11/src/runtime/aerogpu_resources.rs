@@ -860,7 +860,9 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
                 if operand_pos >= inst_end {
                     break;
                 }
-                let Some(ext) = toks.get(operand_pos).copied() else { break };
+                let Some(ext) = toks.get(operand_pos).copied() else {
+                    break;
+                };
                 operand_pos += 1;
                 extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
             }
@@ -891,7 +893,9 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
                     if operand_pos >= inst_end {
                         break;
                     }
-                    let Some(ext) = toks.get(operand_pos).copied() else { break };
+                    let Some(ext) = toks.get(operand_pos).copied() else {
+                        break;
+                    };
                     operand_pos += 1;
                     operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
                 }
