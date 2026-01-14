@@ -268,7 +268,7 @@ $ErrorActionPreference = "Stop"
 #
 # To keep provisioning media compatible with both behaviors, default `-TestSndCapture` to on when
 # virtio-snd is being required/tested, unless the caller explicitly disabled capture.
-if (-not $TestSndCapture -and -not $DisableSnd -and -not $DisableSndCapture -and ($RequireSnd -or $RequireSndCapture -or $RequireNonSilence -or $TestSndBufferLimits)) {
+if (-not $TestSndCapture -and -not $DisableSnd -and -not $DisableSndCapture -and ($RequireSnd -or $RequireSndMsix -or $RequireSndCapture -or $RequireNonSilence -or $TestSndBufferLimits)) {
   $TestSndCapture = $true
 }
 
