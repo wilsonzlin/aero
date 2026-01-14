@@ -1838,6 +1838,10 @@ fn atapi_dma_missing_prd_eot_sets_error_status_on_secondary_channel() {
     assert_eq!(st & 0x08, 0, "DRQ should be clear after DMA failure");
     assert_ne!(st & 0x40, 0, "DRDY should be set after DMA failure");
     assert_ne!(st & 0x01, 0, "ERR should be set after DMA failure");
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     // Even though the PRD table is malformed, the DMA engine should still have written the data
@@ -1845,6 +1849,20 @@ fn atapi_dma_missing_prd_eot_sets_error_status_on_secondary_channel() {
     let mut out = vec![0u8; 2048];
     mem.read_physical(dma_buf, &mut out);
     assert_eq!(out, expected);
+
+    // Reading STATUS acknowledges and clears the IDE IRQ latch, but does not clear BMIDE status
+    // bits.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(
+        !ide.borrow().controller.secondary_irq_pending(),
+        "reading STATUS should clear the IDE IRQ latch"
+    );
+    let bm_st_after_ack = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(
+        bm_st_after_ack & 0x07,
+        0x06,
+        "BMIDE status bits should remain set after STATUS acknowledges the IDE IRQ"
+    );
 
     // Secondary BMIDE status should be RW1C for IRQ/ERR bits.
     ioports.write(bm_base + 8 + 2, 1, 0x02);
@@ -1940,12 +1958,21 @@ fn atapi_dma_prd_too_short_sets_error_status_and_partially_transfers_data() {
     assert_eq!(st & 0x08, 0, "DRQ should be clear after DMA failure");
     assert_ne!(st & 0x40, 0, "DRDY should be set after DMA failure");
     assert_ne!(st & 0x01, 0, "ERR should be set after DMA failure");
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     let mut out = vec![0u8; 2048];
     mem.read_physical(dma_buf, &mut out);
     assert_eq!(&out[..PRD_LEN as usize], &expected[..PRD_LEN as usize]);
     assert!(out[PRD_LEN as usize..].iter().all(|&b| b == 0xFF));
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x06);
 }
 
 #[test]
@@ -2027,11 +2054,20 @@ fn atapi_dma_direction_mismatch_sets_error_status_and_does_not_transfer_data() {
     assert_eq!(st & 0x08, 0);
     assert_ne!(st & 0x40, 0);
     assert_ne!(st & 0x01, 0);
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     let mut out = vec![0u8; 2048];
     mem.read_physical(dma_buf, &mut out);
     assert!(out.iter().all(|&b| b == 0xFF));
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x06);
 }
 
 #[test]
@@ -2173,6 +2209,10 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
     assert_eq!(st & 0x08, 0, "DRQ should be clear");
     assert_ne!(st & 0x40, 0, "DRDY should be set");
     assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     // Reading Status acknowledges and clears the pending interrupt.
@@ -2243,6 +2283,10 @@ fn ata_dma_prd_too_short_sets_error_status() {
     assert_eq!(st & 0x08, 0, "DRQ should be clear");
     assert_ne!(st & 0x40, 0, "DRDY should be set");
     assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     // Partial transfer: first PRD segment written, remainder untouched.
@@ -2315,6 +2359,10 @@ fn ata_dma_direction_mismatch_sets_error_status() {
     assert_eq!(st & 0x08, 0, "DRQ should be clear");
     assert_ne!(st & 0x40, 0, "DRDY should be set");
     assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "reading ALT_STATUS must not clear the IDE IRQ latch"
+    );
     assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 
     // Direction mismatch should prevent any DMA writes.
