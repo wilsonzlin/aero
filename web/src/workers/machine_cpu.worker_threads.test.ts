@@ -215,6 +215,142 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("updates input latency telemetry when processing batches (dummy machine, no WASM)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      // Enable a dummy machine instance inside the worker so input batches are processed even without WASM.
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+
+      const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+      const processedBase = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+      const eventsBase = Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0;
+      const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+      const tsUs = (nowUs - 1_000_000) >>> 0; // 1s in the past (u32 wrap-safe), avoids zero-latency edge cases.
+
+      const buf = new ArrayBuffer((2 + 4) * 4);
+      const words = new Int32Array(buf);
+      words[0] = 1; // count
+      words[1] = tsUs | 0; // batch send timestamp
+      words[2] = InputEventType.KeyScancode;
+      words[3] = tsUs | 0; // event timestamp
+      words[4] = 0x1c; // packed scancode bytes
+      words[5] = 1; // len
+
+      const recycledPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+      worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+      await recycledPromise;
+
+      expect((Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0) - receivedBase).toBe(1);
+      expect((Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0) - processedBase).toBe(1);
+      expect((Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0) - eventsBase).toBe(1);
+      expect((Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0) - droppedBase).toBe(0);
+
+      const batchLatency = Atomics.load(status, StatusIndex.IoInputBatchSendLatencyUs) >>> 0;
+      const batchLatencyEwma = Atomics.load(status, StatusIndex.IoInputBatchSendLatencyEwmaUs) >>> 0;
+      const batchLatencyMax = Atomics.load(status, StatusIndex.IoInputBatchSendLatencyMaxUs) >>> 0;
+      const eventLatencyAvg = Atomics.load(status, StatusIndex.IoInputEventLatencyAvgUs) >>> 0;
+      const eventLatencyEwma = Atomics.load(status, StatusIndex.IoInputEventLatencyEwmaUs) >>> 0;
+      const eventLatencyMax = Atomics.load(status, StatusIndex.IoInputEventLatencyMaxUs) >>> 0;
+
+      expect(batchLatency).not.toBe(0);
+      expect(batchLatencyEwma).toBe(batchLatency);
+      expect(batchLatencyMax).toBe(batchLatency);
+
+      expect(eventLatencyAvg).not.toBe(0);
+      expect(eventLatencyEwma).toBe(eventLatencyAvg);
+      expect(eventLatencyMax).toBe(eventLatencyAvg);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("counts clamped input batch claims as drops (dummy machine)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+
+      const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+      const processedBase = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+      const eventsBase = Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0;
+
+      // Buffer contains 1 event, but claims 2 in the header; validateInputBatchBuffer should clamp it.
+      const buf = new ArrayBuffer((2 + 4) * 4);
+      const words = new Int32Array(buf);
+      words[0] = 2; // claimed count (too large for buffer)
+      words[1] = 0;
+      words[2] = InputEventType.KeyScancode;
+      words[3] = 0;
+      words[4] = 0x1c;
+      words[5] = 1;
+
+      const recycledPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+      worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+      await recycledPromise;
+
+      expect((Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0) - processedBase).toBe(1);
+      expect((Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0) - eventsBase).toBe(1);
+      expect((Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0) - droppedBase).toBe(1);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("queues input batches while snapshot-paused and flushes them on resume", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

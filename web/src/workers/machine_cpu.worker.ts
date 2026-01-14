@@ -30,6 +30,7 @@ import {
   type SharedMemorySegments,
   type WorkerRole,
 } from "../runtime/shared_layout";
+import { u32Delta } from "../utils/u32";
 import {
   restoreMachineSnapshotAndReattachDisks,
   restoreMachineSnapshotFromOpfsAndReattachDisks,
@@ -195,6 +196,18 @@ const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
 // Avoid per-event allocations when falling back to `inject_keyboard_bytes` (older WASM builds).
 // Preallocate small scancode buffers for len=1..4.
 const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Array(2), new Uint8Array(3), new Uint8Array(4)];
+
+// End-to-end input latency telemetry (main thread capture -> CPU worker injection).
+//
+// Keep this in sync with the IO worker's input telemetry so debug HUDs (input diagnostics panel)
+// report meaningful latency statistics in `vmRuntime="machine"` mode.
+const INPUT_LATENCY_EWMA_ALPHA = 0.125; // 1/8 smoothing factor
+const INPUT_LATENCY_MAX_WINDOW_MS = 1000;
+let ioInputLatencyMaxWindowStartMs = 0;
+let ioInputBatchSendLatencyEwmaUs = 0;
+let ioInputBatchSendLatencyMaxUs = 0;
+let ioInputEventLatencyEwmaUs = 0;
+let ioInputEventLatencyMaxUs = 0;
 
 const AEROSPARSE_HEADER_SIZE_BYTES = 64;
 const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
@@ -449,6 +462,8 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   const m = machine;
   if (!m) return;
 
+  const t0 = performance.now();
+  const nowUs = Math.round(t0 * 1000) >>> 0;
   const decoded = validateInputBatchBuffer(buffer);
   if (!decoded.ok) {
     if (st) Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
@@ -456,10 +471,26 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   }
 
   const { words, count, claimedCount } = decoded;
+  const batchSendTimestampUs = words[1] >>> 0;
+  const batchSendLatencyUs = u32Delta(nowUs, batchSendTimestampUs);
+
   if (st) {
     // Maintain the same shared status telemetry indices as the legacy I/O worker so existing
     // UIs/tests that track `ioBatches`/`ioEvents` remain meaningful when input is injected by the
     // machine CPU worker.
+    if (ioInputLatencyMaxWindowStartMs === 0 || t0 - ioInputLatencyMaxWindowStartMs > INPUT_LATENCY_MAX_WINDOW_MS) {
+      ioInputLatencyMaxWindowStartMs = t0;
+      ioInputBatchSendLatencyMaxUs = 0;
+      ioInputEventLatencyMaxUs = 0;
+    }
+    ioInputBatchSendLatencyEwmaUs =
+      ioInputBatchSendLatencyEwmaUs === 0
+        ? batchSendLatencyUs
+        : Math.round(ioInputBatchSendLatencyEwmaUs + (batchSendLatencyUs - ioInputBatchSendLatencyEwmaUs) * INPUT_LATENCY_EWMA_ALPHA) >>> 0;
+    if (batchSendLatencyUs > ioInputBatchSendLatencyMaxUs) {
+      ioInputBatchSendLatencyMaxUs = batchSendLatencyUs;
+    }
+
     Atomics.add(st, StatusIndex.IoInputBatchCounter, 1);
     Atomics.add(st, StatusIndex.IoInputEventCounter, count);
     if (count !== claimedCount) {
@@ -467,10 +498,23 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
     }
   }
+
+  if (count === 0) {
+    return;
+  }
+
   const base = INPUT_BATCH_HEADER_WORDS;
+  let eventLatencySumUs = 0;
+  let eventLatencyMaxUsBatch = 0;
   for (let i = 0; i < count; i += 1) {
     const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
     const type = words[off] >>> 0;
+    const eventTimestampUs = words[off + 1] >>> 0;
+    const eventLatencyUs = u32Delta(nowUs, eventTimestampUs);
+    eventLatencySumUs += eventLatencyUs;
+    if (eventLatencyUs > eventLatencyMaxUsBatch) {
+      eventLatencyMaxUsBatch = eventLatencyUs;
+    }
     if (type === InputEventType.KeyScancode) {
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
@@ -523,6 +567,24 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // ignore
       }
     }
+  }
+
+  if (st) {
+    const eventLatencyAvgUs = Math.round(eventLatencySumUs / count) >>> 0;
+    ioInputEventLatencyEwmaUs =
+      ioInputEventLatencyEwmaUs === 0
+        ? eventLatencyAvgUs
+        : Math.round(ioInputEventLatencyEwmaUs + (eventLatencyAvgUs - ioInputEventLatencyEwmaUs) * INPUT_LATENCY_EWMA_ALPHA) >>> 0;
+    if (eventLatencyMaxUsBatch > ioInputEventLatencyMaxUs) {
+      ioInputEventLatencyMaxUs = eventLatencyMaxUsBatch;
+    }
+
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyUs, batchSendLatencyUs | 0);
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyEwmaUs, ioInputBatchSendLatencyEwmaUs | 0);
+    Atomics.store(st, StatusIndex.IoInputBatchSendLatencyMaxUs, ioInputBatchSendLatencyMaxUs | 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyAvgUs, eventLatencyAvgUs | 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyEwmaUs, ioInputEventLatencyEwmaUs | 0);
+    Atomics.store(st, StatusIndex.IoInputEventLatencyMaxUs, ioInputEventLatencyMaxUs | 0);
   }
 }
 
@@ -1162,6 +1224,14 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
 ctx.onmessage = (ev) => {
   const msg = ev.data as unknown;
+
+  // Test-only hook (Node worker_threads): allow unit tests to enable a dummy machine instance so
+  // input-batch parsing + telemetry can be exercised without loading WASM.
+  if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.enableDummyMachine") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine = {} as any;
+    return;
+  }
 
   const input = msg as Partial<InputBatchMessage | InputBatchRecycleMessage>;
   if (input?.type === "in:input-batch") {
