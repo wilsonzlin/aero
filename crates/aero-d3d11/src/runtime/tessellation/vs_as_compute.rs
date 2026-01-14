@@ -588,7 +588,7 @@ fn parse_struct_member_name_and_type(line: &str) -> Option<(String, String)> {
     // Expect something like:
     // `@location(0) a0: vec4<f32>,`
     // `@builtin(vertex_index) vertex_id: u32,`
-    let after = line.split(')').last()?.trim();
+    let after = line.split(')').next_back()?.trim();
     let (name, ty) = after.split_once(':')?;
     let name = name.trim();
     if name.is_empty() {
@@ -938,9 +938,9 @@ fn load_fn_for_format(
 fn extract_expr(var: &str, want_count: u32, have_count: u32) -> Result<String> {
     match (want_count, have_count) {
         (1, 1) => Ok(var.to_owned()),
-        (1, 2 | 3 | 4) => Ok(format!("{var}.x")),
+        (1, 2..=4) => Ok(format!("{var}.x")),
         (2, 2) => Ok(var.to_owned()),
-        (2, 3 | 4) => Ok(format!("{var}.xy")),
+        (2, 3..=4) => Ok(format!("{var}.xy")),
         (3, 3) => Ok(var.to_owned()),
         (3, 4) => Ok(format!("{var}.xyz")),
         (4, 4) => Ok(var.to_owned()),
@@ -973,7 +973,7 @@ fn cast_expr(expr: &str, from: WgslScalarType, to: WgslScalarType, count: u32) -
 fn wgsl_load_attr_fn(attr: &VertexPullingAttribute, loc: u32, target_ty: &str) -> Result<String> {
     let target = parse_wgsl_numeric_type(target_ty)?;
 
-    let format_count = attr.format.component_count.max(1).min(4);
+    let format_count = attr.format.component_count.clamp(1, 4);
     let data_count = target.count.min(format_count);
 
     let elem_index_expr = match attr.step_mode {
