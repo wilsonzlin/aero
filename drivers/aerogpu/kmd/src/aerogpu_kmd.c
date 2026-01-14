@@ -6456,7 +6456,7 @@ static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
     /*
      * MVP scanout formats:
      * - D3DDDIFMT_X8R8G8B8 (default desktop format on Win7)
-     * - D3DDDIFMT_A8R8G8B8 (same memory layout; alpha ignored for scanout)
+     * - D3DDDIFMT_A8R8G8B8 (same memory layout; alpha ignored / treated as opaque for scanout)
      */
     switch (Format) {
     case D3DDDIFMT_X8R8G8B8:

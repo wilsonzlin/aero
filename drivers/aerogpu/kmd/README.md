@@ -250,7 +250,7 @@ existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pi
 `>= width*4` and may be aligned up):
 
 * `D3DDDIFMT_X8R8G8B8` (treated as fully opaque; the unused `X` byte must not affect scanout)
-* `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha is ignored by scanout)
+* `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha is ignored / treated as opaque by scanout)
 
 **Mode list**
 
