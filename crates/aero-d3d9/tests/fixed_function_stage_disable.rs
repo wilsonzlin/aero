@@ -192,3 +192,57 @@ fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
         "expected stage0 to write to temp:\n{wgsl_temp}"
     );
 }
+
+#[test]
+fn blendtexturealpha_op_implicitly_samples_texture() {
+    // BLENDTEXTUREALPHA uses the current stage texture alpha as its interpolant, even if none of
+    // the args explicitly reference `D3DTA_TEXTURE`. Ensure we still emit a textureSample and
+    // include texcoord state in the cache key.
+    let base_stage = TextureStageState {
+        color_op: TextureOp::BlendTextureAlpha,
+        color_arg0: TextureArg::Current, // unused by this op
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let mut stages_tc0 = [TextureStageState::default(); 8];
+    stages_tc0[0] = TextureStageState {
+        texcoord_index: None,
+        ..base_stage
+    };
+    let mut stages_tc1 = stages_tc0;
+    stages_tc1[0].texcoord_index = Some(1);
+
+    let desc_tc0 = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | ((2u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_tc0,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_tc1 = FixedFunctionShaderDesc {
+        stages: stages_tc1,
+        ..desc_tc0.clone()
+    };
+
+    assert_ne!(
+        desc_tc0.state_hash(),
+        desc_tc1.state_hash(),
+        "texcoord_index should affect the state hash when BLENDTEXTUREALPHA is used"
+    );
+
+    let wgsl = generate_fixed_function_shaders(&desc_tc0).fragment_wgsl;
+    assert!(
+        wgsl.contains("textureSample(tex0, samp0"),
+        "expected BLENDTEXTUREALPHA to emit a texture sample:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("tex0_color.a"),
+        "expected BLENDTEXTUREALPHA to reference stage texture alpha:\n{wgsl}"
+    );
+}
