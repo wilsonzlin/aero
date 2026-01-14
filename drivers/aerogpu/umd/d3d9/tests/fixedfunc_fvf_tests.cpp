@@ -906,10 +906,13 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
-  const VertexXyzrhwDiffuse expected_clip[3] = {
-      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFF0000u},
-      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFF00FF00u},
-      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFF0000FFu},
+  // Fixed-function emulation for XYZ vertices uses a WVP vertex shader and
+  // uploads the matrix into reserved VS constants c240..c243 as column vectors.
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
   };
 
   aerogpu_handle_t expected_input_layout = 0;
@@ -955,7 +958,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
   }
 
   // Create a VB (non-UP draw path) with a leading dummy vertex, then draw starting
-  // at vertex 1. This exercises `start_vertex` handling in the CPU-transform path.
+  // at vertex 1. This exercises `start_vertex` handling in the draw packet.
   const VertexXyzDiffuse verts[4] = {
       {123.0f, 456.0f, 0.0f, 0xFFFFFFFFu},
       {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
@@ -987,6 +990,15 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
   cleanup.resources.push_back(create_vb.hResource);
+  aerogpu_handle_t expected_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock_dev(dev->mutex);
+    auto* vb = reinterpret_cast<Resource*>(create_vb.hResource.pDrvPrivate);
+    expected_vb = vb ? vb->handle : 0;
+  }
+  if (!Check(expected_vb != 0, "vb handle non-zero")) {
+    return false;
+  }
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_vb.hResource;
@@ -1024,47 +1036,27 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
 
-  aerogpu_handle_t expected_clip_input_layout = 0;
-  aerogpu_handle_t expected_vb = 0;
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
-    if (!Check(dev->fixedfunc_vs != nullptr, "fixedfunc_vs created")) {
+    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs, "XYZ|DIFFUSE binds passthrough VS")) {
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE binds WVP VS")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColor),
-               "XYZ|DIFFUSE VS bytecode passthrough")) {
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColor),
+               "XYZ|DIFFUSE VS bytecode matches kVsWvpPosColor")) {
       return false;
     }
-
-    if (dev->fvf_vertex_decl) {
-      expected_clip_input_layout = dev->fvf_vertex_decl->handle;
+    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer")) {
+      return false;
     }
-    if (dev->up_vertex_buffer) {
-      expected_vb = dev->up_vertex_buffer->handle;
-      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
-                 "scratch VB storage contains converted vertices")) {
-        return false;
-      }
-      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
-                 "scratch VB contains expected clip-space vertices (XYZ|DIFFUSE VB draw)")) {
-        return false;
-      }
-    }
-  }
-  if (!Check(expected_vb != 0, "scratch VB handle non-zero (XYZ|DIFFUSE VB draw)")) {
-    return false;
-  }
-  if (!Check(expected_clip_input_layout != 0, "clip-space decl handle non-zero (XYZ|DIFFUSE VB draw)")) {
-    return false;
   }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE VB CPU transform)")) {
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE VB draw)")) {
     return false;
   }
 
@@ -1080,19 +1072,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
 
-  bool saw_clip_layout = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
-    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
-    if (il->input_layout_handle == expected_clip_input_layout) {
-      saw_clip_layout = true;
-      break;
-    }
-  }
-  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space layout handle (XYZ|DIFFUSE VB draw)")) {
-    return false;
-  }
-
-  bool saw_expected_vb = false;
+  bool saw_expected_vb_bind = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -1106,16 +1086,49 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
-      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuse)) {
-        saw_expected_vb = true;
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuse)) {
+        saw_expected_vb_bind = true;
         break;
       }
     }
-    if (saw_expected_vb) {
+    if (saw_expected_vb_bind) {
       break;
     }
   }
-  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (XYZ|DIFFUSE VB clip-space)")) {
+  if (!Check(saw_expected_vb_bind, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  bool saw_draw = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
+    if (d->first_vertex == 1 && d->vertex_count == 3 && d->instance_count == 1) {
+      saw_draw = true;
+      break;
+    }
+  }
+  if (!Check(saw_draw, "DRAW uses start_vertex=1 vertex_count=3 instance_count=1")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (VB draw)")) {
     return false;
   }
 
@@ -1651,10 +1664,13 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
-  const VertexXyzrhwDiffuseTex1 expected_clip[3] = {
-      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
-      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
-      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  // Fixed-function emulation for XYZ vertices uses a WVP vertex shader and
+  // uploads the matrix into reserved VS constants c240..c243 as column vectors.
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
   };
 
   aerogpu_handle_t expected_input_layout = 0;
@@ -1709,7 +1725,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
   }
 
   // Create a VB (non-UP draw path) with a leading dummy vertex, then draw starting
-  // at vertex 1. This exercises `start_vertex` handling in the CPU-transform path.
+  // at vertex 1. This exercises `start_vertex` handling in the draw packet.
   const VertexXyzDiffuseTex1 verts[4] = {
       {123.0f, 456.0f, 0.0f, 0xFFFFFFFFu, 9.0f, 9.0f},
       {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
@@ -1741,6 +1757,15 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
   cleanup.resources.push_back(create_vb.hResource);
+  aerogpu_handle_t expected_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock_dev(dev->mutex);
+    auto* vb = reinterpret_cast<Resource*>(create_vb.hResource.pDrvPrivate);
+    expected_vb = vb ? vb->handle : 0;
+  }
+  if (!Check(expected_vb != 0, "vb handle non-zero")) {
+    return false;
+  }
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_vb.hResource;
@@ -1778,47 +1803,27 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
 
-  aerogpu_handle_t expected_clip_input_layout = 0;
-  aerogpu_handle_t expected_vb = 0;
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
     if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds passthrough VS")) {
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColorTex1),
-               "XYZ|DIFFUSE|TEX1 VS bytecode passthrough")) {
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
+               "XYZ|DIFFUSE|TEX1 VS bytecode matches kVsWvpPosColorTex0")) {
       return false;
     }
-
-    if (dev->fvf_vertex_decl_tex1) {
-      expected_clip_input_layout = dev->fvf_vertex_decl_tex1->handle;
+    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (TEX1)")) {
+      return false;
     }
-    if (dev->up_vertex_buffer) {
-      expected_vb = dev->up_vertex_buffer->handle;
-      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
-                 "scratch VB storage contains converted vertices (TEX1)")) {
-        return false;
-      }
-      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
-                 "scratch VB contains expected clip-space vertices (XYZ|DIFFUSE|TEX1 VB draw)")) {
-        return false;
-      }
-    }
-  }
-  if (!Check(expected_vb != 0, "scratch VB handle non-zero (XYZ|DIFFUSE|TEX1 VB draw)")) {
-    return false;
-  }
-  if (!Check(expected_clip_input_layout != 0, "clip-space decl handle non-zero (XYZ|DIFFUSE|TEX1 VB draw)")) {
-    return false;
   }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 VB CPU transform)")) {
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 VB draw)")) {
     return false;
   }
 
@@ -1834,19 +1839,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     return false;
   }
 
-  bool saw_clip_layout = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
-    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
-    if (il->input_layout_handle == expected_clip_input_layout) {
-      saw_clip_layout = true;
-      break;
-    }
-  }
-  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space layout handle (XYZ|DIFFUSE|TEX1 VB draw)")) {
-    return false;
-  }
-
-  bool saw_expected_vb = false;
+  bool saw_expected_vb_bind = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
     const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
     if (svb->buffer_count == 0) {
@@ -1860,16 +1853,49 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
     const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
         reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
     for (uint32_t i = 0; i < svb->buffer_count; ++i) {
-      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuseTex1)) {
-        saw_expected_vb = true;
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzDiffuseTex1)) {
+        saw_expected_vb_bind = true;
         break;
       }
     }
-    if (saw_expected_vb) {
+    if (saw_expected_vb_bind) {
       break;
     }
   }
-  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (XYZ|DIFFUSE|TEX1 VB clip-space)")) {
+  if (!Check(saw_expected_vb_bind, "SET_VERTEX_BUFFERS binds the created VB (XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  bool saw_draw = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
+    if (d->first_vertex == 1 && d->vertex_count == 3 && d->instance_count == 1) {
+      saw_draw = true;
+      break;
+    }
+  }
+  if (!Check(saw_draw, "DRAW uses start_vertex=1 vertex_count=3 instance_count=1 (TEX1)")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (VB draw TEX1)")) {
     return false;
   }
 

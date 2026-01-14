@@ -999,20 +999,31 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
       0.0f, 0.0f, 1.0f, 0.0f,
       0.0f, 0.0f, 0.0f, 1.0f,
   };
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTransformView = 2u;
-    constexpr uint32_t kD3dTransformProjection = 3u;
-    constexpr uint32_t kD3dTransformWorld0 = 256u;
-    for (uint32_t idx : {kD3dTransformView, kD3dTransformProjection, kD3dTransformWorld0}) {
-      float* m = dev->transform_matrices[idx];
-      std::memset(m, 0, 16 * sizeof(float));
-      m[0] = 1.0f;
-      m[5] = 1.0f;
-      m[10] = 1.0f;
-      m[15] = 1.0f;
-    }
-    dev->fixedfunc_matrix_dirty = true;
+  // Use the public SetTransform DDI so the driver's dirty tracking and stateblock
+  // recording paths are exercised (avoid poking `Device::transform_matrices`
+  // directly in host-side tests).
+  constexpr uint32_t kD3dTransformView = 2u;
+  constexpr uint32_t kD3dTransformProjection = 3u;
+  constexpr uint32_t kD3dTransformWorld0 = 256u;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0)")) {
+    return false;
   }
 
   const VertexXyzDiffuse tri[3] = {
