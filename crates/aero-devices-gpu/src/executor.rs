@@ -207,6 +207,94 @@ impl AeroGpuExecutor {
             .collect()
     }
 
+    pub(crate) fn save_pending_submissions_snapshot_state(&self) -> Option<Vec<u8>> {
+        if self.pending_submissions.is_empty() {
+            return None;
+        }
+
+        let mut enc = Encoder::new().u32(self.pending_submissions.len() as u32);
+        for sub in &self.pending_submissions {
+            enc = enc
+                .u32(sub.flags)
+                .u32(sub.context_id)
+                .u32(sub.engine_id)
+                .u64(sub.signal_fence)
+                .u32(sub.cmd_stream.len() as u32)
+                .bytes(&sub.cmd_stream);
+            match sub.alloc_table.as_ref().filter(|bytes| !bytes.is_empty()) {
+                Some(bytes) => {
+                    enc = enc.u32(bytes.len() as u32).bytes(bytes);
+                }
+                None => {
+                    enc = enc.u32(0);
+                }
+            }
+        }
+
+        Some(enc.finish())
+    }
+
+    pub(crate) fn load_pending_submissions_snapshot_state(
+        &mut self,
+        bytes: &[u8],
+    ) -> SnapshotResult<()> {
+        // This queue may contain arbitrary guest command streams. Since snapshots can come from
+        // untrusted sources, cap sizes to keep decode bounded.
+        const MAX_PENDING_SUBMISSIONS: usize = 65_536;
+
+        let mut d = Decoder::new(bytes);
+        let count = d.u32()? as usize;
+        if count > MAX_PENDING_SUBMISSIONS {
+            return Err(SnapshotError::InvalidFieldEncoding("pending_submissions"));
+        }
+
+        let mut pending = VecDeque::new();
+        pending
+            .try_reserve_exact(count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+
+        for _ in 0..count {
+            let flags = d.u32()?;
+            let context_id = d.u32()?;
+            let engine_id = d.u32()?;
+            let signal_fence = d.u64()?;
+
+            let cmd_len = d.u32()? as usize;
+            if cmd_len > MAX_CMD_STREAM_SIZE_BYTES as usize {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "pending_submissions.cmd_stream",
+                ));
+            }
+            let cmd_stream = d.bytes_vec(cmd_len)?;
+
+            let alloc_len = d.u32()? as usize;
+            if alloc_len > MAX_ALLOC_TABLE_SIZE_BYTES as usize {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "pending_submissions.alloc_table",
+                ));
+            }
+            let alloc_table = if alloc_len == 0 {
+                None
+            } else {
+                Some(d.bytes_vec(alloc_len)?)
+            };
+
+            pending.push_back(AeroGpuBackendSubmission {
+                flags,
+                context_id,
+                engine_id,
+                signal_fence,
+                cmd_stream,
+                alloc_table,
+            });
+        }
+
+        d.finish()?;
+
+        self.pending_submissions = pending;
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.pending_submissions.clear();
         self.pending_fences.clear();

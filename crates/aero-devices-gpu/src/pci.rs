@@ -845,7 +845,7 @@ fn all_ones(size: usize) -> u64 {
 
 impl IoSnapshot for AeroGpuPciDevice {
     const DEVICE_ID: [u8; 4] = *b"AGPU";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -856,10 +856,14 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_VBLANK_IRQ_ENABLE_PENDING: u16 = 6;
         const TAG_DOORBELL_PENDING: u16 = 7;
         const TAG_RING_RESET_PENDING_DMA: u16 = 8;
+        const TAG_PENDING_SUBMISSIONS: u16 = 9;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_bytes(TAG_REGS, encode_regs(&self.regs));
         w.field_bytes(TAG_EXECUTOR, self.executor.save_snapshot_state());
+        if let Some(bytes) = self.executor.save_pending_submissions_snapshot_state() {
+            w.field_bytes(TAG_PENDING_SUBMISSIONS, bytes);
+        }
         if let Some(vblank_period_ns) = self.vblank_period_ns {
             w.field_u64(TAG_VBLANK_PERIOD_NS, vblank_period_ns);
         }
@@ -887,6 +891,7 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_VBLANK_IRQ_ENABLE_PENDING: u16 = 6;
         const TAG_DOORBELL_PENDING: u16 = 7;
         const TAG_RING_RESET_PENDING_DMA: u16 = 8;
+        const TAG_PENDING_SUBMISSIONS: u16 = 9;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -903,12 +908,17 @@ impl IoSnapshot for AeroGpuPciDevice {
         let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
         let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
 
+        // Reset executor state up-front so any fields not restored from the snapshot do not leak
+        // across restore calls.
+        self.executor.reset();
+        self.executor.last_submissions.clear();
+
         // Executor state is optional for forward/backward compatibility; missing means "reset".
         if let Some(exec_bytes) = r.bytes(TAG_EXECUTOR) {
             self.executor.load_snapshot_state(exec_bytes)?;
-        } else {
-            self.executor.reset();
-            self.executor.last_submissions.clear();
+        }
+        if let Some(buf) = r.bytes(TAG_PENDING_SUBMISSIONS) {
+            self.executor.load_pending_submissions_snapshot_state(buf)?;
         }
 
         self.regs = regs;
