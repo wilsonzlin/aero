@@ -1235,8 +1235,6 @@ impl AeroGpuMmioDevice {
                 ) {
                     let tail = mem.read_u32(tail_addr);
                     mem.write_u32(head_addr, tail);
-                } else {
-                    self.record_error(pci::AerogpuErrorCode::Oob, 0);
                 }
             }
 
@@ -1295,8 +1293,6 @@ impl AeroGpuMmioDevice {
                     // Driver and device are out of sync; drop all pending work to avoid looping forever.
                     if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {
                         mem.write_u32(head_addr, tail);
-                    } else {
-                        self.record_error(pci::AerogpuErrorCode::Oob, 0);
                     }
                     self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
                     break 'doorbell;
@@ -1308,9 +1304,30 @@ impl AeroGpuMmioDevice {
                 while head != tail && processed < max {
                     // entry_count is validated as a power-of-two.
                     let slot = head & (ring_hdr.entry_count - 1);
-                    let desc_gpa = self.ring_gpa
-                        + RING_HEADER_SIZE_BYTES
-                        + (u64::from(slot) * u64::from(ring_hdr.entry_stride_bytes));
+                    let desc_offset = match u64::from(slot).checked_mul(u64::from(ring_hdr.entry_stride_bytes)) {
+                        Some(v) => v,
+                        None => {
+                            if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {
+                                mem.write_u32(head_addr, tail);
+                            }
+                            self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                            break 'doorbell;
+                        }
+                    };
+                    let desc_gpa = match self
+                        .ring_gpa
+                        .checked_add(RING_HEADER_SIZE_BYTES)
+                        .and_then(|base| base.checked_add(desc_offset))
+                    {
+                        Some(v) => v,
+                        None => {
+                            if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {
+                                mem.write_u32(head_addr, tail);
+                            }
+                            self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                            break 'doorbell;
+                        }
+                    };
 
                     let mut desc_buf = [0u8; ring::AerogpuSubmitDesc::SIZE_BYTES];
                     mem.read_physical(desc_gpa, &mut desc_buf);
@@ -1331,6 +1348,7 @@ impl AeroGpuMmioDevice {
                     mem.write_u32(head_addr, head);
                 } else {
                     self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                    break 'doorbell;
                 }
 
                 // Mirror the emulator device model: after consuming a doorbell, publish the current fence

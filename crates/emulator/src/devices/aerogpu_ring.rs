@@ -75,7 +75,9 @@ impl AeroGpuRingHeader {
     }
 
     pub fn write_head(mem: &mut dyn MemoryBus, gpa: u64, head: u32) {
-        mem.write_u32(gpa + RING_HEAD_OFFSET, head);
+        if let Some(addr) = gpa.checked_add(RING_HEAD_OFFSET) {
+            mem.write_u32(addr, head);
+        }
     }
 
     pub fn slot_index(&self, index: u32) -> u32 {

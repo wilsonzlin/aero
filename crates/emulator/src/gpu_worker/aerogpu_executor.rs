@@ -462,9 +462,24 @@ impl AeroGpuExecutor {
         let max = ring.entry_count.min(pending);
 
         while head != tail && processed < max {
-            let desc_gpa = regs.ring_gpa
-                + AEROGPU_RING_HEADER_SIZE_BYTES
-                + (u64::from(ring.slot_index(head)) * u64::from(ring.entry_stride_bytes));
+            let desc_offset =
+                u64::from(ring.slot_index(head)) * u64::from(ring.entry_stride_bytes);
+            let desc_gpa = match regs
+                .ring_gpa
+                .checked_add(AEROGPU_RING_HEADER_SIZE_BYTES)
+                .and_then(|base| base.checked_add(desc_offset))
+            {
+                Some(v) => v,
+                None => {
+                    // Address overflow when forming the descriptor GPA. Drop all pending work (as if the
+                    // ring were corrupted) to avoid looping forever and surface an OOB error.
+                    AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
+                    regs.stats.malformed_submissions =
+                        regs.stats.malformed_submissions.saturating_add(1);
+                    regs.record_error(AerogpuErrorCode::Oob, 0);
+                    return;
+                }
+            };
             let desc = AeroGpuSubmitDesc::read_from(mem, desc_gpa);
 
             regs.stats.submissions = regs.stats.submissions.saturating_add(1);

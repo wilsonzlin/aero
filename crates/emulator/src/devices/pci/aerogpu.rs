@@ -639,8 +639,10 @@ impl AeroGpuPciDevice {
     fn reset_ring(&mut self, mem: &mut dyn MemoryBus) {
         let dma_enabled = self.bus_master_enabled();
         if dma_enabled && self.regs.ring_gpa != 0 {
-            let tail = mem.read_u32(self.regs.ring_gpa + RING_TAIL_OFFSET);
-            AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
+            if let Some(tail_addr) = self.regs.ring_gpa.checked_add(RING_TAIL_OFFSET) {
+                let tail = mem.read_u32(tail_addr);
+                AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
+            }
         }
         self.executor.reset();
         self.regs.completed_fence = 0;
