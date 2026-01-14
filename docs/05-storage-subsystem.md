@@ -845,7 +845,8 @@ In production, Aero often combines **immutable base media** with a **local writa
   as such to the guest.
 
 To make this intent explicit (and to avoid accidental mutation), prefer wrapping base media in a
-read-only adapter at the disk layer (e.g. `ReadOnlyDisk` / `ReadOnlyBackend` around the
+read-only adapter at the disk/backing-store layer (e.g. `aero_storage::ReadOnlyDisk` /
+`aero_storage::ReadOnlyBackend` around the
 canonical `aero_storage::{VirtualDisk, StorageBackend}` traits; see
 [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md)).
 

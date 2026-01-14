@@ -132,9 +132,9 @@ Aero frequently attaches media that is **semantically immutable**:
 - **Install/driver ISOs** attached via ATAPI
 - **Remote “chunked” base images** served from object storage/CDNs
 
-For these, prefer to enforce immutability in the **disk layer** with a read-only wrapper (e.g.
-`ReadOnlyBackend` / `ReadOnlyDisk` around the canonical traits), rather than relying on “we
-just won’t call `write_at`”.
+For these, prefer to enforce immutability in the **disk/backing-store layer** with a read-only
+wrapper (e.g. `aero_storage::ReadOnlyDisk` / `aero_storage::ReadOnlyBackend` around the canonical
+traits), rather than relying on “we just won’t call `write_at`”.
 
 This catches accidental write paths early (and makes bugs loud), and it documents intent at the API
 boundary.
