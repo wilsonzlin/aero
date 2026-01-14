@@ -41,6 +41,11 @@ mod wasm {
             options: &JsValue,
         ) -> core::result::Result<Promise, JsValue>;
 
+        #[wasm_bindgen(catch, method, js_name = createWritable)]
+        fn create_writable_no_args(
+            this: &FileSystemFileHandle,
+        ) -> core::result::Result<Promise, JsValue>;
+
         #[wasm_bindgen(catch, method, js_name = getFile)]
         fn get_file(this: &FileSystemFileHandle) -> core::result::Result<Promise, JsValue>;
 
@@ -377,6 +382,14 @@ mod wasm {
         file: &FileSystemFileHandle,
         keep_existing_data: bool,
     ) -> Result<FileSystemWritableFileStream, DiskError> {
+        // Some browser implementations reject the `createWritable(options)` options-bag overload,
+        // but still support `createWritable()` without arguments. Mirror the safe overwrite
+        // fallback pattern described in `docs/11-browser-apis.md`.
+        //
+        // NOTE: Current callers all pass `keep_existing_data = true`. When we fall back to the
+        // no-args overload, we assume it preserves existing data by default on these older
+        // implementations. If a future caller needs `keep_existing_data = false`, the no-args
+        // fallback may not guarantee truncation and might require an explicit truncate step.
         let opts = Object::new();
         Reflect::set(
             &opts,
@@ -385,16 +398,28 @@ mod wasm {
         )
         .map_err(disk_error_from_js)?;
 
-        let promise = file
-            .create_writable(&opts.into())
-            .map_err(disk_error_from_js)?;
+        let create_no_args = || async {
+            let promise = file
+                .create_writable_no_args()
+                .map_err(disk_error_from_js)?;
+            await_promise(promise).await
+        };
 
-        let stream = match await_promise(promise).await {
+        let with_opts = match file.create_writable(&opts.into()) {
+            Ok(promise) => await_promise(promise).await,
+            Err(err) => Err(disk_error_from_js(err)),
+        };
+
+        let stream = match with_opts {
             Ok(stream) => stream,
             // When a file already has an open sync access handle, browsers use
             // `InvalidStateError`; map it to the more semantic `InUse`.
             Err(DiskError::InvalidState(_)) => return Err(DiskError::InUse),
-            Err(e) => return Err(e),
+            Err(_) => match create_no_args().await {
+                Ok(stream) => stream,
+                Err(DiskError::InvalidState(_)) => return Err(DiskError::InUse),
+                Err(e) => return Err(e),
+            },
         };
 
         stream
