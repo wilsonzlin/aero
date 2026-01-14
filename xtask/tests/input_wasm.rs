@@ -224,6 +224,7 @@ fn said_rust_only_skips_node_and_npm() -> Result<(), Box<dyn std::error::Error>>
         "ehci",
         "xhci_enum_smoke",
         "webusb_passthrough_uhci",
+        "xhci_stop_endpoint_unschedules",
         "xhci_webusb_passthrough",
     ] {
         assert!(
