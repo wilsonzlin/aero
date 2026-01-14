@@ -637,6 +637,26 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
         return;
     }
 
+    // `Sm4Program::parse_from_dxbc` allocates a `Vec<u32>` of the declared token length. Avoid
+    // allocating very large (but in-bounds) token streams by pre-checking the length token in the
+    // selected shader chunk. Out-of-bounds declared lengths are still parsed (they fail before
+    // allocating).
+    if let Some(chunk) = shader_chunk.as_ref() {
+        let shader_bytes = chunk.data;
+        if shader_bytes.len().is_multiple_of(4) && shader_bytes.len() >= 8 {
+            let available = shader_bytes.len() / 4;
+            let declared_len = u32::from_le_bytes([
+                shader_bytes[4],
+                shader_bytes[5],
+                shader_bytes[6],
+                shader_bytes[7],
+            ]) as usize;
+            if declared_len <= available && declared_len > MAX_PROGRAM_TOKENS_DWORDS {
+                return;
+            }
+        }
+    }
+
     let Ok(program) = aero_d3d11::sm4::Sm4Program::parse_from_dxbc(&dxbc) else {
         return;
     };
