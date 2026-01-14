@@ -1,6 +1,6 @@
 #![cfg(feature = "aerogpu-native")]
 
-use std::time::{Duration, Instant};
+const NS_PER_MS: u64 = 1_000_000;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST,
@@ -73,13 +73,12 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
 }
 
 fn drive_until_fence(mem: &mut Bus, dev: &mut AeroGpuPciDevice, fence: u64) {
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= fence {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(mem, now);
     }
     assert_eq!(dev.regs.completed_fence, fence);

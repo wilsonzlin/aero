@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent as ProtocolCmdPresent,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
@@ -26,6 +24,8 @@ use emulator::gpu_worker::aerogpu_backend::ImmediateAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::MemoryBus;
+
+const NS_PER_MS: u64 = 1_000_000;
 
 const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
 const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
@@ -187,6 +187,7 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
 
     // With COMMAND.BME clear, DMA must not run.
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
     assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
@@ -194,6 +195,7 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     // Once bus mastering is enabled, the same doorbell should process.
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 42);
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
     assert_eq!(
@@ -234,6 +236,7 @@ fn pci_wrapper_gates_aerogpu_intx_on_pci_command_intx_disable_bit() {
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
     assert!(dev.irq_level());
 
     // INTX_DISABLE suppresses the external interrupt line, but does not clear internal state.
@@ -299,6 +302,7 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -597,6 +601,7 @@ fn doorbell_accepts_newer_minor_abi_version() {
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.stats.malformed_submissions, 0);
     assert_eq!(dev.regs.completed_fence, 42);
@@ -653,6 +658,7 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.stats.malformed_submissions, 0);
     assert_eq!(dev.regs.stats.submissions, 2);
@@ -703,6 +709,7 @@ fn doorbell_rejects_unknown_major_abi_version() {
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::ERROR);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
     assert!(dev.irq_level());
@@ -934,11 +941,11 @@ fn vblank_tick_sets_irq_status() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
 
-    let t0 = Instant::now();
+    let t0 = 0;
     dev.tick(&mut mem, t0);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 
-    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+    dev.tick(&mut mem, t0 + 100 * NS_PER_MS);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(dev.irq_level());
 }
@@ -956,19 +963,19 @@ fn enabling_vblank_irq_does_not_immediately_fire_on_catchup_ticks() {
 
     // Create a vblank schedule anchored in the past without calling tick() again. This makes the
     // next vblank deadline already elapsed by the time we enable vblank interrupts.
-    let past = Instant::now() - Duration::from_millis(500);
+    let past = 0;
     dev.tick(&mut mem, past);
 
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
 
     // A catch-up tick that covers vblanks that occurred *before* enabling must not latch the vblank
     // IRQ bit (WaitForVerticalBlankEvent must wait for the next vblank after enabling).
-    let now = Instant::now();
+    let now = 500 * NS_PER_MS;
     dev.tick(&mut mem, now);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(!dev.irq_level());
 
-    dev.tick(&mut mem, now + Duration::from_millis(100));
+    dev.tick(&mut mem, now + 100 * NS_PER_MS);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(dev.irq_level());
 }
@@ -1062,6 +1069,11 @@ fn vsynced_present_fence_completes_on_vblank() {
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
+    // Consume the doorbell and queue the vsync-paced fence. No vblank has elapsed yet, so the fence
+    // should remain pending.
+    let t0 = 0;
+    dev.tick(&mut mem, t0);
+
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
@@ -1069,11 +1081,7 @@ fn vsynced_present_fence_completes_on_vblank() {
     let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
     assert_eq!(head_after, 1);
 
-    let t0 = Instant::now();
-    dev.tick(&mut mem, t0);
-    assert_eq!(dev.regs.completed_fence, 0);
-
-    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+    dev.tick(&mut mem, t0 + 100 * NS_PER_MS);
 
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1184,6 +1192,11 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
+    // Consume the doorbell and queue the vsync-paced fence. No vblank has elapsed yet, so the fence
+    // should remain pending.
+    let t0 = 0;
+    dev.tick(&mut mem, t0);
+
     // Backend completes immediately, but vsynced presents should still wait until vblank.
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1192,11 +1205,7 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
     let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
     assert_eq!(head_after, 1);
 
-    let t0 = Instant::now();
-    dev.tick(&mut mem, t0);
-    assert_eq!(dev.regs.completed_fence, 0);
-
-    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+    dev.tick(&mut mem, t0 + 100 * NS_PER_MS);
 
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1446,8 +1455,8 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
 
     // Simulate the host not calling `tick()` for a while by creating a vblank schedule anchored in
-    // the past. This makes `next_vblank` < Instant::now() before we submit work.
-    let past = Instant::now() - Duration::from_millis(500);
+    // the past. This makes `next_vblank_ns` < `now_ns` before we submit work.
+    let past = 0;
     dev.tick(&mut mem, past);
 
     // Ring layout in guest memory.
@@ -1522,17 +1531,17 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
 
-    // DOORBELL internally catches up the vblank clock to Instant::now() *before* queuing fences.
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Catch-up vblanks that happened before the submission must not complete a vsynced present.
-    let now = Instant::now();
+    // `tick()` catches up vblank state before consuming the pending doorbell.
+    let now = 500 * NS_PER_MS;
     dev.tick(&mut mem, now);
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
     // The next vblank after the submission should complete the fence.
-    dev.tick(&mut mem, now + Duration::from_millis(100));
+    dev.tick(&mut mem, now + 100 * NS_PER_MS);
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 }
@@ -1629,33 +1638,34 @@ fn vsynced_present_does_not_complete_on_elapsed_vblank_before_submission() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
 
-    // Establish a vblank schedule such that the next vblank is at t=10ms.
-    //
-    // We use a base time slightly in the past so the DOORBELL handler's internal `Instant::now()`
-    // call lines up with our intended t=11ms submission point without sleeping.
-    let t0 = Instant::now() - Duration::from_millis(11);
+    // Establish a vblank schedule such that the next vblank is at t=10ms. We'll submit a vsync
+    // present at t=11ms via DOORBELL without a host tick at t=10ms; the device must catch up vblank
+    // state before processing the doorbell so the present cannot complete on the already-elapsed
+    // vblank edge.
+    let t0 = 0u64;
     dev.tick(&mut mem, t0);
-    dev.tick(&mut mem, t0 + Duration::from_millis(9));
+    dev.tick(&mut mem, t0 + 9 * NS_PER_MS);
 
     // Submit at ~t=11ms without a host tick at t=10ms. DOORBELL must catch up the vblank clock
     // before accepting new work, so the vsynced present can't complete on the already-elapsed
     // vblank edge at t=10ms.
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, t0 + 11 * NS_PER_MS);
     assert_eq!(dev.regs.completed_fence, 0);
 
-    // DOORBELL's internal catch-up should have processed the vblank edge at t=10ms (and possibly
-    // more if the host clock advanced further than expected). The vsynced fence must not complete
-    // on any already-elapsed vblank edges.
+    // The tick that processed the doorbell should have caught up the vblank edge at t=10ms (and
+    // possibly more if the host clock advanced further than expected). The vsynced fence must not
+    // complete on any already-elapsed vblank edges.
     let vblank_seq = u32::try_from(dev.regs.scanout0_vblank_seq).expect("vblank seq fits u32");
     assert!(
         vblank_seq >= 1,
-        "expected DOORBELL to catch up vblank scheduling before accepting work"
+        "expected tick to catch up vblank scheduling before processing the doorbell"
     );
-    let period = Duration::from_nanos(dev.regs.scanout0_vblank_period_ns as u64);
-    let next_vblank = t0 + period * (vblank_seq + 1);
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
+    let next_vblank = t0 + period_ns * u64::from(vblank_seq + 1);
 
     // No completion before the next vblank after the submission.
-    dev.tick(&mut mem, next_vblank - Duration::from_nanos(1));
+    dev.tick(&mut mem, next_vblank - 1);
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
@@ -1677,9 +1687,9 @@ fn scanout_disable_stops_vblank_and_clears_pending_irq() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
 
-    let t0 = Instant::now();
+    let t0 = 0;
     dev.tick(&mut mem, t0);
-    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+    dev.tick(&mut mem, t0 + 100 * NS_PER_MS);
 
     let seq_before_disable = dev.regs.scanout0_vblank_seq;
     assert_ne!(seq_before_disable, 0);
@@ -1690,16 +1700,16 @@ fn scanout_disable_stops_vblank_and_clears_pending_irq() {
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(!dev.irq_level());
 
-    dev.tick(&mut mem, t0 + Duration::from_millis(200));
+    dev.tick(&mut mem, t0 + 200 * NS_PER_MS);
     assert_eq!(dev.regs.scanout0_vblank_seq, seq_before_disable);
 
     // Re-enable scanout and tick before the next period: should not generate a "stale" vblank.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
-    dev.tick(&mut mem, t0 + Duration::from_millis(250));
+    dev.tick(&mut mem, t0 + 250 * NS_PER_MS);
     assert_eq!(dev.regs.scanout0_vblank_seq, seq_before_disable);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 
-    dev.tick(&mut mem, t0 + Duration::from_millis(350));
+    dev.tick(&mut mem, t0 + 350 * NS_PER_MS);
     assert!(dev.regs.scanout0_vblank_seq > seq_before_disable);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(dev.irq_level());
@@ -1940,6 +1950,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
     assert_eq!(mem.read_u32(fence_gpa), AEROGPU_FENCE_PAGE_MAGIC);
@@ -2182,6 +2193,7 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 2);
 
@@ -2318,6 +2330,7 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -2550,6 +2563,7 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -2813,6 +2827,7 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -3065,6 +3080,7 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -3314,6 +3330,7 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -3601,6 +3618,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -3849,6 +3867,7 @@ fn exec_d3d11_fullscreen_triangle_center_pixel(push_blend_state: impl FnOnce(&mu
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -4264,6 +4283,7 @@ fn cmd_exec_d3d11_depth_test_rejects_farther_triangle() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 
@@ -4663,6 +4683,7 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
     dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(dev.regs.completed_fence, 1);
 

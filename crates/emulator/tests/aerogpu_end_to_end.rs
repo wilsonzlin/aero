@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+const NS_PER_MS: u64 = 1_000_000;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -232,13 +232,12 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..100 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 

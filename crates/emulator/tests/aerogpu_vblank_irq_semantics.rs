@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use emulator::devices::aerogpu_regs::{irq_bits, mmio};
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::{MmioDevice, PciDevice};
@@ -39,14 +37,13 @@ fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
     // Enable scanout to start the free-running vblank clock.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
 
-    let period_ns = dev.regs.scanout0_vblank_period_ns;
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
     assert_ne!(period_ns, 0, "test requires vblank pacing to be enabled");
-    let period = Duration::from_nanos(period_ns as u64);
 
     // Arm the scheduler with a next-vblank deadline that is already in the past. This simulates
     // the device not being ticked for a while (host stall / guest paused).
-    let now = Instant::now();
-    dev.tick(&mut mem, now - period * 3);
+    let now = period_ns * 10;
+    dev.tick(&mut mem, now - period_ns * 3);
 
     // Enable vblank IRQ delivery. The device must catch up its vblank clock *before* enabling
     // IRQ latching so that old vblanks while masked do not immediately appear as a pending IRQ.
@@ -62,11 +59,11 @@ fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
 
     // An immediate tick at the current time should *not* produce a pending IRQ (the next vblank
     // deadline should be in the future).
-    let after_enable = Instant::now();
+    let after_enable = now;
     dev.tick(&mut mem, after_enable);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 
     // The first tick that crosses the next vblank edge should latch the IRQ status bit.
-    dev.tick(&mut mem, after_enable + period);
+    dev.tick(&mut mem, after_enable + period_ns);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 }

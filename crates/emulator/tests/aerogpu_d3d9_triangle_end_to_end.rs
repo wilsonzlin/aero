@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+const NS_PER_MS: u64 = 1_000_000;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
@@ -490,13 +490,12 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 
@@ -888,13 +887,12 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 
@@ -1189,13 +1187,12 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 
@@ -1593,13 +1590,12 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 2);
 
     // Drive polling until both fences complete.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..400 {
         if dev.regs.completed_fence >= 2 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 
@@ -1799,13 +1795,12 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 
@@ -1904,13 +1899,12 @@ fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
 
     // Drive polling until the fence completes. Even though the command stream is invalid, we must
     // still make forward progress to avoid deadlocking the guest.
-    let start = Instant::now();
-    let mut now = start;
+    let mut now = 0u64;
     for _ in 0..200 {
         if dev.regs.completed_fence >= 1 {
             break;
         }
-        now += Duration::from_millis(1);
+        now += NS_PER_MS;
         dev.tick(&mut mem, now);
     }
 

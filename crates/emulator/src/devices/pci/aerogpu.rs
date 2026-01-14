@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use aero_gpu_vga::{PortIO as _, VgaDevice};
 use aero_shared::scanout_state::{ScanoutState, ScanoutStateUpdate, SCANOUT_SOURCE_WDDM};
@@ -75,9 +74,13 @@ pub struct AeroGpuPciDevice {
     /// (drivers typically write LO then HI).
     scanout0_fb_gpa_lo_pending: bool,
 
-    boot_time: Instant,
-    vblank_interval: Option<Duration>,
-    next_vblank: Option<Instant>,
+    boot_time_ns: Option<u64>,
+    vblank_interval_ns: Option<u64>,
+    next_vblank_ns: Option<u64>,
+    suppress_vblank_irq: bool,
+
+    ring_reset_pending: bool,
+    doorbell_pending: bool,
 }
 
 impl AeroGpuPciDevice {
@@ -114,18 +117,18 @@ impl AeroGpuPciDevice {
         // Interrupt pin INTA#.
         config_space.write(0x3d, 1, 1);
 
-        let vblank_interval = cfg.vblank_hz.and_then(|hz| {
+        let vblank_interval_ns = cfg.vblank_hz.and_then(|hz| {
             if hz == 0 {
                 return None;
             }
             // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
             let period_ns = 1_000_000_000u64.div_ceil(hz as u64);
-            Some(Duration::from_nanos(period_ns))
+            Some(period_ns)
         });
 
         let mut regs = AeroGpuRegs::default();
-        if let Some(interval) = vblank_interval {
-            regs.scanout0_vblank_period_ns = interval.as_nanos().min(u32::MAX as u128) as u32;
+        if let Some(interval_ns) = vblank_interval_ns {
+            regs.scanout0_vblank_period_ns = interval_ns.min(u64::from(u32::MAX)) as u32;
         } else {
             // If vblank is disabled by configuration, also clear the advertised feature bit so
             // guests don't wait on a vblank that will never arrive.
@@ -154,9 +157,12 @@ impl AeroGpuPciDevice {
             scanout_state: None,
             last_published_scanout0: None,
             scanout0_fb_gpa_lo_pending: false,
-            boot_time: Instant::now(),
-            vblank_interval,
-            next_vblank: None,
+            boot_time_ns: None,
+            vblank_interval_ns,
+            next_vblank_ns: None,
+            suppress_vblank_irq: false,
+            ring_reset_pending: false,
+            doorbell_pending: false,
         }
     }
 
@@ -350,12 +356,45 @@ impl AeroGpuPciDevice {
             vram[idx] = b;
         }
     }
+    pub fn reset(&mut self) {
+        // Preserve the configured vblank cadence and executor backend while resetting all
+        // guest-visible state.
+        let vblank_interval_ns = self.vblank_interval_ns;
 
-    pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
+        self.regs = AeroGpuRegs::default();
+        if let Some(interval_ns) = vblank_interval_ns {
+            self.regs.scanout0_vblank_period_ns = interval_ns.min(u64::from(u32::MAX)) as u32;
+        } else {
+            self.regs.features &= !FEATURE_VBLANK;
+        }
+
+        self.executor.reset();
+        self.irq_level = false;
+        self.boot_time_ns = None;
+        self.next_vblank_ns = None;
+        self.suppress_vblank_irq = false;
+        self.ring_reset_pending = false;
+        self.doorbell_pending = false;
+    }
+
+    pub fn tick(&mut self, mem: &mut dyn MemoryBus, now_ns: u64) {
         // Coalesce any deferred scanout register updates (page flips / dynamic reprogramming).
         self.maybe_publish_wddm_scanout0_state();
 
+        let boot_time_ns = *self.boot_time_ns.get_or_insert(now_ns);
+
         let dma_enabled = self.bus_master_enabled();
+        let suppress_vblank_irq = self.suppress_vblank_irq;
+        // Suppression is a one-tick guard against "catch-up" vblank edges causing an immediate IRQ
+        // when the guest enables vblank delivery. It must not persist across multiple `tick()` calls
+        // or we'd miss the first vblank after enable.
+        self.suppress_vblank_irq = false;
+
+        if self.ring_reset_pending {
+            self.ring_reset_pending = false;
+            self.doorbell_pending = false;
+            self.reset_ring(mem);
+        }
 
         // Polling completions and flushing fences may write guest memory (fence page / writeback).
         // When PCI bus mastering is disabled (COMMAND.BME=0), the device must not perform DMA.
@@ -367,51 +406,62 @@ impl AeroGpuPciDevice {
 
         // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
         // vsync-delayed fences to remain queued forever.
-        if dma_enabled && (self.vblank_interval.is_none() || !self.regs.scanout0.enable) {
+        if dma_enabled && (self.vblank_interval_ns.is_none() || !self.regs.scanout0.enable) {
             self.executor.flush_pending_fences(&mut self.regs, mem);
             self.update_irq_level();
         }
 
-        let Some(interval) = self.vblank_interval else {
-            return;
-        };
-        if !self.regs.scanout0.enable {
-            return;
-        }
-        let mut next = self.next_vblank.unwrap_or(now + interval);
-        if now < next {
-            self.next_vblank = Some(next);
-            return;
-        }
+        // Vblank bookkeeping and vblank-paced fence completion. This is intentionally independent
+        // of doorbell processing so we can catch up vblank state before consuming new submissions.
+        if let (Some(interval_ns), true) = (self.vblank_interval_ns, self.regs.scanout0.enable) {
+            let mut next = self
+                .next_vblank_ns
+                .unwrap_or_else(|| now_ns.saturating_add(interval_ns));
+            if now_ns < next {
+                self.next_vblank_ns = Some(next);
+            } else {
+                let mut ticks = 0u32;
+                while now_ns >= next {
+                    // Counters advance even if vblank IRQ delivery is masked.
+                    self.regs.scanout0_vblank_seq = self.regs.scanout0_vblank_seq.wrapping_add(1);
+                    let t_ns = next.saturating_sub(boot_time_ns);
+                    self.regs.scanout0_vblank_time_ns = t_ns;
 
-        let mut ticks = 0u32;
-        while now >= next {
-            // Counters advance even if vblank IRQ delivery is masked.
-            self.regs.scanout0_vblank_seq = self.regs.scanout0_vblank_seq.wrapping_add(1);
-            let t_ns = next.saturating_duration_since(self.boot_time).as_nanos();
-            self.regs.scanout0_vblank_time_ns = t_ns.min(u64::MAX as u128) as u64;
+                    // Only latch the vblank IRQ status bit while the guest has it enabled.
+                    // This prevents an immediate "stale" interrupt on re-enable.
+                    if !suppress_vblank_irq
+                        && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0
+                    {
+                        self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
+                    }
 
-            // Only latch the vblank IRQ status bit while the guest has it enabled.
-            // This prevents an immediate "stale" interrupt on re-enable.
-            if (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0 {
-                self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
+                    if dma_enabled {
+                        self.executor.process_vblank_tick(&mut self.regs, mem);
+                    }
+
+                    next = next.saturating_add(interval_ns);
+                    ticks += 1;
+
+                    // Avoid unbounded catch-up work if the host stalls for a very long time.
+                    if ticks >= 1024 {
+                        next = now_ns.saturating_add(interval_ns);
+                        break;
+                    }
+                }
+                self.next_vblank_ns = Some(next);
+                self.update_irq_level();
             }
+        }
 
+        // Consume any pending doorbells after catching up vblank state so vsync-paced submissions
+        // cannot complete on an already-elapsed vblank edge.
+        if self.doorbell_pending {
+            self.doorbell_pending = false;
             if dma_enabled {
-                self.executor.process_vblank_tick(&mut self.regs, mem);
-            }
-
-            next += interval;
-            ticks += 1;
-
-            // Avoid unbounded catch-up work if the host stalls for a very long time.
-            if ticks >= 1024 {
-                next = now + interval;
-                break;
+                self.executor.process_doorbell(&mut self.regs, mem);
+                self.update_irq_level();
             }
         }
-        self.next_vblank = Some(next);
-        self.update_irq_level();
     }
 
     pub fn read_scanout0_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
@@ -611,7 +661,7 @@ impl AeroGpuPciDevice {
         }
     }
 
-    fn mmio_write_dword(&mut self, mem: &mut dyn MemoryBus, offset: u64, value: u32) {
+    fn mmio_write_dword(&mut self, offset: u64, value: u32) {
         match offset {
             mmio::RING_GPA_LO => {
                 self.regs.ring_gpa =
@@ -626,7 +676,7 @@ impl AeroGpuPciDevice {
             }
             mmio::RING_CONTROL => {
                 if value & ring_control::RESET != 0 {
-                    self.reset_ring(mem);
+                    self.ring_reset_pending = true;
                 }
                 self.regs.ring_control = value & ring_control::ENABLE;
             }
@@ -639,23 +689,17 @@ impl AeroGpuPciDevice {
                     (self.regs.fence_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
             }
             mmio::DOORBELL => {
-                // Keep the vblank clock caught up to real time before accepting new work. Without
-                // this, a vsynced PRESENT submitted just after a vblank deadline (but before the
-                // next `tick()` call) could complete on that already-elapsed vblank edge.
-                self.tick(mem, Instant::now());
-                if self.bus_master_enabled() {
-                    self.executor.process_doorbell(&mut self.regs, mem);
-                    self.update_irq_level();
-                }
+                self.doorbell_pending = true;
             }
             mmio::IRQ_ENABLE => {
-                // Keep the vblank clock caught up before enabling vblank delivery. Without this,
-                // a vblank IRQ can "arrive" immediately on enable due to catch-up ticks, breaking
-                // `D3DKMTWaitForVerticalBlankEvent` pacing (it must wait for the *next* vblank).
                 let enabling_vblank = (value & irq_bits::SCANOUT_VBLANK) != 0
                     && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) == 0;
                 if enabling_vblank {
-                    self.tick(mem, Instant::now());
+                    // Suppress vblank IRQ latching on the next `tick` so we don't immediately raise
+                    // an interrupt due to catch-up vblank edges that occurred before the guest
+                    // enabled vblank delivery.
+                    self.suppress_vblank_irq = true;
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                 }
 
                 self.regs.irq_enable = value;
@@ -678,12 +722,8 @@ impl AeroGpuPciDevice {
                 self.regs.scanout0.enable = new_enable;
                 if prev_enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
-                    self.next_vblank = None;
+                    self.next_vblank_ns = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
-                    if self.bus_master_enabled() {
-                        self.executor.flush_pending_fences(&mut self.regs, mem);
-                    }
-                    self.update_irq_level();
                 }
                 if !new_enable {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
@@ -699,6 +739,7 @@ impl AeroGpuPciDevice {
                     // the scanout registers for page flips / mode changes.
                     self.maybe_publish_wddm_scanout0_state();
                 }
+                self.update_irq_level();
             }
             mmio::SCANOUT0_WIDTH => {
                 self.regs.scanout0.width = value;
@@ -751,6 +792,63 @@ impl AeroGpuPciDevice {
             // Ignore writes to read-only / unknown registers.
             _ => {}
         }
+    }
+
+    fn mmio_read_u32(&mut self, offset: u64, size: usize) -> u32 {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
+        }
+        if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
+            return 0;
+        }
+        let aligned = offset & !3;
+        let shift = (offset & 3) * 8;
+        let value = self.mmio_read_dword(aligned);
+        match size {
+            1 => (value >> shift) & 0xff,
+            2 => (value >> shift) & 0xffff,
+            4 => value,
+            _ => 0,
+        }
+    }
+
+    fn mmio_write_u32(&mut self, offset: u64, size: usize, value: u32) {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return;
+        }
+        if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
+            return;
+        }
+
+        let aligned = offset & !3;
+        let shift = (offset & 3) * 8;
+        let value32 = match size {
+            1 => (value & 0xff) << shift,
+            2 => (value & 0xffff) << shift,
+            4 => value,
+            _ => return,
+        };
+
+        let merged = if size == 4 {
+            value32
+        } else {
+            let cur = self.mmio_read_u32(aligned, 4);
+            let mask = match size {
+                1 => 0xffu32 << shift,
+                2 => 0xffffu32 << shift,
+                _ => 0,
+            };
+            (cur & !mask) | value32
+        };
+
+        self.mmio_write_dword(aligned, merged);
     }
 }
 
@@ -809,60 +907,12 @@ impl PciDevice for AeroGpuPciDevice {
 
 impl MmioDevice for AeroGpuPciDevice {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
-        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
-        if !self.mem_space_enabled() {
-            return match size {
-                1 => 0xff,
-                2 => 0xffff,
-                4 => u32::MAX,
-                _ => u32::MAX,
-            };
-        }
-        if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
-            return 0;
-        }
-        let aligned = offset & !3;
-        let shift = (offset & 3) * 8;
-        let value = self.mmio_read_dword(aligned);
-        match size {
-            1 => (value >> shift) & 0xff,
-            2 => (value >> shift) & 0xffff,
-            4 => value,
-            _ => 0,
-        }
+        self.mmio_read_u32(offset, size)
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
-        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
-        if !self.mem_space_enabled() {
-            return;
-        }
-        if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
-            return;
-        }
-
-        let aligned = offset & !3;
-        let shift = (offset & 3) * 8;
-        let value32 = match size {
-            1 => (value & 0xff) << shift,
-            2 => (value & 0xffff) << shift,
-            4 => value,
-            _ => return,
-        };
-
-        let merged = if size == 4 {
-            value32
-        } else {
-            let cur = self.mmio_read(mem, aligned, 4);
-            let mask = match size {
-                1 => 0xffu32 << shift,
-                2 => 0xffffu32 << shift,
-                _ => 0,
-            };
-            (cur & !mask) | value32
-        };
-
-        self.mmio_write_dword(mem, aligned, merged);
+        let _ = mem;
+        self.mmio_write_u32(offset, size, value);
     }
 }
 
@@ -1055,7 +1105,10 @@ mod tests {
 
         // Kick.
         dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
-
+        // Doorbell processing and backend completion are driven by `tick()`.
+        dev.tick(&mut mem, 0);
+        dev.tick(&mut mem, 0);
+ 
         // Fence must still advance even on backend error, and the ERROR IRQ bit must latch.
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1188,10 +1241,14 @@ mod tests {
         dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
         dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
         dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
-
+ 
         // Kick.
         dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
-
+        // Drive doorbell processing and poll the backend completion so the error IRQ payload
+        // becomes visible before the vsync-delayed fence completes.
+        dev.tick(&mut mem, 0);
+        dev.tick(&mut mem, 0);
+ 
         // Backend error should set ERROR before the vsync-delayed fence completes.
         assert_eq!(dev.regs.completed_fence, 0);
         assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1200,11 +1257,13 @@ mod tests {
         assert_eq!(dev.regs.error_fence, 1);
         assert_eq!(dev.regs.error_count, 1);
         assert!(dev.irq_level());
-
+ 
         // Force a vblank edge and ensure the fence still advances (even though the backend errored).
-        let next = dev.next_vblank.expect("vblank scheduling should be active");
+        let next = dev
+            .next_vblank_ns
+            .expect("vblank scheduling should be active");
         dev.tick(&mut mem, next);
-
+ 
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
@@ -1228,8 +1287,8 @@ mod tests {
             error: Some("boom".to_string()),
         });
         dev.set_backend(Box::new(backend));
-
-        dev.tick(&mut mem, Instant::now());
+ 
+        dev.tick(&mut mem, 0);
 
         let features_lo = dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64;
         let features_hi = dev.mmio_read(&mut mem, mmio::FEATURES_HI, 4) as u64;
