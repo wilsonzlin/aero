@@ -70,6 +70,25 @@ class QmpQueryPciParsingTests(unittest.TestCase):
         self.assertEqual(devs[0].device_id, 0x1042)
         self.assertEqual(devs[0].revision, 0x01)
 
+    def test_parses_nested_id_object(self) -> None:
+        h = self.harness
+        query = [
+            {
+                "devices": [
+                    {
+                        # Some QEMU builds nest IDs under an `id` object.
+                        "id": {"vendor_id": "0x1af4", "device_id": "0x1041"},
+                        "revision": "0x01",
+                    },
+                ]
+            }
+        ]
+        devs = h._iter_qmp_query_pci_devices(query)
+        self.assertEqual(len(devs), 1)
+        self.assertEqual(devs[0].vendor_id, 0x1AF4)
+        self.assertEqual(devs[0].device_id, 0x1041)
+        self.assertEqual(devs[0].revision, 0x01)
+
     def test_ignores_missing_vendor_or_device_id(self) -> None:
         h = self.harness
         query = [
@@ -88,4 +107,3 @@ class QmpQueryPciParsingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

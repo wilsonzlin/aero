@@ -486,16 +486,6 @@ def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
     """
     devices: list[_PciId] = []
 
-    def _as_int(v: object) -> Optional[int]:
-        if isinstance(v, int):
-            return v
-        if isinstance(v, str):
-            try:
-                return int(v, 0)
-            except ValueError:
-                return None
-        return None
-
     if not isinstance(query_pci_result, list):
         return devices
 
@@ -509,14 +499,13 @@ def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
             if not isinstance(dev, dict):
                 continue
 
-            vendor = _as_int(dev.get("vendor_id"))
-            device = _as_int(dev.get("device_id"))
+            vendor, device = _qmp_device_vendor_device_id(dev)  # type: ignore[arg-type]
             if vendor is None or device is None:
                 continue
 
-            subsys_vendor = _as_int(dev.get("subsystem_vendor_id"))
-            subsys = _as_int(dev.get("subsystem_id"))
-            rev = _as_int(dev.get("revision"))
+            subsys_vendor = _qmp_maybe_int(dev.get("subsystem_vendor_id"))
+            subsys = _qmp_maybe_int(dev.get("subsystem_id"))
+            rev = _qmp_maybe_int(dev.get("revision"))
             devices.append(_PciId(vendor, device, subsys_vendor, subsys, rev))
 
     return devices
