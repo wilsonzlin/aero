@@ -77,5 +77,53 @@ describe("requestWebGpuDevice()", () => {
     device.onuncapturederror({ error: "boom2" });
     expect(onUncapturedError).toHaveBeenCalledWith("boom2");
   });
-});
 
+  it("defaults to console.error logging when onUncapturedError is not provided", async () => {
+    let uncapturedHandler: ((ev: any) => void) | null = null;
+    const device = {
+      addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
+        if (type === "uncapturederror") uncapturedHandler = handler;
+      }),
+    };
+
+    const adapter = { requestDevice: vi.fn(async () => device) };
+    const gpu = {
+      requestAdapter: vi.fn(async () => adapter),
+      getPreferredCanvasFormat: vi.fn(() => "bgra8unorm"),
+    };
+    Object.defineProperty(globalThis, "navigator", { value: { gpu }, configurable: true });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await requestWebGpuDevice();
+
+    expect(uncapturedHandler).toBeTypeOf("function");
+    uncapturedHandler?.({ error: "boom3" });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("treats non-function onUncapturedError values as unset", async () => {
+    let uncapturedHandler: ((ev: any) => void) | null = null;
+    const device = {
+      addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
+        if (type === "uncapturederror") uncapturedHandler = handler;
+      }),
+    };
+
+    const adapter = { requestDevice: vi.fn(async () => device) };
+    const gpu = {
+      requestAdapter: vi.fn(async () => adapter),
+      getPreferredCanvasFormat: vi.fn(() => "bgra8unorm"),
+    };
+    Object.defineProperty(globalThis, "navigator", { value: { gpu }, configurable: true });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await requestWebGpuDevice({ onUncapturedError: 123 as any });
+
+    expect(uncapturedHandler).toBeTypeOf("function");
+    uncapturedHandler?.({ error: "boom4" });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
