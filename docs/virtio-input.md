@@ -129,14 +129,18 @@ Contract note:
 - `AERO-W7-VIRTIO` v1 encodes the contract major version in the PCI Revision ID (`REV_01`).
 - The in-tree Win7 virtio-input INFs are intentionally **revision-gated** (match only `...&REV_01` HWIDs), so QEMU-style
   `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
-  - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) matches the contract v1
-    subsystem-qualified keyboard/mouse IDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager names, **and**
-    includes a strict generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs are not
-    exposed/recognized.
+  - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) is intentionally
+    **SUBSYS-only**:
+    - it matches the subsystem-qualified keyboard/mouse IDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager
+      names, and
+    - it intentionally does **not** include a generic (no `SUBSYS`) fallback match.
   - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`, which is a **legacy filename
-    alias** for workflows/tools that still reference `virtio-input.inf`. From the first section header (`[Version]`)
-    onward, it is expected to remain byte-for-byte identical to `aero_virtio_input.inf` (different filename only; CI
-    enforces this).
+    alias** (`virtio-input.inf`) for workflows/tools that still reference the old INF filename.
+    - It adds an opt-in strict, revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that
+      do not expose the Aero subsystem IDs (e.g. stock QEMU).
+    - It is allowed to differ from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to
+      provide the fallback entry, but should otherwise stay in sync (see
+      `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (overlapping INFs can lead to
     confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.
