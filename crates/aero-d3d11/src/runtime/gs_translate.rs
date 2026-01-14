@@ -28,18 +28,16 @@ use crate::sm4_ir::{
 /// common encodings to stay robust across toolchains.
 const D3D10_SB_PRIMITIVE_POINT: u32 = 1;
 const D3D10_SB_PRIMITIVE_LINE: u32 = 2;
-/// `triangle` is commonly encoded as 4 (`D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST`).
-const D3D10_SB_PRIMITIVE_TRIANGLE: u32 = 4;
-/// `lineadj` is commonly encoded as 10/11 (`*_LINELIST_ADJ` / `*_LINESTRIP_ADJ`).
-const D3D10_SB_PRIMITIVE_LINE_ADJ: u32 = 10;
-/// `triangleadj` is commonly encoded as 12/13 (`*_TRIANGLELIST_ADJ` / `*_TRIANGLESTRIP_ADJ`).
-const D3D10_SB_PRIMITIVE_TRIANGLE_ADJ: u32 = 12;
+const D3D10_SB_PRIMITIVE_TRIANGLE: u32 = 3;
+const D3D10_SB_PRIMITIVE_LINE_ADJ: u32 = 6;
+const D3D10_SB_PRIMITIVE_TRIANGLE_ADJ: u32 = 7;
 
 /// D3D10 tokenized program format: `D3D10_SB_PRIMITIVE_TOPOLOGY`.
 ///
 /// Values are sourced from the Windows SDK header `d3d10tokenizedprogramformat.h`.
-// Note: `dcl_outputtopology` uses a small enum (point/line/triangle_strip). Many toolchains encode
-// `triangle_strip` as 3. Some of our historical fixtures use 5, so the translator accepts both.
+// Note: `dcl_outputtopology` uses a small enum (point/line/triangle_strip).
+// - Tokenized shader format encodes `triangle_strip` as 3.
+// - Some toolchains/fixtures use D3D primitive-topology constants (`triangle_strip` = 5).
 const D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,12 +213,15 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     let verts_per_primitive = match input_primitive {
         D3D10_SB_PRIMITIVE_POINT => 1,
         D3D10_SB_PRIMITIVE_LINE => 2,
-        // Triangle (accept both the common triangle-list encoding (4) and the older/alternate (3)).
-        D3D10_SB_PRIMITIVE_TRIANGLE | 3 => 3,
-        // Line adjacency (accept both the tokenized-format value and the D3D topology values).
-        D3D10_SB_PRIMITIVE_LINE_ADJ | 6 | 11 => 4,
-        // Triangle adjacency.
-        D3D10_SB_PRIMITIVE_TRIANGLE_ADJ | 7 | 13 => 6,
+        // Triangle (accept both the tokenized-format value (3) and the D3D topology value
+        // `D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST` (4) as seen in some fixtures).
+        D3D10_SB_PRIMITIVE_TRIANGLE | 4 => 3,
+        // Line adjacency (accept tokenized-format value (6) and D3D topology values
+        // `LINELIST_ADJ` (10) / `LINESTRIP_ADJ` (11)).
+        D3D10_SB_PRIMITIVE_LINE_ADJ | 10 | 11 => 4,
+        // Triangle adjacency (accept tokenized-format value (7) and D3D topology values
+        // `TRIANGLELIST_ADJ` (12) / `TRIANGLESTRIP_ADJ` (13)).
+        D3D10_SB_PRIMITIVE_TRIANGLE_ADJ | 12 | 13 => 6,
         other => return Err(GsTranslateError::UnsupportedInputPrimitive { primitive: other }),
     };
 
@@ -697,7 +698,8 @@ fn emit_src_vec4(
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
-                    msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
+                    msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)"
+                        .to_owned(),
                 })
             }
             other => {
