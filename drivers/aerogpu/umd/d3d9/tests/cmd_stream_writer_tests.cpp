@@ -11360,6 +11360,320 @@ bool TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws() {
   return ValidateStream(buf, len);
 }
 
+bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSHADER hPs{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_ps = false;
+
+    ~Cleanup() {
+      if (has_ps && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hPs);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "CreateShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "SetShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Prime the shared passthrough VS slot by drawing with XYZRHW so we can verify
+  // the XYZ|DIFFUSE PS-only fallback uses the WVP VS slot (distinct bytecode).
+  constexpr uint32_t kD3dFvfXyz = 0x00000002u;
+  constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+  constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+
+  {
+    hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyzRhw | kD3dFvfDiffuse);
+    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+      return false;
+    }
+
+    struct VertexRhw {
+      float x;
+      float y;
+      float z;
+      float rhw;
+      uint32_t color;
+    };
+    constexpr uint32_t kGreen = 0xFF00FF00u;
+    VertexRhw tri[3]{};
+    tri[0] = {0.0f, 0.0f, 0.5f, 1.0f, kGreen};
+    tri[1] = {1.0f, 0.0f, 0.5f, 1.0f, kGreen};
+    tri[2] = {0.0f, 1.0f, 0.5f, 1.0f, kGreen};
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexRhw));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE)")) {
+      return false;
+    }
+  }
+
+  aerogpu_handle_t passthrough_vs = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_vs != nullptr, "XYZRHW draw created fixedfunc_vs")) {
+      return false;
+    }
+    passthrough_vs = dev->fixedfunc_vs->handle;
+  }
+  if (!Check(passthrough_vs != 0, "passthrough fixedfunc_vs handle is non-zero")) {
+    return false;
+  }
+
+  // Clear the command stream so we only inspect the PS-only XYZ|DIFFUSE packets.
+  dev->cmd.reset();
+
+  // Install a non-identity world matrix so the uploaded WVP constants are easy to spot.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto set_identity = [](float m[16]) {
+      std::memset(m, 0, 16 * sizeof(float));
+      m[0] = 1.0f;
+      m[5] = 1.0f;
+      m[10] = 1.0f;
+      m[15] = 1.0f;
+    };
+    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
+    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
+    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
+
+    dev->transform_matrices[256][0] = 2.0f;
+    dev->transform_matrices[256][5] = 3.0f;
+    dev->transform_matrices[256][10] = 4.0f;
+    dev->transform_matrices[256][12] = 5.0f;
+    dev->transform_matrices[256][13] = 6.0f;
+    dev->transform_matrices[256][14] = 7.0f;
+
+    // Make sure the SetFVF transition marks the reserved WVP constant range dirty.
+    dev->fixedfunc_matrix_dirty = false;
+  }
+
+  // Configure XYZ|DIFFUSE so the driver will use the WVP fixed-function VS.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyz | kD3dFvfDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  aerogpu_handle_t internal_decl = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
+      return false;
+    }
+    internal_decl = dev->fvf_vertex_decl_xyz_diffuse->handle;
+  }
+  if (!Check(internal_decl != 0, "internal FVF decl handle non-zero")) {
+    return false;
+  }
+
+  // Bind a user pixel shader, leave VS NULL (shader stage interop PS-only).
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0xAA, 0xBB, 0xCC, 0xDD};
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            dxbc,
+                                            static_cast<uint32_t>(sizeof(dxbc)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader returned handle")) {
+    return false;
+  }
+  cleanup.hPs = hPs;
+  cleanup.has_ps = true;
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(VS=NULL)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+  };
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex tri[3]{};
+  tri[0] = {-1.0f, -1.0f, 0.0f, kWhite};
+  tri[1] = {1.0f, -1.0f, 0.0f, kWhite};
+  tri[2] = {0.0f, 1.0f, 0.0f, kWhite};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only, XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  aerogpu_handle_t wvp_vs = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "XYZ|DIFFUSE PS-only created WVP VS")) {
+      return false;
+    }
+    wvp_vs = dev->fixedfunc_vs_xyz_diffuse->handle;
+  }
+  if (!Check(wvp_vs != 0, "WVP VS handle non-zero")) {
+    return false;
+  }
+  if (!Check(wvp_vs != passthrough_vs, "XYZ|DIFFUSE uses distinct VS handle from passthrough")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const auto* vs_create = FindCreateShaderByHandle(buf, len, wvp_vs);
+  if (!Check(vs_create != nullptr, "CREATE_SHADER_DXBC emitted for WVP VS")) {
+    return false;
+  }
+  if (!Check(vs_create->stage == AEROGPU_SHADER_STAGE_VERTEX, "CREATE_SHADER_DXBC stage is vertex")) {
+    return false;
+  }
+
+  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!Check(set_layout.hdr != nullptr, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
+  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "SET_INPUT_LAYOUT binds internal FVF decl")) {
+    return false;
+  }
+
+  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  if (!Check(set_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F emitted")) {
+    return false;
+  }
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+    return false;
+  }
+  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+    return false;
+  }
+  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+    return false;
+  }
+
+  if (!Check(set_consts.hdr->size_bytes >= sizeof(*const_cmd) + sizeof(float) * 16u, "WVP constants packet has payload")) {
+    return false;
+  }
+  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
+  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+    return false;
+  }
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c0.w/c1.w/c2.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+    return false;
+  }
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+
+  // Draw-time interop may restore the original (NULL) shader stage after drawing,
+  // so the final BIND_SHADERS packet might occur after DRAW. Find the most recent
+  // bind before the draw packet.
+  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(bind.offset < draw.offset, "BIND_SHADERS occurs before DRAW")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs == wvp_vs, "BIND_SHADERS binds WVP VS handle")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps != 0, "BIND_SHADERS binds non-zero user PS")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+}
+
 bool TestDestroyBoundVertexDeclUnbinds() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -26798,6 +27112,7 @@ int main() {
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws();
   failures += !aerogpu::TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws();
+  failures += !aerogpu::TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestSetVertexDeclDerivesFixedFunctionFvf();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();

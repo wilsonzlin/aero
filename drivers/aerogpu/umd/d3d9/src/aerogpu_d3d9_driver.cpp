@@ -13525,7 +13525,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->fvf_set) {
     const uint32_t old_fvf = dev->fvf;
     dev->fvf = sb->fvf;
-    // Switching to a WVP-fixed-function path must refresh the reserved matrix
+    // Switching to a WVP fixed-function path must refresh the reserved matrix
     // constant range, even if transforms did not change. State-block apply
     // bypasses SetFVF/SetVertexDecl, so handle the transition here as well.
     if (old_fvf != dev->fvf &&
