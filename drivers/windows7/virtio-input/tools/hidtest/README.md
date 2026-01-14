@@ -209,6 +209,8 @@ hidtest.exe --get-log-mask
 hidtest.exe --set-log-mask 0x8000000F
 ```
 
+`--get-log-mask` / `--set-log-mask` are intended as standalone actions (similar to `--state` / `--counters`); they are mutually exclusive with other report/IOCTL test modes.
+
 This updates the same `DiagnosticsMask` that is normally read from the registry at `DriverEntry`:
 
 `HKLM\\System\\CurrentControlSet\\Services\\aero_virtio_input\\Parameters\\DiagnosticsMask`
