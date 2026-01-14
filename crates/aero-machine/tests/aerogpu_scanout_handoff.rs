@@ -264,7 +264,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert!(!m.display_framebuffer().is_empty());
     let legacy_fb_before = m.display_framebuffer().to_vec();
 
-    // Legacy text memory changes should now become visible again.
+    // Legacy text memory changes should become visible once ownership is released.
     m.write_physical_u8(0xB8000, b'Z');
     m.write_physical_u8(0xB8001, 0x1F);
     m.display_present();
