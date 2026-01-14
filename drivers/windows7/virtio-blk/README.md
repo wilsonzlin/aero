@@ -16,7 +16,9 @@
   - `virtio_pci_modern_miniport.{c,h}` (miniport modern transport shim)
   - `virtqueue_split_legacy.{c,h}` (split ring implementation)
 
-## Interrupts (INTx vs MSI/MSI-X)
+## Optional/Compatibility Features
+
+### Interrupts (INTx vs MSI/MSI-X)
 
 Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required** and MSI/MSI-X is an optional enhancement.
 
@@ -25,9 +27,10 @@ The miniport supports both:
 - **INTx (line-based)** — legacy virtio-pci interrupt semantics using the ISR status byte (read-to-ack).
 - **MSI/MSI-X (message-signaled)** — when Windows assigns message interrupts, the driver programs the virtio MSI-X routing registers (`msix_config` / `queue_msix_vector`) and services completions without relying on ISR status.
 
-On Windows 7, message-signaled interrupts are opt-in via INF. The shipped `inf/aero_virtio_blk.inf` requests MSI/MSI-X and Windows will fall back to INTx when MSI isn't available.
+On Windows 7, message-signaled interrupts are opt-in via INF. The shipped `inf/aero_virtio_blk.inf` requests MSI/MSI-X
+and Windows will fall back to INTx when MSI isn't available.
 
-### INF registry keys
+#### INF registry keys
 
 The MSI opt-in keys live under:
 
@@ -50,7 +53,7 @@ Notes:
 - `0x00010001` = `REG_DWORD`
 - `MessageNumberLimit` is a request; Windows may grant fewer messages than requested.
 
-### Expected vector mapping
+#### Expected vector mapping
 
 When MSI-X is active and Windows grants enough messages, the driver uses:
 
@@ -61,7 +64,7 @@ Fallback when messages are insufficient:
 
 - **All sources on vector/message 0** (config + all queues)
 
-### Troubleshooting / verifying MSI is active
+#### Troubleshooting / verifying MSI is active
 
 In **Device Manager** → device **Properties** → **Resources**:
 
@@ -75,6 +78,9 @@ You can also use `aero-virtio-selftest.exe`:
   - `irq_mode=<intx|msi|msix>`
   - `msix_config_vector=0x....`
   - `msix_queue_vector=0x....` (queue0)
+- To make MSI/MSI-X a hard requirement in the in-tree QEMU harness:
+  - Host: `-VirtioMsixVectors N` / `--virtio-msix-vectors N` and `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
+  - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).

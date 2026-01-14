@@ -920,6 +920,80 @@ Capture data path (`rxq`):
 > A tight per-buffer cap is a defensive bound against malicious guests and prevents large scratch
 > allocations during S16 decode and sample-rate resampling.
 
+### 3.5 Optional/Compatibility Features (non-normative)
+
+This section documents **optional** behaviors that are **not required by AERO-W7-VIRTIO contract v1**,
+but are supported (or intentionally tolerated) by the in-tree Windows 7 drivers when running against
+hypervisors/devices that implement a larger subset of virtio (for example, stock QEMU).
+
+These notes are **not contract requirements** for Aero device models. They exist so:
+
+- The strict contract-v1 required semantics in §3.1–§3.4 remain small and testable, while
+- Developers can still run meaningful compatibility/performance experiments against non-contract targets.
+
+When adding a new optional capability to the Win7 drivers, prefer to:
+
+1. Keep the required contract-v1 behavior unchanged.
+2. Document the optional capability here and in the per-driver README under an **“Optional/Compatibility Features”**
+   section.
+3. Add/extend harness validation (see `drivers/windows7/tests/`).
+
+#### 3.5.1 Transport interrupts: MSI-X (optional)
+
+Contract v1 requires PCI **INTx** interrupts and only permits MSI-X as an **optional enhancement** (§1.8.4).
+
+Driver behavior (non-normative):
+
+- Drivers MUST remain correct with INTx only.
+- When MSI-X is enabled by the platform and the driver chooses to use it, the driver programs:
+  - `common_cfg.msix_config` (config vector), and
+  - `common_cfg.queue_msix_vector` per queue.
+
+Harness validation (non-normative, QEMU):
+
+- The Win7 QEMU harness parses the guest selftest output for interrupt-mode diagnostics when present and emits a
+  host-side marker (for log scraping / diagnostics):
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=<intx|msi|msix>|irq_message_count=<n>|msix_config_vector=0x....|msix_queue_vector=0x....`
+  - Additional optional fields may also appear (e.g. `irq_vectors`, `msi_vector`) depending on what the guest reports.
+- Those fields (when emitted) are expected to appear on the guest marker:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS/FAIL|irq_mode=...|...`
+- By default these are informational. To make MSI-X a **hard** harness requirement under QEMU:
+  - Host harness:
+    - request a larger MSI-X table size (best-effort): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+    - fail if MSI-X is not enabled on the device: `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
+  - Guest selftest (virtio-blk only): `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+
+See:
+- `drivers/windows7/tests/README.md`
+- `drivers/windows7/tests/host-harness/README.md`
+
+#### 3.5.2 virtio-net: host offloads (checksum/TSO) (optional)
+
+Contract v1 devices MUST NOT offer any checksum/GSO/TSO offload feature bits (§3.2.3).
+
+Compatibility note (non-normative):
+
+- Some non-contract virtio-net implementations (notably QEMU) may advertise offload-related feature bits such as:
+  `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6`, etc.
+- The Win7 virtio-net driver MUST remain functional when those bits are merely *offered* (the driver may ignore them
+  or negotiate a supported subset depending on driver build/configuration).
+
+Harness validation (non-normative, QEMU):
+
+- The guest selftest’s virtio-net test includes deterministic large download/upload transfers and reports throughput
+  and integrity fields (`large_*`, `upload_*`) on the `virtio-net` marker. These markers are intended to be used when
+  comparing QEMU/device configurations (for example, with offloads enabled vs disabled).
+
+#### 3.5.3 virtio-snd: `eventq` robustness (optional)
+
+Contract v1 reserves virtio-snd `eventq` for future use and forbids drivers from depending on events (§3.4.2.1).
+
+Compatibility note (non-normative):
+
+- Some virtio-snd implementations may complete `eventq` buffers (e.g., jack connect/disconnect, period elapsed,
+  XRUN, control notify).
+- The Win7 virtio-snd driver is expected to tolerate unexpected `eventq` traffic without impacting audio streaming.
+
 ## 4. Versioning and compatibility
 
 ### 4.1 Contract version encoding

@@ -81,6 +81,51 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
 | `release/` | Release packaging docs and output directory (ignored by git). |
 | `docs/` | Driver implementation notes / references. |
 
+## Optional/Compatibility Features
+
+This section documents behavior that is **not required by AERO-W7-VIRTIO contract v1**, but is relevant when running
+against non-contract virtio-snd implementations (for example, stock QEMU).
+
+### `eventq` handling (virtio-snd asynchronous notifications)
+
+Contract v1 reserves `eventq` for future use and forbids drivers from depending on it
+(`docs/windows7-virtio-driver-contract.md` §3.4.2.1).
+
+Driver behavior:
+
+- The driver still initializes `eventq` and posts a small bounded pool of writable buffers.
+- If the device completes `eventq` buffers, the driver drains/reposts them and (best-effort) parses/logs known event
+  types (jack connect/disconnect, period elapsed, XRUN, control notify).
+- Audio streaming (render/capture) must remain correct even if `eventq` is absent, silent, or noisy.
+
+How to validate (in-tree harness):
+
+- The functional harness (`drivers/windows7/tests/`) validates that playback + capture + duplex are correct under QEMU
+  (via `aero-virtio-selftest.exe`) when `-WithVirtioSnd` / `--with-virtio-snd` is enabled.
+- For eventq-specific debugging, use the `DebugLogs` build (`aero_virtio_snd_dbg.sys`) and capture kernel debug output
+  (e.g. WinDbg/DebugView) while exercising playback/capture; look for `virtiosnd: eventq:` log lines.
+
+### MSI/MSI-X interrupts
+
+Contract v1 requires INTx, but MSI/MSI-X is supported as an optional enhancement when Windows grants message interrupts
+(the shipped INF opts in; see “Interrupts: INTx baseline, optional MSI/MSI-X” above).
+
+How to validate (in-tree harness):
+
+- Request a larger MSI-X table size from QEMU (best-effort): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`.
+- Optionally fail the harness if MSI-X is not enabled on the device: `-RequireVirtioSndMsix` / `--require-virtio-snd-msix`.
+- Inspect guest diagnostics (`virtio-snd-irq|INFO|mode=...`) and the mirrored host marker (`AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|...`).
+
+### Multi-format/device capability variance (non-contract)
+
+Contract v1 fixes the required PCM formats/rates and stream topology (stream 0 render + stream 1 capture, both 48kHz
+S16_LE).
+
+For compatibility, the bring-up path is defensive when a device advertises a superset:
+
+- It validates that the required contract format/rate/channel combinations are present in `PCM_INFO`.
+- It does not attempt to expose additional formats/rates to the Windows 7 audio stack.
+
 ## Prerequisites (host build/sign machine)
 
 Any Windows machine that can run the Windows Driver Kit tooling.

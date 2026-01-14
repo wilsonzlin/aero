@@ -89,6 +89,25 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### Requiring MSI-X to be enabled (host-side QMP check)
+
+By default, the harness will still PASS when Windows falls back to INTx (MSI/MSI-X is optional per the
+`AERO-W7-VIRTIO` v1 contract). To make MSI-X a **hard requirement**, you can ask the harness to fail if QEMU reports
+MSI-X as disabled on the corresponding PCI function (best-effort introspection via QMP `query-pci` or HMP `info pci`).
+
+- PowerShell:
+  - `-RequireVirtioNetMsix`
+  - `-RequireVirtioBlkMsix`
+  - `-RequireVirtioSndMsix` (only relevant when `-WithVirtioSnd` is enabled)
+- Python:
+  - `--require-virtio-net-msix`
+  - `--require-virtio-blk-msix`
+  - `--require-virtio-snd-msix` (only relevant when `--with-virtio-snd` is enabled)
+
+Note: this checks whether MSI-X is enabled on the **QEMU device**, not whether Windows actually granted multiple message
+interrupts. For guest-observed mode/message counts, use the guest `virtio-<dev>-irq|INFO|...` lines and the mirrored
+host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
+
 ### virtio-input event delivery (QMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.
@@ -494,8 +513,12 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=.
 
 This mirrors the guest's virtio-net marker fields when present and does not affect overall PASS/FAIL.
 
-The harnesses may also surface IRQ-related diagnostics in the output for log scraping. These are informational by default
-and do not affect overall PASS/FAIL.
+## Optional/Compatibility Features
+
+### IRQ diagnostics (INTx vs MSI/MSI-X)
+
+The harnesses may also surface IRQ-related diagnostics in the output for log scraping. These are informational by
+default and do not affect overall PASS/FAIL.
 
 - Standalone guest lines:
   - `virtio-<dev>-irq|INFO|...`
@@ -511,6 +534,13 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_cou
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
 ```
+
+### virtio-snd `eventq`
+
+Contract v1 reserves virtio-snd `eventq` and forbids the driver from depending on it, but the Win7 virtio-snd driver is
+written to tolerate event traffic. For eventq-specific debugging, use the `DebugLogs` virtio-snd build and capture
+kernel debug output while the harness runs (playback/capture will run via `aero-virtio-selftest.exe` when the device is
+attached).
 
 ### Why `x-pci-revision=0x01`?
 

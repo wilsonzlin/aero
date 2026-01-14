@@ -71,6 +71,31 @@ The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci moder
 transport stack but is packaged to bind to QEMU's transitional virtio-snd PCI ID
 (`PCI\VEN_1AF4&DEV_1018`).
 
+## Optional/Compatibility Features
+
+This section describes optional behavior that is **not required by AERO-W7-VIRTIO contract v1**, but is relevant when
+running against non-contract virtio-snd implementations (for example, stock QEMU).
+
+### `eventq` robustness
+
+Contract v1 reserves `eventq` for future use (§3.4.2.1) and forbids drivers from depending on event messages.
+
+The driver still initializes `eventq` and posts a small buffer pool so it can safely tolerate:
+
+- devices that unexpectedly complete event buffers, and
+- future device models that begin emitting async events (jack connect/disconnect, period elapsed, XRUN, etc.).
+
+Audio streaming MUST remain correct even when `eventq` is silent (most contract-v1 devices) or noisy.
+
+### Multi-format/device capability variance (non-contract)
+
+Contract v1 fixes the PCM formats/rates and stream topology (stream 0 render + stream 1 capture, both 48kHz S16_LE).
+
+For compatibility, the bring-up path is written to be defensive when a device advertises a superset:
+
+- It validates that the required contract format/rate/channel combinations are present in `PCM_INFO`.
+- It ignores additional formats/rates rather than attempting to expose them to the Windows audio stack.
+
 ## High-level architecture
 
 The implementation is intended to be layered so that most logic is reusable across

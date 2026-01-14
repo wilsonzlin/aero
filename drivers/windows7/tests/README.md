@@ -112,6 +112,57 @@ Note:
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed). Use `--disable-snd-capture` to skip capture-only checks while still exercising playback.
 
+## Optional/Compatibility Features
+
+The core Win7 harness is designed to validate the **strict contract v1 required behavior** first, but it also has
+hooks for diagnosing *optional* features when running against non-contract virtio implementations (for example, stock
+QEMU).
+
+These optional diagnostics are not currently treated as hard PASS/FAIL gates unless explicitly enabled by the harness
+configuration.
+
+### MSI-X (interrupt mode diagnostics)
+
+- Contract v1 requires INTx and permits MSI-X only as an optional enhancement.
+- The host harness includes a best-effort parser for virtio-blk interrupt-mode diagnostics when the guest selftest
+  includes interrupt-related key/value fields on the `virtio-blk` marker:
+  - Guest marker (example): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0|msix_queue_vector=1`
+  - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|msix_config_vector=0|msix_queue_vector=1`
+- This host marker is **diagnostic only** (it does not currently affect overall PASS/FAIL).
+
+To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
+
+- Request a larger MSI-X table size from QEMU (best-effort):
+  - PowerShell: `-VirtioMsixVectors N`
+  - Python: `--virtio-msix-vectors N`
+- Fail the harness if QEMU reports MSI-X **disabled** (QMP introspection check):
+  - PowerShell: `-RequireVirtioBlkMsix` / `-RequireVirtioNetMsix` / `-RequireVirtioSndMsix`
+  - Python: `--require-virtio-blk-msix` / `--require-virtio-net-msix` / `--require-virtio-snd-msix`
+- For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
+  - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+
+### virtio-net “offload-sensitive” large transfers
+
+virtio-net offloads (checksum/TSO/GSO) are **out of scope** for the strict Aero contract v1 device model, but are
+commonly implemented by other virtio-net devices and can affect performance/robustness.
+
+The guest selftest includes deterministic 1 MiB download/upload transfers and reports:
+
+- `large_ok`, `large_bytes`, `large_fnv1a64`, `large_mbps`
+- `upload_ok`, `upload_bytes`, `upload_mbps`
+
+These fields can be used to compare performance across hypervisors/device configurations (for example, when toggling
+virtio-net offload-related device properties on QEMU via `QemuExtraArgs` / extra CLI args).
+
+### virtio-snd `eventq`
+
+Contract v1 reserves virtio-snd `eventq` for future use and forbids the driver from depending on events. For
+compatibility, the Win7 virtio-snd driver still initializes `eventq` and is expected to tolerate event traffic without
+affecting streaming.
+
+The harness validates correct render/capture/duplex behavior under QEMU; for eventq-specific debugging, use the
+virtio-snd `DebugLogs` build and capture kernel debug output while running the selftest.
+
 ### Building (Windows)
 
 See `guest-selftest/README.md`.

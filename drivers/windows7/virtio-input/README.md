@@ -137,15 +137,20 @@ To confirm the IDs on Windows 7:
 1. Device Manager → the device → **Properties**
 2. **Details** tab → **Hardware Ids**
 
-## Interrupts: INTx baseline, optional MSI/MSI-X
+## Optional/Compatibility Features
 
-Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required** and MSI/MSI-X is an optional enhancement.
-MSI/MSI-X must not be required for functionality: if Windows does not allocate MSI/MSI-X, the driver is expected to fall back to INTx.
+### Interrupts: INTx baseline, optional MSI/MSI-X
 
-### INF settings (MSI opt-in)
+Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required**
+and MSI/MSI-X is an optional enhancement.
 
-On Windows 7, MSI/MSI-X allocation is typically controlled by INF registry keys under `Interrupt Management\\MessageSignaledInterruptProperties`.
-The in-tree `inf/aero_virtio_input.inf` already opts in:
+MSI/MSI-X must not be required for functionality: if Windows does not allocate MSI/MSI-X, the driver is expected to
+fall back to INTx.
+
+#### INF settings (MSI opt-in)
+
+On Windows 7, MSI/MSI-X allocation is typically controlled by INF registry keys under
+`Interrupt Management\\MessageSignaledInterruptProperties`. The in-tree `inf/aero_virtio_input.inf` opts in:
 
 ```inf
 [AeroVirtioInput_InterruptManagement_AddReg]
@@ -159,7 +164,7 @@ Notes:
 
 For background, see [`docs/windows/virtio-pci-modern-interrupts.md`](../../../docs/windows/virtio-pci-modern-interrupts.md) (§5).
 
-### Expected vector mapping
+#### Expected vector mapping
 
 When MSI/MSI-X is active and Windows grants enough messages, the in-tree driver uses:
 
@@ -171,7 +176,7 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
 
 - **All sources on vector/message 0** (config + all queues)
 
-### Troubleshooting / verifying which interrupt mode you got
+#### Troubleshooting / verifying which interrupt mode you got
 
 - **Device Manager → Properties → Resources**:
   - INTx usually shows a small IRQ number (often shared).
@@ -181,7 +186,19 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - The selftest also emits a `virtio-input-irq|INFO|...` line indicating which interrupt mode Windows assigned:
     - `virtio-input-irq|INFO|mode=intx`
     - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+  - To request a larger MSI-X table size under QEMU in the in-tree harness (best-effort), run the host harness with:
+    `-VirtioMsixVectors N` / `--virtio-msix-vectors N`.
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
+
+## Testing (in-tree harness)
+
+End-to-end input report delivery is validated by the Win7 harness when enabled:
+
+- Provision the guest selftest with `--test-input-events`.
+- Run the host harness with `-WithInputEvents` / `--with-input-events`.
+- Expected guest markers:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 ## Build
 

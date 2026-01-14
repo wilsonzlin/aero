@@ -34,17 +34,44 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - Optional control virtqueue (queue index = the device’s last queue; commonly queue 2) when `VIRTIO_NET_F_CTRL_VQ` is negotiated
 - Interrupts:
   - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
-  - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages. The optional control virtqueue does not get a dedicated MSI-X vector and is serviced via polling.
-- TX offloads (when offered by the host and enabled by Windows):
+  - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX
+    and falls back to sharing vector 0 if Windows grants fewer messages. The optional control virtqueue does not get a
+    dedicated MSI-X vector and is serviced via polling.
+- TX offloads (optional; when offered by the host and enabled by Windows):
   - TCP/UDP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
-  - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6` (uses `virtio_net_hdr` GSO fields)
+  - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6`
+    (uses `virtio_net_hdr` GSO fields)
 
-## MSI / MSI-X interrupts (optional)
+## Optional/Compatibility Features
 
-On Windows 7, message-signaled interrupts (MSI/MSI-X) are typically **opt-in via INF**. MSI/MSI-X is an optional enhancement over the contract-required
-INTx path: it reduces shared line interrupt overhead and can enable per-queue vectoring.
+This section documents behavior that is **not required by AERO-W7-VIRTIO contract v1**, but is relevant when running
+against non-contract virtio-net implementations (for example, stock QEMU).
 
-### INF registry keys
+### Net offloads (CSUM/TSO)
+
+Contract v1 Aero device models MUST NOT offer any checksum/GSO/TSO offload features (§3.2.3), but other virtio-net
+implementations (notably QEMU) may.
+
+When the host offers them and Windows enables NDIS offloads, this driver can negotiate and use:
+
+- `VIRTIO_NET_F_CSUM`
+- `VIRTIO_NET_F_HOST_TSO4`
+- `VIRTIO_NET_F_HOST_TSO6`
+
+How to validate (in-tree harness):
+
+- Run the Win7 QEMU harness (`drivers/windows7/tests/host-harness/`) and inspect the guest marker
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...` (and the mirrored host marker `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`).
+- The marker includes deterministic large transfer diagnostics (`large_*`, `upload_*`) which can be used to compare
+  throughput and integrity across configurations.
+
+### MSI / MSI-X interrupts
+
+On Windows 7, message-signaled interrupts (MSI/MSI-X) are typically **opt-in via INF**. MSI/MSI-X is an optional
+enhancement over the contract-required INTx path: it reduces shared line interrupt overhead and can enable per-queue
+vectoring.
+
+#### INF registry keys
 
 On Windows 7, MSI/MSI-X is typically opt-in via `HKR` settings under:
 
@@ -69,7 +96,7 @@ Notes:
 - `MessageNumberLimit` is a **request**, not a guarantee. The driver remains functional with fewer messages and will fall back as described below.
 - Even when `MSISupported=1` is set, Windows may still assign only a legacy **INTx** interrupt resource (for example when MSI/MSI-X allocation fails). In that case the driver uses the INTx + ISR read-to-ack path.
 
-### Expected vector mapping
+#### Expected vector mapping
 
 When MSI-X is available and Windows grants enough messages, the driver uses:
 
@@ -82,7 +109,7 @@ If Windows grants fewer than `3` messages (config + RX + TX), the driver falls b
 - **Vector/message 0:** config + RX + TX
 - The optional **control virtqueue** (when negotiated) does not get a dedicated MSI-X vector; the driver disables its MSI-X routing and polls for completions.
 
-### Troubleshooting / verifying MSI is active
+#### Troubleshooting / verifying MSI is active
 
 In **Device Manager** (`devmgmt.msc`) → device **Properties** → **Resources**:
 
@@ -95,6 +122,9 @@ You can also use `aero-virtio-selftest.exe`:
 - The selftest also emits a `virtio-net-irq|INFO|...` line indicating which interrupt mode Windows assigned:
   - `virtio-net-irq|INFO|mode=intx`
   - `virtio-net-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+- To force MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
+  - Host: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+  - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
