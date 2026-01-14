@@ -5,8 +5,8 @@ use aero_d3d11::binding_model::{
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, DxbcFile,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
-    ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
-    TextureRef, UavRef, WriteMask,
+    ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
+    SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -1826,6 +1826,75 @@ fn translates_front_facing_as_d3d_boolean_mask_for_bitwise_ops() {
     assert!(
         translated.wgsl.contains("bitcast<vec4<u32>>"),
         "expected integer bitcasts to be present in generated WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_if_bool_test_uses_raw_bits_for_boolean_masks() {
+    // `if_z`/`if_nz` should test the raw 32-bit lane value, not the *numeric* `f32` value.
+    //
+    // This matters for D3D-style boolean masks: if we `and` a 0xffffffff/0 mask with a mask that
+    // yields `0x80000000`, the result is `-0.0` as an `f32`. Numeric comparisons would treat this
+    // as zero (false) even though the bit-pattern is non-zero (true).
+    const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+    let mut front_facing = sig_param("SV_IsFrontFace", 0, 0, 0b0001);
+    front_facing.system_value_type = D3D_NAME_IS_FRONT_FACE;
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[front_facing])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let sign_bit = SrcOperand {
+        kind: SrcKind::ImmediateF32([0x80000000u32; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // r0 = front_facing & 0x80000000
+            Sm4Inst::And {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Input, 0),
+                b: sign_bit,
+            },
+            // if_nz r0.x
+            Sm4Inst::If {
+                cond: src_reg(RegFile::Temp, 0),
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 0.0, 0.0, 1.0]),
+            },
+            Sm4Inst::Else,
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([0.0, 1.0, 0.0, 1.0]),
+            },
+            Sm4Inst::EndIf,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated
+            .wgsl
+            .contains("if (bitcast<u32>((r0).x) != 0u)"),
+        "expected `if_nz` to test raw bits via `bitcast<u32>`:\n{}",
         translated.wgsl
     );
 }

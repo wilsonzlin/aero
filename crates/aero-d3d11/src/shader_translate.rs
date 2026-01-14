@@ -2983,9 +2983,10 @@ fn emit_instructions(
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
                 let cond_scalar = format!("({cond_vec}).x");
+                let cond_bits = format!("bitcast<u32>({cond_scalar})");
                 let expr = match test {
-                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_scalar} == 0.0"),
-                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_scalar} != 0.0"),
+                    crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
+                    crate::sm4_ir::Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
                 };
                 w.line(&format!("if ({expr}) {{"));
                 w.indent();
