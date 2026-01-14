@@ -27,6 +27,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 * `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
 * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — Win7 WDK symbol-name reference for D3D10/11 UMD callbacks (submission, fences, `SetErrorCb`, WOW64 gotchas).
 * `docs/graphics/win7-d3d10-caps-tracing.md` — how to enable `GetCaps` + entrypoint tracing in the D3D10/11 UMD during Win7 bring-up.
+* `docs/graphics/win7-shared-surfaces-share-token.md` — Win7 shared-surface strategy (stable cross-process `share_token` vs user-mode shared `HANDLE` numeric values).
 
 > Header references: the names in this doc match the WDK user-mode DDI headers:
 > `d3d10umddi.h`, `d3d10_1umddi.h` (optional), `d3d11umddi.h`, and for swapchain/present: `dxgiddi.h`.
@@ -765,6 +766,21 @@ Validate that `Map(READ, DO_NOT_WAIT)` behaves like a **non-blocking poll** (ret
 * `drivers/aerogpu/tests/win7/d3d10_map_do_not_wait/`
 * `drivers/aerogpu/tests/win7/d3d10_1_map_do_not_wait/`
 * `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait/`
+
+### 7.7 Shared resources / DXGI shared handles (cross-process)
+
+On Win7, DWM (D3D9Ex) commonly consumes **DXGI shared handles** produced by D3D10/D3D11 apps. Ensure that:
+
+* shared resources create a stable `share_token` in preserved WDDM allocation private data, and
+* cross-process `OpenSharedResource(...)` drives `IMPORT_SHARED_SURFACE` using that stable token.
+
+Canonical contract and rationale: `docs/graphics/win7-shared-surfaces-share-token.md`.
+
+**Existing in repo:**
+
+* `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/`
+* `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc/`
+* `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/`
 
 ---
 
