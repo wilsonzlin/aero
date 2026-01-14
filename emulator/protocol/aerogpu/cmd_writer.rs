@@ -586,6 +586,7 @@ impl AerogpuCmdWriter {
         self.bind_shaders_ex_inner(vs, ps, cs, gs, hs, ds, /*reserved0=*/ gs);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn bind_shaders_ex_inner(
         &mut self,
         vs: AerogpuHandle,

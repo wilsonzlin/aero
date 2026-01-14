@@ -505,7 +505,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         writer.set_pipeline(PipelineKind::Compute, PIPELINE);
 
         writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
-        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + 0, VB_F16, 0, 0);
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE, VB_F16, 0, 0);
         writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + 1, VB_U16, 0, 0);
         writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + 2, VB_U32, 0, 0);
         for i in 3..IA_MAX_VERTEX_BUFFERS as u32 {
