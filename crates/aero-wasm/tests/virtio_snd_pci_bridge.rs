@@ -495,15 +495,7 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
 
     // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
     guest[buf as usize..buf as usize + 8].fill(0xAA);
-    write_desc(
-        guest,
-        desc_table,
-        0,
-        buf as u64,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
     write_u16(guest, avail, 0);
     write_u16(guest, avail + 2, 1);
     write_u16(guest, avail + 4, 0);
@@ -512,8 +504,8 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
 
     // Attach the mic ring: should queue a microphone JACK_CONNECTED event.
     let capacity_samples = 16u32;
-    let byte_len = (mic_ring::HEADER_BYTES
-        + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
+    let byte_len =
+        (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
     let mic_sab = SharedArrayBuffer::new(byte_len);
     let mic_header =
         Uint32Array::new_with_byte_offset_and_length(&mic_sab, 0, mic_ring::HEADER_U32_LEN as u32);
@@ -525,7 +517,11 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
 
     // Notify queue 1. notify_mult is 4 in `VirtioPciDevice`.
     let notify_off = bridge.mmio_read(COMMON + 0x1e, 2) as u32;
-    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
 
     assert_eq!(read_u16(guest, used + 2), 1);
     assert_eq!(read_u32(guest, used + 8), 8);
@@ -535,10 +531,7 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
         evt[4..8].copy_from_slice(&JACK_ID_MICROPHONE.to_le_bytes());
         evt
     };
-    assert_eq!(
-        &guest[buf as usize..buf as usize + 8],
-        &expected_connected
-    );
+    assert_eq!(&guest[buf as usize..buf as usize + 8], &expected_connected);
 
     // Detach the mic ring: should queue a microphone JACK_DISCONNECTED event and deliver it into
     // a subsequent event buffer.
@@ -550,7 +543,11 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
     // Re-post the same descriptor (index 0).
     write_u16(guest, avail + 6, 0); // avail.ring[1] = desc 0
     write_u16(guest, avail + 2, 2); // avail.idx = 2
-    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
 
     assert_eq!(read_u16(guest, used + 2), 2);
     assert_eq!(read_u32(guest, used + 16), 8);

@@ -46,4 +46,3 @@ fn uhci_tick_does_not_walk_schedule_without_dma() {
     );
     assert!(!ctrl.irq_level());
 }
-

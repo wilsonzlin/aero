@@ -41,9 +41,7 @@ impl<S: aero_storage::StorageBackend> RawDisk<S> {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
 
-        let len = storage
-            .len()
-            .map_err(aero_storage_disk_error_to_emulator)?;
+        let len = storage.len().map_err(aero_storage_disk_error_to_emulator)?;
         if !len.is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "raw size not multiple of sector size",

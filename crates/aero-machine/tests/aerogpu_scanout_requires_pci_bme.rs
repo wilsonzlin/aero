@@ -52,9 +52,18 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     // Pixel (0,0): B,G,R,X = AA,BB,CC,00.
     m.write_physical(fb_gpa, &[0xAA, 0xBB, 0xCC, 0x00, 0, 0, 0, 0]);
 
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, w);
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, h);
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64, pitch);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64,
+        w,
+    );
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64,
+        h,
+    );
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64,
+        pitch,
+    );
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
         aerogpu_pci::AerogpuFormat::B8G8R8X8Unorm as u32,
@@ -68,7 +77,10 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
         (fb_gpa >> 32) as u32,
     );
     // Enable scanout, which (once configured validly) claims WDDM scanout.
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 1);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        1,
+    );
 
     // ---------------------------------------------------------------------
     // 1) With PCI COMMAND.BME=0, host-side scanout reads must be gated off.
@@ -97,10 +109,12 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
     // Explicit disable should release the WDDM scanout claim and fall back to legacy output.
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        0,
+    );
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(m.display_resolution(), legacy_res);
 }
-

@@ -55,10 +55,10 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
     );
 
     let seq_before = {
-        let lo = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO))
-            as u64;
-        let hi = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI))
-            as u64;
+        let lo =
+            m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO)) as u64;
+        let hi =
+            m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI)) as u64;
         lo | (hi << 32)
     };
 
@@ -67,10 +67,10 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
     m.tick_platform(20_000_000);
 
     let seq_after = {
-        let lo = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO))
-            as u64;
-        let hi = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI))
-            as u64;
+        let lo =
+            m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO)) as u64;
+        let hi =
+            m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI)) as u64;
         lo | (hi << 32)
     };
     assert!(
