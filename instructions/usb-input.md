@@ -415,7 +415,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test ehci_ports \
   --test ehci_snapshot_roundtrip \
   --test usb2_companion_routing \
+  --test usb2_port_mux_speed \
   --test usb2_port_mux_remote_wakeup \
+  --test usb2_mux_non_owner_writes \
   --test hid_remote_wakeup \
   --test webusb_passthrough_uhci \
   --test hid_builtin_snapshot \
