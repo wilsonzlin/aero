@@ -206,6 +206,16 @@ where
         });
     }
 
+    let max_bindings_per_bind_group = device.limits().max_bindings_per_bind_group as usize;
+    for (group_index, bindings) in &groups {
+        let count = bindings.len();
+        if count > max_bindings_per_bind_group {
+            bail!(
+                "pipeline requires {count} bindings in @group({group_index}), but device limit max_bindings_per_bind_group={max_bindings_per_bind_group}"
+            );
+        }
+    }
+
     // wgpu enforces per-stage resource limits. Validate early so callers get a clear error rather
     // than a backend validation panic.
     let mut uniform_buffers_vertex = 0u32;
