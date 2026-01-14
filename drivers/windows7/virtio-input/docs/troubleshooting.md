@@ -159,6 +159,32 @@ Try the following in the Windows 7 guest:
 
 Also confirm you are opening the intended collection (keyboard vs mouse) if multiple HID devices are present.
 
+## Debugging keyboard LEDs / statusq backpressure
+
+Keyboard LED updates (NumLock/CapsLock/ScrollLock) flow through the virtio **statusq** (driver → device). Under heavy write load, the statusq can become full; the driver provides a debug knob to control what happens then:
+
+`HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\StatusQDropOnFull` (REG_DWORD)
+
+- `0` (default): keep the most recent pending LED update until the queue drains
+- nonzero: drop pending updates when the queue is full (useful for debugging/reporting backpressure)
+
+To enable and stress it (elevated cmd + reboot or disable/enable the device):
+
+```cmd
+reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+  /v StatusQDropOnFull /t REG_DWORD /d 1 /f
+```
+
+Then in the guest:
+
+```bat
+hidtest.exe --keyboard --reset-counters
+hidtest.exe --keyboard --led-spam 10000
+hidtest.exe --keyboard --counters
+```
+
+Watch `StatusQFull` and (when enabled) `VirtioStatusDrops` / `LedWritesDropped`.
+
 ## No input events (likely still using PS/2)
 
 In virtualized setups it’s easy to accidentally keep using the emulated **PS/2** keyboard/mouse (i8042) even after installing the virtio-input driver.
