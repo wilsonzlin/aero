@@ -1032,6 +1032,23 @@ def _self_test_scan_text_tree_for_substrings_utf16() -> None:
             fail("internal unit-test failed: scan_text_tree_for_substrings did not find needle in UTF-16LE file")
 
 
+def _self_test_parse_queue_table_sizes() -> None:
+    sample = r"""
+| Queue index | Name | Direction | Queue size |
+|------------|------|-----------|------------|
+| 0 | `q0` | device → driver | **64** |
+| 1 | `q1` | driver → device | **128** |
+"""
+    parsed = _parse_queue_table_sizes(sample, file=Path("<unit-test>"), context="virtio-test")
+    if parsed != {0: 64, 1: 128}:
+        fail(
+            format_error(
+                "internal unit-test failed: _parse_queue_table_sizes returned unexpected mapping:",
+                [f"got: {parsed!r}", "expected: {0: 64, 1: 128}"],
+            )
+        )
+
+
 @dataclass(frozen=True)
 class InfRegDwordOccurrence:
     line_no: int
@@ -2507,11 +2524,26 @@ def parse_w7_contract_pci_identification_tables(
 def _parse_queue_table_sizes(block: str, *, file: Path, context: str) -> dict[int, int]:
     sizes: dict[int, int] = {}
     for m in re.finditer(r"^\|\s*(?P<idx>\d+)\s*\|.*?\|\s*\*\*(?P<size>\d+)\*\*\s*\|\s*$", block, flags=re.M):
-        sizes[int(m.group("idx"))] = int(m.group("size"))
+        idx = int(m.group("idx"))
+        if idx in sizes:
+            fail(f"{file.as_posix()}: duplicate virtqueue index {idx} in {context} virtqueue table")
+        sizes[idx] = int(m.group("size"))
     if not sizes:
         fail(
             f"could not parse any virtqueue sizes for {context} in {file.as_posix()} "
             "(expected table rows like '| 0 | `rxq` | ... | **256** |')"
+        )
+    # Virtio queue indices are expected to start at 0 and be contiguous (0..N-1).
+    # Enforce that here so contract doc typos are caught early (and so derived
+    # MSI/MSI-X MessageNumberLimit minimums remain meaningful).
+    indices = sorted(sizes)
+    expected = list(range(len(indices)))
+    if indices != expected:
+        fail(
+            format_error(
+                f"{file.as_posix()}: {context} virtqueue indices must be contiguous starting at 0:",
+                [f"expected: {expected}", f"got:      {indices}"],
+            )
         )
     return sizes
 
@@ -3025,6 +3057,7 @@ def main() -> None:
     _self_test_inf_int_parsing()
     _self_test_read_text_utf16()
     _self_test_scan_text_tree_for_substrings_utf16()
+    _self_test_parse_queue_table_sizes()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
