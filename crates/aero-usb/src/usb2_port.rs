@@ -121,7 +121,7 @@ impl Usb2PortMux {
         if p.effective_owner != Usb2PortOwner::Companion {
             return;
         }
-        p.uhci.tick_1ms(&mut p.device);
+        p.uhci.tick_1ms(&mut p.device, RemoteWakeBehavior::ResumeDetect);
     }
 
     pub fn uhci_bus_reset(&mut self, port: usize) {
@@ -233,7 +233,7 @@ impl Usb2PortMux {
         if p.effective_owner != Usb2PortOwner::Ehci {
             return;
         }
-        p.ehci.tick_1ms(&mut p.device);
+        p.ehci.tick_1ms(&mut p.device, RemoteWakeBehavior::EnterResume);
     }
 
     pub fn ehci_bus_reset(&mut self, port: usize) {
@@ -565,6 +565,14 @@ struct PortLogic {
     resume_countdown_ms: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteWakeBehavior {
+    /// Model remote wakeup as a UHCI-style "Resume Detect" latch (PORTSC.RD).
+    ResumeDetect,
+    /// Model remote wakeup as an EHCI-style resume signaling window (PORTSC.FPR asserted for 20ms).
+    EnterResume,
+}
+
 impl PortLogic {
     fn new() -> Self {
         Self {
@@ -794,7 +802,7 @@ impl PortLogic {
         }
     }
 
-    fn tick_1ms(&mut self, dev: &mut Option<AttachedUsbDevice>) {
+    fn tick_1ms(&mut self, dev: &mut Option<AttachedUsbDevice>, remote_wake: RemoteWakeBehavior) {
         if self.reset {
             self.reset_countdown_ms = self.reset_countdown_ms.saturating_sub(1);
             if self.reset_countdown_ms == 0 {
@@ -817,7 +825,15 @@ impl PortLogic {
         if self.enabled && self.suspended && !self.resuming {
             if let Some(dev) = dev.as_mut() {
                 if dev.model_mut().poll_remote_wakeup() {
-                    self.resume_detect = true;
+                    match remote_wake {
+                        RemoteWakeBehavior::ResumeDetect => {
+                            self.resume_detect = true;
+                        }
+                        RemoteWakeBehavior::EnterResume => {
+                            self.resuming = true;
+                            self.resume_countdown_ms = 20;
+                        }
+                    }
                 }
             }
         }
