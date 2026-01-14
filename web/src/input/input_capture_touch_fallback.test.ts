@@ -119,7 +119,7 @@ describe("InputCapture touch fallback", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as any).queue.size).toBe(0);
 
       (capture as any).handleTouchEnd({
         timeStamp: 1,
@@ -147,7 +147,7 @@ describe("InputCapture touch fallback", () => {
     });
   });
 
-  it("releases touch-emulated buttons on blur so the guest cannot get stuck", () => {
+  it("cancels pending tap-to-click on blur so a later touchend cannot click", () => {
     withStubbedDocument(() => {
       const canvas = {
         tabIndex: 0,
@@ -175,22 +175,24 @@ describe("InputCapture touch fallback", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).mouseButtons).toBe(1);
 
-      // Blur should force a full release and flush immediately.
+      // Blur should cancel the touch session and flush immediately (no-op since queue is empty).
       (capture as any).handleBlur();
 
-      expect((capture as any).mouseButtons).toBe(0);
-      expect(posted).toHaveLength(1);
-      const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
+      // A subsequent touchend (common when the browser delivers the end event after blur) must not
+      // produce a click.
+      (capture as any).handleTouchEnd({
+        timeStamp: 1,
+        touches: [],
+        changedTouches: [touch(1, 0, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
 
-      // Should contain both the original press and the forced release.
-      expect(words[0]).toBe(2);
-      expect(words[2]).toBe(InputEventType.MouseButtons);
-      expect(words[4]).toBe(1);
-      expect(words[6]).toBe(InputEventType.MouseButtons);
-      expect(words[8]).toBe(0);
+      capture.flushNow();
+
+      expect((capture as any).mouseButtons).toBe(0);
+      expect(posted).toHaveLength(0);
     });
   });
 });
