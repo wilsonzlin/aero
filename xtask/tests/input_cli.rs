@@ -44,11 +44,13 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-machine"))
         .stdout(predicate::str::contains("aero-wasm"))
         .stdout(predicate::str::contains("cargo test -p aero-wasm"))
-        .stdout(predicate::str::contains("machine_input_injection"))
+        .stdout(predicate::str::contains(
+            "--test machine_input_injection --test",
+        ))
         .stdout(predicate::str::contains("machine_input_backends"))
         .stdout(predicate::str::contains("machine_defaults_usb_hid"))
         .stdout(predicate::str::contains(
-            "webhid_report_descriptor_synthesis --test machine_virtio_input",
+            "--test webhid_report_descriptor_synthesis --test",
         ))
         .stdout(predicate::str::contains(
             "machine_i8042_snapshot_pending_bytes",
@@ -77,7 +79,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("xhci_snapshot"))
         .stdout(predicate::str::contains("machine_xhci_usb_attach_at_path"))
         .stdout(predicate::str::contains("usb_snapshot_host_state"))
-        .stdout(predicate::str::contains("webusb_uhci_bridge"))
+        .stdout(predicate::str::contains("--test webusb_uhci_bridge"))
         .stdout(predicate::str::contains("uhci_controller_topology"))
         .stdout(predicate::str::contains(
             "uhci_runtime_webusb_drain_actions",
@@ -90,15 +92,15 @@ fn input_help_mentions_flags_and_steps() {
         ))
         .stdout(predicate::str::contains("ehci_controller_topology"))
         .stdout(predicate::str::contains("webusb_ehci_passthrough_harness"))
-        .stdout(predicate::str::contains("xhci_webusb_bridge"))
+        .stdout(predicate::str::contains("--test xhci_webusb_bridge"))
         .stdout(predicate::str::contains("xhci_controller_bridge"))
         .stdout(predicate::str::contains("xhci_controller_bridge_topology"))
         .stdout(predicate::str::contains("xhci_controller_bridge_webusb"))
         .stdout(predicate::str::contains("xhci_controller_topology"))
         .stdout(predicate::str::contains("xhci_bme_event_ring"))
-        .stdout(predicate::str::contains("xhci_webusb_snapshot"))
+        .stdout(predicate::str::contains("--test xhci_webusb_snapshot"))
         .stdout(predicate::str::contains("usb_bridge_snapshot_roundtrip"))
-        .stdout(predicate::str::contains("usb_snapshot"))
+        .stdout(predicate::str::contains("--test usb_snapshot --test"))
         .stdout(predicate::str::contains("machine_input_injection_wasm"))
         .stdout(predicate::str::contains("wasm_machine_ps2_mouse"))
         .stdout(predicate::str::contains(
@@ -133,8 +135,10 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "src/workers/uhci_runtime_hub_config.test.ts",
         ))
-        .stdout(predicate::str::contains("usb_guest_controller"))
-        .stdout(predicate::str::contains("webusb_passthrough_runtime"))
+        .stdout(predicate::str::contains("src/usb/usb_guest_controller.test.ts"))
+        .stdout(predicate::str::contains(
+            "src/usb/webusb_passthrough_runtime.test.ts",
+        ))
         .stdout(predicate::str::contains(
             "src/usb/webhid_passthrough_runtime.test.ts",
         ))
@@ -154,6 +158,7 @@ fn input_help_mentions_flags_and_steps() {
             "src/usb/xhci_webusb_bridge.test.ts",
         ))
         .stdout(predicate::str::contains("xhci_webusb_passthrough_runtime"))
+        .stdout(predicate::str::contains("uhci_machine_topology_rust_drift"))
         .stdout(predicate::str::contains("uhci_webusb_root_port_rust_drift"))
         .stdout(predicate::str::contains("ehci_webusb_root_port_rust_drift"))
         .stdout(predicate::str::contains("xhci_webusb_root_port_rust_drift"))
