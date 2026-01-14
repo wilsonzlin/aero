@@ -2014,28 +2014,6 @@ impl MmioHandler for VgaLfbMmio {
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
 
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 /// Size of the legacy VGA memory window (`0xA0000..0xC0000`) in bytes.
 ///
 /// This is aliased to `VRAM[0..LEGACY_VGA_WINDOW_SIZE]` when AeroGPU is enabled.
