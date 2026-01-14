@@ -14366,6 +14366,194 @@ bool TestApplyStateBlockSplitsShaderConstIBVs() {
       static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX)>();
 }
 
+bool TestApplyStateBlockNormalizesShaderConstIBStage() {
+  if constexpr (!HasPfnSetShaderConstI<D3D9DDI_DEVICEFUNCS>::value ||
+                !HasPfnSetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
+    // Some D3D9 DDI header variants do not expose the I/B constant entrypoints in the device
+    // function table. In those builds we cannot exercise the DDI surface area; treat the test as a
+    // no-op.
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      D3D9DDI_DEVICEFUNCS device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      D3D9DDI_HSTATEBLOCK hStateBlock{};
+      bool has_adapter = false;
+      bool has_device = false;
+      bool has_stateblock = false;
+      ~Cleanup() {
+        if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+          device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+        }
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "BeginStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "EndStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "ApplyStateBlock must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "DeleteStateBlock must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Record constants into a state block using a non-{0,1} stage value. The UMD should treat any
+    // non-VS stage as PS (matching its shader binding path).
+    constexpr uint32_t kWeirdStage = 42u;
+    hr = cleanup.device_funcs.pfnBeginStateBlock(create_dev.hDevice);
+    if (!Check(hr == S_OK, "BeginStateBlock")) {
+      return false;
+    }
+
+    const uint32_t int_start = 5;
+    const uint32_t int_count = 1;
+    const int32_t ints_a[4] = {1, 2, 3, 4};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kWeirdStage, int_start, ints_a, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(weird stage, recorded)")) {
+      return false;
+    }
+
+    const uint32_t bool_start = 7;
+    const uint32_t bool_count = 1;
+    const BOOL bools_a[1] = {static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kWeirdStage, bool_start, bools_a, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(weird stage, recorded)")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnEndStateBlock(create_dev.hDevice, &cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "EndStateBlock")) {
+      return false;
+    }
+    if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "EndStateBlock returns stateblock handle")) {
+      return false;
+    }
+    cleanup.has_stateblock = true;
+
+    // Change PS constants so ApplyStateBlock must restore.
+    const int32_t ints_b[4] = {-1, -2, -3, -4};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, int_start, ints_b, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, B)")) {
+      return false;
+    }
+
+    const BOOL bools_b[1] = {static_cast<BOOL>(0)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, bool_start, bools_b, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, B)")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "ApplyStateBlock")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I) == 1,
+               "ApplyStateBlock emits one SET_SHADER_CONSTANTS_I")) {
+      return false;
+    }
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B) == 1,
+               "ApplyStateBlock emits one SET_SHADER_CONSTANTS_B")) {
+      return false;
+    }
+
+    const CmdLoc i_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+    if (!Check(i_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_I emitted")) {
+      return false;
+    }
+    const auto* i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(i_loc.hdr);
+    if (!Check(i_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "I stage normalized to PS")) {
+      return false;
+    }
+    if (!Check(i_cmd->start_register == int_start, "I start_register")) {
+      return false;
+    }
+    if (!Check(i_cmd->vec4_count == int_count, "I vec4_count")) {
+      return false;
+    }
+    const auto* i_payload = reinterpret_cast<const int32_t*>(
+        reinterpret_cast<const uint8_t*>(i_cmd) + sizeof(*i_cmd));
+    if (!Check(std::memcmp(i_payload, ints_a, sizeof(ints_a)) == 0, "I payload matches recorded")) {
+      return false;
+    }
+
+    const CmdLoc b_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+    if (!Check(b_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_B emitted")) {
+      return false;
+    }
+    const auto* b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(b_loc.hdr);
+    if (!Check(b_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "B stage normalized to PS")) {
+      return false;
+    }
+    if (!Check(b_cmd->start_register == bool_start, "B start_register")) {
+      return false;
+    }
+    if (!Check(b_cmd->bool_count == bool_count, "B bool_count")) {
+      return false;
+    }
+    const auto* b_payload = reinterpret_cast<const uint32_t*>(
+        reinterpret_cast<const uint8_t*>(b_cmd) + sizeof(*b_cmd));
+    const uint32_t expected_b[4] = {1u, 1u, 1u, 1u};
+    return Check(std::memcmp(b_payload, expected_b, sizeof(expected_b)) == 0, "B payload matches recorded");
+  }
+}
+
 template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
 bool TestCaptureStateBlockUpdatesShaderConstIBImpl() {
   if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
@@ -38887,6 +39075,7 @@ int main() {
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIBVs);
+  RUN_TEST(TestApplyStateBlockNormalizesShaderConstIBStage);
   RUN_TEST(TestCaptureStateBlockUpdatesShaderConstIB);
   RUN_TEST(TestCaptureStateBlockUpdatesShaderConstIBVs);
   RUN_TEST(TestCaptureStateBlockSplitsShaderConstIB);
