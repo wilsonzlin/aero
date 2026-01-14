@@ -1030,6 +1030,7 @@ Harness validation (non-normative, QEMU):
           `mode=msix` (end-to-end validation).
       - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
   - Guest selftest (virtio-blk only): `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+    - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
 
 See:
 - `drivers/windows7/tests/README.md`
