@@ -1612,6 +1612,232 @@ bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseLightingDirtyAfterUserVsAndConstClobber() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "pfnSetShader is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use a fixed-function XYZ|NORMAL|DIFFUSE draw so lighting constants are required.
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // First draw: uploads lighting constants and clears the dirty flag.
+  dev->cmd.reset();
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(initial lit draw)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(initial lit draw)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "initial draw emits one lighting constant upload")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "initial draw cleared fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  // If the app writes overlapping VS constants (c208..c236), the fixed-function lighting
+  // constants must be treated as clobbered and re-uploaded.
+  const float junk_vec4[4] = {123.0f, 456.0f, 789.0f, 1011.0f};
+  hr = cleanup.device_funcs.pfnSetShaderConstF(
+      cleanup.hDevice, kD3dShaderStageVs, /*start_reg=*/kFixedfuncLightingStartRegister, junk_vec4, 1);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, fixedfunc lighting start, 1)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_lighting_dirty, "SetShaderConstF overlap marks fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after lighting const clobber)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(after lighting const clobber)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "lighting constant upload re-emitted after const clobber")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "const-clobber draw cleared fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  // If the app binds a user VS, it may write overlapping constants. Ensure the
+  // driver forces a lighting constant re-upload when switching back to fixed-function.
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStageVs,
+                                            fixedfunc::kVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS user)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_lighting_dirty, "binding user VS marks fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  // Simulate a user shader clobbering the reserved fixed-function lighting constant range.
+  hr = cleanup.device_funcs.pfnSetShaderConstF(
+      cleanup.hDevice, kD3dShaderStageVs, /*start_reg=*/kFixedfuncLightingStartRegister, junk_vec4, 1);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, fixedfunc lighting start, 1; user VS bound)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_lighting_dirty,
+               "SetShaderConstF overlap keeps fixedfunc_lighting_dirty while user VS is bound")) {
+      return false;
+    }
+  }
+
+  // Unbind the user VS. This call should switch back to fixed-function pipeline
+  // and refresh lighting constants once (either eagerly here or lazily on the
+  // next draw) if the user shader clobbered the reserved range.
+  D3D9DDI_HSHADER hNull{};
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hNull);
+  if (!Check(hr == S_OK, "SetShader(VS NULL)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(after VS unbind)")) {
+    return false;
+  }
+  const size_t unbind_uploads =
+      CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(unbind_uploads <= 1, "after VS unbind: at most one lighting constant upload")) {
+    return false;
+  }
+
+  // Perform a draw. If lighting constants weren't refreshed eagerly above, this
+  // draw must refresh them before executing.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after VS unbind)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(draw after VS unbind)")) {
+    return false;
+  }
+  const size_t draw_uploads =
+      CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(draw_uploads <= 1, "draw after VS unbind: at most one lighting constant upload")) {
+    return false;
+  }
+  if (!Check(unbind_uploads + draw_uploads == 1,
+             "lighting constants refreshed once after switching back from user VS")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "draw after VS unbind cleared fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFvfXyzDiffuseRedundantSetFvfDoesNotReuploadWvp() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -12167,6 +12393,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseLightingDirtyAfterUserVsAndConstClobber()) {
     return 1;
   }
   if (!aerogpu::TestSetShaderConstFDedupSkipsRedundantUpload()) {
