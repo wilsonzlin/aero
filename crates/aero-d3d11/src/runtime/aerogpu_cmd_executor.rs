@@ -89,6 +89,15 @@ const DEFAULT_MAX_UAV_SLOTS: usize = MAX_UAV_SLOTS as usize;
 const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = D3D11_MAX_CONSTANT_BUFFER_SLOTS as usize;
 const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
 
+const ALL_SHADER_STAGES: [ShaderStage; 6] = [
+    ShaderStage::Vertex,
+    ShaderStage::Pixel,
+    ShaderStage::Geometry,
+    ShaderStage::Hull,
+    ShaderStage::Domain,
+    ShaderStage::Compute,
+];
+
 // WebGPU pipelines must declare at least one color target when a fragment shader writes a color
 // output. D3D11 commonly executes depth-only passes (no RTVs bound) while a PS is still present.
 // Our current DXBC→WGSL translation always emits `@location(0)` output, so we bind an internal
@@ -11120,7 +11129,16 @@ impl AerogpuD3d11Executor {
                     size: (size_bytes != 0).then_some(size_bytes as u64),
                 })
             };
-
+            // D3D11 does not allow the same resource to be bound as both an input (SRV) and output
+            // (UAV) at the same time. Mirror that behavior by unbinding any UAV buffer views that
+            // refer to the newly bound SRV resource (across all stages).
+            if let Some(handle) = bound.as_ref().map(|b| b.buffer) {
+                for other_stage in ALL_SHADER_STAGES {
+                    self.bindings
+                        .stage_mut(other_stage)
+                        .clear_uav_buffer_handle(handle);
+                }
+            }
             let slot = start_slot
                 .checked_add(i as u32)
                 .ok_or_else(|| anyhow!("SET_SHADER_RESOURCE_BUFFERS: slot overflow"))?;
@@ -11194,7 +11212,15 @@ impl AerogpuD3d11Executor {
                     size: (size_bytes != 0).then_some(size_bytes as u64),
                 })
             };
-
+            // D3D11 does not allow a resource to be simultaneously bound as an SRV and UAV.
+            // Unbind SRV buffer views that reference the newly bound UAV resource.
+            if let Some(handle) = bound.as_ref().map(|b| b.buffer) {
+                for other_stage in ALL_SHADER_STAGES {
+                    self.bindings
+                        .stage_mut(other_stage)
+                        .clear_srv_buffer_handle(handle);
+                }
+            }
             let slot = start_slot
                 .checked_add(i as u32)
                 .ok_or_else(|| anyhow!("SET_UNORDERED_ACCESS_BUFFERS: slot overflow"))?;
@@ -18549,6 +18575,177 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 exec.bindings.stage(ShaderStage::Compute).uav_buffer(0),
                 Some(BoundBuffer {
                     buffer: UAV_BUF,
+                    offset: 0,
+                    size: None,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn set_unordered_access_buffers_unbinds_srv_buffers_with_same_resource() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const BUF: u32 = 1;
+            let allocs = AllocTable::new(None).unwrap();
+
+            let mut create_cmd = Vec::new();
+            create_cmd.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            create_cmd.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&BUF.to_le_bytes());
+            create_cmd.extend_from_slice(&AEROGPU_RESOURCE_USAGE_STORAGE.to_le_bytes());
+            create_cmd.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create_cmd.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            exec.exec_create_buffer(&create_cmd, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+
+            // Bind BUF as an SRV buffer in the vertex stage (t0).
+            let mut srv_cmd = Vec::new();
+            srv_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetShaderResourceBuffers as u32).to_le_bytes(),
+            );
+            srv_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            srv_cmd.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            srv_cmd.extend_from_slice(&BUF.to_le_bytes());
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            exec.exec_set_shader_resource_buffers(&srv_cmd)
+                .expect("SET_SHADER_RESOURCE_BUFFERS should succeed");
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Vertex)
+                    .srv_buffer(0)
+                    .is_some(),
+                "expected SRV buffer binding to be set before SET_UNORDERED_ACCESS_BUFFERS"
+            );
+
+            // Bind the same resource as a UAV (u0) in compute. D3D11 unbinds the SRV automatically;
+            // mirror that so wgpu does not see SRV/UAV aliasing.
+            let mut uav_cmd = Vec::new();
+            uav_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
+            );
+            uav_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            uav_cmd.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            uav_cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            uav_cmd.extend_from_slice(&BUF.to_le_bytes());
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+            exec.exec_set_unordered_access_buffers(&uav_cmd)
+                .expect("SET_UNORDERED_ACCESS_BUFFERS should succeed");
+
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Vertex)
+                    .srv_buffer(0)
+                    .is_none(),
+                "binding a UAV buffer must unbind SRV buffer views of the same resource"
+            );
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Compute).uav_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset: 0,
+                    size: None,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn set_shader_resource_buffers_unbinds_uav_buffers_with_same_resource() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const BUF: u32 = 1;
+            let allocs = AllocTable::new(None).unwrap();
+
+            let mut create_cmd = Vec::new();
+            create_cmd.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            create_cmd.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&BUF.to_le_bytes());
+            create_cmd.extend_from_slice(&AEROGPU_RESOURCE_USAGE_STORAGE.to_le_bytes());
+            create_cmd.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create_cmd.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            exec.exec_create_buffer(&create_cmd, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+
+            // Bind BUF as a UAV buffer in compute (u0).
+            let mut uav_cmd = Vec::new();
+            uav_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
+            );
+            uav_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            uav_cmd.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            uav_cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            uav_cmd.extend_from_slice(&BUF.to_le_bytes());
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+            exec.exec_set_unordered_access_buffers(&uav_cmd)
+                .expect("SET_UNORDERED_ACCESS_BUFFERS should succeed");
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .uav_buffer(0)
+                    .is_some(),
+                "expected UAV buffer binding to be set before SET_SHADER_RESOURCE_BUFFERS"
+            );
+
+            // Bind the same resource as an SRV buffer (t0) in vertex. D3D11 unbinds UAV views.
+            let mut srv_cmd = Vec::new();
+            srv_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetShaderResourceBuffers as u32).to_le_bytes(),
+            );
+            srv_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            srv_cmd.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            srv_cmd.extend_from_slice(&BUF.to_le_bytes());
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            exec.exec_set_shader_resource_buffers(&srv_cmd)
+                .expect("SET_SHADER_RESOURCE_BUFFERS should succeed");
+
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .uav_buffer(0)
+                    .is_none(),
+                "binding an SRV buffer must unbind UAV buffer views of the same resource"
+            );
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Vertex).srv_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF,
                     offset: 0,
                     size: None,
                 })
