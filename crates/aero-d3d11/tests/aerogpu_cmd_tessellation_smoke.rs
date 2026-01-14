@@ -3,8 +3,9 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    AerogpuShaderStageEx, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -128,8 +129,6 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
 
         // Large-ish triangle that does *not* cover the full render target, so we can assert
         // pixels outside it remain at the clear color.
-        //
-        // Note: order is clockwise to match the executor's default CW front-face state.
         let verts = [
             Vertex {
                 pos: [-0.8, -0.8, 0.0],
@@ -183,6 +182,17 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
 
         // Bind VS+PS and HS/DS (extended append-only BIND_SHADERS payload).
         writer.bind_shaders_ex(VS, PS, 0, 0, HS, DS);
+
+        // The tessellation index generator should output a stable triangle winding, but disable
+        // face culling so the test does not depend on it (matches other compute-prepass tests).
+        writer.set_rasterizer_state_ext(
+            AerogpuFillMode::Solid,
+            AerogpuCullMode::None,
+            false,
+            false,
+            0,
+            false,
+        );
 
         writer.set_vertex_buffers(
             0,
