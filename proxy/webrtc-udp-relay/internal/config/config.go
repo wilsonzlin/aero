@@ -1218,24 +1218,6 @@ func isHTTPTokenChar(r rune) bool {
 	}
 }
 
-func NewLogger(cfg Config) (*slog.Logger, error) {
-	opts := &slog.HandlerOptions{
-		Level: cfg.LogLevel,
-	}
-
-	var handler slog.Handler
-	switch cfg.LogFormat {
-	case LogFormatText:
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	case LogFormatJSON:
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	default:
-		return nil, fmt.Errorf("unsupported log format %q", cfg.LogFormat)
-	}
-
-	return slog.New(handler), nil
-}
-
 func envOrDefault(lookup func(string) (string, bool), key, fallback string) string {
 	if v, ok := lookup(key); ok && v != "" {
 		return v

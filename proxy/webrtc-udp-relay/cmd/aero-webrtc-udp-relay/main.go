@@ -38,7 +38,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger, err := config.NewLogger(cfg)
+	logger, err := newLogger(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -187,6 +187,24 @@ func inboundFilterMode(mode config.UDPInboundFilterMode) relay.InboundFilterMode
 		// Should be validated by config.Load.
 		return relay.InboundFilterAddressAndPort
 	}
+}
+
+func newLogger(cfg config.Config) (*slog.Logger, error) {
+	opts := &slog.HandlerOptions{
+		Level: cfg.LogLevel,
+	}
+
+	var handler slog.Handler
+	switch cfg.LogFormat {
+	case config.LogFormatText:
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	case config.LogFormatJSON:
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	default:
+		return nil, fmt.Errorf("unsupported log format %q", cfg.LogFormat)
+	}
+
+	return slog.New(handler), nil
 }
 
 func resolveBuildInfo(commit, buildTime string) (string, string) {
