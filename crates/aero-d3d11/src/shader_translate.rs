@@ -1100,7 +1100,7 @@ fn build_hs_patch_constant_layout(pcsg: &DxbcSignature) -> HsPatchConstantLayout
     // Apply the outer-factor offset to inside tess factors and combine.
     let tess_factor_stride = outer_count + inner_count;
     let mut tess_factor_writes = Vec::<HsTessFactorWrite>::new();
-    tess_factor_writes.extend(outer_writes.into_iter());
+    tess_factor_writes.extend(outer_writes);
     tess_factor_writes.extend(inner_writes.into_iter().map(|mut w| {
         w.dst_index += outer_count;
         w
