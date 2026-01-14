@@ -6542,6 +6542,8 @@ mod tests {
 
     #[tokio::test]
     async fn verify_http_manifest_url_rejects_meta_mismatch() -> Result<()> {
+        use std::sync::Mutex;
+
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
         let chunk1 = vec![b'b'; 512];
@@ -6568,18 +6570,26 @@ mod tests {
         };
         let meta_bytes = serde_json::to_vec_pretty(&meta).context("serialize meta")?;
 
+        let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let requests_for_responder = Arc::clone(&requests);
+
         let responder: Arc<
             dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
                 + Send
                 + Sync
                 + 'static,
-        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
-            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
-            "/meta.json" => (200, Vec::new(), meta_bytes.clone()),
-            // Chunks should not be needed if meta.json validation fails, but include them anyway.
-            "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
-            "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
-            _ => (404, Vec::new(), b"not found".to_vec()),
+        > = Arc::new(move |req: TestHttpRequest| {
+            requests_for_responder
+                .lock()
+                .expect("lock requests")
+                .push(req.path.clone());
+            match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (200, Vec::new(), meta_bytes.clone()),
+                // Chunks should never be requested when meta.json validation fails.
+                _ if req.path.starts_with("/chunks/") => (500, Vec::new(), b"unexpected".to_vec()),
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            }
         });
         let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
 
@@ -6611,6 +6621,15 @@ mod tests {
         assert!(
             summary.contains("meta.json chunkCount mismatch"),
             "unexpected error chain: {summary}"
+        );
+        let requests = requests.lock().expect("lock requests");
+        assert!(
+            requests.iter().any(|p| p == "/meta.json"),
+            "expected meta.json to be requested, got {requests:?}"
+        );
+        assert!(
+            !requests.iter().any(|p| p.starts_with("/chunks/")),
+            "expected no chunk fetches on meta mismatch, got {requests:?}"
         );
         Ok(())
     }
@@ -6921,25 +6940,11 @@ mod tests {
     #[tokio::test]
     async fn verify_local_manifest_rejects_meta_mismatch() -> Result<()> {
         let dir = tempfile::tempdir().context("create tempdir")?;
-        tokio::fs::create_dir_all(dir.path().join("chunks"))
-            .await
-            .context("create chunks dir")?;
 
         let chunk_size: u64 = 1024;
-        let chunk0 = vec![b'a'; chunk_size as usize];
-        let chunk1 = vec![b'b'; SECTOR_SIZE];
-        let total_size = (chunk0.len() + chunk1.len()) as u64;
+        let total_size = chunk_size + (SECTOR_SIZE as u64);
 
-        let chunk0_path = dir.path().join(chunk_object_key(0)?);
-        let chunk1_path = dir.path().join(chunk_object_key(1)?);
-        tokio::fs::write(&chunk0_path, &chunk0)
-            .await
-            .with_context(|| format!("write {}", chunk0_path.display()))?;
-        tokio::fs::write(&chunk1_path, &chunk1)
-            .await
-            .with_context(|| format!("write {}", chunk1_path.display()))?;
-
-        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let sha256_by_index = vec![Some(sha256_hex(b"chunk0")), Some(sha256_hex(b"chunk1"))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
