@@ -5171,6 +5171,7 @@ function renderAudioPanel(): HTMLElement {
           data: encoder.encode(
             [
               `Aero audio QA bundle (${timeIso})`,
+              `Build: version=${metricsReport.build.version} gitSha=${metricsReport.build.gitSha} builtAt=${metricsReport.build.builtAt}`,
               ``,
               `This archive is best-effort: some files may be missing and corresponding *-error.txt or *.json { ok:false } files may be present.`,
               ``,
