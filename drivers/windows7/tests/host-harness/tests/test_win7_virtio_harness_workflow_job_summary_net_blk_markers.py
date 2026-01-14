@@ -22,6 +22,8 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         for marker in (
             "VIRTIO_BLK_IO|",
             "VIRTIO_BLK_MSIX|",
+            "VIRTIO_BLK_RECOVERY|",
+            "VIRTIO_BLK_COUNTERS|",
             "VIRTIO_BLK_RESET_RECOVERY|",
             "VIRTIO_BLK_MINIPORT_FLAGS|",
             "VIRTIO_BLK_MINIPORT_RESET_RECOVERY|",
@@ -38,6 +40,8 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         # Job summary bullet labels
         self.assertIn("Host virtio-blk I/O marker", self.text)
         self.assertIn("Host virtio-blk MSI-X marker", self.text)
+        self.assertIn("Host virtio-blk recovery marker", self.text)
+        self.assertIn("Host virtio-blk counters marker", self.text)
         self.assertIn("Host virtio-blk-reset-recovery marker", self.text)
         self.assertIn("Host virtio-blk miniport flags marker", self.text)
         self.assertIn("Host virtio-blk miniport reset recovery marker", self.text)
