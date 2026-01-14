@@ -476,6 +476,7 @@ typedef struct _AEROGPU_ADAPTER {
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;
     LIST_ENTRY ShareTokenRefs;
+    NPAGED_LOOKASIDE_LIST ShareTokenRefLookaside;
     /*
      * Atomic alloc_id generator for non-AeroGPU (kernel/runtime) allocations
      * that do not carry an AeroGPU private-data blob.

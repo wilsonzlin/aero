@@ -3718,7 +3718,7 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
     KeReleaseSpinLock(&Adapter->AllocationsLock, *OldIrqlInOut);
 
     AEROGPU_SHARE_TOKEN_REF* node =
-        (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
+        (AEROGPU_SHARE_TOKEN_REF*)ExAllocateFromNPagedLookasideList(&Adapter->ShareTokenRefLookaside);
     if (!node) {
         KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
         /*
@@ -3764,7 +3764,7 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
              * Drop AllocationsLock to free outside the spin-locked region.
              */
             KeReleaseSpinLock(&Adapter->AllocationsLock, *OldIrqlInOut);
-            ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+            ExFreeToNPagedLookasideList(&Adapter->ShareTokenRefLookaside, node);
             KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
             return openCount;
         }
@@ -3829,7 +3829,7 @@ static BOOLEAN AeroGpuShareTokenRefDecrement(_Inout_ AEROGPU_ADAPTER* Adapter, _
     }
 
     if (toFree) {
-        ExFreePoolWithTag(toFree, AEROGPU_POOL_TAG);
+        ExFreeToNPagedLookasideList(&Adapter->ShareTokenRefLookaside, toFree);
     }
 
     if (ShouldReleaseOut) {
@@ -3869,7 +3869,7 @@ static VOID AeroGpuFreeAllShareTokenRefs(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+        ExFreeToNPagedLookasideList(&Adapter->ShareTokenRefLookaside, node);
     }
 }
 
@@ -4016,7 +4016,7 @@ static BOOLEAN AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ 
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
 
     if (toFree) {
-        ExFreePoolWithTag(toFree, AEROGPU_POOL_TAG);
+        ExFreeToNPagedLookasideList(&Adapter->ShareTokenRefLookaside, toFree);
     }
 
     if (Allocation->ShareToken != 0) {
@@ -4332,6 +4332,8 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->CursorLock);
     InitializeListHead(&adapter->Allocations);
     InitializeListHead(&adapter->ShareTokenRefs);
+    ExInitializeNPagedLookasideList(
+        &adapter->ShareTokenRefLookaside, NULL, NULL, 0, sizeof(AEROGPU_SHARE_TOKEN_REF), AEROGPU_POOL_TAG, 128);
 
     KeInitializeSpinLock(&adapter->SharedHandleTokenLock);
     InitializeListHead(&adapter->SharedHandleTokens);
@@ -5998,6 +6000,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     AeroGpuFreeAllPendingSubmissions(adapter);
     AeroGpuFreeAllAllocations(adapter);
     AeroGpuFreeAllShareTokenRefs(adapter);
+    ExDeleteNPagedLookasideList(&adapter->ShareTokenRefLookaside);
     AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuFreeSharedHandleTokens(adapter);
     AeroGpuContigPoolPurge(adapter);
