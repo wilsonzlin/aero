@@ -123,9 +123,9 @@ fn aerogpu_bar0_mmio_magic_and_vblank_irq() {
     // Advance time deterministically via the machine's HLT idle tick path until a vblank edge
     // arrives. Derive the required duration from the guest-visible vblank period register so this
     // test remains correct if the default vblank rate changes.
-    let period_ns = u64::from(m.read_physical_u32(
-        bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
-    ));
+    let period_ns = u64::from(
+        m.read_physical_u32(bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    );
     assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
     let ticks_needed = period_ns.div_ceil(1_000_000) as usize;
 

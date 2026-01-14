@@ -4893,8 +4893,10 @@ impl AerogpuD3d11Executor {
             .checked_mul(expanded_vertex_count.max(1))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
 
-        let max_indices_per_prim =
-            gs_prepass_max_indices_per_primitive(gs_meta.output_topology_kind, gs_meta.max_output_vertices)?;
+        let max_indices_per_prim = gs_prepass_max_indices_per_primitive(
+            gs_meta.output_topology_kind,
+            gs_meta.max_output_vertices,
+        )?;
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
@@ -7627,8 +7629,10 @@ impl AerogpuD3d11Executor {
             .checked_mul(expanded_vertex_count.max(1))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
 
-        let max_indices_per_prim =
-            gs_prepass_max_indices_per_primitive(gs_meta.output_topology_kind, gs_meta.max_output_vertices)?;
+        let max_indices_per_prim = gs_prepass_max_indices_per_primitive(
+            gs_meta.output_topology_kind,
+            gs_meta.max_output_vertices,
+        )?;
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
@@ -9103,7 +9107,8 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             expanded_index_alloc = Some(tess_index_alloc);
             indirect_args_alloc = tess_indirect_args_alloc;
         } else if let Some((gs_handle, gs_meta)) = gs_prepass {
-            expanded_draw_topology = gs_prepass_expanded_draw_topology(gs_meta.output_topology_kind);
+            expanded_draw_topology =
+                gs_prepass_expanded_draw_topology(gs_meta.output_topology_kind);
 
             // The GS translator writes `DrawIndexedIndirectArgs` + an indexed list. We
             // expand indices into a non-indexed vertex stream before the render pass so we can

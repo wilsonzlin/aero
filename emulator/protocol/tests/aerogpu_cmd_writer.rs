@@ -2091,7 +2091,6 @@ fn cmd_writer_emits_set_shader_constants_i_with_vec4_aligned_i32_payload() {
 
 #[test]
 fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_per_register() {
-fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_values() {
     let data: [u32; 2] = [0, 1];
 
     let mut w = AerogpuCmdWriter::new();

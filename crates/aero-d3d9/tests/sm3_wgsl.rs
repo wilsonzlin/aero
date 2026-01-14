@@ -3570,17 +3570,20 @@ fn sm3_translate_to_wgsl_with_options_emits_half_pixel_uniform() {
     assert_eq!(out.entry_point, "vs_main");
     assert_eq!(out.bind_group_layout.sampler_group, 1);
     assert!(
-        out.wgsl.contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
+        out.wgsl
+            .contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
         "{}",
         out.wgsl
     );
     assert!(
-        out.wgsl.contains("out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;"),
+        out.wgsl
+            .contains("out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;"),
         "{}",
         out.wgsl
     );
     assert!(
-        out.wgsl.contains("out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;"),
+        out.wgsl
+            .contains("out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;"),
         "{}",
         out.wgsl
     );
