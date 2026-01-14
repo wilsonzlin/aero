@@ -222,4 +222,3 @@ fn inject_input_batch_mouse_backend_switches_from_ps2_to_usb_only_after_buttons_
         "expected USB mouse report after switching away from PS/2"
     );
 }
-

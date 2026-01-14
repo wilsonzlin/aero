@@ -1989,7 +1989,9 @@ mod tests {
         let fn_end = SRC[fn_start..]
             .find("fn collect_used_pixel_inputs_cond")
             .map(|off| fn_start + off)
-            .expect("collect_used_pixel_inputs_cond should exist after collect_used_pixel_inputs_op");
+            .expect(
+                "collect_used_pixel_inputs_cond should exist after collect_used_pixel_inputs_op",
+            );
 
         let fn_src = &SRC[fn_start..fn_end];
         assert_eq!(

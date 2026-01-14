@@ -1,7 +1,7 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig};
 use aero_gpu::stats::GpuStats;
+use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,

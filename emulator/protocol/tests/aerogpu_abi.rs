@@ -2760,7 +2760,9 @@ fn rust_layout_matches_c_headers() {
             .filter(|name| name.starts_with("aerogpu_umd_private_"))
             .map(|name| (*name).to_string())
             .collect(),
-        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_umd_private.h")),
+        parse_c_struct_def_names(
+            &repo_root().join("drivers/aerogpu/protocol/aerogpu_umd_private.h"),
+        ),
         "aerogpu_umd_private.h struct definitions",
     );
     assert_name_set_eq(
@@ -2769,7 +2771,9 @@ fn rust_layout_matches_c_headers() {
             .filter(|name| name.starts_with("aerogpu_wddm_alloc_"))
             .map(|name| (*name).to_string())
             .collect(),
-        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h")),
+        parse_c_struct_def_names(
+            &repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"),
+        ),
         "aerogpu_wddm_alloc.h struct definitions",
     );
 

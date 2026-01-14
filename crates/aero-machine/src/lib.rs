@@ -8068,11 +8068,15 @@ impl Machine {
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
+                        .and_then(|cfg| {
+                            cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX)
+                        })
                         .map(|range| range.base)
                         .unwrap_or(0);
                     let bar1_base = cfg
-                        .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+                        .and_then(|cfg| {
+                            cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+                        })
                         .map(|range| range.base)
                         .unwrap_or(0);
                     (command, bar0_base, bar1_base)
@@ -8080,10 +8084,8 @@ impl Machine {
 
                 let mut dev = aerogpu_mmio.borrow_mut();
                 dev.config_mut().set_command(command);
-                dev.config_mut().set_bar_base(
-                    aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
-                    bar0_base,
-                );
+                dev.config_mut()
+                    .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
                 dev.config_mut().set_bar_base(
                     aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
                     bar1_base,

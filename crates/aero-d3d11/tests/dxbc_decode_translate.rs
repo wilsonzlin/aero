@@ -3325,12 +3325,19 @@ fn decodes_and_translates_float_cmp_mask_and_movc() {
     assert!(
         matches!(
             module.instructions.get(0),
-            Some(Sm4Inst::Cmp { ty: CmpType::F32, op: CmpOp::Lt, .. })
+            Some(Sm4Inst::Cmp {
+                ty: CmpType::F32,
+                op: CmpOp::Lt,
+                ..
+            })
         ),
         "expected first instruction to decode as float compare: {:#?}",
         module.instructions
     );
-    assert!(matches!(module.instructions.get(1), Some(Sm4Inst::Movc { .. })));
+    assert!(matches!(
+        module.instructions.get(1),
+        Some(Sm4Inst::Movc { .. })
+    ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
