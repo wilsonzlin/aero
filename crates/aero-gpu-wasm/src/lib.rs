@@ -21,6 +21,7 @@ mod drain_queue;
 // - `web/src/arch/guest_ram_translate.ts` (and its wrapper `web/src/runtime/shared_layout.ts`)
 #[cfg(any(test, target_arch = "wasm32"))]
 mod guest_phys {
+    #[cfg(test)]
     pub use aero_guest_phys::{HIGH_RAM_START, LOW_RAM_END};
     pub use aero_guest_phys::translate_guest_paddr_range_to_offset as translate_guest_paddr_range;
 
