@@ -661,6 +661,71 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal_HeaderAli
 	}
 }
 
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal_HeaderXAPIKeyAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+
+	h1 := http.Header{}
+	h1.Set("Authorization", "Bearer "+tokenA)
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, h1)
+	if err != nil {
+		t.Fatalf("dial ws1: %v", err)
+	}
+	t.Cleanup(func() { _ = ws1.Close() })
+
+	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws1: %v", err)
+	}
+	_ = ws1.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws1.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws1: %v", err)
+	}
+	got, err := parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws1: %v", err)
+	}
+	if got.Type != "answer" {
+		t.Fatalf("unexpected ws1 message: %#v", got)
+	}
+
+	h2 := http.Header{}
+	h2.Set("X-API-Key", tokenB)
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURL, h2)
+	if err != nil {
+		t.Fatalf("dial ws2: %v", err)
+	}
+	t.Cleanup(func() { _ = ws2.Close() })
+
+	if err := ws2.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws2: %v", err)
+	}
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err = ws2.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws2: %v", err)
+	}
+	got, err = parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws2: %v", err)
+	}
+	if got.Type != "error" || got.Code != "session_already_active" {
+		t.Fatalf("unexpected ws2 message: %#v", got)
+	}
+}
+
 func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_WebSocketSignal(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:    config.AuthModeJWT,
