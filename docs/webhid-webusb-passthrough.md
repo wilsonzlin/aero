@@ -520,8 +520,11 @@ Recommended guardrails:
 
 ## Current limitations (MVP constraints)
 
-- **Guest USB root hub: 2 ports (today)**
-  - Only two devices can be attached *directly* to the root hub.
+- **Guest USB root hub port count varies by controller**
+  - UHCI exposes **2** root ports; EHCI/xHCI expose more root ports by default.
+  - The browser runtime uses a consistent topology convention across controllers:
+    - root port **0** hosts an emulated external USB hub (synthetic HID devices + WebHID passthrough)
+    - root port **1** is reserved for the guest-visible WebUSB passthrough device
   - The browser/WASM USB stack includes an external USB hub device model (`UsbHubDevice`, USB class
     `0x09`) that can be attached behind a root port to expose additional downstream ports.
     - Implementation: `crates/aero-usb/src/hub/device.rs`
