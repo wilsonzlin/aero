@@ -1247,6 +1247,12 @@ describe("hid/WebHidBroker", () => {
       expect(
         warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
       ).toBe(1);
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain(`pending=${limit}`);
+      expect(warnMsg).toContain(`maxPendingDeviceSends=${limit}`);
 
       broker.destroy();
     } finally {
@@ -1286,6 +1292,12 @@ describe("hid/WebHidBroker", () => {
       expect(
         warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
       ).toBe(1);
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain(`pending=${limit}`);
+      expect(warnMsg).toContain(`maxPendingDeviceSends=${limit}`);
 
       broker.destroy();
     } finally {
@@ -1332,6 +1344,12 @@ describe("hid/WebHidBroker", () => {
       expect(
         warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
       ).toBe(1);
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain(`pending=${limit}`);
+      expect(warnMsg).toContain(`maxPendingDeviceSends=${limit}`);
 
       broker.destroy();
     } finally {
@@ -1378,6 +1396,12 @@ describe("hid/WebHidBroker", () => {
       expect(
         warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
       ).toBe(1);
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain(`pending=${limit}`);
+      expect(warnMsg).toContain(`maxPendingDeviceSends=${limit}`);
 
       broker.destroy();
     } finally {
@@ -1425,6 +1449,12 @@ describe("hid/WebHidBroker", () => {
       expect(
         warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
       ).toBe(1);
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain("pending=1");
+      expect(warnMsg).toContain("maxPendingDeviceSends=1");
 
       broker.destroy();
     } finally {
