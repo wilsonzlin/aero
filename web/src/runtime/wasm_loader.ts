@@ -573,6 +573,14 @@ export type MachineHandle = {
      */
     attach_install_media_iso_bytes?(bytes: Uint8Array): void;
     /**
+     * Back-compat alias: attach an in-memory ISO as the canonical install media CD-ROM.
+     *
+     * Prefer {@link attach_install_media_iso_bytes}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_cd_image?(bytes: Uint8Array): void;
+    /**
      * Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM (`disk_id=1`).
      *
      * Newer wasm builds export this as `attach_install_media_iso_opfs`; older builds used
@@ -590,6 +598,14 @@ export type MachineHandle = {
      */
     attach_install_media_iso_opfs_existing?(path: string): Promise<void>;
     attach_install_media_opfs_iso?(path: string): Promise<void>;
+    /**
+     * Back-compat alias: attach an existing OPFS-backed ISO as the canonical install media CD-ROM.
+     *
+     * Prefer {@link attach_install_media_opfs_iso} / {@link attach_install_media_iso_opfs}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_cd_opfs_existing?(path: string): Promise<void>;
     /**
      * Attach an existing OPFS-backed ISO image as install media and set the snapshot overlay ref
      * (`DISKS` entry) for `disk_id=1` in one call.
@@ -1821,6 +1837,16 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         new_with_cpu_count?: (ramSizeBytes: number, cpuCount: number) => MachineHandle;
+        /**
+         * Construct a canonical machine and optionally enable additional input backends.
+         *
+         * Optional for older WASM builds.
+         */
+        new_with_input_backends?: (
+            ramSizeBytes: number,
+            enableVirtioInput: boolean,
+            enableSyntheticUsbHid: boolean,
+        ) => MachineHandle;
         /**
          * Construct a machine with an options object that can override the default device set.
          *

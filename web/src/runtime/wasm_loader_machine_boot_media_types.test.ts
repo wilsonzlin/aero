@@ -12,6 +12,8 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
     const machine = {
       set_boot_drive: (_drive: number) => {},
       attach_install_media_iso_bytes: (_bytes: Uint8Array) => {},
+      set_cd_image: (_bytes: Uint8Array) => {},
+      set_cd_opfs_existing: async (_path: string) => {},
     } as unknown as Machine;
 
     // Optional methods should require feature detection under `strictNullChecks`.
@@ -20,6 +22,10 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
       machine.set_boot_drive(0x80);
       // @ts-expect-error attach_install_media_iso_bytes may be undefined
       machine.attach_install_media_iso_bytes(new Uint8Array());
+      // @ts-expect-error set_cd_image may be undefined
+      machine.set_cd_image(new Uint8Array());
+      // @ts-expect-error set_cd_opfs_existing may be undefined
+      machine.set_cd_opfs_existing("install.iso");
     }
     void assertStrictNullChecksEnforced;
 
@@ -29,8 +35,13 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
     if (machine.attach_install_media_iso_bytes) {
       machine.attach_install_media_iso_bytes(new Uint8Array([0x01]));
     }
+    if (machine.set_cd_image) {
+      machine.set_cd_image(new Uint8Array([0x01]));
+    }
+    if (machine.set_cd_opfs_existing) {
+      void machine.set_cd_opfs_existing("install.iso");
+    }
 
     expect(true).toBe(true);
   });
 });
-

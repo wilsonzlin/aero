@@ -42,4 +42,38 @@ describe("runtime/wasm_loader (Machine constructor typings)", () => {
 
     expect(true).toBe(true);
   });
+
+  it("requires feature detection for optional Machine.new_with_input_backends", () => {
+    type Machine = InstanceType<WasmApi["Machine"]>;
+    type MachineCtor = WasmApi["Machine"];
+
+    const machine = {
+      free: () => {},
+    } as unknown as Machine;
+
+    const machineCtor = {
+      new_with_input_backends: (
+        _ramSizeBytes: number,
+        _enableVirtioInput: boolean,
+        _enableSyntheticUsbHid: boolean,
+      ) => machine,
+    } as unknown as MachineCtor;
+
+    function assertStrictNullChecksEnforced() {
+      // @ts-expect-error new_with_input_backends may be undefined
+      machineCtor.new_with_input_backends(2 * 1024 * 1024, true, true);
+      // @ts-expect-error enableVirtioInput must be boolean
+      machineCtor.new_with_input_backends?.(2 * 1024 * 1024, 1, true);
+      // @ts-expect-error enableSyntheticUsbHid must be boolean
+      machineCtor.new_with_input_backends?.(2 * 1024 * 1024, true, "1");
+    }
+    void assertStrictNullChecksEnforced;
+
+    if (machineCtor.new_with_input_backends) {
+      const m = machineCtor.new_with_input_backends(2 * 1024 * 1024, true, false);
+      m.free();
+    }
+
+    expect(true).toBe(true);
+  });
 });
