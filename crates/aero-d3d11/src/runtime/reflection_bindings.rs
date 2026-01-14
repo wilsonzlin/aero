@@ -912,9 +912,11 @@ mod tests {
                 &mut layout_cache,
                 [
                     ShaderBindingSet::Guest(empty.as_slice()),
-                    ShaderBindingSet::Guest(gs.as_slice()),
+                    ShaderBindingSet::Internal(gs.as_slice()),
                 ],
-                BindGroupIndexValidation::GuestShaders,
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
             )
             .unwrap();
 
@@ -1293,9 +1295,11 @@ mod tests {
                 &mut layout_cache,
                 [
                     ShaderBindingSet::Guest(vs_bindings.as_slice()),
-                    ShaderBindingSet::Guest(gs_bindings.as_slice()),
+                    ShaderBindingSet::Internal(gs_bindings.as_slice()),
                 ],
-                BindGroupIndexValidation::GuestShaders,
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
             )
             .expect("build pipeline bindings info");
             assert_eq!(
