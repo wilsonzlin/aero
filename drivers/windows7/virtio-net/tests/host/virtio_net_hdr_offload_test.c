@@ -455,6 +455,21 @@ static int test_malformed_and_truncated(void) {
     ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
   }
 
+  /* IPv6 payload_len=0 with NextHeader=TCP must not parse into Ethernet padding. */
+  {
+    static const uint8_t Frame[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x86, 0xdd,
+        0x60, 0, 0, 0, 0x00, 0x00, 0x06, 0x40, /* payload_len=0, next=TCP */
+        /* rest of IPv6 header */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        /* trailing bytes that look like a TCP header (should be ignored due to payload_len=0) */
+        0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    };
+    St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+    ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
+  }
+
   return 0;
 }
 

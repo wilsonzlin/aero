@@ -207,10 +207,10 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
    * Payload length excludes the 40-byte base header. If it's non-zero, ensure
    * the packet isn't truncated. (We don't currently support jumbograms.)
    */
-  if (PayloadLen != 0 && (size_t)PayloadLen > FrameLen - L3Offset - 40u) {
+  if ((size_t)PayloadLen > FrameLen - L3Offset - 40u) {
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
   }
-  MaxEnd = (PayloadLen != 0) ? (L3Offset + 40u + (size_t)PayloadLen) : FrameLen;
+  MaxEnd = L3Offset + 40u + (size_t)PayloadLen;
 
   NextHdr = Ip[6];
   Offset = L3Offset + 40u;
