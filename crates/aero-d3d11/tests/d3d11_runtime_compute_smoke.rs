@@ -29,7 +29,7 @@ fn d3d11_runtime_compute_smoke() {
         const STAGING: u32 = 4;
 
         let wgsl = r#"
-@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@group(2) @binding(0) var<storage, read_write> out: array<u32>;
 
 @compute @workgroup_size(1)
 fn cs_main() {
@@ -72,4 +72,3 @@ fn cs_main() {
         assert_eq!(got, 0x12345678);
     });
 }
-

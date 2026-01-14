@@ -35,7 +35,7 @@ fn d3d11_runtime_compute_dispatch_writes_storage_buffer() {
         let initial_words = vec![0xDEADBEEFu32; ELEMENTS as usize];
 
         let wgsl = r#"
-@group(0) @binding(0)
+@group(2) @binding(0)
 var<storage, read_write> buf: array<u32>;
 
 @compute @workgroup_size(1)

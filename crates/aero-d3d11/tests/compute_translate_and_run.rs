@@ -10,11 +10,8 @@ use aero_d3d11::{
 };
 
 // The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
-// model). The `protocol_d3d11` command-stream runtime binds only group 0 for compute pipelines, so
-// translated compute WGSL cannot be executed through that path.
-//
-// Test strategy (Option 1): use a small wgpu harness with an explicit pipeline layout containing
-// empty bind groups 0/1 and the translated compute resources bound at group 2.
+// model). Validate that the generated WGSL can be executed on wgpu with a pipeline layout that
+// includes empty bind groups 0/1 and the translated resources bound at group 2.
 
 async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
     let slice = buffer.slice(0..size);
@@ -98,6 +95,15 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
             .expect("compute translation should succeed");
         assert_wgsl_validates(&translated.wgsl);
 
+        let binding_u0 = BINDING_BASE_UAV + 0;
+        assert!(
+            translated
+                .wgsl
+                .contains(&format!("@group(2) @binding({binding_u0})")),
+            "expected u0 storage buffer binding to use @group(2); wgsl={}",
+            translated.wgsl
+        );
+
         let rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
@@ -109,13 +115,6 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
             common::skip_or_panic(TEST_NAME, "compute unsupported");
             return;
         }
-
-        let binding_u0 = BINDING_BASE_UAV + 0;
-        assert!(
-            translated.wgsl.contains("@group(2)"),
-            "translated compute WGSL must use @group(2):\n{}",
-            translated.wgsl
-        );
 
         let device = rt.device();
         let queue = rt.queue();

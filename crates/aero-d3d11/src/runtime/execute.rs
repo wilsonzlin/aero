@@ -1072,13 +1072,28 @@ impl D3D11Runtime {
             .bind_group_layout_cache
             .get_or_create(&self.device, &bind_group_layout_entries);
 
+        // D3D11 compute shaders are placed in bind group 2 by the shared binding model. WebGPU
+        // requires the pipeline layout to include all bind groups up to the maximum group index,
+        // so we insert empty layouts for groups 0 and 1.
+        let empty_bind_group_layout = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
+
         let layout_key = PipelineLayoutKey {
-            bind_group_layout_hashes: vec![bind_group_layout.hash],
+            bind_group_layout_hashes: vec![
+                empty_bind_group_layout.hash,
+                empty_bind_group_layout.hash,
+                bind_group_layout.hash,
+            ],
         };
         let pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
             &layout_key,
-            &[bind_group_layout.layout.as_ref()],
+            &[
+                empty_bind_group_layout.layout.as_ref(),
+                empty_bind_group_layout.layout.as_ref(),
+                bind_group_layout.layout.as_ref(),
+            ],
             Some("aero-d3d11 compute pipeline layout"),
         );
 
@@ -1515,6 +1530,17 @@ impl D3D11Runtime {
         self.encoder_has_commands = true;
         let device = &self.device;
         let resources = &self.resources;
+
+        // Compute-stage resources live in `@group(2)` in the AeroGPU D3D11 binding model, but WebGPU
+        // requires empty bind groups to exist for indices below the maximum used group. Prepare a
+        // shared empty bind group for groups 0 and 1.
+        let empty_bind_group_layout = self.bind_group_layout_cache.get_or_create(device, &[]);
+        let empty_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 empty bind group (compute)"),
+            layout: empty_bind_group_layout.layout.as_ref(),
+            entries: &[],
+        });
+
         let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
 
         // wgpu requires any `&BindGroup` passed to `set_bind_group` to remain alive for the entire
@@ -1614,7 +1640,9 @@ impl D3D11Runtime {
                     let bg_ptr = current_bind_group.expect("bind group must be built above");
                     if bound_bind_group != Some(bg_ptr) {
                         let bg_ref = unsafe { &*bg_ptr };
-                        compute_pass.set_bind_group(0, bg_ref, &[]);
+                        compute_pass.set_bind_group(0, &empty_bind_group, &[]);
+                        compute_pass.set_bind_group(1, &empty_bind_group, &[]);
+                        compute_pass.set_bind_group(2, bg_ref, &[]);
                         bound_bind_group = Some(bg_ptr);
                     }
                     compute_pass.dispatch_workgroups(x, y, z);
