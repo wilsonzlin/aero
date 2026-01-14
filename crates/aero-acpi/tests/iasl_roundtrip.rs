@@ -77,6 +77,20 @@ fn find_generated_dsl(temp_dir: &Path) -> io::Result<PathBuf> {
     }
 }
 
+fn iasl_disassemble_files(temp_path: &Path, files: &[&str]) {
+    for file in files {
+        let disasm = run_iasl(temp_path, &["-d", file])
+            .unwrap_or_else(|err| panic!("failed to spawn `iasl -d {file}`: {err}"));
+        if !disasm.status.success() {
+            panic!(
+                "`iasl -d {file}` failed\n{}\n(temp dir: {})",
+                fmt_output(&disasm),
+                temp_path.display()
+            );
+        }
+    }
+}
+
 fn dsdt_iasl_roundtrip(cfg: &AcpiConfig, label: &str) {
     let placement = AcpiPlacement::default();
     let tables = AcpiTables::build(cfg, placement);
@@ -162,3 +176,69 @@ fn dsdt_iasl_roundtrip_handles_ecam_disabled_and_enabled_variants() {
     );
 }
 
+#[test]
+fn full_table_set_iasl_disassembly_smoke() {
+    if !iasl_available() {
+        eprintln!("skipping: `iasl` not found in PATH");
+        return;
+    }
+
+    let placement = AcpiPlacement::default();
+
+    // Disassemble every emitted table both with and without ECAM enabled. This
+    // catches regressions where non-AML tables (FADT/MADT/HPET/MCFG, etc) become
+    // malformed even if checksums still pass.
+    for (label, cfg) in [
+        ("ecam-disabled", AcpiConfig::default()),
+        (
+            "ecam-enabled",
+            AcpiConfig {
+                // Typical Q35 ECAM/MMCONFIG base; must be 1MiB aligned.
+                pcie_ecam_base: 0xB000_0000,
+                pcie_segment: 0,
+                pcie_start_bus: 0,
+                pcie_end_bus: 0xFF,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let tables = AcpiTables::build(&cfg, placement);
+        if cfg.pcie_ecam_base != 0 {
+            assert!(
+                tables.mcfg.is_some(),
+                "expected AcpiTables::build to emit MCFG when ECAM is enabled ({label})"
+            );
+        } else {
+            assert!(
+                tables.mcfg.is_none(),
+                "did not expect AcpiTables::build to emit MCFG when ECAM is disabled ({label})"
+            );
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix(&format!("aero-acpi-iasl-tables-{label}-"))
+            .tempdir()
+            .expect("create tempdir");
+        let temp_path = tempdir.path();
+
+        let mut files: Vec<&'static str> = Vec::new();
+        let mut write_table = |name: &'static str, bytes: &[u8]| {
+            fs::write(temp_path.join(name), bytes)
+                .unwrap_or_else(|err| panic!("write {label} {name}: {err}"));
+            files.push(name);
+        };
+
+        // NOTE: `iasl -d` expects full table blobs including the SDT header.
+        write_table("rsdt.dat", &tables.rsdt);
+        write_table("xsdt.dat", &tables.xsdt);
+        write_table("fadt.dat", &tables.fadt);
+        write_table("madt.dat", &tables.madt);
+        write_table("hpet.dat", &tables.hpet);
+        if let Some(mcfg) = tables.mcfg.as_ref() {
+            write_table("mcfg.dat", mcfg);
+        }
+        write_table("dsdt.dat", &tables.dsdt);
+
+        iasl_disassemble_files(temp_path, &files);
+    }
+}
