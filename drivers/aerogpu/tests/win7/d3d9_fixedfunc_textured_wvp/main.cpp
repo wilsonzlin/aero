@@ -144,15 +144,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   dev->SetRenderState(D3DRS_ZENABLE, FALSE);
 
   // Create a 2x2 texture with distinct colors.
-  ComPtr<IDirect3DTexture9> tex;
-  hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, tex.put(), NULL);
+  //
+  // Use a SYSTEMMEM staging texture + UpdateTexture so this works reliably on
+  // D3D9Ex (which does not support D3DPOOL_MANAGED resources).
+  ComPtr<IDirect3DTexture9> sys_tex;
+  hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, sys_tex.put(), NULL);
   if (FAILED(hr)) {
-    return reporter.FailHresult("CreateTexture", hr);
+    return reporter.FailHresult("CreateTexture (SYSTEMMEM)", hr);
   }
 
   D3DLOCKED_RECT tlr;
   ZeroMemory(&tlr, sizeof(tlr));
-  hr = tex->LockRect(0, &tlr, NULL, 0);
+  hr = sys_tex->LockRect(0, &tlr, NULL, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DTexture9::LockRect", hr);
   }
@@ -166,7 +169,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   row1[0] = D3DCOLOR_XRGB(0, 0, 255);      // bottom-left: blue
   row1[1] = D3DCOLOR_XRGB(255, 255, 0);    // bottom-right: yellow
 
-  tex->UnlockRect(0);
+  sys_tex->UnlockRect(0);
+
+  ComPtr<IDirect3DTexture9> tex;
+  hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex.put(), NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateTexture (DEFAULT)", hr);
+  }
+
+  hr = dev->UpdateTexture(sys_tex.get(), tex.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::UpdateTexture", hr);
+  }
 
   hr = dev->SetTexture(0, tex.get());
   if (FAILED(hr)) {
