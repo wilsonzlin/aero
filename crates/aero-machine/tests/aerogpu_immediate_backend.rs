@@ -1,5 +1,5 @@
 use aero_devices::pci::PciInterruptPin;
-use aero_machine::{ImmediateAeroGpuBackend, Machine, MachineConfig};
+use aero_machine::{ImmediateAeroGpuBackend, Machine, MachineConfig, NullAeroGpuBackend};
 use aero_platform::interrupts::InterruptController as PlatformInterruptController;
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 use pretty_assertions::assert_eq;
@@ -19,7 +19,10 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
     })
     .unwrap();
 
-    m.aerogpu_set_backend(Box::new(ImmediateAeroGpuBackend::new()))
+    // First install the null backend. This ensures the test actually exercises
+    // `Machine::aerogpu_set_backend`: if backend installation is broken and the device falls back
+    // to its legacy "auto-complete fences" behavior, the assertions below will fail.
+    m.aerogpu_set_backend(Box::new(NullAeroGpuBackend::new()))
         .unwrap();
 
     let bdf = aero_devices::pci::profile::AEROGPU.bdf;
@@ -100,6 +103,40 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
     // Let the device make forward progress: consume the ring entry and complete the fence.
     m.process_aerogpu();
 
+    // With the null backend installed, the ring entry is consumed but the fence must not advance.
+    let completed_fence = {
+        let lo =
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO));
+        let hi =
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI));
+        u64::from(lo) | (u64::from(hi) << 32)
+    };
+    assert_eq!(completed_fence, 0);
+
+    let irq_status = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+
+    // Fence page in guest RAM should also reflect completion.
+    let fence_page = m.read_physical_bytes(FENCE_GPA, ring::AerogpuFencePage::SIZE_BYTES);
+    let fence_page = ring::AerogpuFencePage::decode_from_le_bytes(&fence_page).unwrap();
+    // `AerogpuFencePage` is `#[repr(packed)]`, so avoid taking references to its fields.
+    let fence_magic = fence_page.magic;
+    let fence_completed = fence_page.completed_fence;
+    assert_eq!(fence_magic, ring::AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(fence_completed, 0);
+
+    // Switch to the immediate backend and re-submit the same fence; this must now complete and
+    // assert INTx.
+    m.aerogpu_set_backend(Box::new(ImmediateAeroGpuBackend::new()))
+        .unwrap();
+    m.write_physical_u32(RING_GPA + 24, 0); // head
+    m.write_physical_u32(RING_GPA + 28, 1); // tail
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL),
+        1,
+    );
+    m.process_aerogpu();
+
     let completed_fence = {
         let lo =
             m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO));
@@ -112,10 +149,8 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
     let irq_status = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_eq!(irq_status, pci::AEROGPU_IRQ_FENCE);
 
-    // Fence page in guest RAM should also reflect completion.
     let fence_page = m.read_physical_bytes(FENCE_GPA, ring::AerogpuFencePage::SIZE_BYTES);
     let fence_page = ring::AerogpuFencePage::decode_from_le_bytes(&fence_page).unwrap();
-    // `AerogpuFencePage` is `#[repr(packed)]`, so avoid taking references to its fields.
     let fence_magic = fence_page.magic;
     let fence_completed = fence_page.completed_fence;
     assert_eq!(fence_magic, ring::AEROGPU_FENCE_PAGE_MAGIC);
