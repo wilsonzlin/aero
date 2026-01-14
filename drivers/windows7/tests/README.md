@@ -72,8 +72,8 @@ drivers/windows7/tests/
   - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
     `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1` to enable it.
-  - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
-    HID interface.
+    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+      HID interface.
     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
     - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the canonical INFs

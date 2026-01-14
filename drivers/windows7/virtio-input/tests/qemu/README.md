@@ -251,8 +251,10 @@ If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows w
 optional legacy alias INF to provide the generic fallback entry (the device will show up as **Aero VirtIO Input Device**).
 If you expect distinct keyboard/mouse names, ensure the subsystem IDs are present (`SUBSYS_0010` / `SUBSYS_0011`).
 
-Tablet devices bind via `aero_virtio_tablet.inf` when that INF is installed. The tablet HWID is more specific (`SUBSYS_0012...`),
-so it wins over the generic fallback.
+If the device reports `REV_00`, Windows will not bind (the INFs are revision-gated). Ensure `x-pci-revision=0x01` is set.
+
+If you want tablet devices to bind with the tablet Device Manager name, ensure `aero_virtio_tablet.inf` is installed as well
+(it is more specific than the fallback match, so it wins when both are present).
 
 Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match the same HWIDs, which can
 lead to confusing PnP driver selection.

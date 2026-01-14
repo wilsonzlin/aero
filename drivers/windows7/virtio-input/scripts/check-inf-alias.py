@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Verify that the virtio-input legacy INF filename alias stays in sync.
+"""\
+Verify that the legacy virtio-input INF filename alias stays in sync.
 
 The Windows 7 virtio-input driver package has a canonical INF:
   - drivers/windows7/virtio-input/inf/aero_virtio_input.inf
@@ -12,18 +13,10 @@ filename alias INF (checked in disabled-by-default):
 Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
-  - The alias INF is a *legacy filename alias* that also provides an opt-in strict
-    generic fallback HWID (`PCI\\VEN_1AF4&DEV_1052&REV_01`) for environments that do
-    not expose the Aero subsystem IDs.
-  - It is allowed to differ from the canonical INF in the models sections
-    (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add that fallback entry.
-  - Outside the models sections, it is expected to stay in sync with the canonical
-    INF. This check enforces that.
-
-Comparison notes:
-  - Comments and the allowed-to-diverge models sections are ignored.
-  - Outside the ignored sections, the comparison is strict (all functional lines
-    must match).
+  - The alias INF is a *filename alias only*.
+  - From the first section header (typically `[Version]`) onward, the alias must
+    remain byte-for-byte identical to the canonical INF.
+  - Only the leading banner/comment block may differ.
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
 """
@@ -31,85 +24,82 @@ Run from the repo root:
 from __future__ import annotations
 
 import difflib
-import re
 import sys
 from pathlib import Path
 
 
-def _strip_inf_inline_comment(line: str) -> str:
-    """Strip a ';' comment from an INF line, but keep semicolons inside quotes."""
+def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
+    """
+    Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
 
-    in_quote = False
-    out: list[str] = []
-    for ch in line:
-        if ch == '"':
-            in_quote = not in_quote
-            out.append(ch)
+    This is robust to UTF-16LE/BE encoded INFs where each ASCII character is
+    separated by a NUL byte.
+    """
+
+    if first_line:
+        # Strip BOMs for *detection only*. Returned content still includes them.
+        if line.startswith(b"\xef\xbb\xbf"):
+            line = line[3:]
+        elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
+            line = line[2:]
+
+    for b in line:
+        if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
             continue
-        if ch == ";" and not in_quote:
-            break
-        out.append(ch)
-    return "".join(out)
+        return b
+    return None
 
 
-def _read_text(path: Path) -> str:
-    """Decode an INF file as text.
+def inf_functional_bytes(path: Path) -> bytes:
+    """
+    Return the file content starting from the first section header line.
 
-    This helper is resilient to common Windows encodings (UTF-16 with or without
-    BOM, or UTF-8 with BOM) so drift checks still work if the INF is edited with
-    tools that change encodings.
+    We intentionally ignore the leading comment/header block so the alias INF can
+    have a different filename banner, while still enforcing byte-for-byte
+    equality for all sections/keys.
     """
 
     data = path.read_bytes()
-    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
-        return data.decode("utf-16", errors="replace").lstrip("\ufeff")
-    if data.startswith(b"\xef\xbb\xbf"):
-        return data.decode("utf-8-sig", errors="replace")
+    lines = data.splitlines(keepends=True)
 
-    text = data.decode("utf-8", errors="replace")
+    for i, line in enumerate(lines):
+        first = _first_nonblank_ascii_byte(line=line, first_line=(i == 0))
+        if first is None:
+            continue
 
-    # If the file was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
-    if "\x00" in text:
-        text = text.replace("\x00", "")
+        # First section header (e.g. "[Version]") starts the functional region.
+        if first == ord("["):
+            return b"".join(lines[i:])
 
-    return text
+        # Ignore leading comments.
+        if first == ord(";"):
+            continue
+
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
+
+    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
-def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
-    """Return a normalized INF representation for drift checks.
+def _decode_lines_for_diff(data: bytes) -> list[str]:
+    """
+    Decode bytes for a readable unified diff.
 
-    Normalization rules:
-    - strips full-line and inline comments (INF comments start with ';' outside quoted strings)
-    - drops empty lines
-    - removes entire sections (by name, case-insensitive)
-    - normalizes section headers to lowercase (INF section names are case-insensitive)
+    The comparison is byte-for-byte, but when files drift we want the diff output
+    to be readable even if the INF is UTF-16 encoded (with or without a BOM).
     """
 
-    drop = {s.lower() for s in drop_sections}
-    out: list[str] = []
-    current_section: str | None = None
-    dropping = False
-
-    for raw in _read_text(path).splitlines():
-        line = _strip_inf_inline_comment(raw).strip()
-        if not line:
-            continue
-
-        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
-        if m:
-            current_section = m.group("section").strip()
-            dropping = current_section.lower() in drop
-            if not dropping:
-                # INF section names are case-insensitive.
-                out.append(f"[{current_section.lower()}]")
-            continue
-
-        if dropping:
-            continue
-
-        out.append(line)
-
-    return out
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+    elif data.startswith(b"\xef\xbb\xbf"):
+        text = data.decode("utf-8-sig", errors="replace")
+    else:
+        text = data.decode("utf-8", errors="replace")
+        # If this was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+    return text.splitlines(keepends=True)
 
 def strip_inf_sections(data: bytes, *, sections: set[str]) -> bytes:
     """Remove entire INF sections (including their headers) by name (case-insensitive)."""
@@ -157,19 +147,16 @@ def main() -> int:
         )
         return 0
 
-    drop_sections = {"Aero.NTx86", "Aero.NTamd64"}
-    canonical_lines = _normalized_inf_lines_without_sections(canonical, drop_sections=drop_sections)
-    alias_lines = _normalized_inf_lines_without_sections(alias, drop_sections=drop_sections)
-    if canonical_lines == alias_lines:
-        print(
-            "virtio-input INF alias drift check: OK ({} stays in sync with {} outside models sections)".format(
-                alias.relative_to(repo_root), canonical.relative_to(repo_root)
-            )
-        )
+    canonical_body = inf_functional_bytes(canonical)
+    alias_body = inf_functional_bytes(alias)
+    if canonical_body == alias_body:
         return 0
 
-    sys.stderr.write("virtio-input INF alias drift detected outside models sections.\n")
-    sys.stderr.write(f"Ignored sections: {sorted(drop_sections)}\n\n")
+    sys.stderr.write("virtio-input INF alias drift detected.\n")
+    sys.stderr.write("The alias INF must match the canonical INF from [Version] onward.\n\n")
+
+    canonical_lines = _decode_lines_for_diff(canonical_body)
+    alias_lines = _decode_lines_for_diff(alias_body)
 
     # Use repo-relative paths in the diff output to keep it readable and stable
     # across machines/CI environments.
@@ -177,13 +164,14 @@ def main() -> int:
     alias_label = str(alias.relative_to(repo_root))
 
     diff = difflib.unified_diff(
-        [l + "\n" for l in canonical_lines],
-        [l + "\n" for l in alias_lines],
+        canonical_lines,
+        alias_lines,
         fromfile=canonical_label,
         tofile=alias_label,
         lineterm="",
     )
-    sys.stderr.write("".join(diff))
+    for line in diff:
+        sys.stderr.write(line + "\n")
 
     return 1
 

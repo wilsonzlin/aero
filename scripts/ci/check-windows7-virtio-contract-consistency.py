@@ -2155,8 +2155,8 @@ def validate_virtio_input_model_lines(
       (distinct naming).
     - If `require_fallback=True`, it must include the strict REV-qualified generic
       fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
-      IDs are absent/ignored.
-    - If `require_fallback=False`, it must not include that strict fallback HWID.
+      IDs are absent/ignored. If `require_fallback=False`, it must not include that
+      fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
@@ -2187,7 +2187,7 @@ def validate_virtio_input_model_lines(
         if strict_bytes and strict_bytes in inf_path.read_bytes().upper():
             errors.append(
                 format_error(
-                    f"{inf_path.as_posix()}: virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}) when fallback is disabled:",
+                    f"{inf_path.as_posix()}: INF must not contain the strict generic fallback HWID ({strict_hwid}) when fallback is forbidden:",
                     [f"found: {strict_hwid}"],
                 )
             )
@@ -2404,11 +2404,13 @@ def check_inf_alias_drift_excluding_sections(
         lineterm="\n",
     )
 
-    return (
-        f"{label}: INF alias drift detected outside ignored sections.\n"
-        + f"Ignored sections: {sorted(drop_sections)}\n\n"
-        + "".join(diff)
-    )
+    ignored = sorted(drop_sections)
+    header = f"{label}: INF alias drift detected"
+    if ignored:
+        header += " outside ignored sections"
+
+    ignored_line = f"Ignored sections: {ignored}\n\n" if ignored else ""
+    return header + "\n" + ignored_line + "".join(diff)
 
 
 def windows_contract_marks_transitional_ids_out_of_scope(md: str) -> bool:

@@ -838,9 +838,9 @@ To enable end-to-end testing:
        to exercise the contract tablet binding specifically). If you are intentionally using the opt-in legacy alias INF for
        generic fallback binding, include the legacy alias INF instead (the one that matches `PCI\VEN_1AF4&DEV_1052&REV_01`).
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-    `-WithTabletEvents`, `-EnableTabletEvents`) /
-    `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-    `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+     `-WithTabletEvents`, `-EnableTabletEvents`) /
+     `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+     `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
     - requires the guest marker to PASS
