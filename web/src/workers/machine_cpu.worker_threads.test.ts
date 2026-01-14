@@ -221,6 +221,52 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("publishes virtio-input driver_ok into shared status (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      // Enable a dummy machine instance with virtio driver_ok probes before init so the first
+      // heartbeat publishes status without needing a full 250ms wait.
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine", virtioKeyboardOk: true, virtioMouseOk: false });
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      // Poll for up to 1s to avoid flakes under heavy CI load.
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        const kbdOk = Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk);
+        const mouseOk = Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk);
+        if (kbdOk !== 0 || mouseOk !== 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk)).toBe(1);
+      expect(Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk)).toBe(0);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

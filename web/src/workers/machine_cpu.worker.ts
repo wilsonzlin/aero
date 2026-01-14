@@ -1636,8 +1636,14 @@ ctx.onmessage = (ev) => {
   // Test-only hook (Node worker_threads): allow unit tests to enable a dummy machine instance so
   // input-batch parsing + telemetry can be exercised without loading WASM.
   if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.enableDummyMachine") {
+    const payload = msg as Partial<{ virtioKeyboardOk: unknown; virtioMouseOk: unknown }>;
+    const virtioKeyboardOk = payload.virtioKeyboardOk === true;
+    const virtioMouseOk = payload.virtioMouseOk === true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine = {} as any;
+    machine = {
+      virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
+      virtio_input_mouse_driver_ok: () => virtioMouseOk,
+    } as any;
     return;
   }
 
