@@ -348,6 +348,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --counters
    hidtest.exe --reset-counters
    ```
+   Note: `--reset-counters` requires opening the HID interface with write access; if it fails, rerun elevated.
    For how to interpret the counters output (normal increments vs drops/overruns), see:
    - [`tools/hidtest/README.md` → Counters interpretation](../../tools/hidtest/README.md#counters-interpretation)
 
