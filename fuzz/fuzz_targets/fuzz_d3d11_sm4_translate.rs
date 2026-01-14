@@ -12,7 +12,7 @@ use aero_d3d11::sm4::opcode::{
     OPERAND_TYPE_SAMPLER, OPERAND_TYPE_SHIFT, OPERAND_TYPE_TEMP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
-use aero_dxbc::DxbcFile;
+use aero_dxbc::{test_utils as dxbc_test_utils, DxbcFile, FourCC};
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
@@ -115,48 +115,13 @@ struct DxbcChunkOwned {
     data: Vec<u8>,
 }
 
-fn build_dxbc_container(chunks: &[DxbcChunkOwned]) -> Vec<u8> {
-    // DXBC header layout:
-    // - magic: "DXBC"
-    // - checksum: 16 bytes
-    // - reserved: u32
-    // - total_size: u32
-    // - chunk_count: u32
-    // - chunk_offsets: chunk_count * u32
-    const HEADER_LEN: usize = 4 + 16 + 4 + 4 + 4;
-
-    let chunk_count = chunks.len().min(16);
-    let mut out = Vec::with_capacity(HEADER_LEN + chunk_count * 4);
-
-    out.extend_from_slice(b"DXBC");
-    out.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
-    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
-    out.extend_from_slice(&0u32.to_le_bytes()); // total_size placeholder
-    out.extend_from_slice(&(chunk_count as u32).to_le_bytes());
-
-    let offset_table_off = out.len();
-    out.resize(offset_table_off + chunk_count * 4, 0);
-
-    let mut offsets = Vec::<u32>::with_capacity(chunk_count);
-    for chunk in chunks.iter().take(chunk_count) {
-        let off = out.len() as u32;
-        offsets.push(off);
-        out.extend_from_slice(&chunk.fourcc);
-        out.extend_from_slice(&(chunk.data.len() as u32).to_le_bytes());
-        out.extend_from_slice(&chunk.data);
-    }
-
-    // total_size
-    let total_size = out.len() as u32;
-    out[24..28].copy_from_slice(&total_size.to_le_bytes());
-
-    // offsets
-    for (i, off) in offsets.iter().enumerate() {
-        let base = offset_table_off + i * 4;
-        out[base..base + 4].copy_from_slice(&off.to_le_bytes());
-    }
-
-    out
+fn build_dxbc_container(mut chunks: Vec<DxbcChunkOwned>) -> Vec<u8> {
+    chunks.truncate(16);
+    let chunks: Vec<(FourCC, Vec<u8>)> = chunks
+        .into_iter()
+        .map(|chunk| (FourCC(chunk.fourcc), chunk.data))
+        .collect();
+    dxbc_test_utils::build_container_owned(&chunks)
 }
 
 fn pack_opcode(opcode: u32, len_dwords: usize) -> u32 {
@@ -635,7 +600,7 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
         },
     ];
 
-    build_dxbc_container(&chunks)
+    build_dxbc_container(chunks)
 }
 
 fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {

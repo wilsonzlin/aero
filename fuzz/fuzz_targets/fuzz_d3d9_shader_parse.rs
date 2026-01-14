@@ -1,6 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 
 /// Hard cap on the raw libFuzzer input size. This limits allocations in both the D3D9 shader token
 /// parser and the optional DXBC wrapper parser.
@@ -16,34 +17,7 @@ const MAX_DECLARATIONS: usize = 512;
 const MAX_INSTRUCTIONS: usize = 2048;
 
 fn wrap_dxbc(shader_bytes: &[u8], chunk_fourcc: [u8; 4]) -> Vec<u8> {
-    // Minimal DXBC container with a single shader bytecode chunk.
-    // Header is:
-    // - magic "DXBC"
-    // - 16-byte checksum (ignored by our parser unless md5 feature is enabled)
-    // - 4-byte reserved
-    // - total_size
-    // - chunk_count
-    // followed by chunk offsets table.
-    //
-    // Each chunk is:
-    // - fourcc
-    // - size
-    // - payload bytes
-    const HEADER_SIZE: usize = 32;
-    const OFFSET_TABLE_SIZE: usize = 4;
-    let chunk_offset = (HEADER_SIZE + OFFSET_TABLE_SIZE) as u32;
-    let total_size = chunk_offset as usize + 8 + shader_bytes.len();
-    let mut dxbc = Vec::with_capacity(total_size);
-    dxbc.extend_from_slice(b"DXBC");
-    dxbc.extend_from_slice(&[0u8; 16]); // checksum
-    dxbc.extend_from_slice(&0u32.to_le_bytes()); // reserved
-    dxbc.extend_from_slice(&(total_size as u32).to_le_bytes());
-    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
-    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
-    dxbc.extend_from_slice(&chunk_fourcc);
-    dxbc.extend_from_slice(&(shader_bytes.len() as u32).to_le_bytes());
-    dxbc.extend_from_slice(shader_bytes);
-    dxbc
+    dxbc_test_utils::build_container(&[(FourCC(chunk_fourcc), shader_bytes)])
 }
 
 fn disassemble_bounded(mut shader: aero_d3d9_shader::D3d9Shader) {

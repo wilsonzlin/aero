@@ -1,6 +1,6 @@
 #![no_main]
 
-use aero_dxbc::{DxbcFile, FourCC};
+use aero_dxbc::{test_utils as dxbc_test_utils, DxbcFile, FourCC};
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
@@ -282,50 +282,9 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
         (FourCC(*b"STAT"), stat_bytes),
     ];
 
-    // DXBC header is always 32 bytes:
-    // magic (4) + checksum (16) + reserved (4) + total_size (4) + chunk_count (4).
-    let header_len = 32usize;
-    let offset_table_len = chunks.len() * 4;
-    let mut total_size = header_len + offset_table_len;
-    for &(_fourcc, data) in chunks {
-        total_size = total_size.saturating_add(8).saturating_add(data.len());
-    }
-
     // Keep the synthesized container bounded regardless of future cap tweaks.
-    if total_size > MAX_INPUT_SIZE_BYTES {
-        total_size = MAX_INPUT_SIZE_BYTES;
-    }
-
-    let mut out = Vec::with_capacity(total_size);
-    out.extend_from_slice(b"DXBC");
-    out.extend_from_slice(&[0u8; 16]); // checksum
-    out.extend_from_slice(&[0u8; 4]); // reserved
-    out.extend_from_slice(&(total_size as u32).to_le_bytes());
-    out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
-
-    let offset_table_start = out.len();
-    out.resize(offset_table_start + offset_table_len, 0);
-
-    for (i, (fourcc, data)) in chunks.iter().enumerate() {
-        let chunk_offset = out.len();
-        let table_entry_off = offset_table_start + i * 4;
-        out[table_entry_off..table_entry_off + 4]
-            .copy_from_slice(&(chunk_offset as u32).to_le_bytes());
-
-        out.extend_from_slice(&fourcc.0);
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(data);
-        if out.len() > MAX_INPUT_SIZE_BYTES {
-            // Truncate defensively; DxbcFile::parse will reject `total_size` anyway.
-            out.truncate(MAX_INPUT_SIZE_BYTES);
-            break;
-        }
-    }
-
-    // Fix up total_size to match the actual synthesized buffer size.
-    let actual_size = out.len().min(u32::MAX as usize);
-    out[24..28].copy_from_slice(&(actual_size as u32).to_le_bytes());
-
+    let out = dxbc_test_utils::build_container(chunks);
+    debug_assert!(out.len() <= MAX_INPUT_SIZE_BYTES);
     out
 }
 

@@ -1,6 +1,6 @@
 #![no_main]
 
-use aero_dxbc::{DxbcFile, FourCC};
+use aero_dxbc::{test_utils as dxbc_test_utils, DxbcFile, FourCC};
 use libfuzzer_sys::fuzz_target;
 
 /// Max fuzz input size to avoid pathological allocations in DXBC/SM4 parsing paths.
@@ -59,34 +59,9 @@ fn exercise_dxbc(bytes: &[u8]) {
 }
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Option<Vec<u8>> {
-    let chunk_count = u32::try_from(chunks.len()).ok()?;
-    let header_len = 4usize + 16 + 4 + 4 + 4 + chunks.len().checked_mul(4)?;
-
-    // Compute chunk offsets.
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_len;
-    for (_fourcc, data) in chunks {
-        offsets.push(u32::try_from(cursor).ok()?);
-        cursor = cursor.checked_add(8)?.checked_add(data.len())?;
-    }
-    if cursor > MAX_INPUT_SIZE_BYTES {
+    let bytes = dxbc_test_utils::build_container(chunks);
+    if bytes.len() > MAX_INPUT_SIZE_BYTES {
         return None;
-    }
-
-    let total_size = u32::try_from(cursor).ok()?;
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
     }
     Some(bytes)
 }
