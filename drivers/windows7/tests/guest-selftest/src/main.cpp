@@ -4030,10 +4030,13 @@ static bool VirtioInputEventsButtonsOk(const VirtioInputEventsTestResult& out) {
 }
 
 static bool VirtioInputEventsWheelOk(const VirtioInputEventsTestResult& out) {
-  constexpr int kExpectedWheelDelta = 1;
-  constexpr int kExpectedHWheelDelta = -2;
-  return out.saw_mouse_wheel && out.saw_mouse_hwheel && out.mouse_wheel_total == kExpectedWheelDelta &&
-         out.mouse_hwheel_total == kExpectedHWheelDelta;
+  // The host harness may retry QMP injection multiple times after the guest reports READY (to reduce
+  // timing flakiness when no user-mode `ReadFile` is pending). Accept multiples of the expected
+  // deltas, but require that:
+  // - at least one expected delta was observed for each axis, and
+  // - no unexpected deltas were observed.
+  return out.saw_mouse_wheel && out.saw_mouse_hwheel && out.saw_mouse_wheel_expected &&
+         out.saw_mouse_hwheel_expected && !out.saw_mouse_wheel_unexpected && !out.saw_mouse_hwheel_unexpected;
 }
 
 static void ProcessKeyboardReport(VirtioInputEventsTestResult& out, const uint8_t* buf, DWORD len) {
@@ -9285,7 +9288,7 @@ int wmain(int argc, wchar_t** argv) {
       log.Logf(
           "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS|mouse_reports=%d|mouse_bad_reports=%d|wheel_total=%d|hwheel_total=%d|expected_wheel=%d|expected_hwheel=%d|saw_wheel=%d|saw_hwheel=%d",
           input_events.mouse_reports, input_events.mouse_bad_reports, input_events.mouse_wheel_total,
-          input_events.mouse_hwheel_total, kExpectedWheelDelta, kExpectedHWheelDelta,
+          input_events.mouse_hwheel_total, kExpectedMouseWheelDelta, kExpectedMouseHWheelDelta,
           input_events.saw_mouse_wheel ? 1 : 0, input_events.saw_mouse_hwheel ? 1 : 0);
     } else {
       log.Logf(
@@ -9293,7 +9296,7 @@ int wmain(int argc, wchar_t** argv) {
           input_events.reason.empty() ? "unknown" : input_events.reason.c_str(),
           static_cast<unsigned long>(input_events.win32_error), input_events.mouse_reports,
           input_events.mouse_bad_reports, input_events.mouse_wheel_total, input_events.mouse_hwheel_total,
-          kExpectedWheelDelta, kExpectedHWheelDelta, input_events.saw_mouse_wheel ? 1 : 0,
+          kExpectedMouseWheelDelta, kExpectedMouseHWheelDelta, input_events.saw_mouse_wheel ? 1 : 0,
           input_events.saw_mouse_hwheel ? 1 : 0);
     }
     if (want_input_wheel) all_ok = all_ok && input_events.wheel_ok;
