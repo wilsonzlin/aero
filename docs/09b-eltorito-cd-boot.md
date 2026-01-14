@@ -51,18 +51,21 @@ Descriptor** that advertises the El Torito boot catalog.
 ### Scan algorithm (conceptual)
 
 1. For `iso_lba = 16..`:
-   1. Read 2048 bytes from the CD at `iso_lba`.
-      * If your underlying disk interface is 512-byte sectors, this means reading 4 consecutive
-        512-byte sectors at `lba512 = iso_lba * 4`.
-   2. Validate `vd[1..6] == "CD001"` (standard identifier).
-   3. Dispatch on `vd[0]` (volume descriptor type):
-      * `0x00` → **Boot Record VD** (El Torito is identified by a magic string; see below)
-      * `0x01` → Primary Volume Descriptor (not used for El Torito discovery)
-      * `0x02` → Supplementary (Joliet) (not used for El Torito discovery)
-      * `0xFF` → Volume Descriptor Set Terminator (**stop scanning**)
-      * other types are ignored
+    1. Read 2048 bytes from the CD at `iso_lba`.
+       * If your underlying disk interface is 512-byte sectors, this means reading 4 consecutive
+         512-byte sectors at `lba512 = iso_lba * 4`.
+    2. Validate `vd[1..6] == "CD001"` (standard identifier) and `vd[6] == 0x01` (version).
+    3. Dispatch on `vd[0]` (volume descriptor type):
+       * `0x00` → **Boot Record VD** (El Torito is identified by a magic string; see below)
+       * `0x01` → Primary Volume Descriptor (not used for El Torito discovery)
+       * `0x02` → Supplementary (Joliet) (not used for El Torito discovery)
+       * `0xFF` → Volume Descriptor Set Terminator (**stop scanning**)
+       * other types are ignored
 2. If we hit the terminator without finding a valid El Torito Boot Record VD, the ISO is treated as
    **not BIOS-bootable via El Torito**.
+
+Implementation note: Aero scans until it sees the Volume Descriptor Set Terminator (`0xFF`) or
+encounters a non-ISO9660 descriptor; there is no separate fixed scan cap beyond the image boundary.
 
 ---
 
@@ -97,12 +100,13 @@ Once `boot_catalog_lba` is read, convert to BIOS sectors if needed:
 
 ---
 
-## 3) Boot Catalog (validation entry + initial/default entry)
+## 3) Boot Catalog (validation entry + boot entry scanning)
 
-The **Boot Catalog** is an array of 32-byte entries (typically stored in 2048-byte ISO sectors). In
-the Windows install ISO case, the “initial/default entry” is commonly the very next entry after the
-validation entry, but Aero does **not** assume that; it scans entries for the first usable BIOS
-no-emulation boot entry.
+The **Boot Catalog** is an array of 32-byte entries (typically stored in 2048-byte ISO blocks).
+
+In the Windows install ISO case, the bootable BIOS no-emulation entry is commonly the
+“initial/default entry” at offset `0x20` (entry #1), but Aero does **not** assume that; it scans
+entries for the first usable BIOS no-emulation boot entry.
 
 Aero’s implemented behavior:
 
@@ -151,10 +155,10 @@ valid = (sum == 0)
 
 If the checksum or the key bytes are wrong, **do not attempt to boot**.
 
-### 3.2 Boot Entry (initial/default for Win7) (required)
+### 3.2 Boot Entry (initial/default entry on Windows media)
 
-The initial/default boot entry (for typical Win7 media: entry #1) specifies the boot image location
-and how to load it.
+The boot entry specifies the boot image location and how to load it. On Windows install media this
+is typically the “Initial/Default Entry”.
 
 | Offset | Size | Field | Notes |
 |---:|---:|---|---|
@@ -179,7 +183,7 @@ the minimal path.
 
 ## 4) No-emulation boot image loading rules (Win7 critical)
 
-Given the initial/default entry:
+Given the selected boot entry:
 
 1. Compute `load_segment`:
    * If `load_segment != 0`, use it.

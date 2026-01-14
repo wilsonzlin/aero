@@ -87,10 +87,12 @@ boot sector / El Torito boot image:
 3. BIOS performs an **El Torito no-emulation** boot from that CD drive (see
    [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the detailed El Torito + INT 13h
    expectations).
-4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), fall back to
-   the primary HDD boot path and enter the HDD boot sector with **`DL=0x80`** (i.e. configure
-   `firmware::bios::BiosConfig::boot_drive = 0x80`, or in `aero_machine` call
-   `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
+4. If you want to boot the HDD instead (for example after installation, or if the CD is absent or
+   unbootable), set the boot drive to the first HDD so BIOS enters the HDD boot sector with
+   **`DL=0x80`** (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, or in
+   `aero_machine` call `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
+   - Note: Aero’s BIOS does **not** currently probe a list of devices; `boot_drive` is an explicit
+     selection.
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
 Implementation note (Rust): in `aero_machine`, `Machine::set_boot_drive(0xE0)` selects CD-first boot
