@@ -1160,6 +1160,11 @@ inline void InitUnlockArgsForMap(UnlockT* unlock, uint32_t subresource) {
   }
 }
 
+template <typename UnlockT>
+inline void InitUnlockForWrite(UnlockT* unlock) {
+  InitUnlockArgsForMap(unlock, /*subresource=*/0);
+}
+
 enum class ResourceKind : uint32_t {
   Unknown = 0,
   Buffer = 1,

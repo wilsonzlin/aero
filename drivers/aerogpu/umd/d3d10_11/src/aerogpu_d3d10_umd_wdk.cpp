@@ -82,6 +82,7 @@ using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
 using aerogpu::d3d10_11::InitLockForWrite;
 using aerogpu::d3d10_11::InitLockArgsForMap;
 using aerogpu::d3d10_11::InitUnlockArgsForMap;
+using aerogpu::d3d10_11::InitUnlockForWrite;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
 using aerogpu::d3d10_11::ResourcesAlias;
@@ -1306,8 +1307,7 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
 Unlock:
   D3DDDICB_UNLOCK unlock_args = {};
   unlock_args.hAllocation = lock_args.hAllocation;
-  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+  InitUnlockForWrite(&unlock_args);
   hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
   if (FAILED(hr)) {
     SetError(hDevice, hr);
@@ -2822,8 +2822,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
               if (lock_pitch < row_bytes) {
                 D3DDDICB_UNLOCK unlock_args = {};
                 unlock_args.hAllocation = lock_args.hAllocation;
-                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                InitUnlockForWrite(&unlock_args);
                 (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
 
                 SetError(hDevice, E_INVALIDARG);
@@ -2844,8 +2843,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                                        &updated_total_bytes)) {
                 D3DDDICB_UNLOCK unlock_args = {};
                 unlock_args.hAllocation = lock_args.hAllocation;
-                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                InitUnlockForWrite(&unlock_args);
                 (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
 
                 SetError(hDevice, E_FAIL);
@@ -2857,8 +2855,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                   updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
                 D3DDDICB_UNLOCK unlock_args = {};
                 unlock_args.hAllocation = lock_args.hAllocation;
-                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                InitUnlockForWrite(&unlock_args);
                 (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
 
                 SetError(hDevice, E_INVALIDARG);
@@ -2874,8 +2871,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
           D3DDDICB_UNLOCK unlock_args = {};
           unlock_args.hAllocation = lock_args.hAllocation;
-          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+          InitUnlockForWrite(&unlock_args);
           (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
         }
       }
@@ -3316,12 +3312,7 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
         D3DDDICB_UNLOCK unlock_cb = {};
         unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
         const uint32_t unlock_subresource = (res->kind == ResourceKind::Texture2D) ? 0u : res->mapped_subresource;
-        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-          unlock_cb.SubresourceIndex = unlock_subresource;
-        }
-        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-          unlock_cb.SubResourceIndex = unlock_subresource;
-        }
+        InitUnlockArgsForMap(&unlock_cb, unlock_subresource);
         (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
       }
     }
@@ -4779,8 +4770,7 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
 
       D3DDDICB_UNLOCK unlock_args = {};
       unlock_args.hAllocation = lock_args.hAllocation;
-      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+      InitUnlockForWrite(&unlock_args);
       hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
       if (FAILED(hr)) {
         SetError(hDevice, hr);
