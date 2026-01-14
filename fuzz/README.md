@@ -34,29 +34,34 @@ rustup toolchain install "$nightly"
 
 ## Run
 
+Note: most fuzz targets are feature-gated in `fuzz/Cargo.toml` so CPU-only fuzzers (especially
+`fuzz_tier0_step`) can build without pulling in the full device/GPU dependency tree. If you see a
+build error mentioning `required-features`, re-run with either `--all-features` or the specific
+feature(s) listed in the error.
+
 From the repository root:
 
 ```bash
-cargo +"$nightly" fuzz run fuzz_mmu_translate
-cargo +"$nightly" fuzz run fuzz_bus_rw
-cargo +"$nightly" fuzz run fuzz_ahci
-cargo +"$nightly" fuzz run fuzz_ahci_command
-cargo +"$nightly" fuzz run fuzz_ide
-cargo +"$nightly" fuzz run fuzz_piix3_ide_pci
-cargo +"$nightly" fuzz run fuzz_ide_busmaster
-cargo +"$nightly" fuzz run fuzz_http_range
-cargo +"$nightly" fuzz run fuzz_auth_tokens
-cargo +"$nightly" fuzz run fuzz_atapi
-cargo +"$nightly" fuzz run fuzz_aerosparse_open
-cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
-cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
+cargo +"$nightly" fuzz run --features mem fuzz_mmu_translate
+cargo +"$nightly" fuzz run --features mem fuzz_bus_rw
+cargo +"$nightly" fuzz run --features storage-devices fuzz_ahci
+cargo +"$nightly" fuzz run --features storage-devices fuzz_ahci_command
+cargo +"$nightly" fuzz run --features storage-devices fuzz_ide
+cargo +"$nightly" fuzz run --features storage-devices fuzz_piix3_ide_pci
+cargo +"$nightly" fuzz run --features storage-devices fuzz_ide_busmaster
+cargo +"$nightly" fuzz run --features http-range fuzz_http_range
+cargo +"$nightly" fuzz run --features auth fuzz_auth_tokens
+cargo +"$nightly" fuzz run --features storage-devices fuzz_atapi
+cargo +"$nightly" fuzz run --features storage fuzz_aerosparse_open
+cargo +"$nightly" fuzz run --features storage fuzz_aero_storage_sparse_open
+cargo +"$nightly" fuzz run --features storage fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run --features aerogpu fuzz_aerogpu_parse
 cargo +"$nightly" fuzz run --features aerogpu-trace fuzz_aerogpu_trace_read
-cargo +"$nightly" fuzz run fuzz_i8042
-cargo +"$nightly" fuzz run fuzz_uhci
-cargo +"$nightly" fuzz run fuzz_hid_report_descriptor
+cargo +"$nightly" fuzz run --features input fuzz_i8042
+cargo +"$nightly" fuzz run --features usb fuzz_uhci
+cargo +"$nightly" fuzz run --features usb fuzz_hid_report_descriptor
 cargo +"$nightly" fuzz run --features aerogpu fuzz_aerogpu_bc_decompress
-cargo +"$nightly" fuzz run fuzz_bios_interrupts
+cargo +"$nightly" fuzz run --features firmware fuzz_bios_interrupts
 cargo +"$nightly" fuzz run fuzz_tier0_step
 cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 
@@ -69,21 +74,21 @@ cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
   cargo +"$nightly" fuzz run --features d3d9-shader fuzz_d3d9_shader_parse
   
   # Audio
-  cargo +"$nightly" fuzz run fuzz_hda_mmio
-  cargo +"$nightly" fuzz run fuzz_hda_corb_verbs
-  cargo +"$nightly" fuzz run fuzz_virtio_snd_queues
+  cargo +"$nightly" fuzz run --features audio fuzz_hda_mmio
+  cargo +"$nightly" fuzz run --features audio fuzz_hda_corb_verbs
+  cargo +"$nightly" fuzz run --features virtio,audio fuzz_virtio_snd_queues
 
 # Networking
-  cargo +"$nightly" fuzz run fuzz_l2_protocol_decode
-  cargo +"$nightly" fuzz run fuzz_net_stack_outbound_ethernet
-  cargo +"$nightly" fuzz run fuzz_e1000_mmio_poll
-  cargo +"$nightly" fuzz run fuzz_virtio_net_queue
+  cargo +"$nightly" fuzz run --features l2 fuzz_l2_protocol_decode
+  cargo +"$nightly" fuzz run --features net fuzz_net_stack_outbound_ethernet
+  cargo +"$nightly" fuzz run --features e1000 fuzz_e1000_mmio_poll
+  cargo +"$nightly" fuzz run --features virtio fuzz_virtio_net_queue
 ```
 
 To run time-bounded:
 
 ```bash
-cargo +"$nightly" fuzz run fuzz_mmu_translate -- -max_total_time=10
+cargo +"$nightly" fuzz run --features mem fuzz_mmu_translate -- -max_total_time=10
 ```
 
 ### Tier-0 CPU single-step fuzzer
@@ -119,7 +124,7 @@ Workarounds:
 
 ## Smoke runs
 
-Build the default target set (excludes GPU/WGPU-heavy fuzzers unless their features are enabled):
+Build the default target set (CPU-only targets that don't require extra Cargo features):
 
 ```bash
 cd fuzz && cargo +"$nightly" fuzz build
@@ -158,44 +163,44 @@ or `unset RUSTUP_TOOLCHAIN` if something in your environment is forcing stable).
 Run a bounded number of iterations:
 
 ```bash
-cd fuzz && cargo +"$nightly" fuzz run fuzz_ahci -- -runs=10000
-cd fuzz && cargo fuzz run fuzz_ahci -- -runs=10000
+cd fuzz && cargo +"$nightly" fuzz run --features storage-devices fuzz_ahci -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_ahci -- -runs=10000
 
 # Targeted AHCI command list / PRDT parsing
-cd fuzz && cargo fuzz run fuzz_ahci_command -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_ahci_command -- -runs=10000
 
 # IDE (PIIX3-style, includes Bus Master IDE DMA)
-cd fuzz && cargo fuzz run fuzz_ide -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_ide -- -runs=10000
 
 # Targeted Bus Master IDE PRD parsing / DMA engine
-cd fuzz && cargo fuzz run fuzz_ide_busmaster -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_ide_busmaster -- -runs=10000
 
 # IDE via PCI wrapper (PIIX3-style config gating + BAR4 relocation + BMIDE DMA)
-cd fuzz && cargo fuzz run fuzz_piix3_ide_pci -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_piix3_ide_pci -- -runs=10000
 
 # HTTP Range parsing/resolution (hostile headers near caps)
-cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
+cd fuzz && cargo fuzz run --features http-range fuzz_http_range -- -runs=10000
 
 # Auth tokens (session cookie + HS256 JWT)
-cd fuzz && cargo fuzz run fuzz_auth_tokens -- -runs=10000
+cd fuzz && cargo fuzz run --features auth fuzz_auth_tokens -- -runs=10000
 
 # ATAPI packet parsing (SCSI CDBs)
-cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
+cd fuzz && cargo fuzz run --features storage-devices fuzz_atapi -- -runs=10000
 
 # AeroSparse image parsing/open + bounded IO against corrupt images
-cd fuzz && cargo fuzz run fuzz_aerosparse_open -- -runs=10000
-cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
+cd fuzz && cargo fuzz run --features storage fuzz_aerosparse_open -- -runs=10000
+cd fuzz && cargo fuzz run --features storage fuzz_aero_storage_sparse_open -- -runs=10000
 
 # Allow larger generated inputs (the target itself caps at 1MiB)
-cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576
+cd fuzz && cargo fuzz run --features storage fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576
 
 # Optional: use the bundled dictionary to help libFuzzer find valid headers faster
-cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_aero_storage_sparse_open.dict
-cd fuzz && cargo fuzz run fuzz_aerosparse_open -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_aerosparse_open.dict
-cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_disk_image_open_auto.dict
+cd fuzz && cargo fuzz run --features storage fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_aero_storage_sparse_open.dict
+cd fuzz && cargo fuzz run --features storage fuzz_aerosparse_open -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_aerosparse_open.dict
+cd fuzz && cargo fuzz run --features storage fuzz_disk_image_open_auto -- -runs=10000 -max_len=1048576 -dict=fuzz_targets/fuzz_disk_image_open_auto.dict
 
 # Auto-detect + open (raw/aerosparse/qcow2/vhd) + bounded IO
-cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
+cd fuzz && cargo fuzz run --features storage fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run --features aerogpu fuzz_aerogpu_parse -- -runs=10000
@@ -242,17 +247,17 @@ cd fuzz && cargo fuzz run --features d3d9-shader fuzz_d3d9_shader_parse -- -runs
 cd fuzz && cargo fuzz run --features d3d9-shader fuzz_d3d9_shader_parse -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_shader_parse.dict
   
 # Networking (quick sanity)
-cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
-cd fuzz && cargo fuzz run fuzz_net_stack_outbound_ethernet -- -runs=1000
-cd fuzz && cargo fuzz run fuzz_e1000_mmio_poll -- -runs=1000
-cd fuzz && cargo fuzz run fuzz_virtio_net_queue -- -runs=1000
+cd fuzz && cargo fuzz run --features l2 fuzz_l2_protocol_decode -- -runs=1000
+cd fuzz && cargo fuzz run --features net fuzz_net_stack_outbound_ethernet -- -runs=1000
+cd fuzz && cargo fuzz run --features e1000 fuzz_e1000_mmio_poll -- -runs=1000
+cd fuzz && cargo fuzz run --features virtio fuzz_virtio_net_queue -- -runs=1000
 
 # i8042 PS/2 controller port I/O + keyboard injection + snapshot roundtrips
-cd fuzz && cargo fuzz run fuzz_i8042 -- -runs=10000 -dict=fuzz_targets/fuzz_i8042.dict
+cd fuzz && cargo fuzz run --features input fuzz_i8042 -- -runs=10000 -dict=fuzz_targets/fuzz_i8042.dict
 
 # UHCI register I/O + schedule walker tick + snapshot roundtrips
-cd fuzz && cargo fuzz run fuzz_uhci -- -runs=10000 -dict=fuzz_targets/fuzz_uhci.dict
+cd fuzz && cargo fuzz run --features usb fuzz_uhci -- -runs=10000 -dict=fuzz_targets/fuzz_uhci.dict
 
 # HID report descriptor parser (bounded to 4KiB per input)
-cd fuzz && cargo fuzz run fuzz_hid_report_descriptor -- -runs=10000 -dict=fuzz_targets/fuzz_hid_report_descriptor.dict
+cd fuzz && cargo fuzz run --features usb fuzz_hid_report_descriptor -- -runs=10000 -dict=fuzz_targets/fuzz_hid_report_descriptor.dict
 ```

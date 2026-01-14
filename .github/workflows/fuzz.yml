@@ -30,68 +30,68 @@ jobs:
       - name: Verify fuzz Cargo.lock is up to date
         run: cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
-      - name: fuzz_mmu_translate (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_mmu_translate -- -max_total_time=10
-
-      - name: fuzz_bus_rw (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bus_rw -- -max_total_time=10
+      - name: fuzz_tier0_step (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_tier0_step -- -max_total_time=10
 
       - name: fuzz_linear_mem_wrapped (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_linear_mem_wrapped -- -max_total_time=10
 
-      - name: fuzz_tier0_step (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_tier0_step -- -max_total_time=10
+      - name: fuzz_mmu_translate (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_mmu_translate -- -max_total_time=10
+
+      - name: fuzz_bus_rw (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_bus_rw -- -max_total_time=10
 
       - name: fuzz_bios_interrupt_dispatch (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bios_interrupt_dispatch -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_bios_interrupt_dispatch -- -max_total_time=10
 
       - name: fuzz_aerogpu_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse --features aerogpu -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aerogpu_parse -- -max_total_time=10
 
       - name: fuzz_aerogpu_trace_read (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_trace_read --features aerogpu-trace -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerogpu_trace_read.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aerogpu_trace_read -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerogpu_trace_read.dict
 
       - name: fuzz_dxbc_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_parse --features d3d11 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_dxbc_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
 
       - name: fuzz_dxbc_sm4_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_sm4_parse --features dxbc -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_dxbc_sm4_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
 
       - name: fuzz_d3d11_sm4_translate (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d11_sm4_translate --features d3d11 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d11_sm4_translate.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_d3d11_sm4_translate -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d11_sm4_translate.dict
 
       - name: fuzz_d3d9_sm3_decode (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_decode --features d3d9 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_d3d9_sm3_decode -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 
       - name: fuzz_d3d9_sm3_wgsl (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_wgsl --features d3d9 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_d3d9_sm3_wgsl -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 
       - name: fuzz_aerosparse_open (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aerosparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
 
       - name: fuzz_aero_storage_sparse_open (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aero_storage_sparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aero_storage_sparse_open.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aero_storage_sparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aero_storage_sparse_open.dict
 
       - name: fuzz_disk_image_open_auto (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_disk_image_open_auto -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
 
       - name: fuzz_disk_image_open_auto_rw (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto_rw -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_disk_image_open_auto_rw -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
 
       - name: fuzz_ahci_command (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_ahci_command -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_ahci_command -- -max_total_time=10
 
       - name: fuzz_ide_busmaster (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_ide_busmaster -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_ide_busmaster -- -max_total_time=10
 
       - name: fuzz_hda_mmio (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_hda_mmio -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_hda_mmio -- -max_total_time=10
 
       - name: fuzz_hda_corb_verbs (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_hda_corb_verbs -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_hda_corb_verbs -- -max_total_time=10
 
       - name: fuzz_virtio_snd_queues (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_virtio_snd_queues -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_virtio_snd_queues -- -max_total_time=10
 
       - name: Ensure fuzz lockfile was not modified
         run: git diff --exit-code -- fuzz/Cargo.lock

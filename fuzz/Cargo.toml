@@ -21,41 +21,87 @@ d3d9 = ["dxbc", "dep:aero-d3d9"]
 d3d9-shader = ["dxbc", "dep:aero-d3d9-shader"]
 d3d11 = ["dxbc", "dep:aero-d3d11"]
 
+# Non-GPU fuzz targets (opt-in). Most of these crates are unrelated to the Tier-0 CPU step fuzzer,
+# so keep them behind features to avoid build breakage and excessive compile times when only
+# targeting `fuzz_tier0_step`.
+mem = ["dep:memory"]
+io-snapshot = ["dep:aero-io-snapshot"]
+snapshot = ["dep:aero-snapshot"]
+storage = ["dep:aero-storage"]
+storage-devices = [
+    "storage",
+    "io-snapshot",
+    "mem",
+    "dep:aero-devices",
+    "dep:aero-devices-storage",
+]
+input = ["io-snapshot", "dep:aero-devices-input"]
+usb = ["io-snapshot", "dep:aero-usb"]
+http-range = ["dep:aero-http-range"]
+auth = ["dep:aero-auth-tokens", "dep:base64", "dep:sha2"]
+audio = ["dep:aero-audio"]
+virtio = ["dep:aero-virtio"]
+l2 = ["dep:aero-l2-protocol"]
+net = ["dep:aero-net-stack"]
+e1000 = ["mem", "dep:aero-net-e1000"]
+firmware = ["mem", "dep:firmware"]
+ci-smoke = [
+    # Match `.github/workflows/fuzz.yml` (smoke suite).
+    "storage-devices",
+    "firmware",
+    "audio",
+    "virtio",
+    "aerogpu",
+    "aerogpu-trace",
+    "d3d11",
+    "d3d9",
+]
+
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
-base64 = "0.22"
-sha2 = "0.10"
+base64 = { version = "0.22", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dependencies.memory]
 path = "../crates/memory"
+optional = true
 
 [dependencies.aero-snapshot]
 path = "../crates/aero-snapshot"
+optional = true
 
 [dependencies.aero-io-snapshot]
 path = "../crates/aero-io-snapshot"
+optional = true
 
 [dependencies.aero-devices-storage]
 path = "../crates/aero-devices-storage"
+optional = true
 
 [dependencies.aero-devices-input]
 path = "../crates/aero-devices-input"
+optional = true
 
 [dependencies.aero-usb]
 path = "../crates/aero-usb"
+optional = true
 
 [dependencies.aero-devices]
 path = "../crates/devices"
+optional = true
 
 [dependencies.aero-storage]
 path = "../crates/aero-storage"
+optional = true
 
 [dependencies.aero-http-range]
 path = "../crates/aero-http-range"
+optional = true
 
 [dependencies.aero-auth-tokens]
 path = "../crates/aero-auth-tokens"
+optional = true
 
 [dependencies.aero-gpu]
 path = "../crates/aero-gpu"
@@ -77,9 +123,11 @@ optional = true
 
 [dependencies.aero-audio]
 path = "../crates/aero-audio"
+optional = true
 
 [dependencies.aero-virtio]
 path = "../crates/aero-virtio"
+optional = true
 
 [dependencies.aero-gpu-trace]
 path = "../crates/aero-gpu-trace"
@@ -100,84 +148,99 @@ optional = true
 
 [dependencies.firmware]
 path = "../crates/firmware"
+optional = true
 
 [dependencies.aero-cpu-core]
 path = "../crates/aero-cpu-core"
 
 [dependencies.aero-l2-protocol]
 path = "../crates/aero-l2-protocol"
+optional = true
 
 [dependencies.aero-net-stack]
 path = "../crates/aero-net-stack"
+optional = true
 
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
+optional = true
 
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
 test = false
 doc = false
+required-features = ["mem"]
 
 [[bin]]
 name = "fuzz_bus_rw"
 path = "fuzz_targets/fuzz_bus_rw.rs"
 test = false
 doc = false
+required-features = ["mem"]
 
 [[bin]]
 name = "fuzz_snapshot_decode"
 path = "fuzz_targets/fuzz_snapshot_decode.rs"
 test = false
 doc = false
+required-features = ["snapshot"]
 
 [[bin]]
 name = "fuzz_ahci"
 path = "fuzz_targets/fuzz_ahci.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_ide"
 path = "fuzz_targets/fuzz_ide.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_ahci_command"
 path = "fuzz_targets/fuzz_ahci_command.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_ide_busmaster"
 path = "fuzz_targets/fuzz_ide_busmaster.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_http_range"
 path = "fuzz_targets/fuzz_http_range.rs"
 test = false
 doc = false
+required-features = ["http-range"]
 
 [[bin]]
 name = "fuzz_atapi"
 path = "fuzz_targets/fuzz_atapi.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_piix3_ide_pci"
 path = "fuzz_targets/fuzz_piix3_ide_pci.rs"
 test = false
 doc = false
+required-features = ["storage-devices"]
 
 [[bin]]
 name = "fuzz_aero_storage_sparse_open"
 path = "fuzz_targets/fuzz_aero_storage_sparse_open.rs"
 test = false
 doc = false
+required-features = ["storage"]
 
 [[bin]]
 name = "fuzz_aerogpu_parse"
@@ -191,72 +254,84 @@ name = "fuzz_aerosparse_open"
 path = "fuzz_targets/fuzz_aerosparse_open.rs"
 test = false
 doc = false
+required-features = ["storage"]
 
 [[bin]]
 name = "fuzz_disk_image_open_auto"
 path = "fuzz_targets/fuzz_disk_image_open_auto.rs"
 test = false
 doc = false
+required-features = ["storage"]
 
 [[bin]]
 name = "fuzz_disk_image_open_auto_rw"
 path = "fuzz_targets/fuzz_disk_image_open_auto_rw.rs"
 test = false
 doc = false
+required-features = ["storage"]
 
 [[bin]]
 name = "fuzz_i8042_port_io"
 path = "fuzz_targets/fuzz_i8042_port_io.rs"
 test = false
 doc = false
+required-features = ["input"]
 
 [[bin]]
 name = "fuzz_i8042"
 path = "fuzz_targets/fuzz_i8042.rs"
 test = false
 doc = false
+required-features = ["input"]
 
 [[bin]]
 name = "fuzz_ps2_keyboard_commands"
 path = "fuzz_targets/fuzz_ps2_keyboard_commands.rs"
 test = false
 doc = false
+required-features = ["input"]
 
 [[bin]]
 name = "fuzz_ps2_mouse_commands"
 path = "fuzz_targets/fuzz_ps2_mouse_commands.rs"
 test = false
 doc = false
+required-features = ["input"]
 
 [[bin]]
 name = "fuzz_uhci"
 path = "fuzz_targets/fuzz_uhci.rs"
 test = false
 doc = false
+required-features = ["usb"]
 
 [[bin]]
 name = "fuzz_ehci"
 path = "fuzz_targets/fuzz_ehci.rs"
 test = false
 doc = false
+required-features = ["usb"]
 
 [[bin]]
 name = "fuzz_ehci_periodic"
 path = "fuzz_targets/fuzz_ehci_periodic.rs"
 test = false
 doc = false
+required-features = ["usb"]
 
 [[bin]]
 name = "fuzz_xhci"
 path = "fuzz_targets/fuzz_xhci.rs"
 test = false
 doc = false
+required-features = ["usb"]
 
 [[bin]]
 name = "fuzz_hid_report_descriptor"
 path = "fuzz_targets/fuzz_hid_report_descriptor.rs"
 test = false
 doc = false
+required-features = ["usb"]
 
 [[bin]]
 name = "fuzz_dxbc_sm4_parse"
@@ -284,6 +359,7 @@ name = "fuzz_auth_tokens"
 path = "fuzz_targets/fuzz_auth_tokens.rs"
 test = false
 doc = false
+required-features = ["auth"]
 
 [[bin]]
 name = "fuzz_d3d9_sm3_wgsl"
@@ -297,42 +373,49 @@ name = "fuzz_hda_mmio"
 path = "fuzz_targets/fuzz_hda_mmio.rs"
 test = false
 doc = false
+required-features = ["audio"]
 
 [[bin]]
 name = "fuzz_hda_corb_verbs"
 path = "fuzz_targets/fuzz_hda_corb_verbs.rs"
 test = false
 doc = false
+required-features = ["audio"]
 
 [[bin]]
 name = "fuzz_virtio_snd_queues"
 path = "fuzz_targets/fuzz_virtio_snd_queues.rs"
 test = false
 doc = false
+required-features = ["virtio", "audio"]
 
 [[bin]]
 name = "fuzz_l2_protocol_decode"
 path = "fuzz_targets/fuzz_l2_protocol_decode.rs"
 test = false
 doc = false
+required-features = ["l2"]
 
 [[bin]]
 name = "fuzz_net_stack_outbound_ethernet"
 path = "fuzz_targets/fuzz_net_stack_outbound_ethernet.rs"
 test = false
 doc = false
+required-features = ["net"]
 
 [[bin]]
 name = "fuzz_e1000_mmio_poll"
 path = "fuzz_targets/fuzz_e1000_mmio_poll.rs"
 test = false
 doc = false
+required-features = ["e1000"]
 
 [[bin]]
 name = "fuzz_virtio_net_queue"
 path = "fuzz_targets/fuzz_virtio_net_queue.rs"
 test = false
 doc = false
+required-features = ["virtio"]
 
 [[bin]]
 name = "fuzz_tier0_step"
@@ -372,6 +455,7 @@ name = "fuzz_bios_interrupt_dispatch"
 path = "fuzz_targets/fuzz_bios_interrupt_dispatch.rs"
 test = false
 doc = false
+required-features = ["firmware"]
 
 [[bin]]
 name = "fuzz_aerogpu_bc_decompress"
@@ -385,3 +469,4 @@ name = "fuzz_bios_interrupts"
 path = "fuzz_targets/fuzz_bios_interrupts.rs"
 test = false
 doc = false
+required-features = ["firmware"]
