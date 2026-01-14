@@ -226,7 +226,16 @@ impl EventRingProducer {
         let paddr = self.pos_to_paddr(mem, self.prod_pos)?;
         let mut trb = trb;
         trb.set_cycle(self.prod_cycle);
+        let bytes = trb.to_bytes();
         trb.write_to(mem, paddr);
+        // Defensive: verify that the event write actually landed in guest memory. Some `MemoryBus`
+        // implementations treat out-of-range writes as no-ops; failing to detect that would cause
+        // the guest to miss critical events without the controller noticing.
+        let mut verify = [0u8; TRB_LEN];
+        mem.read_physical(paddr, &mut verify);
+        if verify != bytes {
+            return Err(EnqueueError::InvalidConfig);
+        }
 
         self.advance_producer(mem)?;
         Ok(())

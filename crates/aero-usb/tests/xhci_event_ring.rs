@@ -22,7 +22,7 @@ impl UsbDeviceModel for DummyDevice {
     }
 }
 
-fn write_erst_entry(mem: &mut TestMemory, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
+fn write_erst_entry<M: MemoryBus + ?Sized>(mem: &mut M, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
     MemoryBus::write_u64(mem, erstba, seg_base);
     MemoryBus::write_u32(mem, erstba + 8, seg_size_trbs);
     MemoryBus::write_u32(mem, erstba + 12, 0);
@@ -230,6 +230,42 @@ fn event_ring_invalid_config_sets_host_controller_error() {
     xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_HCE);
     let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
     assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should be sticky");
+}
+
+#[test]
+fn event_ring_out_of_range_segment_base_sets_host_controller_error() {
+    let mut mem = SafeMemory::new(0x1000);
+    let mut xhci = XhciController::new();
+
+    // ERST itself lives in-range, but it points at a segment base outside the address space.
+    let erstba = 0x100;
+    let ring_base = 0xdead_beef_u64 << 12;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    // ERDP must point into the segment; use the (invalid) base address.
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    xhci.service_event_ring(&mut mem);
+
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "invalid segment base must not consume the queued event"
+    );
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(
+        sts & regs::USBSTS_HCE,
+        0,
+        "controller should latch HCE when the segment base is not writable"
+    );
 }
 
 #[test]
