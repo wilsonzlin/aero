@@ -6,11 +6,12 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_set_unordered_access_buffers_bindings_le, decode_stage_ex, decode_stage_ex_gated,
     encode_stage_ex, resolve_shader_stage_with_ex, resolve_shader_stage_with_ex_gated,
     resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
-    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
-    AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader, AerogpuConstantBufferBinding,
-    AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding, AerogpuShaderStage,
-    AerogpuShaderStageEx, AerogpuShaderStageResolved, AerogpuStageResolveError,
-    AerogpuUnorderedAccessBufferBinding, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuCmdSetShaderConstantsB, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
+    AerogpuCmdStreamHeader, AerogpuConstantBufferBinding, AerogpuD3dShaderStage,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuShaderStageResolved, AerogpuStageResolveError, AerogpuUnorderedAccessBufferBinding,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -399,7 +400,7 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
     );
     // Compute stage is canonicalized to stage_ex=None (reserved0=0).
     w.set_shader_constants_f_ex(AerogpuShaderStageEx::Compute, 0, &[1.0, 2.0, 3.0, 4.0]);
-    w.set_shader_constants_i_ex(AerogpuShaderStageEx::Vertex, 1, &[1, 2, 3, 4]);
+    w.set_shader_constants_i_ex(AerogpuShaderStageEx::Hull, 1, &[1, 2, 3, 4]);
     w.set_shader_constants_b_ex(AerogpuShaderStageEx::Geometry, 2, &[0, 1]);
 
     let buf = w.finish();
@@ -549,7 +550,7 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
     );
     assert_eq!(
         decode_stage_ex(stage, reserved0),
-        Some(AerogpuShaderStageEx::Vertex)
+        Some(AerogpuShaderStageEx::Hull)
     );
     cursor += size_bytes as usize;
 
