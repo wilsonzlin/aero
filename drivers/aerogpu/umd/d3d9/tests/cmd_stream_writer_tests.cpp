@@ -2024,6 +2024,179 @@ bool TestCreateResourceMipmappedTextureEmitsMipLevels() {
   return true;
 }
 
+bool TestLockMipmappedTextureReportsSubresourcePitch() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr,
+             "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can validate the emitted upload range.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  constexpr uint32_t kD3dRTypeTexture = 3u;
+
+  constexpr uint32_t kWidth = 8;
+  constexpr uint32_t kHeight = 8;
+  constexpr uint32_t kMipLevels = 2;
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = kWidth;
+  create_res.height = kHeight;
+  create_res.depth = 1;
+  create_res.mip_levels = kMipLevels;
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(mipmapped texture)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == kMipLevels, "resource stores mip_levels")) {
+    return false;
+  }
+
+  // The packed texture layout stores mip levels sequentially.
+  const uint32_t mip0_row_pitch = kWidth * 4;
+  const uint32_t mip0_slice_pitch = mip0_row_pitch * kHeight;
+  const uint32_t mip1_row_pitch = (kWidth / 2) * 4;
+  const uint32_t mip1_slice_pitch = mip1_row_pitch * (kHeight / 2);
+  const uint32_t mip1_offset = mip0_slice_pitch;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = mip1_offset;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+  if (!Check(hr == S_OK, "Lock(mip1)")) {
+    return false;
+  }
+  if (!Check(locked.pData != nullptr, "Lock(mip1) returns pData")) {
+    return false;
+  }
+  if (!Check(locked.RowPitch == mip1_row_pitch, "Lock(mip1) RowPitch matches mip1")) {
+    return false;
+  }
+  if (!Check(locked.SlicePitch == mip1_slice_pitch, "Lock(mip1) SlicePitch matches mip1")) {
+    return false;
+  }
+
+  // Mark the entire mip as dirty.
+  std::memset(locked.pData, 0xAB, mip1_slice_pitch);
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(mip1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const size_t used = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+
+  const CmdLoc upload_loc = FindLastUploadResourceBefore(dma.data(), dma.size(), used, res->handle);
+  if (!Check(upload_loc.hdr != nullptr, "upload_resource emitted for mipmapped texture")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload_loc.hdr);
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(mip1_offset), "upload_resource offset matches mip1")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == static_cast<uint64_t>(mip1_slice_pitch), "upload_resource size matches mip1")) {
+    return false;
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
+}
+
 bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -17116,6 +17289,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceRejectsNon2dDepth();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
+  failures += !aerogpu::TestLockMipmappedTextureReportsSubresourcePitch();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChain();
   failures += !aerogpu::TestLockSizeZeroClampsToMipSubresource();
