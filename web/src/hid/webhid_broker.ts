@@ -3,7 +3,11 @@ import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
-import { computeFeatureReportPayloadByteLengths, computeInputReportPayloadByteLengths } from "./hid_report_sizes";
+import {
+  computeFeatureReportPayloadByteLengths,
+  computeInputReportPayloadByteLengths,
+  computeMaxOutputReportBytesOnWire,
+} from "./hid_report_sizes";
 import {
   isHidAttachResultMessage,
   isHidErrorMessage,
@@ -122,15 +126,11 @@ type HidDeviceSendTask = () => Promise<void>;
 type HidDeviceSendTaskFactory = () => HidDeviceSendTask;
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
-  const stack = [...collections];
-  while (stack.length) {
-    const node = stack.pop()!;
-    // Feature reports are transferred over the control endpoint (SET_REPORT/GET_REPORT) and do
-    // not require an interrupt OUT endpoint. Only output reports imply an interrupt OUT endpoint.
-    if (node.outputReports.length > 0) return true;
-    for (const child of node.children) stack.push(child);
-  }
-  return false;
+  // Full-speed USB interrupt endpoints cannot transfer more than 64 bytes in a single packet.
+  // If the device defines any output report larger than that, the guest must omit the interrupt
+  // OUT endpoint and fall back to control SET_REPORT(Output) transfers.
+  const maxOutputBytes = computeMaxOutputReportBytesOnWire(collections);
+  return maxOutputBytes > 0 && maxOutputBytes <= 64;
 }
 
 function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {

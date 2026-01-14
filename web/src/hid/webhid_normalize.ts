@@ -114,6 +114,9 @@ const MAX_U32 = 0xffff_ffffn;
 const MAX_U32_NUM = 0xffff_ffff;
 const MAX_U16_NUM = 0xffff;
 const MAX_INTERRUPT_REPORT_BYTES = 64n;
+// USB control transfers use a 16-bit `wLength`, so a single transaction cannot carry more than
+// u16::MAX bytes of payload.
+const MAX_CONTROL_REPORT_BYTES = 0xffffn;
 const MIN_I32 = -0x8000_0000;
 const MAX_I32 = 0x7fff_ffff;
 
@@ -533,14 +536,27 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
             throw err(itemPath, "total report bit length overflows u32");
           }
 
-          if (listName !== "featureReports") {
-            const dataBytes = (totalBits + 7n) / 8n;
-            const reportBytes = dataBytes + (report.reportId !== 0 ? 1n : 0n);
+          const dataBytes = (totalBits + 7n) / 8n;
+          const reportBytes = dataBytes + (report.reportId !== 0 ? 1n : 0n);
+
+          if (listName === "inputReports") {
+            // Full-speed USB interrupt endpoints have a 64-byte max packet size, and HID input
+            // reports must fit within a single interrupt IN transaction.
             if (reportBytes > MAX_INTERRUPT_REPORT_BYTES) {
-              const kind = listName === "inputReports" ? "input" : "output";
               throw err(
                 itemPath,
-                `${kind} report length ${reportBytes} bytes exceeds max USB full-speed interrupt packet size ${MAX_INTERRUPT_REPORT_BYTES}`,
+                `input report length ${reportBytes} bytes exceeds max USB full-speed interrupt packet size ${MAX_INTERRUPT_REPORT_BYTES}`,
+              );
+            }
+          } else if (listName === "outputReports" || listName === "featureReports") {
+            // Output and feature reports can be transferred over the control endpoint (SET_REPORT /
+            // GET_REPORT). Bound the descriptor-defined size so we can't allocate absurdly large
+            // buffers based on untrusted metadata.
+            if (reportBytes > MAX_CONTROL_REPORT_BYTES) {
+              const kind = listName === "outputReports" ? "output" : "feature";
+              throw err(
+                itemPath,
+                `${kind} report length ${reportBytes} bytes exceeds max USB control transfer length ${MAX_CONTROL_REPORT_BYTES}`,
               );
             }
           }

@@ -67,3 +67,32 @@ export function computeFeatureReportPayloadByteLengths(
   }
   return out;
 }
+
+/**
+ * Compute the maximum *on-wire* byte length of any output report defined by a WebHID device.
+ *
+ * The returned size includes the optional reportId prefix byte (when reportId != 0).
+ *
+ * Sizes are aggregated across collections: multiple output reports with the same `reportId`
+ * contribute to the same on-wire report length.
+ */
+export function computeMaxOutputReportBytesOnWire(collections: readonly NormalizedHidCollectionInfo[]): number {
+  const bitsByReportId = new Map<number, number>();
+  const stack: NormalizedHidCollectionInfo[] = [...collections];
+  while (stack.length) {
+    const node = stack.pop()!;
+    for (const report of node.outputReports) {
+      const prev = bitsByReportId.get(report.reportId) ?? 0;
+      bitsByReportId.set(report.reportId, prev + reportBits(report));
+    }
+    for (const child of node.children) stack.push(child);
+  }
+
+  let max = 0;
+  for (const [reportId, bits] of bitsByReportId) {
+    const dataBytes = Math.ceil(bits / 8);
+    const onWireBytes = dataBytes + (reportId !== 0 ? 1 : 0);
+    max = Math.max(max, onWireBytes);
+  }
+  return max;
+}

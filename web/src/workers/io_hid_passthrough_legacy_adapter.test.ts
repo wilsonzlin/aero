@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { IoWorkerLegacyHidPassthroughAdapter, computeHasInterruptOut } from "./io_hid_passthrough_legacy_adapter";
 
 describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
-  it("computes hasInterruptOut based on output reports (feature-only does not require interrupt OUT)", () => {
+  it("computes hasInterruptOut based on max output report on-wire size (feature-only does not require interrupt OUT)", () => {
     const withOutput = [
       {
         outputReports: [{ reportId: 1, items: [] }],
@@ -24,6 +24,14 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
       },
     ] as any;
     expect(computeHasInterruptOut(withChildOutput)).toBe(true);
+
+    const withLargeOutput = [
+      {
+        outputReports: [{ reportId: 0, items: [{ reportSize: 8, reportCount: 65 }] }],
+        children: [],
+      },
+    ] as any;
+    expect(computeHasInterruptOut(withLargeOutput)).toBe(false);
 
     const featureOnly = [
       {

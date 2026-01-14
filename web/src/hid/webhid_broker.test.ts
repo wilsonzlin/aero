@@ -168,6 +168,37 @@ describe("hid/WebHidBroker", () => {
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
   });
 
+  it("sets hasInterruptOut=false when any output report exceeds a full-speed interrupt packet", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    device.collections = [
+      {
+        usagePage: 1,
+        usage: 2,
+        type: "application",
+        children: [],
+        inputReports: [],
+        outputReports: [
+          {
+            reportId: 0,
+            items: [{ reportSize: 8, reportCount: 65 }],
+          },
+        ],
+        featureReports: [],
+      },
+    ] as unknown as HIDCollectionInfo[];
+
+    await broker.attachDevice(device as unknown as HIDDevice);
+
+    const attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
+    expect(attach).toBeTruthy();
+    expect(attach!.hasInterruptOut).toBe(false);
+  });
+
   it("rejects attachDevice when detachDevice is called before hid.attachResult", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager, attachResultTimeoutMs: 60_000 });

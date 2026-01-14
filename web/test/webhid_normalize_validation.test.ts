@@ -202,20 +202,20 @@ test("normalizeCollections(validate): rejects unitExponent out of range with an 
   });
 });
 
-test("normalizeCollections(validate): rejects total report bit length overflow with an item path", () => {
-  const hugeItem: HidReportItem = { ...BASE_ITEM, reportSize: 255, reportCount: 65535 };
-  const items: HidReportItem[] = [];
-  for (let i = 0; i < 258; i++) items.push({ ...hugeItem });
+test("normalizeCollections(validate): rejects reportSize*reportCount u32 overflow with an item path", () => {
+  // Use a huge reportCount that is still a safe integer (so it passes type checks) but causes
+  // reportSize*reportCount to exceed the u32 bit-length cap in the validator.
+  const hugeItem: HidReportItem = { ...BASE_ITEM, reportSize: 255, reportCount: 20_000_000 };
 
   const collections: HidCollectionInfo[] = [
     {
       ...baseCollection(),
-      featureReports: [{ reportId: 0, items }],
+      featureReports: [{ reportId: 0, items: [hugeItem] }],
     },
   ];
 
   assert.throws(() => normalizeCollections(collections, { validate: true }), {
-    message: /total report bit length overflows u32.*collections\[0\]\.featureReports\[0\]\.items\[257\]/,
+    message: /reportSize\*reportCount overflows u32.*collections\[0\]\.featureReports\[0\]\.items\[0\]/,
   });
 });
 
@@ -247,7 +247,7 @@ test("normalizeCollections(validate): rejects reportId prefixes that push input 
   });
 });
 
-test("normalizeCollections(validate): rejects output reports longer than a full-speed interrupt packet", () => {
+test("normalizeCollections(validate): accepts output reports longer than a full-speed interrupt packet", () => {
   const bigItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 65 };
   const collections: HidCollectionInfo[] = [
     {
@@ -256,22 +256,36 @@ test("normalizeCollections(validate): rejects output reports longer than a full-
     },
   ];
 
-  assert.throws(() => normalizeCollections(collections, { validate: true }), {
-    message: /collections\[0\]\.outputReports\[0\]\.items\[0\]/,
-  });
+  assert.doesNotThrow(() => normalizeCollections(collections, { validate: true }));
 });
 
-test("normalizeCollections(validate): rejects reportId prefixes that push output reports over 64 bytes", () => {
-  const bigItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 64 };
+test("normalizeCollections(validate): rejects output reports longer than u16::MAX bytes", () => {
+  const maxItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 65_535 };
+  const plusOne: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 1 };
   const collections: HidCollectionInfo[] = [
     {
       ...baseCollection(),
-      outputReports: [{ reportId: 1, items: [bigItem] }],
+      outputReports: [{ reportId: 0, items: [maxItem, plusOne] }],
     },
   ];
 
   assert.throws(() => normalizeCollections(collections, { validate: true }), {
-    message: /collections\[0\]\.outputReports\[0\]\.items\[0\]/,
+    message: /output report length 65536 bytes exceeds max USB control transfer length 65535.*collections\[0\]\.outputReports\[0\]\.items\[1\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects feature reports longer than u16::MAX bytes", () => {
+  const maxItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 65_535 };
+  const plusOne: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 1 };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      featureReports: [{ reportId: 0, items: [maxItem, plusOne] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /feature report length 65536 bytes exceeds max USB control transfer length 65535.*collections\[0\]\.featureReports\[0\]\.items\[1\]/,
   });
 });
 

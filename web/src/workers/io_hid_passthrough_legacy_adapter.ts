@@ -1,4 +1,5 @@
 import type { NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
+import { computeMaxOutputReportBytesOnWire } from "../hid/hid_report_sizes";
 import type {
   HidAttachMessage,
   HidDetachMessage,
@@ -19,15 +20,8 @@ import type {
 const DEFAULT_LEGACY_DEVICE_ID_BASE = 0x4000_0000;
 
 export function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
-  const stack = [...collections];
-  while (stack.length) {
-    const node = stack.pop()!;
-    // Feature reports are transferred over the control endpoint (SET_REPORT/GET_REPORT) and do
-    // not require an interrupt OUT endpoint. Only output reports imply an interrupt OUT endpoint.
-    if (node.outputReports.length > 0) return true;
-    for (const child of node.children) stack.push(child);
-  }
-  return false;
+  const maxOutputBytes = computeMaxOutputReportBytesOnWire(collections);
+  return maxOutputBytes > 0 && maxOutputBytes <= 64;
 }
 
 function arrayBufferFromView(view: Uint8Array): ArrayBuffer {
