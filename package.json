@@ -75,6 +75,7 @@
     "check:security-headers": "node scripts/ci/check-security-headers.mjs",
     "test:webgpu": "playwright test --project=chromium-webgpu",
     "generate:goldens": "node tests/golden/generate_goldens.cjs",
+    "check:goldens": "node scripts/ci/check-goldens.mjs",
     "test:gpu": "playwright test -c playwright.gpu.config.ts tests/e2e/playwright/gpu_golden.spec.ts",
     "wasm:ensure": "npm -w web run wasm:ensure",
     "wasm:build": "npm -w web run wasm:build",

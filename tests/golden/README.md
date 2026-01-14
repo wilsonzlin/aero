@@ -11,5 +11,12 @@ npm ci
 npm run generate:goldens
 ```
 
+To run the same check CI uses (regenerate + fail on drift):
+
+```bash
+npm ci
+npm run check:goldens
+```
+
 CI enforces that the committed goldens stay in sync with the generator output. If CI fails with a
 `tests/golden` diff, rerun `npm run generate:goldens` and commit the updated PNGs.
