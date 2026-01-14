@@ -654,11 +654,103 @@ impl UsbPassthroughDevice {
             }
         }
 
+        // Defensive: if a snapshot somehow contains both a queued action and a queued completion
+        // for the same transfer, drop the action so it cannot be executed after restore. This
+        // mirrors the runtime behavior in `push_completion` (and handles snapshots that were taken
+        // before that invariant was enforced).
+        let completion_ids: HashSet<u32> = self.completions.keys().copied().collect();
+        self.actions
+            .retain(|action| !completion_ids.contains(&action.id()));
+
         for action in self.actions.iter() {
             if !inflight_ids.contains(&action.id()) {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "queued action without inflight transfer",
                 ));
+            }
+
+            // Additional invariant: queued actions must match the corresponding in-flight transfer
+            // (type + endpoint + length + setup payload). This ensures that host-side actions
+            // cannot be replayed with mismatched guest-visible state after restore.
+            match action {
+                UsbHostAction::ControlIn { id, setup } => {
+                    let Some(ctl) = self.control_inflight.as_ref() else {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued control action without inflight control transfer",
+                        ));
+                    };
+                    if ctl.id != *id || ctl.setup != *setup {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued control action does not match inflight control transfer",
+                        ));
+                    }
+                }
+                UsbHostAction::ControlOut { id, setup, data } => {
+                    let Some(ctl) = self.control_inflight.as_ref() else {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued control action without inflight control transfer",
+                        ));
+                    };
+                    if ctl.id != *id || ctl.setup != *setup {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued control action does not match inflight control transfer",
+                        ));
+                    }
+                    match ctl.data.as_ref() {
+                        Some(buf) => {
+                            if buf.as_slice() != data.as_slice() {
+                                return Err(SnapshotError::InvalidFieldEncoding(
+                                    "queued control action data mismatch",
+                                ));
+                            }
+                        }
+                        None => {
+                            if !data.is_empty() {
+                                return Err(SnapshotError::InvalidFieldEncoding(
+                                    "queued control action data mismatch",
+                                ));
+                            }
+                        }
+                    }
+                }
+                UsbHostAction::BulkIn {
+                    id,
+                    endpoint,
+                    length,
+                } => {
+                    let Some(inflight) = self.ep_inflight.get(endpoint) else {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action without inflight endpoint",
+                        ));
+                    };
+                    if inflight.id != *id {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action does not match inflight endpoint",
+                        ));
+                    }
+                    if inflight.len != *length as usize {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action length mismatch",
+                        ));
+                    }
+                }
+                UsbHostAction::BulkOut { id, endpoint, data } => {
+                    let Some(inflight) = self.ep_inflight.get(endpoint) else {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action without inflight endpoint",
+                        ));
+                    };
+                    if inflight.id != *id {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action does not match inflight endpoint",
+                        ));
+                    }
+                    if inflight.len != data.len() {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "queued bulk action length mismatch",
+                        ));
+                    }
+                }
             }
         }
         for id in self.completions.keys() {
@@ -2091,6 +2183,220 @@ mod tests {
             .u8(3) // Stall
             .bool(false) // has_control
             .u32(0) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_drops_queued_action_when_completion_present() {
+        // Defensive: if a snapshot contains both a queued action and a queued completion for the
+        // same transfer, snapshot_load should drop the action so it cannot be replayed after
+        // restore.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            // BulkIn action (id=1)
+            .u8(3)
+            .u32(1)
+            .u8(0x81)
+            .u32(1)
+            // completion_count
+            .u32(1)
+            // completion (id=1, OkIn [0xaa])
+            .u32(1)
+            .u8(1)
+            .u32(1)
+            .u8(0xaa)
+            // has_control
+            .bool(false)
+            // ep_count
+            .u32(1)
+            .u8(0x81)
+            .u32(1)
+            .u32(1)
+            .finish();
+
+        let mut dev = UsbPassthroughDevice::new();
+        dev.snapshot_load(&bytes).unwrap();
+        assert!(dev.pop_action().is_none(), "stale queued action should be dropped");
+        assert_eq!(
+            dev.handle_in_transfer(0x81, 1),
+            UsbInResult::Data(vec![0xaa])
+        );
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_action_with_control_inflight_id() {
+        // The bulk action ID is an in-flight ID, but it refers to the control transfer rather than
+        // an endpoint in-flight record. This would lead to misrouting results after restore.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // BulkIn action (id=1)
+            .u8(3)
+            .u32(1)
+            .u8(0x81)
+            .u32(8)
+            // completion_count
+            .u32(0)
+            // has_control=true with id=1
+            .bool(true)
+            .u32(1)
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(false) // has_data
+            // No endpoint inflight entries.
+            .u32(0)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_action_with_endpoint_inflight_id() {
+        // A control action must correspond to an in-flight control transfer, not an endpoint TD.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // ControlIn action (id=1)
+            .u8(1)
+            .u32(1)
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            // completion_count
+            .u32(0)
+            // has_control=false
+            .bool(false)
+            // ep_count=1 with endpoint inflight id=1
+            .u32(1)
+            .u8(0x81)
+            .u32(1)
+            .u32(8)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_action_with_missing_inflight_endpoint() {
+        // bulk action id=1 is a valid in-flight ID (it belongs to endpoint 0x81), but the action
+        // claims endpoint 0x82 which is not in-flight.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // BulkIn action (id=1) for endpoint 0x82
+            .u8(3)
+            .u32(1)
+            .u8(0x82)
+            .u32(4)
+            // completion_count
+            .u32(0)
+            // has_control=false
+            .bool(false)
+            // ep_count=1 with endpoint 0x81 inflight id=1
+            .u32(1)
+            .u8(0x81)
+            .u32(1)
+            .u32(4)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_in_action_length_mismatch_with_inflight_len() {
+        // bulk action length should match the in-flight endpoint record.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // BulkIn action (id=1, length=8)
+            .u8(3)
+            .u32(1)
+            .u8(0x81)
+            .u32(8)
+            // completion_count
+            .u32(0)
+            // has_control=false
+            .bool(false)
+            // ep_count=1 with len=4
+            .u32(1)
+            .u8(0x81)
+            .u32(1)
+            .u32(4)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_out_action_length_mismatch_with_inflight_len() {
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // BulkOut action (id=1, data=[0xaa, 0xbb])
+            .u8(4)
+            .u32(1)
+            .u8(0x02)
+            .u32(2)
+            .u8(0xaa)
+            .u8(0xbb)
+            // completion_count
+            .u32(0)
+            // has_control=false
+            .bool(false)
+            // ep_count=1 with len=1
+            .u32(1)
+            .u8(0x02)
+            .u32(1)
+            .u32(1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_out_action_data_mismatch_with_inflight() {
+        // ControlOut action payload must match the in-flight control payload.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1) // action_count
+            // ControlOut action (id=1, data=[0xaa])
+            .u8(2)
+            .u32(1)
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            // action data
+            .u32(1)
+            .u8(0xaa)
+            // completion_count
+            .u32(0)
+            // has_control=true with same setup but different data
+            .bool(true)
+            .u32(1)
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            .bool(true) // has_data
+            .u32(1)
+            .u8(0xbb)
+            // ep_count
+            .u32(0)
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
