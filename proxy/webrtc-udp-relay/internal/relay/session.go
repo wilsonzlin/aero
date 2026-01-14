@@ -6,13 +6,7 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 )
-
-type sessionLimiter interface {
-	AllowUDPSend(destKey string, bytes int) (allowed bool, tooManyDestinations bool)
-	AllowDataChannelSend(bytes int) bool
-}
 
 type Session struct {
 	id      string
@@ -43,7 +37,7 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock clock, o
 			m.Inc(metrics.UDPPerDestBucketEvictions)
 		}
 	}
-	rl := ratelimit.NewSessionLimiter(
+	rl := newSessionLimiter(
 		clock,
 		cfg.MaxUDPPpsPerSession,
 		cfg.MaxUDPBpsPerSession,

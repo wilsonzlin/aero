@@ -1,4 +1,4 @@
-package ratelimit
+package relay
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 
 func TestSessionLimiter_BoundsPerDestBucketCount(t *testing.T) {
 	var evictions int
-	l := NewSessionLimiter(nil, 0, 0, 0, 100, 0, 4, func() {
+	l := newSessionLimiter(nil, 0, 0, 0, 100, 0, 4, func() {
 		evictions++
 	})
 	impl := l.(*sessionLimiterImpl)
@@ -34,7 +34,7 @@ func TestSessionLimiter_BoundsPerDestBucketCount(t *testing.T) {
 
 func TestSessionLimiter_PerDestBucketEvictionLRU(t *testing.T) {
 	var evictions int
-	l := NewSessionLimiter(nil, 0, 0, 0, 100, 0, 2, func() {
+	l := newSessionLimiter(nil, 0, 0, 0, 100, 0, 2, func() {
 		evictions++
 	})
 	impl := l.(*sessionLimiterImpl)

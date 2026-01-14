@@ -1,4 +1,4 @@
-package ratelimit
+package relay
 
 import (
 	"container/list"
@@ -62,7 +62,7 @@ type sessionLimiterConfig struct {
 	onUDPDestBucketEvicted func()
 }
 
-func NewSessionLimiter(
+func newSessionLimiter(
 	clock clock,
 	udpPacketsPerSecond int,
 	udpBytesPerSecond int,
@@ -72,7 +72,7 @@ func NewSessionLimiter(
 	maxUDPDestBuckets int,
 	onUDPDestBucketEvicted func(),
 ) sessionLimiter {
-	return newSessionLimiter(clock, sessionLimiterConfig{
+	return newSessionLimiterFromConfig(clock, sessionLimiterConfig{
 		udpPacketsPerSecond:        udpPacketsPerSecond,
 		udpBytesPerSecond:          udpBytesPerSecond,
 		dataChannelBytesPerSecond:  dataChannelBytesPerSecond,
@@ -83,7 +83,7 @@ func NewSessionLimiter(
 	})
 }
 
-func newSessionLimiter(clock clock, cfg sessionLimiterConfig) *sessionLimiterImpl {
+func newSessionLimiterFromConfig(clock clock, cfg sessionLimiterConfig) *sessionLimiterImpl {
 	var udpPackets *tokenBucket
 	if cfg.udpPacketsPerSecond > 0 {
 		udpPackets = newTokenBucket(clock, int64(cfg.udpPacketsPerSecond), int64(cfg.udpPacketsPerSecond))
