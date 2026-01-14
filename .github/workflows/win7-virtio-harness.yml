@@ -455,12 +455,8 @@ jobs:
               fi
             fi
             if [[ -d "${disk_image_path}" ]]; then
-              if [[ "${dry_run}" == "true" ]]; then
-                echo "WARNING: disk image path is a directory: ${disk_image_path}"
-              else
-                echo "ERROR: disk image path is a directory: ${disk_image_path}"
-                exit 1
-              fi
+              echo "ERROR: disk image path is a directory: ${disk_image_path}"
+              exit 1
             fi
 
             if ! command -v "${qemu_system}" >/dev/null 2>&1; then
