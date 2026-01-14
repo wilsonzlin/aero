@@ -107,6 +107,14 @@ impl UsbHidMouseHandle {
     pub fn hwheel(&self, delta: i32) {
         self.0.borrow_mut().hwheel(delta);
     }
+
+    /// Inject a vertical + horizontal wheel update (AC Pan) into the mouse report stream.
+    ///
+    /// This allows callers to emit a single report that contains both axes, matching how physical
+    /// pointing devices often report diagonal scrolling.
+    pub fn wheel2(&self, wheel: i32, hwheel: i32) {
+        self.0.borrow_mut().wheel2(wheel, hwheel);
+    }
 }
 
 impl Default for UsbHidMouseHandle {
@@ -376,12 +384,16 @@ impl UsbHidMouse {
     }
 
     pub fn wheel(&mut self, delta: i32) {
-        self.wheel += delta;
-        self.flush_motion();
+        self.wheel2(delta, 0);
     }
 
     pub fn hwheel(&mut self, delta: i32) {
-        self.hwheel += delta;
+        self.wheel2(0, delta);
+    }
+
+    pub fn wheel2(&mut self, wheel: i32, hwheel: i32) {
+        self.wheel += wheel;
+        self.hwheel += hwheel;
         self.flush_motion();
     }
 

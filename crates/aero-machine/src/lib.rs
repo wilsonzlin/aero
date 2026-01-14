@@ -7269,6 +7269,22 @@ impl Machine {
         mouse.hwheel(delta);
     }
 
+    /// Inject both vertical and horizontal mouse wheel deltas into the synthetic USB HID mouse
+    /// device (if present).
+    ///
+    /// This emits a single report containing both axes, matching how physical devices may report
+    /// diagonal scrolling.
+    ///
+    /// Conventions:
+    /// - `wheel > 0` means wheel up.
+    /// - `hwheel > 0` means wheel right / AC Pan.
+    pub fn inject_usb_hid_mouse_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        let Some(mouse) = &self.usb_hid_mouse else {
+            return;
+        };
+        mouse.wheel2(wheel, hwheel);
+    }
+
     /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
     /// present).
     ///

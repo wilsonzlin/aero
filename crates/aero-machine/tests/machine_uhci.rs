@@ -259,6 +259,55 @@ fn machine_synthetic_usb_hid_mouse_wheel_injection_produces_report() {
 }
 
 #[test]
+fn machine_synthetic_usb_hid_mouse_wheel2_injection_produces_single_report() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep the machine minimal/deterministic for this device-model test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let mut mouse = m
+        .usb_hid_mouse_handle()
+        .expect("synthetic USB HID mouse handle should be present");
+
+    assert_eq!(
+        mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack,
+        "mouse should accept SET_CONFIGURATION"
+    );
+
+    m.inject_usb_hid_mouse_wheel2(5, 7);
+
+    let report = match mouse.handle_in_transfer(0x81, 5) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected mouse report data, got {other:?}"),
+    };
+    assert_eq!(report, vec![0, 0, 0, 5, 7]);
+
+    assert_eq!(mouse.handle_in_transfer(0x81, 5), UsbInResult::Nak);
+}
+
+#[test]
 fn machine_synthetic_usb_hid_mouse_move_injection_produces_report() {
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,

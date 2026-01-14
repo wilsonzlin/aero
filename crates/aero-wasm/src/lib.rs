@@ -1147,6 +1147,13 @@ impl UsbHidBridge {
         self.mouse.hwheel(delta);
     }
 
+    /// Inject vertical + horizontal wheel movement in a single report frame.
+    ///
+    /// This matches how physical devices may report diagonal scrolling.
+    pub fn mouse_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        self.mouse.wheel2(wheel, hwheel);
+    }
+
     /// Inject an 8-byte USB HID gamepad report (packed into two 32-bit words).
     ///
     /// The packed format matches `web/src/input/gamepad.ts`:
@@ -6006,6 +6013,12 @@ impl Machine {
     /// Inject a horizontal mouse wheel delta into the synthetic USB HID mouse device (if enabled).
     pub fn inject_usb_hid_mouse_hwheel(&mut self, delta: i32) {
         self.inner.inject_usb_hid_mouse_hwheel(delta);
+    }
+
+    /// Inject both vertical and horizontal mouse wheel deltas into the synthetic USB HID mouse
+    /// device (if enabled).
+    pub fn inject_usb_hid_mouse_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        self.inner.inject_usb_hid_mouse_wheel2(wheel, hwheel);
     }
 
     /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
