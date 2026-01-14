@@ -17,7 +17,7 @@ default = []
 aerogpu = ["dep:aero-gpu", "dep:aero-shared", "dep:aero-protocol"]
 aerogpu-trace = ["dep:aero-gpu-trace"]
 dxbc = ["dep:aero-dxbc"]
-d3d9 = ["dep:aero-d3d9"]
+d3d9 = ["dxbc", "dep:aero-d3d9"]
 d3d9-shader = ["dxbc", "dep:aero-d3d9-shader"]
 d3d11 = ["dxbc", "dep:aero-d3d11"]
 
