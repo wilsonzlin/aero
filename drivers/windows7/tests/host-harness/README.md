@@ -908,11 +908,12 @@ The guest selftest includes an opt-in `virtio-net-link-flap` test that validates
 When enabled, the host harness:
 
 1. Waits for the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
-2. Uses QMP `set_link` to toggle the virtio-net device link **down**, waits a short delay (currently 2 seconds), then
+2. Uses QMP `set_link` to toggle the virtio-net device link **down**, waits a short delay (currently 3 seconds), then
    toggles it **up**
 3. Requires the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
 4. Emits a host-side marker for log scraping/debugging:
-   `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|down_delay_sec=...|reason=...`
+   - PASS: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=...|down_delay_sec=3`
+   - FAIL: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name=...|down_delay_sec=3|reason=...`
 
 To enable end-to-end testing:
 

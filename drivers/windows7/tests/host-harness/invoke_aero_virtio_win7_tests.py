@@ -99,7 +99,7 @@ It may also optionally flap the virtio-net link state via QMP `set_link` when `-
 coordinated by a guest-side READY marker:
 
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY` (guest)
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|reason=...` (host)
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|down_delay_sec=...|reason=...` (host)
 
 It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
 
@@ -6562,9 +6562,10 @@ def main() -> int:
                     and not saw_virtio_net_link_flap_fail
                     and not saw_virtio_net_link_flap_skip
                 ):
+                    down_delay_sec = 3
                     if qmp_endpoint is None:
                         print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={_VIRTIO_NET_QMP_ID}|reason=no_qmp",
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={_VIRTIO_NET_QMP_ID}|down_delay_sec={down_delay_sec}|reason=no_qmp",
                             file=sys.stderr,
                         )
                         print(
@@ -6579,11 +6580,11 @@ def main() -> int:
                         name_used = _try_qmp_net_link_flap(
                             qmp_endpoint,
                             names=[_VIRTIO_NET_QMP_ID, "net0"],
-                            down_delay_seconds=3.0,
+                            down_delay_seconds=float(down_delay_sec),
                         )
                         print(
                             "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|"
-                            f"name={_sanitize_marker_value(name_used)}|down_delay_sec=3"
+                            f"name={_sanitize_marker_value(name_used)}|down_delay_sec={down_delay_sec}"
                         )
                     except Exception as e:
                         name_used = getattr(e, "name_used", None)
@@ -6594,7 +6595,7 @@ def main() -> int:
                         name_tok = _sanitize_marker_value(str(name_used))
                         reason = _sanitize_marker_value(str(e) or type(e).__name__)
                         print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={name_tok}|reason={reason}",
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={name_tok}|down_delay_sec={down_delay_sec}|reason={reason}",
                             file=sys.stderr,
                         )
                         print(
