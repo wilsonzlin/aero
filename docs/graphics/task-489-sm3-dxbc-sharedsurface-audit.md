@@ -30,6 +30,7 @@ All file paths are repository-relative.
 - `crates/aero-d3d9/tests/sm3_wgsl.rs` (many `naga::front::wgsl::parse_str` + validator assertions)
 - `crates/aero-d3d9/tests/sm3_wgsl_math.rs`
 - `crates/aero-d3d9/tests/sm3_loop_wgsl.rs`
+- `crates/aero-d3d9/tests/sm3_fixtures_wgsl.rs` (naga validation for real `fxc`-produced DXBC fixtures)
 
 **How to run:**
 ```bash
@@ -37,6 +38,7 @@ All file paths are repository-relative.
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_math --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_loop_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_fixtures_wgsl --locked
 ```
 
 ---
