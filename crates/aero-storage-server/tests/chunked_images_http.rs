@@ -1807,6 +1807,82 @@ async fn invalid_chunk_name_is_rejected_without_traversal() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_chunk_endpoint_accepts_non_padded_chunk_names() {
+    let dir = tempdir().expect("tempdir");
+
+    tokio::fs::write(dir.path().join("disk.img"), b"raw image bytes")
+        .await
+        .expect("write disk.img");
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": true }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+
+    let chunk_root = dir.path().join("chunked").join(IMAGE_ID);
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    let manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "imageId": IMAGE_ID,
+        "version": "v1",
+        "mimeType": "application/octet-stream",
+        "totalSize": 2,
+        "chunkSize": 2,
+        "chunkCount": 1,
+        "chunkIndexWidth": 1,
+        "chunks": [
+            { "size": 2 }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(chunk_root.join("manifest.json"), manifest.as_bytes())
+        .await
+        .expect("write chunked manifest.json");
+    tokio::fs::write(chunk_root.join("chunks/0.bin"), b"ab")
+        .await
+        .expect("write chunk0");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/chunks/0.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"ab");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), manifest);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_chunked_version_is_rejected_without_traversal() {
     let (app, dir, _manifest) = setup_app(None).await;
 
