@@ -8,11 +8,11 @@ use libfuzzer_sys::fuzz_target;
 const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Limit chunk walking work for pathological containers with huge (but in-bounds) chunk counts.
-const MAX_CHUNK_WALK: usize = 4096;
+const MAX_CHUNK_WALK: usize = 1024;
 
 /// `DxbcFile::{get_chunk,get_signature,find_first_shader_chunk}` scan the whole chunk table.
 /// Only call them for reasonably small containers to keep fuzzing throughput stable.
-const MAX_FULL_SCAN_CHUNK_COUNT: usize = 8192;
+const MAX_FULL_SCAN_CHUNK_COUNT: usize = 1024;
 
 /// Signature chunk parsing can allocate `param_count` entries + semantic name strings.
 /// Keep both the chunk size and declared entry count bounded.
@@ -118,11 +118,6 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         }
     }
 
-    // Exercise the signature chunk lookup helper (tries variants like ISGN/ISG1).
-    let _ = dxbc.get_signature(FourCC(*b"ISGN"));
-    let _ = dxbc.get_signature(FourCC(*b"OSGN"));
-    let _ = dxbc.get_signature(FourCC(*b"PSGN"));
-
     // Exercise shader chunk lookup (`SHDR`/`SHEX`).
     let _ = dxbc.find_first_shader_chunk();
 
@@ -131,15 +126,15 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
     //
     // Also avoid calling into it if any signature chunk in the prefix would exceed our signature
     // parsing caps.
-    let mut safe_for_d3d11_signatures = true;
-    for chunk in dxbc.chunks().take(chunk_count.min(MAX_CHUNK_WALK)) {
-        if is_signature_fourcc(chunk.fourcc) && !should_parse_signature_chunk(chunk.fourcc, chunk.data)
-        {
-            safe_for_d3d11_signatures = false;
-            break;
-        }
-    }
+    let safe_for_d3d11_signatures = dxbc.chunks().take(chunk_count).all(|chunk| {
+        !is_signature_fourcc(chunk.fourcc) || should_parse_signature_chunk(chunk.fourcc, chunk.data)
+    });
     if safe_for_d3d11_signatures {
+        // Now that we've verified all signature chunks are within conservative caps, we can safely
+        // exercise helper APIs that internally parse signatures.
+        let _ = dxbc.get_signature(FourCC(*b"ISGN"));
+        let _ = dxbc.get_signature(FourCC(*b"OSGN"));
+        let _ = dxbc.get_signature(FourCC(*b"PSGN"));
         let _ = aero_d3d11::parse_signatures(&dxbc);
     }
 }
