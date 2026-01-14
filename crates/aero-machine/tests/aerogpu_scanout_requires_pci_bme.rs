@@ -30,7 +30,8 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     m.write_physical_u16(0xB8000, 0x1F41); // 'A' with bright attribute
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_eq!(m.display_resolution(), (720, 400));
+    let legacy_res = m.display_resolution();
+    assert_eq!(legacy_res, (720, 400));
 
     let bar0_base = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
@@ -107,14 +108,13 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Explicit disable blanks the display but keeps WDDM ownership sticky until reset.
+    // Explicit disable should release the WDDM scanout claim and fall back to legacy output.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
     );
     m.process_aerogpu();
     m.display_present();
-    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
-    assert_eq!(m.display_resolution(), (0, 0));
-    assert!(m.display_framebuffer().is_empty());
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
+    assert_eq!(m.display_resolution(), legacy_res);
 }
