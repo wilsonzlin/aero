@@ -53,6 +53,24 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
     expect(pe.message).toContain("GPUValidationError");
   });
 
+  it("does not prefix primitive errors with constructor name (e.g. String: ...)", () => {
+    const backend = new WebGpuPresenterBackend();
+    const device = new FakeGpuDevice();
+
+    const onError = vi.fn();
+    (backend as any).opts = { onError };
+    (backend as any).destroyed = false;
+    (backend as any).device = device;
+
+    (backend as any).installUncapturedErrorHandler(device);
+
+    device.emit("uncapturederror", { error: "boom" });
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0]?.[0] as unknown as PresenterError;
+    expect(err).toBeInstanceOf(PresenterError);
+    expect(err.message).toBe("boom");
+  });
+
   it("uninstall prevents further forwarding", () => {
     const backend = new WebGpuPresenterBackend();
     const device = new FakeGpuDevice();
