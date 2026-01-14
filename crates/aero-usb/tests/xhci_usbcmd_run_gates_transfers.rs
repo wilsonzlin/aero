@@ -87,9 +87,20 @@ fn xhci_usbcmd_run_gates_transfer_execution() {
     stop_marker.set_cycle(false);
     stop_marker.write_to(&mut mem, transfer_ring + 2 * TRB_LEN as u64);
 
-    // Start controller and run the first transfer.
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    // Ring the endpoint doorbell while halted (RUN=0). The doorbell should be remembered, but
+    // transfers must not execute until RUN is set.
     xhci.ring_doorbell(slot_id, endpoint_id);
+    xhci.tick(&mut mem);
+
+    assert_eq!(&mem.data[buf1 as usize..buf1 as usize + 4], &[0, 0, 0, 0]);
+    assert_eq!(&mem.data[buf2 as usize..buf2 as usize + 4], &[0, 0, 0, 0]);
+    assert!(
+        xhci.pop_pending_event().is_none(),
+        "no transfer event expected while controller is halted"
+    );
+
+    // Start controller and run the first transfer without re-ringing the doorbell.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     xhci.tick(&mut mem);
 
     assert_eq!(
