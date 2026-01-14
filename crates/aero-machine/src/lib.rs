@@ -401,7 +401,7 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_uhci: bool,
-    /// Whether to attach an EHCI (USB 2.0) controller at the canonical BDF
+    /// Whether to attach an Intel ICH9-family EHCI (USB 2.0) controller at the canonical BDF
     /// (`aero_devices::pci::profile::USB_EHCI_ICH9.bdf`, `00:12.0`).
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
@@ -6656,7 +6656,8 @@ impl Machine {
                 let pin = PciInterruptPin::IntA;
 
                 // Keep the device model's internal PCI command state coherent so
-                // `EhciPciDevice::irq_level()` can apply COMMAND.INTX_DISABLE gating.
+                // `EhciPciDevice::irq_level()` and `EhciPciDevice::tick_1ms` can apply
+                // COMMAND.INTX_DISABLE and COMMAND.BME gating.
                 let (command, bar0_base) = self
                     .pci_cfg
                     .as_ref()
@@ -8310,6 +8311,27 @@ impl Machine {
                 }
             }
 
+            if let Some(ehci) = ehci.as_ref() {
+                let bdf = aero_devices::pci::profile::USB_EHCI_ICH9.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base)
+                };
+
+                let mut ehci = ehci.borrow_mut();
+                ehci.config_mut().set_command(command);
+                if bar0_base != 0 {
+                    ehci.config_mut()
+                        .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
+                }
+            }
+
             let vga = self.vga.clone();
             let aerogpu = self.aerogpu.clone();
             let aerogpu_mmio = self.aerogpu_mmio.clone();
@@ -9700,6 +9722,14 @@ impl Machine {
         }
         let ax_after = self.cpu.state.gpr[gpr::RAX] as u16;
 
+        // The HLE BIOS uses its own configuration to determine the VBE LFB base and may overwrite
+        // `VbeDevice::lfb_base` during INT 10h services (e.g. mode sets). Keep it coherent with the
+        // machine's active display wiring (VGA vs AeroGPU vs headless) so subsequent framebuffer
+        // reads/writes target the correct backing store.
+        if vector == 0x10 {
+            self.sync_bios_vbe_lfb_base_to_display_wiring();
+        }
+
         // If the BIOS halts the CPU during an interrupt (currently only via `bios_panic`), mirror
         // the panic message into COM1 so host callers can surface it via the serial log.
         if self.cpu.state.halted {
@@ -10907,6 +10937,9 @@ impl snapshot::SnapshotTarget for Machine {
         // snapshots restore this field from `DeviceId::USB`; older snapshots will leave it at the
         // deterministic default (0).
         self.uhci_ns_remainder = 0;
+        // Reset host-side EHCI tick remainder before applying any snapshot sections. Newer
+        // snapshots restore this field from `DeviceId::USB`; older snapshots will leave it at the
+        // deterministic default (0).
         self.ehci_ns_remainder = 0;
         self.xhci_ns_remainder = 0;
     }
@@ -11701,24 +11734,36 @@ impl snapshot::SnapshotTarget for Machine {
             // controller snapshots (UHCI/EHCI/xHCI) plus the machine's host-side sub-ms tick
             // remainders.
             //
-            // Note: older snapshot formats did not store sub-ms remainder state, so default to 0
-            // unless we successfully decode a `USBC` wrapper containing a remainder value.
+            // Note: older snapshots stored the UHCI PCI device snapshot (`UHCP`) directly under
+            // `DeviceId::USB` and did not include sub-ms tick remainder state. Default to 0 unless
+            // we successfully decode a `USBC` wrapper containing remainder values.
             self.uhci_ns_remainder = 0;
             self.ehci_ns_remainder = 0;
             self.xhci_ns_remainder = 0;
             if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
                 let mut wrapper = MachineUsbSnapshot::default();
                 if wrapper.load_state(&state.data).is_ok() {
-                    if let Some(uhci) = &self.uhci {
-                        if let Some(uhci_bytes) = wrapper.uhci.as_deref() {
+                    if let Some(uhci_state) = wrapper.uhci.as_deref() {
+                        if let Some(uhci) = &self.uhci {
                             self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
-                            let _ = uhci.borrow_mut().load_state(uhci_bytes);
+                            let _ = uhci.borrow_mut().load_state(uhci_state);
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains UHCI state in USBC wrapper but machine has UHCI disabled; ignoring"
+                            );
                         }
                     }
-                    if let Some(ehci) = &self.ehci {
-                        if let Some(ehci_bytes) = wrapper.ehci.as_deref() {
+
+                    if let Some(ehci_state) = wrapper.ehci.as_deref() {
+                        if let Some(ehci) = &self.ehci {
                             self.ehci_ns_remainder = wrapper.ehci_ns_remainder % NS_PER_MS;
-                            let _ = ehci.borrow_mut().load_state(ehci_bytes);
+                            let _ = ehci.borrow_mut().load_state(ehci_state);
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains EHCI state in USBC wrapper but machine has EHCI disabled; ignoring"
+                            );
                         }
                     }
                     if let Some(xhci) = &self.xhci {
@@ -11734,6 +11779,12 @@ impl snapshot::SnapshotTarget for Machine {
                 let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                     &state,
                     &mut *uhci.borrow_mut(),
+                );
+            } else {
+                // Legacy USB payload but no UHCI device to apply it to.
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!(
+                    "warning: snapshot contains legacy UHCI USB payload but machine has UHCI disabled; ignoring"
                 );
             }
         }

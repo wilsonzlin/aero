@@ -14,6 +14,7 @@ use crate::{UsbDeviceModel, UsbHubAttachError, UsbSpeed};
 
 use super::regs::*;
 
+// Snapshots may come from untrusted sources; keep nested device payloads bounded.
 const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 struct Port {

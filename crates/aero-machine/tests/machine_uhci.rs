@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
+use aero_devices::pci::profile::USB_EHCI_ICH9;
+use aero_devices::usb::ehci::regs as ehci_regs;
 use aero_devices::usb::uhci::{regs, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
@@ -378,6 +380,138 @@ fn uhci_tick_remainder_roundtrips_through_snapshot_restore() {
     restored.tick_platform(500_000);
     let after_tick = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
     assert_eq!(after_tick, (before.wrapping_add(1)) & 0x07ff);
+}
+
+#[test]
+fn usb_tick_remainders_roundtrip_with_uhci_and_ehci_enabled() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_ehci: true,
+        // Keep the machine minimal/deterministic for this IO/timer test.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_nvme: false,
+        enable_virtio_blk: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    let pci_cfg = src
+        .pci_config_ports()
+        .expect("pc platform should expose pci_cfg");
+
+    let (uhci_base, ehci_base) = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+
+        let bus = pci_cfg.bus_mut();
+
+        let uhci_cfg = bus
+            .device_config_mut(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist");
+        // Ensure I/O decoding is enabled so `io_read/io_write` reach the UHCI BAR.
+        uhci_cfg.set_command(uhci_cfg.command() | 0x1);
+
+        let uhci_bar4_base = uhci_cfg.bar_range(4).map(|range| range.base).unwrap_or(0);
+        assert_ne!(
+            uhci_bar4_base, 0,
+            "UHCI BAR4 base should be assigned by BIOS POST"
+        );
+
+        let ehci_cfg = bus
+            .device_config_mut(USB_EHCI_ICH9.bdf)
+            .expect("EHCI PCI function should exist");
+        // Ensure MMIO decoding is enabled so `read_physical_u32/write_physical_u32` reach EHCI.
+        ehci_cfg.set_command(ehci_cfg.command() | 0x2);
+        let ehci_bar0_base = ehci_cfg
+            .bar_range(0)
+            .map(|range| range.base)
+            .unwrap_or(0);
+        assert_ne!(
+            ehci_bar0_base, 0,
+            "EHCI BAR0 base should be assigned by BIOS POST"
+        );
+
+        (
+            u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16"),
+            ehci_bar0_base,
+        )
+    };
+
+    // Start both controllers.
+    src.io_write(uhci_base + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+    src.write_physical_u32(ehci_base + ehci_regs::REG_USBCMD, ehci_regs::USBCMD_RS);
+
+    let uhci_frnum_before = src.io_read(uhci_base + regs::REG_FRNUM, 2) as u16;
+    let ehci_frindex_before = src.read_physical_u32(ehci_base + ehci_regs::REG_FRINDEX);
+
+    // Advance by half a frame; neither controller should advance its frame counter yet, but the
+    // machine should retain the fractional remainder across snapshot restore.
+    src.tick_platform(500_000);
+
+    let uhci_frnum_mid = src.io_read(uhci_base + regs::REG_FRNUM, 2) as u16;
+    let ehci_frindex_mid = src.read_physical_u32(ehci_base + ehci_regs::REG_FRINDEX);
+    assert_eq!(uhci_frnum_mid, uhci_frnum_before);
+    assert_eq!(ehci_frindex_mid, ehci_frindex_before);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let pci_cfg_restored = restored
+        .pci_config_ports()
+        .expect("pc platform should expose pci_cfg");
+    let (uhci_base_restored, ehci_base_restored) = {
+        let mut pci_cfg = pci_cfg_restored.borrow_mut();
+
+        let uhci_cfg = pci_cfg
+            .bus_mut()
+            .device_config(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist");
+        let uhci_bar4_base = uhci_cfg.bar_range(4).map(|range| range.base).unwrap_or(0);
+
+        let ehci_cfg = pci_cfg
+            .bus_mut()
+            .device_config(USB_EHCI_ICH9.bdf)
+            .expect("EHCI PCI function should exist");
+        let ehci_bar0_base = ehci_cfg
+            .bar_range(0)
+            .map(|range| range.base)
+            .unwrap_or(0);
+
+        (
+            u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16"),
+            ehci_bar0_base,
+        )
+    };
+
+    let uhci_frnum_after_restore = restored.io_read(uhci_base_restored + regs::REG_FRNUM, 2) as u16;
+    let ehci_frindex_after_restore =
+        restored.read_physical_u32(ehci_base_restored + ehci_regs::REG_FRINDEX);
+    assert_eq!(uhci_frnum_after_restore, uhci_frnum_before);
+    assert_eq!(ehci_frindex_after_restore, ehci_frindex_before);
+
+    // Advance by the remaining half-frame; both controllers should now advance by one 1ms tick.
+    restored.tick_platform(500_000);
+
+    let uhci_frnum_after_tick = restored.io_read(uhci_base_restored + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(uhci_frnum_after_tick, (uhci_frnum_before.wrapping_add(1)) & 0x07ff);
+
+    let ehci_frindex_after_tick =
+        restored.read_physical_u32(ehci_base_restored + ehci_regs::REG_FRINDEX);
+    assert_eq!(
+        ehci_frindex_after_tick,
+        ehci_frindex_before.wrapping_add(8) & ehci_regs::FRINDEX_MASK
+    );
 }
 
 struct LegacyUsbSnapshotSource {

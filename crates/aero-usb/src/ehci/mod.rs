@@ -40,7 +40,6 @@ pub mod regs;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-
 use crate::memory::MemoryBus;
 
 use regs::*;
