@@ -34,6 +34,21 @@ Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/confi
 
 Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
 
+### Per-chunk checksums (`--checksum`)
+
+By default, `publish` computes a **SHA-256 hash for every chunk** and writes it into
+`manifest.json` (`chunks[i].sha256`). This provides an end-to-end integrity check for both the
+publisher and the client/verifier.
+
+To disable per-chunk checksums (smaller manifest, slightly faster publish), use:
+
+```bash
+--checksum none
+```
+
+Note: this is independent of `--compute-version sha256` (which hashes the entire expanded logical
+disk byte stream to compute an image version).
+
 ### Input format (`--format`)
 
 By default, the tool uses `--format auto` (format detection) and treats unknown images as `raw`.
@@ -357,7 +372,7 @@ curl -fSs "<presigned-url>"
 - `chunkSize`: the chosen chunk size in bytes
 - `chunkCount`: total number of chunk objects
 - `chunkIndexWidth`: decimal zero-padding width (8)
-- `chunks[i].sha256`: per-chunk checksum (present when `--checksum sha256`, omitted when `--checksum none`)
+- `chunks[i].sha256`: per-chunk checksum (present when `--checksum sha256` **(default)**, omitted when `--checksum none`)
 
 Example (abridged):
 
