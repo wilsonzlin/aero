@@ -25,6 +25,11 @@ modules, while still allowing them to be enabled for targeted testing via `--fea
 use emulator::io::audio;
 fn main() {}
 ```
+
+```compile_fail
+use emulator::io::virtio;
+fn main() {}
+```
 "#
 )]
 
