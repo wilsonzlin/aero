@@ -178,6 +178,14 @@ describe("runtime disk snapshot payload", () => {
     ).toBe(true);
 
     expect(shouldInvalidateRemoteCache(expected, null)).toBe(true);
+
+    // Corrupt/untrusted bindings should fail closed and invalidate the cache (best-effort).
+    expect(
+      shouldInvalidateRemoteCache(expected, {
+        version: 1,
+        base: { ...(expected as any), deliveryType: 123 },
+      } as any),
+    ).toBe(true);
   });
 
   it("does not invalidate remote overlays when binding is missing, but does when base identity changes", () => {

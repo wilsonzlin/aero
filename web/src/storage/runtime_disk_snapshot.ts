@@ -501,13 +501,24 @@ export function shouldInvalidateRemoteCache(
   if (!binding || binding.version !== 1) return true;
   const base = binding.base;
   if (!base) return true;
-  if (base.imageId !== expected.imageId) return true;
-  if (base.version !== expected.version) return true;
-  if (base.deliveryType !== expected.deliveryType) return true;
-  if (base.chunkSize !== expected.chunkSize) return true;
+  const baseAny = base as unknown as {
+    imageId?: unknown;
+    version?: unknown;
+    deliveryType?: unknown;
+    chunkSize?: unknown;
+    expectedValidator?: unknown;
+  };
+  if (typeof baseAny.imageId !== "string" || baseAny.imageId.trim().length === 0) return true;
+  if (typeof baseAny.version !== "string" || baseAny.version.trim().length === 0) return true;
+  if (typeof baseAny.deliveryType !== "string" || baseAny.deliveryType.trim().length === 0) return true;
+  if (typeof baseAny.chunkSize !== "number" || !Number.isSafeInteger(baseAny.chunkSize) || baseAny.chunkSize <= 0) return true;
+  if (baseAny.imageId !== expected.imageId) return true;
+  if (baseAny.version !== expected.version) return true;
+  if (baseAny.deliveryType !== expected.deliveryType) return true;
+  if (baseAny.chunkSize !== expected.chunkSize) return true;
 
   const a = expected.expectedValidator;
-  const b = base.expectedValidator;
+  const b = isRemoteDiskValidator(baseAny.expectedValidator) ? (baseAny.expectedValidator as RemoteDiskValidator) : undefined;
   if (!a && !b) return false;
   if (!a || !b) return true;
   return a.kind !== b.kind || a.value !== b.value;
