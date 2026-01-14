@@ -2507,6 +2507,10 @@ mod tests {
     #[test]
     fn mode13h_golden_hash() {
         let mut dev = VgaDevice::new();
+        // Use a non-default LFB base to ensure the VBE LFB path does not rely on the historical
+        // hard-coded `SVGA_LFB_BASE`.
+        let lfb_base: u32 = 0xD000_0000;
+        dev.set_svga_lfb_base(lfb_base);
         dev.set_mode_13h();
 
         // Fill the 64k window with a repeating ramp.
@@ -2532,10 +2536,10 @@ mod tests {
         dev.port_write(0x01CE, 2, 0x0004);
         dev.port_write(0x01CF, 2, 0x0041);
 
-        dev.mem_write_u8(SVGA_LFB_BASE, 0x12);
-        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x34);
-        dev.mem_write_u8(SVGA_LFB_BASE + 2, 0x56);
-        dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x78);
+        dev.mem_write_u8(lfb_base, 0x12);
+        dev.mem_write_u8(lfb_base + 1, 0x34);
+        dev.mem_write_u8(lfb_base + 2, 0x56);
+        dev.mem_write_u8(lfb_base + 3, 0x78);
 
         // Disable VBE again and ensure the VGA output is unchanged.
         dev.port_write(0x01CE, 2, 0x0004);
