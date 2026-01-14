@@ -37,6 +37,15 @@ struct VertexXyzTex1 {
   float v;
 };
 
+struct VertexXyzrhwTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+  float v;
+};
+
 struct VertexXyzrhwDiffuseTex1 {
   float x;
   float y;
@@ -687,6 +696,100 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
       if (!white_bytes_match) {
         return reporter.Fail("ProcessVertices XYZ|TEX1 missing-diffuse case did not match expected output");
+      }
+    }
+
+    // Validate XYZRHW|TEX1 -> XYZRHW|DIFFUSE|TEX1 when the source vertex format
+    // does not include a DIFFUSE color. Fixed-function behavior should treat
+    // DIFFUSE as white and pass through POSITIONT + TEX0.
+    {
+      const VertexXyzrhwTex1 src_white = {10.0f, 20.0f, 0.5f, 2.0f, 0.25f, 0.75f};
+
+      ComPtr<IDirect3DVertexBuffer9> src_white_vb;
+      hr = dev->CreateVertexBuffer(sizeof(src_white),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_TEX1,
+                                   D3DPOOL_DEFAULT,
+                                   src_white_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !src_white_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(src_xyzw_tex1_white)", hr);
+      }
+
+      void* src_white_ptr = NULL;
+      hr = src_white_vb->Lock(0, sizeof(src_white), &src_white_ptr, 0);
+      if (FAILED(hr) || !src_white_ptr) {
+        return reporter.FailHresult("src_xyzw_tex1_white->Lock", hr);
+      }
+      memcpy(src_white_ptr, &src_white, sizeof(src_white));
+      hr = src_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("src_xyzw_tex1_white->Unlock", hr);
+      }
+
+      ComPtr<IDirect3DVertexBuffer9> dst_white_vb;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_white_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_white_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_xyzw_tex1_white)", hr);
+      }
+
+      void* dst_white_init_ptr = NULL;
+      hr = dst_white_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_white_init_ptr, 0);
+      if (FAILED(hr) || !dst_white_init_ptr) {
+        return reporter.FailHresult("dst_xyzw_tex1_white->Lock (init)", hr);
+      }
+      memset(dst_white_init_ptr, 0xCD, sizeof(VertexXyzrhwDiffuseTex1));
+      hr = dst_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_xyzw_tex1_white->Unlock (init)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZRHW|TEX1)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_white_vb.get(), 0, sizeof(VertexXyzrhwTex1));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_xyzw_tex1_white)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_white_vb.get(),
+                                decl_tex.get(),
+                                /*Flags=*/0);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyzw|tex1 white)", hr);
+      }
+
+      void* dst_white_ptr = NULL;
+      hr = dst_white_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_white_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_white_ptr) {
+        return reporter.FailHresult("dst_xyzw_tex1_white->Lock (read)", hr);
+      }
+
+      const VertexXyzrhwDiffuseTex1 expected_white = {src_white.x,
+                                                      src_white.y,
+                                                      src_white.z,
+                                                      src_white.rhw,
+                                                      D3DCOLOR_XRGB(255, 255, 255),
+                                                      src_white.u,
+                                                      src_white.v};
+      const bool white_bytes_match = (memcmp(dst_white_ptr, &expected_white, sizeof(expected_white)) == 0);
+
+      hr = dst_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_xyzw_tex1_white->Unlock (read)", hr);
+      }
+
+      if (!white_bytes_match) {
+        return reporter.Fail("ProcessVertices XYZRHW|TEX1 missing-diffuse case did not match expected output");
       }
     }
 

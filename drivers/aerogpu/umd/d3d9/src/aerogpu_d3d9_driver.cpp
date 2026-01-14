@@ -5661,7 +5661,11 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   const bool src_xyz_diffuse = (dev->fvf == kSupportedFvfXyzDiffuse);
   const bool src_xyz_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
   const bool src_xyz_tex1 = (dev->fvf == kSupportedFvfXyzTex1);
-  if (!(fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
+  const bool src_xyzrhw_diffuse = (dev->fvf == kSupportedFvfXyzrhwDiffuse);
+  const bool src_xyzrhw_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  const bool src_xyzrhw_tex1 = (dev->fvf == kSupportedFvfXyzrhwTex1);
+  const bool src_xyzrhw = (src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
+  if (!(fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }
 
@@ -5867,12 +5871,13 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 
   // Fixed-function fallback: implement a minimal CPU vertex transform for common
   // FVF paths when no user shaders are bound.
-  if (fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
+  if (fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
     uint32_t src_min_stride = 0;
     bool src_has_diffuse = false;
     uint32_t src_diffuse_offset = 0;
     bool src_has_tex0 = false;
     uint32_t src_tex0_offset = 0;
+    bool src_is_xyzrhw = false;
     if (src_xyz_diffuse) {
       src_min_stride = 16u;
       src_has_diffuse = true;
@@ -5887,6 +5892,26 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_min_stride = 20u;
       src_has_tex0 = true;
       src_tex0_offset = 12u;
+    } else if (src_xyzrhw_diffuse) {
+      src_is_xyzrhw = true;
+      src_min_stride = 20u;
+      src_has_diffuse = true;
+      src_diffuse_offset = 16u;
+    } else if (src_xyzrhw_diffuse_tex1) {
+      src_is_xyzrhw = true;
+      src_min_stride = 28u;
+      src_has_diffuse = true;
+      src_diffuse_offset = 16u;
+      src_has_tex0 = true;
+      src_tex0_offset = 20u;
+    } else if (src_xyzrhw_tex1) {
+      src_is_xyzrhw = true;
+      src_min_stride = 24u;
+      src_has_tex0 = true;
+      src_tex0_offset = 16u;
+    } else {
+      // Unexpected: the early supported-FVF check should have rejected this.
+      return E_FAIL;
     }
 
     if (src_stride < src_min_stride) {
@@ -5937,83 +5962,95 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       return kD3DErrInvalidCall;
     }
 
-    // Compute WVP matrix (row-major, row-vector convention).
-    if (kD3dTransformWorld0 >= Device::kTransformCacheCount ||
-        kD3dTransformView >= Device::kTransformCacheCount ||
-        kD3dTransformProjection >= Device::kTransformCacheCount) {
+    // XYZ vertices need a WVP transform. XYZRHW vertices are already in screen
+    // space and are passed through as-is.
+    float wvp[16] = {};
+    float vp_x = 0.0f;
+    float vp_y = 0.0f;
+    float vp_w = 1.0f;
+    float vp_h = 1.0f;
+    if (!src_is_xyzrhw) {
+      // Compute WVP matrix (row-major, row-vector convention).
+      if (kD3dTransformWorld0 >= Device::kTransformCacheCount ||
+          kD3dTransformView >= Device::kTransformCacheCount ||
+          kD3dTransformProjection >= Device::kTransformCacheCount) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      if (dst_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst_res->wddm_hAllocation, dev->wddm_context.hContext);
-      }
-      if (src_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
-      }
+        if (dst_locked) {
+          (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst_res->wddm_hAllocation, dev->wddm_context.hContext);
+        }
+        if (src_locked) {
+          (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src_res->wddm_hAllocation, dev->wddm_context.hContext);
+        }
 #endif
-      return E_FAIL;
+        return E_FAIL;
+      }
+
+      float wv[16];
+      d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0],
+                              dev->transform_matrices[kD3dTransformView],
+                              wv);
+      d3d9_mul_mat4_row_major(wv, dev->transform_matrices[kD3dTransformProjection], wvp);
+
+      const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
+      vp_x = vp.X;
+      vp_y = vp.Y;
+      vp_w = vp.Width;
+      vp_h = vp.Height;
     }
-
-    float wv[16];
-    float wvp[16];
-    d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0],
-                            dev->transform_matrices[kD3dTransformView],
-                            wv);
-    d3d9_mul_mat4_row_major(wv, dev->transform_matrices[kD3dTransformProjection], wvp);
-
-    const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
-    const float vp_x = vp.X;
-    const float vp_y = vp.Y;
-    const float vp_w = vp.Width;
-    const float vp_h = vp.Height;
-
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
       std::memset(dst, 0, dst_stride);
 
-      const float in_x = read_f32_unaligned(src + 0);
-      const float in_y = read_f32_unaligned(src + 4);
-      const float in_z = read_f32_unaligned(src + 8);
+      if (src_is_xyzrhw) {
+        // Pre-transformed vertices: POSITIONT is already in screen space.
+        std::memcpy(dst + dst_layout.pos_offset, src + 0, 16);
+      } else {
+        const float in_x = read_f32_unaligned(src + 0);
+        const float in_y = read_f32_unaligned(src + 4);
+        const float in_z = read_f32_unaligned(src + 8);
 
-      const float v[4] = {in_x, in_y, in_z, 1.0f};
-      float clip[4] = {};
-      d3d9_mul_vec4_mat4_row_major(v, wvp, clip);
+        const float v[4] = {in_x, in_y, in_z, 1.0f};
+        float clip[4] = {};
+        d3d9_mul_vec4_mat4_row_major(v, wvp, clip);
 
-      float w = clip[3];
-      if (!std::isfinite(w) || w == 0.0f) {
-        // Avoid division-by-zero / NaNs. A real D3D9 implementation would likely
-        // clip these vertices; for bring-up keep the math finite.
-        w = 1.0f;
-      }
-      float inv_w = 1.0f / w;
-      if (!std::isfinite(inv_w)) {
-        // Keep math finite; an infinite/NaN inv_w would poison all downstream
-        // calculations.
-        inv_w = 0.0f;
-      }
+        float w = clip[3];
+        if (!std::isfinite(w) || w == 0.0f) {
+          // Avoid division-by-zero / NaNs. A real D3D9 implementation would likely
+          // clip these vertices; for bring-up keep the math finite.
+          w = 1.0f;
+        }
+        float inv_w = 1.0f / w;
+        if (!std::isfinite(inv_w)) {
+          // Keep math finite; an infinite/NaN inv_w would poison all downstream
+          // calculations.
+          inv_w = 0.0f;
+        }
 
-      float ndc_x = clip[0] * inv_w;
-      float ndc_y = clip[1] * inv_w;
-      float ndc_z = clip[2] * inv_w;
-      if (!std::isfinite(ndc_x)) {
-        ndc_x = 0.0f;
-      }
-      if (!std::isfinite(ndc_y)) {
-        ndc_y = 0.0f;
-      }
-      if (!std::isfinite(ndc_z)) {
-        ndc_z = 0.0f;
-      }
+        float ndc_x = clip[0] * inv_w;
+        float ndc_y = clip[1] * inv_w;
+        float ndc_z = clip[2] * inv_w;
+        if (!std::isfinite(ndc_x)) {
+          ndc_x = 0.0f;
+        }
+        if (!std::isfinite(ndc_y)) {
+          ndc_y = 0.0f;
+        }
+        if (!std::isfinite(ndc_z)) {
+          ndc_z = 0.0f;
+        }
 
-      // D3D9 viewport transform uses a -0.5 pixel center convention.
-      const float out_x = ((ndc_x + 1.0f) * 0.5f) * vp_w + vp_x - 0.5f;
-      const float out_y = ((1.0f - ndc_y) * 0.5f) * vp_h + vp_y - 0.5f;
-      const float out_z = ndc_z;
-      const float out_rhw = inv_w;
+        // D3D9 viewport transform uses a -0.5 pixel center convention.
+        const float out_x = ((ndc_x + 1.0f) * 0.5f) * vp_w + vp_x - 0.5f;
+        const float out_y = ((1.0f - ndc_y) * 0.5f) * vp_h + vp_y - 0.5f;
+        const float out_z = ndc_z;
+        const float out_rhw = inv_w;
 
-      write_f32_unaligned(dst + dst_layout.pos_offset + 0, out_x);
-      write_f32_unaligned(dst + dst_layout.pos_offset + 4, out_y);
-      write_f32_unaligned(dst + dst_layout.pos_offset + 8, out_z);
-      write_f32_unaligned(dst + dst_layout.pos_offset + 12, out_rhw);
+        write_f32_unaligned(dst + dst_layout.pos_offset + 0, out_x);
+        write_f32_unaligned(dst + dst_layout.pos_offset + 4, out_y);
+        write_f32_unaligned(dst + dst_layout.pos_offset + 8, out_z);
+        write_f32_unaligned(dst + dst_layout.pos_offset + 12, out_rhw);
+      }
 
       if (dst_layout.has_diffuse) {
         if (src_has_diffuse) {
