@@ -246,6 +246,62 @@ class DryRunQemuCmdTests(unittest.TestCase):
             mock_run.assert_not_called()
             mock_popen.assert_not_called()
 
+    def test_dry_run_with_qemu_preflight_pci_enables_qmp(self) -> None:
+        """
+        The QMP `query-pci` preflight is optional, but when enabled it must force QMP on even if no
+        other harness feature requires it.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--qemu-preflight-pci",
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(
+                    self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
+                )
+                if self.harness.os.name != "nt"
+                else contextlib.nullcontext(),
+                contextlib.redirect_stdout(out),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+
+            # First line should be JSON argv.
+            parsed = json.loads(out.getvalue().splitlines()[0])
+            self.assertIn("-qmp", parsed)
+            idx = parsed.index("-qmp")
+            self.assertGreater(idx + 1, idx)
+            qmp_arg = parsed[idx + 1]
+            self.assertIsInstance(qmp_arg, str)
+            self.assertTrue(qmp_arg.endswith(",server,nowait"))
+            if self.harness.os.name == "nt":
+                self.assertRegex(qmp_arg, r"^tcp:127\\.0\\.0\\.1:\\d+,server,nowait$")
+            else:
+                self.assertTrue(qmp_arg.startswith("unix:"))
+                self.assertIn("serial.qmp.sock", qmp_arg)
+
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
