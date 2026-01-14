@@ -98,7 +98,8 @@ param(
   # If set, require virtio-snd to be operating with MSI-X (not INTx).
   # This adds `--require-snd-msix` to the scheduled task.
   #
-  # The guest selftest will then fail the overall selftest if virtio-snd is not using MSI-X
+  # The guest selftest will then fail the overall selftest if virtio-snd is missing, if the optional
+  # virtio-snd diagnostics interface is unavailable, or if the driver reports it is not using MSI-X
   # (mode != msix) in its `virtio-snd-msix` diagnostic marker.
   #
   # This is the guest-side complement to the host harness requirement flag:
@@ -795,6 +796,7 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - To fail the virtio-snd selftest when the driver is not using MSI-X (expected MSI-X), generate this media with
     `-RequireSndMsix` (adds `--require-snd-msix` to the scheduled task). This is the guest-side complement to the host harness flag
     `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` (which also performs a host-side MSI-X enable check via QMP).
+    When enabled, the guest selftest also fails if the virtio-snd device is missing or the diagnostics interface is unavailable.
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
