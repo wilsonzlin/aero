@@ -17,8 +17,8 @@ This script is intentionally narrow and fast:
   descriptions (for example: referencing the deleted
   `aerogpu_alloc_privdata.h` model).
 - Enforce a key KMD invariant for share-token refcount tracking: avoid
-  `ExAllocatePoolWithTag` under `Adapter->AllocationsLock` (spin lock hold time /
-  contention).
+  potentially expensive allocation calls under `Adapter->AllocationsLock` (spin
+  lock hold time / contention).
 """
 
 from __future__ import annotations
@@ -132,8 +132,8 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
     """
     Guardrail for AGPU-ShareToken refcount tracking:
 
-    - `AeroGpuShareTokenRefIncrementLocked` must not call `ExAllocatePoolWithTag`
-      while `Adapter->AllocationsLock` is held.
+    - `AeroGpuShareTokenRefIncrementLocked` must not perform allocations while
+      `Adapter->AllocationsLock` is held.
     - The implementation is expected to drop the spin lock, allocate, then
       re-acquire and re-check before inserting.
     """
@@ -173,22 +173,39 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         "ExAllocateFromNPagedLookasideList(",
         "ExAllocateFromPagedLookasideList(",
     )
+    alloc_re = re.compile("|".join(re.escape(n) for n in alloc_needles))
+
+    # Scan events by offset (more robust than line-based scanning if the call
+    # spans multiple lines).
+    events: list[tuple[int, str, str]] = []
+    for m in re_lock_release.finditer(body):
+        events.append((m.start(), "release", m.group(0)))
+    for m in re_lock_acquire.finditer(body):
+        events.append((m.start(), "acquire", m.group(0)))
+    for m in re_lock_acquire_raise.finditer(body):
+        events.append((m.start(), "acquire", m.group(0)))
+    for m in alloc_re.finditer(body):
+        events.append((m.start(), "alloc", m.group(0)))
+
+    events.sort(key=lambda e: e[0])
 
     # This helper is named "*Locked" and is expected to be entered with the lock
     # held by the caller.
     lock_held = True
-    for idx, raw_line in enumerate(body.splitlines(), start=0):
-        file_line = base_line + idx
-        line = raw_line.strip()
-
-        if re_lock_release.search(line):
+    for pos, kind, snippet in events:
+        if kind == "release":
             lock_held = False
-        elif re_lock_acquire.search(line) or re_lock_acquire_raise.search(line):
+            continue
+        if kind == "acquire":
             lock_held = True
+            continue
 
-        if lock_held and any(needle in line for needle in alloc_needles):
+        if kind == "alloc" and lock_held:
+            # Convert body-relative offset to a file line number.
+            file_line = base_line + body[:pos].count("\n")
+            call_name = snippet.rstrip("(")
             errors.append(
-                f"{kmd_path.relative_to(ROOT)}:{file_line}: allocation call while Adapter->AllocationsLock is held"
+                f"{kmd_path.relative_to(ROOT)}:{file_line}: {call_name} called while Adapter->AllocationsLock is held"
             )
 
 
