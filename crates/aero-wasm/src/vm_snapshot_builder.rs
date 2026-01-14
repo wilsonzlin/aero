@@ -26,6 +26,7 @@ use aero_snapshot::{
 };
 
 use crate::vm_snapshot_device_kind::{kind_from_device_id, parse_device_kind};
+use crate::vm_snapshot_payload_version::parse_vm_snapshot_device_version_flags;
 
 const MAX_STATE_BLOB_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DEVICE_BLOB_BYTES: usize = 4 * 1024 * 1024;
@@ -102,52 +103,8 @@ fn device_default_version_flags(id: DeviceId) -> (u16, u16) {
     (1, 0)
 }
 
-fn device_version_flags_from_aero_header(bytes: &[u8]) -> Option<(u16, u16)> {
-    // Preferred path: `aero-io-snapshot` format uses a 16-byte header (see `aero-io-snapshot`):
-    // - magic: b"AERO" (4 bytes)
-    // - format_version: u16 major, u16 minor
-    // - device_id: [u8; 4]
-    // - device_version: u16 major, u16 minor
-    //
-    // We store the device version pair in the VM snapshot's `DeviceState` version/flags fields so
-    // that future VM-level logic can interpret the contained device blob without re-parsing it.
-    //
-    // Legacy path: some JS-only device snapshots also start with "AERO" but use a shorter header:
-    // - magic: b"AERO" (4 bytes)
-    // - version: u16
-    // - flags: u16
-    //
-    // Detect the io-snapshot header by checking that the 4-byte device id region looks like an
-    // ASCII tag.
-    const IO_HEADER_LEN: usize = 16;
-    if bytes.len() < 4 || &bytes[0..4] != b"AERO" {
-        return None;
-    }
-
-    if bytes.len() >= IO_HEADER_LEN {
-        let id = &bytes[8..12];
-        let is_ascii_tag = id.iter().all(|b| match *b {
-            b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' => true,
-            _ => false,
-        });
-        if is_ascii_tag {
-            let major = u16::from_le_bytes([bytes[12], bytes[13]]);
-            let minor = u16::from_le_bytes([bytes[14], bytes[15]]);
-            return Some((major, minor));
-        }
-    }
-
-    if bytes.len() >= 8 {
-        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        let flags = u16::from_le_bytes([bytes[6], bytes[7]]);
-        return Some((version, flags));
-    }
-
-    None
-}
-
 fn device_version_flags_from_payload(id: DeviceId, bytes: &[u8]) -> (u16, u16) {
-    device_version_flags_from_aero_header(bytes).unwrap_or_else(|| device_default_version_flags(id))
+    parse_vm_snapshot_device_version_flags(bytes).unwrap_or_else(|| device_default_version_flags(id))
 }
 
 fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {
