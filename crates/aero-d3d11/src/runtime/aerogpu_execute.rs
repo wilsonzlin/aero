@@ -13,6 +13,7 @@ use aero_gpu::pipeline_key::{
 };
 use aero_gpu::stats::PipelineCacheStats;
 use aero_gpu::GpuCapabilities;
+use aero_gpu::GpuError;
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
@@ -1061,15 +1062,21 @@ impl AerogpuCmdRuntime {
             hash
         };
 
-        let linked_vs_hash = if vs_output_locations == ps_link_locations {
+        let linked_vs_wgsl = if vs_output_locations == ps_link_locations {
+            std::borrow::Cow::Borrowed(vs.wgsl.as_str())
+        } else {
+            std::borrow::Cow::Owned(super::wgsl_link::trim_vs_outputs_to_locations(
+                &vs.wgsl,
+                &ps_link_locations,
+            ))
+        };
+        let linked_vs_hash = if linked_vs_wgsl.as_ref() == vs.wgsl.as_str() {
             vs.hash
         } else {
-            let linked_vs_wgsl =
-                super::wgsl_link::trim_vs_outputs_to_locations(&vs.wgsl, &ps_link_locations);
             let (hash, _module) = self.pipelines.get_or_create_shader_module(
                 &self.device,
                 ShaderStage::Vertex,
-                &linked_vs_wgsl,
+                linked_vs_wgsl.as_ref(),
                 Some("aero-d3d11 aerogpu linked vertex shader"),
             );
             hash
@@ -1172,52 +1179,86 @@ impl AerogpuCmdRuntime {
         let depth_stencil_state = depth_state.clone();
 
         // Fetch or create pipeline.
-        let pipeline = self.pipelines.get_or_create_render_pipeline(
-            &self.device,
-            key,
-            move |device, vs_module, fs_module| {
-                let pipeline_layout = pipeline_layout.as_ref();
+        let pipeline = {
+            // With bounded LRU shader caches, shader modules referenced by hash may be evicted
+            // between `CREATE_SHADER_*` and first use. Recover by re-registering the WGSL and
+            // retrying pipeline creation.
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                match self.pipelines.get_or_create_render_pipeline(
+                    &self.device,
+                    key.clone(),
+                    |device, vs_module, fs_module| {
+                        let pipeline_layout = pipeline_layout.as_ref();
 
-                let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
-                    .iter()
-                    .map(|l| wgpu::VertexBufferLayout {
-                        array_stride: l.array_stride,
-                        step_mode: l.step_mode,
-                        attributes: &l.attributes,
-                    })
-                    .collect();
+                        let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
+                            .iter()
+                            .map(|l| wgpu::VertexBufferLayout {
+                                array_stride: l.array_stride,
+                                step_mode: l.step_mode,
+                                attributes: &l.attributes,
+                            })
+                            .collect();
 
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("aero-d3d11 aerogpu render pipeline"),
-                    layout: Some(pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: vs_module,
-                        entry_point: "vs_main",
-                        buffers: &vertex_buffers,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                            label: Some("aero-d3d11 aerogpu render pipeline"),
+                            layout: Some(pipeline_layout),
+                            vertex: wgpu::VertexState {
+                                module: vs_module,
+                                entry_point: "vs_main",
+                                buffers: &vertex_buffers,
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            },
+                            fragment: Some(wgpu::FragmentState {
+                                module: fs_module,
+                                entry_point: "fs_main",
+                                targets: &color_target_states,
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            }),
+                            primitive: wgpu::PrimitiveState {
+                                topology: primitive_topology,
+                                strip_index_format,
+                                front_face,
+                                cull_mode,
+                                ..Default::default()
+                            },
+                            depth_stencil: depth_stencil_state.clone(),
+                            multisample: wgpu::MultisampleState {
+                                count: 1,
+                                ..Default::default()
+                            },
+                            multiview: None,
+                        })
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: fs_module,
-                        entry_point: "fs_main",
-                        targets: &color_target_states,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: primitive_topology,
-                        strip_index_format,
-                        front_face,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: depth_stencil_state,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                })
-            },
-        )?;
+                ) {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0 =>
+                    {
+                        recovery_attempts_remaining -= 1;
+
+                        let wgsl = match stage {
+                            ShaderStage::Vertex if hash == linked_vs_hash => linked_vs_wgsl.as_ref(),
+                            ShaderStage::Fragment if hash == linked_ps_hash => linked_ps_wgsl.as_ref(),
+                            _ => return Err(GpuError::MissingShaderModule { stage, hash }.into()),
+                        };
+
+                        let (rehash, _module) = self.pipelines.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            wgsl,
+                            Some("aero-d3d11 aerogpu recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        };
 
         let mut bind_groups: Vec<Arc<wgpu::BindGroup>> = Vec::with_capacity(group_layouts.len());
         let has_geometry_group = group_layouts.len() > 2;

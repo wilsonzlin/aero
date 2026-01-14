@@ -14,7 +14,7 @@ use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
-use aero_gpu::GpuCapabilities;
+use aero_gpu::{GpuCapabilities, GpuError};
 use aero_gpu::{
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
     pack_rgba8_to_b5g6r5_unorm,
@@ -18496,6 +18496,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let gs_output_info = gs_emulation_output_vertex_pulling_info(device, resources, state)?;
     let gs_output_active = gs_output_info.is_some();
     let passthrough_active = emulation_active || gs_output_active;
+    let mut vertex_shader_wgsl: Option<String> = None;
+    let ps_wgsl: Option<String>;
     let (
         vertex_shader,
         ps_wgsl_hash,
@@ -18689,6 +18691,11 @@ fn get_or_create_render_pipeline_for_state<'a>(
         };
 
         let needs_trim = vs_outputs != ps_link_locations;
+        ps_wgsl = match linked_ps_wgsl {
+            std::borrow::Cow::Borrowed(_) => None,
+            std::borrow::Cow::Owned(wgsl) => Some(wgsl),
+        };
+
         let vertex_shader = if !needs_trim {
             base_vs_hash
         } else {
@@ -18702,6 +18709,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 &trimmed_vs_wgsl,
                 Some("aerogpu_cmd linked vertex shader"),
             );
+            vertex_shader_wgsl = Some(trimmed_vs_wgsl);
             hash
         };
 
@@ -18884,43 +18892,156 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let front_face = state.front_face;
     let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
 
-    let pipeline = pipeline_cache
-        .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
-            let vb_layouts: Vec<wgpu::VertexBufferLayout<'_>> = vertex_buffers
-                .iter()
-                .map(VertexBufferLayoutOwned::as_wgpu)
-                .collect();
+    let pipeline_ptr = {
+        // With bounded LRU shader caches, shader modules referenced by hash may be evicted between
+        // `CREATE_SHADER_DXBC` and first use. Recover by re-registering the WGSL and retrying.
+        let mut recovery_attempts_remaining = 2u8;
+        loop {
+            let result = pipeline_cache
+                .get_or_create_render_pipeline(device, key.clone(), |device, vs, fs| {
+                    let vb_layouts: Vec<wgpu::VertexBufferLayout<'_>> = vertex_buffers
+                        .iter()
+                        .map(VertexBufferLayoutOwned::as_wgpu)
+                        .collect();
 
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aerogpu_cmd render pipeline"),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: vs,
-                    entry_point: vs_entry_point,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &vb_layouts,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: fs,
-                    entry_point: fs_entry_point,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &color_target_states,
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology,
-                    strip_index_format,
-                    front_face,
-                    cull_mode,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: depth_stencil_state_for_pipeline,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            })
-        })
-        .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("aerogpu_cmd render pipeline"),
+                        layout: Some(pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: vs,
+                            entry_point: vs_entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            buffers: &vb_layouts,
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: fs,
+                            entry_point: fs_entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            targets: &color_target_states,
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology,
+                            strip_index_format,
+                            front_face,
+                            cull_mode,
+                            polygon_mode: wgpu::PolygonMode::Fill,
+                            unclipped_depth: false,
+                            conservative: false,
+                        },
+                        depth_stencil: depth_stencil_state_for_pipeline.clone(),
+                        multisample: wgpu::MultisampleState::default(),
+                        multiview: None,
+                    })
+                })
+                .map(|pipeline| pipeline as *const wgpu::RenderPipeline);
+
+            match result {
+                Ok(pipeline) => break pipeline,
+                Err(GpuError::MissingShaderModule { stage, hash })
+                    if recovery_attempts_remaining > 0 =>
+                {
+                    recovery_attempts_remaining -= 1;
+
+                    let wgsl: std::borrow::Cow<'_, str> = match stage {
+                        aero_gpu::pipeline_key::ShaderStage::Vertex if hash == vertex_shader => {
+                            if let Some(wgsl) = vertex_shader_wgsl.as_ref() {
+                                std::borrow::Cow::Borrowed(wgsl.as_str())
+                            } else if emulation_active {
+                                let ps = resources
+                                    .shaders
+                                    .get(&ps_handle)
+                                    .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+                                let keep =
+                                    super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
+                                let passthrough = super::wgsl_link::generate_passthrough_vs_wgsl(
+                                    &keep,
+                                )
+                                .context("passthrough VS")?;
+                                if state.depth_clip_enabled {
+                                    std::borrow::Cow::Owned(passthrough)
+                                } else {
+                                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&passthrough))
+                                }
+                            } else if gs_output_active {
+                                let ps = resources
+                                    .shaders
+                                    .get(&ps_handle)
+                                    .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+                                let info = gs_output_info
+                                    .as_ref()
+                                    .expect("gs_output_active implies gs_output_info.is_some()");
+                                let keep =
+                                    super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
+                                let passthrough =
+                                    super::wgsl_link::generate_gs_emulation_output_passthrough_vs_wgsl(
+                                        &keep,
+                                        info.reg_count,
+                                    )
+                                    .context("gs output passthrough VS")?;
+                                if state.depth_clip_enabled {
+                                    std::borrow::Cow::Owned(passthrough)
+                                } else {
+                                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&passthrough))
+                                }
+                            } else {
+                                let vs_handle = state
+                                    .vs
+                                    .ok_or_else(|| anyhow!("render draw without bound VS"))?;
+                                let vs = resources
+                                    .shaders
+                                    .get(&vs_handle)
+                                    .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+                                if vs.stage != ShaderStage::Vertex {
+                                    bail!("shader {vs_handle} is not a vertex shader");
+                                }
+                                if hash == vs.wgsl_hash {
+                                    std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
+                                } else if hash == vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash) {
+                                    // Depth-clamp variant hash is precomputed at shader creation
+                                    // time, but the WGSL variant is only generated on demand.
+                                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
+                                } else {
+                                    return Err(anyhow!(
+                                        "wgpu pipeline cache: vertex shader module 0x{hash:032x} not recoverable"
+                                    ));
+                                }
+                            }
+                        }
+                        aero_gpu::pipeline_key::ShaderStage::Fragment if hash == ps_wgsl_hash => {
+                            if let Some(wgsl) = ps_wgsl.as_ref() {
+                                std::borrow::Cow::Borrowed(wgsl.as_str())
+                            } else {
+                                let ps = resources
+                                    .shaders
+                                    .get(&ps_handle)
+                                    .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+                                std::borrow::Cow::Borrowed(ps.wgsl_source.as_str())
+                            }
+                        }
+                        _ => {
+                            return Err(anyhow!(
+                                "wgpu pipeline cache: {stage:?} shader module 0x{hash:032x} not recoverable"
+                            ))
+                        }
+                    };
+
+                    let (rehash, _module) = pipeline_cache.get_or_create_shader_module(
+                        device,
+                        stage,
+                        wgsl.as_ref(),
+                        Some("aerogpu_cmd recovered shader module"),
+                    );
+                    if rehash != hash {
+                        bail!(
+                            "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                        );
+                    }
+                }
+                Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+            }
+        }
+    };
+    let pipeline = unsafe { &*pipeline_ptr };
 
     Ok((key, pipeline, wgpu_slot_to_d3d_slot))
 }
