@@ -2146,7 +2146,9 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
     PNET_BUFFER Nb = TxReq->Nb;
 
     if (TxReq->SgList) {
-      NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, Nb);
+      if (Adapter->DmaHandle && Nb) {
+        NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, Nb);
+      }
       TxReq->SgList = NULL;
     }
 
@@ -2303,7 +2305,11 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
 
     if (TxReq) {
       Adapter->StatTxPackets++;
-      Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+      if (TxReq->Nb) {
+        Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+      } else {
+        Adapter->StatTxErrors++;
+      }
 
       if (TxReq->State == AerovNetTxSubmitted) {
         RemoveEntryList(&TxReq->Link);
@@ -2551,7 +2557,9 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
 
     if (TxReq->SgList) {
-      NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, TxReq->Nb);
+      if (Adapter->DmaHandle && TxReq->Nb) {
+        NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, TxReq->Nb);
+      }
       TxReq->SgList = NULL;
     }
 
@@ -2784,7 +2792,7 @@ ReleaseAndExit:
 
   if (CompleteNow) {
     // Free the SG list immediately; the device never saw the descriptors.
-    if (ScatterGatherList) {
+    if (ScatterGatherList && Adapter->DmaHandle && NbForFree) {
       NdisMFreeNetBufferSGList(Adapter->DmaHandle, ScatterGatherList, NbForFree);
     }
 
@@ -3899,7 +3907,9 @@ static NDIS_STATUS AerovNetMiniportRestart(_In_ NDIS_HANDLE MiniportAdapterConte
     PNET_BUFFER Nb = TxReq->Nb;
 
     if (TxReq->SgList) {
-      NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, Nb);
+      if (Adapter->DmaHandle && Nb) {
+        NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, Nb);
+      }
       TxReq->SgList = NULL;
     }
 
