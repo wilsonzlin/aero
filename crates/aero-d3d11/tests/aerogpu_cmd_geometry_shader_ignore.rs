@@ -4,7 +4,7 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::FourCC;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
-use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
+use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuShaderStage, AerogpuShaderStageEx};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -32,7 +32,7 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
 }
 
 #[test]
-fn aerogpu_cmd_ignores_geometry_shader_dxbc_payloads() {
+fn aerogpu_cmd_accepts_geometry_shader_stage_ex_plumbing() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -42,23 +42,21 @@ fn aerogpu_cmd_ignores_geometry_shader_dxbc_payloads() {
             }
         };
 
-        // A minimal DXBC container that parses as a geometry shader (program type 2). The WebGPU
-        // executor still has no GS stage, but the command stream can represent it; we want to
-        // accept-and-ignore these payloads rather than failing.
+        // A minimal DXBC container that parses as a geometry shader (program type 2).
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut writer = AerogpuCmdWriter::new();
-        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &gs_dxbc);
-        // Ensure geometry-stage bindings are accepted, even though they are ignored by the WebGPU backend.
+        // New protocol semantics:
+        // - `CREATE_SHADER_DXBC` can encode an extended D3D11 stage in `reserved0` (`stage_ex`).
+        // - `BIND_SHADERS` stores the GS handle in `reserved0` when non-zero (`bind_shaders_with_gs`).
+        writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Geometry, &gs_dxbc);
         writer.bind_shaders_with_gs(0, 1, 0, 0);
-        writer.set_texture(AerogpuShaderStage::Geometry, 0, 0);
-        writer.set_shader_constants_f(AerogpuShaderStage::Geometry, 0, &[1.0, 2.0, 3.0, 4.0]);
         writer.destroy_shader(1);
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("geometry shader DXBC should be ignored, not rejected");
+            .expect("geometry shader stage_ex creation/binding should be accepted");
     });
 }
 
