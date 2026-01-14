@@ -156,6 +156,11 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     // -----------------
     // virtio-input
     // -----------------
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        0,
+        "virtio-input keyboard LEDs should default to 0 before the guest reports any state"
+    );
     let virtio_kbd = m
         .debug_inner()
         .virtio_input_keyboard()

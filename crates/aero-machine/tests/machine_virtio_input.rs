@@ -1697,6 +1697,11 @@ fn virtio_input_statusq_dma_is_gated_on_pci_bus_master_enable() {
         .unwrap()
         .leds_mask();
     assert_eq!(leds, 0, "expected no LED state update while BME=0");
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        leds,
+        "machine helper should mirror virtio-input LED state"
+    );
 
     // Enable Bus Master Enable and allow the device to DMA. The queued statusq buffer should be
     // consumed immediately and update the LED state.
@@ -1712,5 +1717,10 @@ fn virtio_input_statusq_dma_is_gated_on_pci_bus_master_enable() {
     assert_eq!(
         leds, 0x02,
         "expected Caps Lock LED bit to be set once DMA is enabled"
+    );
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        leds,
+        "machine helper should mirror virtio-input LED state"
     );
 }
