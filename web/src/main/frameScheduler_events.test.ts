@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { perf } from "../perf/perf";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
@@ -21,6 +21,12 @@ vi.mock("../../ui/debug_overlay.ts", () => {
 
 describe("main/frameScheduler (telemetry)", () => {
   type Posted = { message: unknown; transfer?: unknown[] };
+
+  let startFrameScheduler: typeof import("./frameScheduler").startFrameScheduler;
+
+  beforeAll(async () => {
+    ({ startFrameScheduler } = await import("./frameScheduler"));
+  }, 15_000);
 
   let posted: Posted[] = [];
   let rafCallback: ((time: number) => void) | null = null;
@@ -73,8 +79,6 @@ describe("main/frameScheduler (telemetry)", () => {
   }
 
   it("preserves gpuEvents across metrics updates", async () => {
-    const { startFrameScheduler } = await import("./frameScheduler");
-
     const gpuWorker = makeMockWorker();
     const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
     const sharedFramebuffer = new SharedArrayBuffer(64);
@@ -146,8 +150,6 @@ describe("main/frameScheduler (telemetry)", () => {
   });
 
   it("preserves gpuStats across metrics updates", async () => {
-    const { startFrameScheduler } = await import("./frameScheduler");
-
     const gpuWorker = makeMockWorker();
     const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
     const sharedFramebuffer = new SharedArrayBuffer(64);
@@ -200,8 +202,6 @@ describe("main/frameScheduler (telemetry)", () => {
   });
 
   it("forwards scanout.format_str from metrics messages into the debug overlay snapshot", async () => {
-    const { startFrameScheduler } = await import("./frameScheduler");
-
     const gpuWorker = makeMockWorker();
     const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
     const sharedFramebuffer = new SharedArrayBuffer(64);
