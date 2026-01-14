@@ -402,3 +402,42 @@ impl SnapshotTarget for WorkerVmSnapshot {
         Ok(())
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn add_device_state_allows_64_mib_and_rejects_larger() {
+        assert_eq!(
+            MAX_DEVICE_BLOB_BYTES,
+            aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize
+        );
+
+        let mut snapshot = WorkerVmSnapshot::new(0, 1).expect("WorkerVmSnapshot::new");
+
+        let max = MAX_DEVICE_BLOB_BYTES;
+
+        let data = vec![0u8; max];
+        snapshot
+            .add_device_state(1, 1, 0, &data)
+            .expect("64 MiB device blob should be accepted");
+        assert_eq!(snapshot.devices.len(), 1);
+        assert_eq!(snapshot.devices[0].data.len(), max);
+
+        // Drop the large allocation before testing the failure case.
+        snapshot.devices.clear();
+        drop(data);
+
+        let too_large = vec![0u8; max + 1];
+        let err = snapshot
+            .add_device_state(2, 1, 0, &too_large)
+            .expect_err("device blob larger than 64 MiB should be rejected");
+        let msg = err.as_string().unwrap_or_default();
+        assert!(
+            msg.contains("device state too large"),
+            "unexpected error message: {msg}"
+        );
+    }
+}
