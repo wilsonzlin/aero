@@ -279,50 +279,51 @@ pub fn build_vertex_pull_plan(
 /// The helpers assume little-endian packing and operate on a raw `array<u32>` view of the vertex
 /// buffer. They return zero for out-of-bounds reads.
 pub const WGSL_VERTEX_PULLING_HELPERS: &str = r#"
-fn aero_load_u32_le(buf: ptr<storage, array<u32>, read>, byte_offset: u32) -> u32 {
+// Expects a `var<storage, read> vb_words: array<u32>;` bound by the caller.
+fn aero_load_u32_le(byte_offset: u32) -> u32 {
   let word_idx = byte_offset >> 2u;
-  let word_count = arrayLength(buf);
+  let word_count = arrayLength(&vb_words);
   if (word_idx >= word_count) {
     return 0u;
   }
 
   // Fast path: 4-byte aligned load.
   if ((byte_offset & 3u) == 0u) {
-    return (*buf)[word_idx];
+    return vb_words[word_idx];
   }
 
   // Safe path: stitch two adjacent u32 values.
-  let lo = (*buf)[word_idx];
-  let hi = select(0u, (*buf)[word_idx + 1u], (word_idx + 1u) < word_count);
+  let lo = vb_words[word_idx];
+  let hi = select(0u, vb_words[word_idx + 1u], (word_idx + 1u) < word_count);
   let shift = (byte_offset & 3u) * 8u;
   return (lo >> shift) | (hi << (32u - shift));
 }
 
-fn aero_load_f32(buf: ptr<storage, array<u32>, read>, byte_offset: u32) -> f32 {
-  return bitcast<f32>(aero_load_u32_le(buf, byte_offset));
+fn aero_load_f32(byte_offset: u32) -> f32 {
+  return bitcast<f32>(aero_load_u32_le(byte_offset));
 }
 
-fn aero_load_vec2_f32(buf: ptr<storage, array<u32>, read>, byte_offset: u32) -> vec2<f32> {
+fn aero_load_vec2_f32(byte_offset: u32) -> vec2<f32> {
   return vec2<f32>(
-    aero_load_f32(buf, byte_offset + 0u),
-    aero_load_f32(buf, byte_offset + 4u),
+    aero_load_f32(byte_offset + 0u),
+    aero_load_f32(byte_offset + 4u),
   );
 }
 
-fn aero_load_vec3_f32(buf: ptr<storage, array<u32>, read>, byte_offset: u32) -> vec3<f32> {
+fn aero_load_vec3_f32(byte_offset: u32) -> vec3<f32> {
   return vec3<f32>(
-    aero_load_f32(buf, byte_offset + 0u),
-    aero_load_f32(buf, byte_offset + 4u),
-    aero_load_f32(buf, byte_offset + 8u),
+    aero_load_f32(byte_offset + 0u),
+    aero_load_f32(byte_offset + 4u),
+    aero_load_f32(byte_offset + 8u),
   );
 }
 
-fn aero_load_vec4_f32(buf: ptr<storage, array<u32>, read>, byte_offset: u32) -> vec4<f32> {
+fn aero_load_vec4_f32(byte_offset: u32) -> vec4<f32> {
   return vec4<f32>(
-    aero_load_f32(buf, byte_offset + 0u),
-    aero_load_f32(buf, byte_offset + 4u),
-    aero_load_f32(buf, byte_offset + 8u),
-    aero_load_f32(buf, byte_offset + 12u),
+    aero_load_f32(byte_offset + 0u),
+    aero_load_f32(byte_offset + 4u),
+    aero_load_f32(byte_offset + 8u),
+    aero_load_f32(byte_offset + 12u),
   );
 }
 
@@ -367,13 +368,17 @@ pub fn emit_wgsl_pull_table(pulls: &[VertexPull]) -> String {
         pulls.len(),
         pulls.len()
     ));
-    for p in pulls {
+    // wgpu 0.20 / naga do not support named struct field initializers in WGSL, so we emit
+    // positional struct constructors instead.
+    for (idx, p) in pulls.iter().enumerate() {
+        let is_last = idx + 1 == pulls.len();
         out.push_str(&format!(
-            "  AeroVertexPull(reg: {}u, mask: {}u, fmt: {}u, offset: {}u),\n",
+            "  AeroVertexPull({}u, {}u, {}u, {}u){}\n",
             p.input_register,
             u32::from(p.mask),
             p.dxgi_format,
-            p.byte_offset
+            p.byte_offset,
+            if is_last { "" } else { "," }
         ));
     }
     out.push_str(");\n");

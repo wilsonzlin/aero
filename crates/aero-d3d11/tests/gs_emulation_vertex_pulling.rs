@@ -186,8 +186,6 @@ fn gs_emulation_vertex_pulling_smoke() {
 
         let wgsl = format!(
             r#"
-{helpers}
-
 {pulls}
 
 const VS_IN_REG_COUNT: u32 = 16u;
@@ -210,17 +208,19 @@ struct OutVertex {{
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read_write> out_vertices: array<OutVertex>;
 
+{helpers}
+
 fn aero_expand_to_vec4(fmt: u32, vtx_byte_offset: u32) -> vec4<f32> {{
   if (fmt == 16u) {{
-    let v = aero_load_vec2_f32(&vb_words, vtx_byte_offset);
+    let v = aero_load_vec2_f32(vtx_byte_offset);
     return vec4<f32>(v.x, v.y, 0.0, 1.0);
   }}
   if (fmt == 6u) {{
-    let v = aero_load_vec3_f32(&vb_words, vtx_byte_offset);
+    let v = aero_load_vec3_f32(vtx_byte_offset);
     return vec4<f32>(v.x, v.y, v.z, 1.0);
   }}
   if (fmt == 2u) {{
-    return aero_load_vec4_f32(&vb_words, vtx_byte_offset);
+    return aero_load_vec4_f32(vtx_byte_offset);
   }}
   return vec4<f32>(0.0);
 }}
@@ -237,8 +237,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     vs_in[i] = vec4<f32>(0.0);
   }}
 
+  var pulls = AERO_VERTEX_PULLS;
   for (var i: u32 = 0u; i < AERO_VERTEX_PULL_COUNT; i = i + 1u) {{
-    let p = AERO_VERTEX_PULLS[i];
+    let p = pulls[i];
     let base = params.base_offset_bytes + vertex_id * params.stride_bytes + p.offset;
     let v = aero_expand_to_vec4(p.fmt, base);
     vs_in[p.reg] = aero_apply_mask(vs_in[p.reg], p.mask, v);
@@ -248,9 +249,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let color = vs_in[COLOR_REG];
   let s = 0.25;
 
-  out_vertices[0] = OutVertex(pos: vec4<f32>(center.x, center.y + s, 0.0, 1.0), color: color);
-  out_vertices[1] = OutVertex(pos: vec4<f32>(center.x - s, center.y - s, 0.0, 1.0), color: color);
-  out_vertices[2] = OutVertex(pos: vec4<f32>(center.x + s, center.y - s, 0.0, 1.0), color: color);
+  out_vertices[0] = OutVertex(vec4<f32>(center.x, center.y + s, 0.0, 1.0), color);
+  out_vertices[1] = OutVertex(vec4<f32>(center.x - s, center.y - s, 0.0, 1.0), color);
+  out_vertices[2] = OutVertex(vec4<f32>(center.x + s, center.y - s, 0.0, 1.0), color);
 }}
 "#,
             helpers = WGSL_VERTEX_PULLING_HELPERS,
