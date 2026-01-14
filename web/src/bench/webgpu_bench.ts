@@ -183,6 +183,45 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
 
   timestampQueryEnabled = timestampQueryEnabled && device.features.has("timestamp-query");
 
+  // WebGPU validation/pipeline errors can surface asynchronously as uncaptured errors rather than thrown exceptions.
+  // Surface them for bench debugging, but dedupe so repeated validation errors don't flood the console.
+  const seenUncapturedErrorKeys = new Set<string>();
+  const uncapturedErrorHandler = (ev: any) => {
+    try {
+      (ev as any).preventDefault?.();
+    } catch {
+      // Ignore.
+    }
+
+    const err = ev?.error;
+    const errorName =
+      (typeof err?.name === "string" && err.name) ||
+      (err && typeof err === "object" && typeof (err as any).constructor?.name === "string"
+        ? (err as any).constructor.name
+        : "");
+    const errorMessage = typeof err?.message === "string" ? err.message : "";
+    let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+    if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
+      msg = `${errorName}: ${msg}`;
+    }
+    if (seenUncapturedErrorKeys.has(msg)) return;
+    seenUncapturedErrorKeys.add(msg);
+    if (seenUncapturedErrorKeys.size > 128) {
+      seenUncapturedErrorKeys.clear();
+      seenUncapturedErrorKeys.add(msg);
+    }
+    console.error("[webgpu-bench] uncapturederror", err ?? ev);
+  };
+  try {
+    if (typeof (device as any).addEventListener === "function") {
+      (device as any).addEventListener("uncapturederror", uncapturedErrorHandler);
+    } else {
+      (device as any).onuncapturederror = uncapturedErrorHandler;
+    }
+  } catch {
+    // Best-effort.
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -452,5 +491,17 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     queryReadBuffer?.destroy();
     queryResolveBuffer?.destroy();
     (querySet as unknown as { destroy?: () => void } | null)?.destroy?.();
+    try {
+      (device as any)?.removeEventListener?.("uncapturederror", uncapturedErrorHandler);
+    } catch {
+      // Ignore.
+    }
+    try {
+      if ((device as any)?.onuncapturederror === uncapturedErrorHandler) {
+        (device as any).onuncapturederror = null;
+      }
+    } catch {
+      // Ignore.
+    }
   }
 }
