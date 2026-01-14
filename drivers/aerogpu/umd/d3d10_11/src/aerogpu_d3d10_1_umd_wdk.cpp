@@ -816,7 +816,7 @@ struct WddmAllocListCheckpoint {
   }
 };
 
-void set_error(AeroGpuDevice* dev, HRESULT hr);
+void set_error(AeroGpuDevice* dev, HRESULT hr) noexcept;
 void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t subresource);
 
 void flush_locked(AeroGpuDevice* dev) {
@@ -922,27 +922,39 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
   }
 }
 
-void set_error(AeroGpuDevice* dev, HRESULT hr) {
+void set_error(AeroGpuDevice* dev, HRESULT hr) noexcept {
+  // Many D3D10/DDI entrypoints are `void` and must signal failures via the
+  // runtime callback instead of returning HRESULT.
+  //
+  // This helper is used in stub entrypoints and in teardown/error paths. Be
+  // defensive and swallow any unexpected C++ exceptions (e.g. from tracing or a
+  // runtime callback).
   if (!HasLiveCookie(dev, kD3D10_1DeviceLiveCookie)) {
     return;
   }
-  // Many D3D10/DDI entrypoints are `void` and must signal failures via the
-  // runtime callback instead of returning HRESULT. Log these so bring-up can
-  // quickly correlate failures to the last DDI call.
-  AEROGPU_D3D10_11_LOG("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
-  AEROGPU_D3D10_TRACEF("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
+
+  try {
+    // Best-effort logging so bring-up can correlate failures to the last DDI call.
+    AEROGPU_D3D10_11_LOG("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
+    AEROGPU_D3D10_TRACEF("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
+  } catch (...) {
+  }
+
   if (!dev || !dev->pfn_set_error) {
     return;
   }
-  if constexpr (std::is_invocable_v<SetErrorFn, D3D10DDI_HDEVICE, HRESULT>) {
-    D3D10DDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = dev;
-    dev->pfn_set_error(hDevice, hr);
-  } else {
-    if (!dev->hrt_device.pDrvPrivate) {
-      return;
+  try {
+    if constexpr (std::is_invocable_v<SetErrorFn, D3D10DDI_HDEVICE, HRESULT>) {
+      D3D10DDI_HDEVICE hDevice{};
+      hDevice.pDrvPrivate = dev;
+      dev->pfn_set_error(hDevice, hr);
+    } else {
+      if (!dev->hrt_device.pDrvPrivate) {
+        return;
+      }
+      CallCbMaybeHandle(dev->pfn_set_error, dev->hrt_device, hr);
     }
-    CallCbMaybeHandle(dev->pfn_set_error, dev->hrt_device, hr);
+  } catch (...) {
   }
 }
 
@@ -956,18 +968,21 @@ void set_error(AeroGpuDevice* dev, HRESULT hr) {
 // unwind into the runtime.
 template <typename... Args>
 inline void ReportExceptionForArgs(HRESULT hr, Args... args) noexcept {
-  if constexpr (sizeof...(Args) == 0) {
-    return;
-  } else {
-    using First = std::tuple_element_t<0, std::tuple<Args...>>;
-    if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
-      const auto tup = std::forward_as_tuple(args...);
-      const auto hDevice = std::get<0>(tup);
-      if (hDevice.pDrvPrivate) {
-        auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-        set_error(dev, hr);
+  try {
+    if constexpr (sizeof...(Args) == 0) {
+      return;
+    } else {
+      using First = std::tuple_element_t<0, std::tuple<Args...>>;
+      if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
+        const auto tup = std::forward_as_tuple(args...);
+        const auto hDevice = std::get<0>(tup);
+        if (hDevice.pDrvPrivate) {
+          auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+          set_error(dev, hr);
+        }
       }
     }
+  } catch (...) {
   }
 }
 

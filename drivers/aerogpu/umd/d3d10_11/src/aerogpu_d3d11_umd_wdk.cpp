@@ -506,29 +506,35 @@ static D3D11DDI_HDEVICE MakeDeviceHandle(Device* dev) {
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
 
-static void SetError(Device* dev, HRESULT hr) {
-  if (!HasLiveCookie(dev, kDeviceDestroyLiveCookie)) {
-    return;
-  }
-  auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
-  if (callbacks && callbacks->pfnSetErrorCb) {
-    // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
-    // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
-    if constexpr (std::is_invocable_v<decltype(callbacks->pfnSetErrorCb), D3D11DDI_HDEVICE, HRESULT>) {
-      callbacks->pfnSetErrorCb(MakeDeviceHandle(dev), hr);
+static void SetError(Device* dev, HRESULT hr) noexcept {
+  // This helper can be called from stub DDIs (which are not wrapped by a thunk)
+  // and from `noexcept` exception barriers. Swallow any unexpected C++ exceptions
+  // from runtime callbacks.
+  try {
+    if (!HasLiveCookie(dev, kDeviceDestroyLiveCookie)) {
       return;
     }
-    if (dev->runtime_device) {
-      CallCbMaybeHandle(callbacks->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+    auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+    if (callbacks && callbacks->pfnSetErrorCb) {
+      // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
+      // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
+      if constexpr (std::is_invocable_v<decltype(callbacks->pfnSetErrorCb), D3D11DDI_HDEVICE, HRESULT>) {
+        callbacks->pfnSetErrorCb(MakeDeviceHandle(dev), hr);
+        return;
+      }
+      if (dev->runtime_device) {
+        CallCbMaybeHandle(callbacks->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+      }
+      return;
     }
-    return;
-  }
 
-  // Some header revisions expose `pUMCallbacks` as a bare `D3DDDI_DEVICECALLBACKS`
-  // table. As a fallback, attempt to call SetErrorCb through that path.
-  auto* wddm_cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
-  if (wddm_cb && wddm_cb->pfnSetErrorCb && dev->runtime_device) {
-    CallCbMaybeHandle(wddm_cb->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+    // Some header revisions expose `pUMCallbacks` as a bare `D3DDDI_DEVICECALLBACKS`
+    // table. As a fallback, attempt to call SetErrorCb through that path.
+    auto* wddm_cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+    if (wddm_cb && wddm_cb->pfnSetErrorCb && dev->runtime_device) {
+      CallCbMaybeHandle(wddm_cb->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+    }
+  } catch (...) {
   }
 }
 

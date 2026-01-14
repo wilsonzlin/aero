@@ -1021,23 +1021,28 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   return hr;
 }
 
-void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
-  if (!IsDeviceLive(hDevice)) {
-    return;
-  }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  if (!dev || !dev->callbacks.pfnSetErrorCb) {
-    return;
-  }
-  // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
-  // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
-  if constexpr (std::is_invocable_v<decltype(dev->callbacks.pfnSetErrorCb), D3D10DDI_HDEVICE, HRESULT>) {
-    dev->callbacks.pfnSetErrorCb(hDevice, hr);
-  } else {
-    if (!dev->hrt_device.pDrvPrivate) {
+void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) noexcept {
+  // Called from many hot/error paths, including from `noexcept` exception
+  // barriers. Swallow any unexpected C++ exceptions from runtime callbacks.
+  try {
+    if (!IsDeviceLive(hDevice)) {
       return;
     }
-    CallCbMaybeHandle(dev->callbacks.pfnSetErrorCb, dev->hrt_device, hr);
+    auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+    if (!dev || !dev->callbacks.pfnSetErrorCb) {
+      return;
+    }
+    // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
+    // HDEVICE. Prefer the HDEVICE form when that's what the signature expects.
+    if constexpr (std::is_invocable_v<decltype(dev->callbacks.pfnSetErrorCb), D3D10DDI_HDEVICE, HRESULT>) {
+      dev->callbacks.pfnSetErrorCb(hDevice, hr);
+    } else {
+      if (!dev->hrt_device.pDrvPrivate) {
+        return;
+      }
+      CallCbMaybeHandle(dev->callbacks.pfnSetErrorCb, dev->hrt_device, hr);
+    }
+  } catch (...) {
   }
 }
 
@@ -1053,15 +1058,18 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
 // runtime.
 template <typename... Args>
 inline void ReportExceptionForArgs(HRESULT hr, Args... args) noexcept {
-  if constexpr (sizeof...(Args) == 0) {
-    return;
-  } else {
-    using First = std::tuple_element_t<0, std::tuple<Args...>>;
-    if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
-      const auto tup = std::forward_as_tuple(args...);
-      const auto hDevice = std::get<0>(tup);
-      SetError(hDevice, hr);
+  try {
+    if constexpr (sizeof...(Args) == 0) {
+      return;
+    } else {
+      using First = std::tuple_element_t<0, std::tuple<Args...>>;
+      if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
+        const auto tup = std::forward_as_tuple(args...);
+        const auto hDevice = std::get<0>(tup);
+        SetError(hDevice, hr);
+      }
     }
+  } catch (...) {
   }
 }
 

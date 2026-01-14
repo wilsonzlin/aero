@@ -660,7 +660,7 @@ struct AeroGpuDevice {
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
 };
 
-inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr);
+inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) noexcept;
 
 // D3D10/11 DDI entrypoints are invoked through function tables filled during
 // OpenAdapter/CreateDevice. Even though we try to make hot paths allocation-free
@@ -669,20 +669,25 @@ inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice
 // cannot escape across the UMD ABI boundary.
 template <typename... Args>
 inline void ReportExceptionForArgs(HRESULT hr, const Args&... args) noexcept {
-  if constexpr (sizeof...(Args) == 0) {
-    return;
-  } else {
-    using First = std::tuple_element_t<0, std::tuple<Args...>>;
-    if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
-      const auto tup = std::forward_as_tuple(args...);
-      const auto hDevice = std::get<0>(tup);
-      if (hDevice.pDrvPrivate) {
-        auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-        if (dev) {
-          ReportDeviceErrorLocked(dev, hDevice, hr);
+  // This helper is invoked from `noexcept` catch blocks. Keep it non-throwing
+  // even if runtime callbacks misbehave.
+  try {
+    if constexpr (sizeof...(Args) == 0) {
+      return;
+    } else {
+      using First = std::tuple_element_t<0, std::tuple<Args...>>;
+      if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
+        const auto tup = std::forward_as_tuple(args...);
+        const auto hDevice = std::get<0>(tup);
+        if (hDevice.pDrvPrivate) {
+          auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+          if (dev) {
+            ReportDeviceErrorLocked(dev, hDevice, hr);
+          }
         }
       }
     }
+  } catch (...) {
   }
 }
 
@@ -983,15 +988,21 @@ inline HRESULT DeallocateResourceIfNeeded(AeroGpuDevice*, D3D10DDI_HDEVICE, Aero
   return S_OK;
 }
 
-inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
-  if (dev) {
-    dev->last_error = hr;
-    if (dev->device_callbacks && dev->device_callbacks->pfnSetError) {
-      const auto* cb = dev->device_callbacks;
-      cb->pfnSetError(cb->pUserContext, hr);
+inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) noexcept {
+  // This helper is used in error/teardown paths and can be invoked from
+  // `noexcept` exception barriers. Be defensive and swallow any unexpected C++
+  // exceptions (e.g. from a runtime callback).
+  try {
+    if (dev) {
+      dev->last_error = hr;
+      if (dev->device_callbacks && dev->device_callbacks->pfnSetError) {
+        const auto* cb = dev->device_callbacks;
+        cb->pfnSetError(cb->pUserContext, hr);
+      }
     }
+    SetErrorIfPossible(dev, hDevice, hr);
+  } catch (...) {
   }
-  SetErrorIfPossible(dev, hDevice, hr);
 }
 
 bool set_texture_locked(AeroGpuDevice* dev,
