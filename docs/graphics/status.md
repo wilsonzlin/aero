@@ -399,7 +399,9 @@ Known gaps / limitations (enforced by code/tests):
   - Strip output expansion helpers for `CutVertex` / `RestartStrip` semantics:
     - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
-  - GS/HS/DS shader objects can be created/bound. HS/DS currently compile to minimal compute shaders for state tracking and are not executed. GS shaders attempt translation to a compute prepass at create time; only point-list draws currently execute translated GS DXBC, and other cases fall back to synthetic expansion.
+- GS/HS/DS shader objects can be created/bound. HS/DS currently compile to minimal compute shaders for state tracking and are not executed. GS shaders attempt translation to a compute prepass at create time:
+  - If translation succeeds, only point-list draws currently execute translated GS DXBC; other cases use synthetic expansion (guest GS DXBC does not execute).
+  - If translation fails, draws with that GS bound currently return a clear “geometry shader not supported” error.
     - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
     - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
 - Current GS translator limitations / initial target subset (non-exhaustive):

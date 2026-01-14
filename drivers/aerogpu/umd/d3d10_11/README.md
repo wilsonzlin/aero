@@ -85,7 +85,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0` (should match the appended `gs`).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for future GS compute-emulation. Today only non-indexed point-list draws can execute translated SM4 GS DXBC; the supported subset does not yet use textures/buffers, and unsupported cases still fall back to synthetic expansion.
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for future GS compute-emulation. Today only non-indexed point-list draws can execute translated SM4 GS DXBC, and the supported subset does not yet use textures/buffers. If GS translation fails, draws with that GS bound currently return a clear error; if translation succeeds but the draw is outside the point-list execution path, the executor falls back to synthetic expansion (guest GS DXBC does not execute).
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
     - Prepass implementations:

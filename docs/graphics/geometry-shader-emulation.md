@@ -241,8 +241,9 @@ Error policy:
 - Some unsupported GS features are rejected with clear errors (e.g. non-zero stream indices at
   `CREATE_SHADER_DXBC` time and `gsinstancecount > 1` at draw time).
 - If the guest GS DXBC cannot be translated by the current `gs_translate` subset, the GS handle is
-  still accepted, but the draw falls back to the built-in synthetic expansion prepass (i.e. the
-  guest GS bytecode will not execute).
+  still accepted/stored, but draws with that GS bound currently fail with a clear
+  “geometry shader not supported” error (rather than silently running the synthetic-expansion
+  prepass).
 - The synthetic-expansion prepass is intended for scaffolding/tests and for non-GS cases that still
   need the compute-prepass path; it is not meant as a “compatibility fallback” for arbitrary
   unsupported GS bytecode.
