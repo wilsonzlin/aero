@@ -1121,6 +1121,10 @@ fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
     let cursor_ptr = machine.cursor_state_ptr();
     #[cfg(feature = "wasm-threaded")]
     let cursor_len = machine.cursor_state_len_bytes();
+    #[cfg(not(feature = "wasm-threaded"))]
+    let cursor_ptr = 0;
+    #[cfg(not(feature = "wasm-threaded"))]
+    let cursor_len = 0;
     machine.reset();
 
     // If the build does not support shared scanout state (non-threaded WASM), skip.
