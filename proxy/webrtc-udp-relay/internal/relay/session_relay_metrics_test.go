@@ -133,3 +133,28 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 	}
 	t.Fatalf("expected %s metric increment", metrics.WebRTCUDPDroppedBackpressure)
 }
+
+func TestSessionRelay_DefaultMetricsSink_UsesSessionMetrics(t *testing.T) {
+	m := metrics.New()
+	// Construct a minimal session with an attached metrics registry. This test is
+	// intentionally focused on the metrics-sink wiring (NewSessionRelay should
+	// default to session.metrics when the explicit sink is nil); it does not
+	// exercise session quota enforcement.
+	sess := &Session{metrics: m}
+
+	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
+	r := NewSessionRelay(dc, DefaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	t.Cleanup(r.Close)
+
+	if r.metrics != m {
+		t.Fatalf("expected relay to default metrics sink to session.metrics")
+	}
+
+	b, err := r.getOrCreateBinding(1234)
+	if err != nil {
+		t.Fatalf("getOrCreateBinding: %v", err)
+	}
+	if b.metrics != m {
+		t.Fatalf("expected binding to inherit metrics sink from session.metrics")
+	}
+}
