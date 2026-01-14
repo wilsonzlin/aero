@@ -43,6 +43,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZRHW | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZ | D3DFVF_TEX1`
 - It writes screen-space `XYZRHW` into the destination layout described by `hVertexDecl`:
+  - Output is written to a single destination buffer (stream 0). Declaration elements in other streams are ignored when
+    inferring destination stride/offsets.
   - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
     `XYZRHW` (screen space).
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
