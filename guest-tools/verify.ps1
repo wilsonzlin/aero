@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.11"
+         version = "2.5.12"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1338,6 +1338,7 @@ try {
         manifest_present = $false
         manifest_path = $manifestPath
         manifest_sha256 = $null
+        manifest_encoding = $null
         parse_ok = $false
         schema_version = $null
         package = $null
@@ -1366,7 +1367,9 @@ try {
         $mediaIntegrity.manifest_present = $true
         $mediaIntegrity.manifest_sha256 = Get-FileSha256Hex $manifestPath
         # Use the encoding-aware reader for robustness (manifest.json is typically UTF-8).
-        $raw = Read-TextFileWithEncodingDetection $manifestPath
+        $mRead = Read-TextFileWithEncodingDetectionEx $manifestPath
+        $raw = $mRead.text
+        $mediaIntegrity.manifest_encoding = $mRead.encoding
         $parsed = Parse-JsonCompat $raw
         if (-not $parsed) {
             $mStatus = "FAIL"
