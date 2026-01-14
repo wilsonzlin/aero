@@ -883,9 +883,28 @@ def _try_parse_inf_int(token: str) -> int | None:
     if not token:
         return None
     try:
-        return int(token, 0)
+        # INF numeric fields are typically either:
+        # - hex literals with a 0x prefix (e.g. 0x00010001)
+        # - base-10 integers (sometimes with leading zeros)
+        #
+        # Python's int(..., 0) rejects leading-zero integers like "08", so parse
+        # decimal explicitly when no prefix is present.
+        if token.lower().startswith("0x"):
+            return int(token, 16)
+        return int(token, 10)
     except ValueError:
         return None
+
+
+def _self_test_inf_int_parsing() -> None:
+    # INF files sometimes use decimal values with leading zeros. Ensure we accept
+    # those (Python's int(..., 0) rejects them).
+    if _try_parse_inf_int("08") != 8:
+        fail("internal unit-test failed: expected _try_parse_inf_int('08') == 8")
+    if _try_parse_inf_int("0x08") != 8:
+        fail("internal unit-test failed: expected _try_parse_inf_int('0x08') == 8")
+    if _try_parse_inf_int("0x00000010") != 16:
+        fail("internal unit-test failed: expected _try_parse_inf_int('0x00000010') == 16")
 
 
 @dataclass(frozen=True)
@@ -2822,6 +2841,7 @@ def main() -> None:
 
     _self_test_inf_inline_comment_stripping()
     _self_test_inf_parsers_ignore_comments()
+    _self_test_inf_int_parsing()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
