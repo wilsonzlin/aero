@@ -1459,4 +1459,88 @@ mod tests {
         assert_eq!(regs.completed_fence, fence);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
     }
+
+    #[test]
+    fn duplicate_fence_entries_preserve_present_writeback_metadata() {
+        #[derive(Debug)]
+        struct CompletingBackend {
+            completions: Vec<AeroGpuBackendCompletion>,
+            scanout: AeroGpuBackendScanout,
+        }
+
+        impl AeroGpuCommandBackend for CompletingBackend {
+            fn reset(&mut self) {}
+
+            fn submit(
+                &mut self,
+                _mem: &mut dyn MemoryBus,
+                _submission: AeroGpuBackendSubmission,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+                core::mem::take(&mut self.completions)
+            }
+
+            fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+                Some(self.scanout.clone())
+            }
+        }
+
+        let mut mem = Bus::new(0x8000);
+        let ring_gpa = 0x1000u64;
+        let fb_gpa = 0x3000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 2);
+
+        let fence = 7u64;
+
+        let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc(&mut mem, desc0_gpa, fence, AeroGpuSubmitDesc::FLAG_PRESENT);
+        let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + stride;
+        write_submit_desc(&mut mem, desc1_gpa, fence, AeroGpuSubmitDesc::FLAG_NO_IRQ);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
+        regs.scanout0.enable = true;
+        regs.scanout0.width = 1;
+        regs.scanout0.height = 1;
+        regs.scanout0.pitch_bytes = 4;
+        regs.scanout0.format = AeroGpuFormat::B8G8R8A8Unorm;
+        regs.scanout0.fb_gpa = fb_gpa;
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+        exec.set_backend(Box::new(CompletingBackend {
+            completions: vec![AeroGpuBackendCompletion {
+                fence,
+                error: None,
+            }],
+            scanout: AeroGpuBackendScanout {
+                width: 1,
+                height: 1,
+                rgba8: vec![1, 2, 3, 4],
+            },
+        }));
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        assert_eq!(mem.read_u32(fb_gpa), u32::from_le_bytes([3, 2, 1, 4]));
+        assert_eq!(regs.completed_fence, fence);
+    }
 }
