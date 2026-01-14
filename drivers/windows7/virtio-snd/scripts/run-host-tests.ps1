@@ -45,6 +45,10 @@
   pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
 
 .EXAMPLE
+  # Windows PowerShell:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
+
+.EXAMPLE
   # Custom build output directory:
   pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1 -BuildDir out\my-virtiosnd-tests
 
