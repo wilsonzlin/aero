@@ -8,6 +8,31 @@ if (-not (Test-Path $DbgctlPath)) {
   throw "aerogpu_dbgctl.exe not found: $DbgctlPath"
 }
 
+function Assert-HasProps {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Obj,
+    [Parameter(Mandatory = $true)] [string]$Context,
+    [Parameter(Mandatory = $true)] [string[]]$Props
+  )
+  if (-not $Obj) {
+    throw "Missing object for: $Context"
+  }
+  foreach ($p in $Props) {
+    if (-not $Obj.PSObject.Properties.Match($p)) {
+      throw "Missing property '$p' on $Context"
+    }
+  }
+}
+
+function Assert-ByteSizeObject {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Obj,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  # Byte sizes in dbgctl JSON are encoded as an object: { \"bytes\": \"...\", \"mib\": \"...\" }.
+  Assert-HasProps -Obj $Obj -Context $Context -Props @("bytes", "mib")
+}
+
 function Assert-ValidJson {
   param(
     [string]$ExpectedCommand,
@@ -54,6 +79,9 @@ function Assert-ValidJson {
     if (-not $obj.perf.contig_pool) {
       throw "Missing perf.contig_pool section in status JSON for: $invocation`n$stdout"
     }
+    if ($obj.perf.contig_pool.available) {
+      Assert-ByteSizeObject -Obj $obj.perf.contig_pool.bytes_saved -Context "perf.contig_pool.bytes_saved"
+    }
   }
 
   if ($ExpectedCommand -eq "query-perf" -and $obj.ok) {
@@ -62,6 +90,9 @@ function Assert-ValidJson {
     }
     if (-not $obj.contig_pool) {
       throw "Missing contig_pool section in query-perf JSON for: $invocation`n$stdout"
+    }
+    if ($obj.contig_pool.available) {
+      Assert-ByteSizeObject -Obj $obj.contig_pool.bytes_saved -Context "contig_pool.bytes_saved"
     }
   }
 }
@@ -124,6 +155,9 @@ function Assert-ValidJsonFile {
     }
     if (-not $obj.perf.contig_pool) {
       throw "Missing perf.contig_pool section in status JSON file: $JsonPath`n$jsonText"
+    }
+    if ($obj.perf.contig_pool.available) {
+      Assert-ByteSizeObject -Obj $obj.perf.contig_pool.bytes_saved -Context "perf.contig_pool.bytes_saved"
     }
   }
 
