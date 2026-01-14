@@ -452,24 +452,37 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
         const ULONG hActive = ((ULONG)b0 + 31u) * 8u;
         const ULONG aspect = (ULONG)(b1 >> 6) & 0x3u;
 
-        ULONG vActive = 0;
+        ULONGLONG num = 0;
+        ULONGLONG den = 0;
         switch (aspect) {
         case 0: /* 16:10 */
-            vActive = (hActive * 10u) / 16u;
+            num = 10;
+            den = 16;
             break;
         case 1: /* 4:3 */
-            vActive = (hActive * 3u) / 4u;
+            num = 3;
+            den = 4;
             break;
         case 2: /* 5:4 */
-            vActive = (hActive * 4u) / 5u;
+            num = 4;
+            den = 5;
             break;
         case 3: /* 16:9 */
-            vActive = (hActive * 9u) / 16u;
+            num = 9;
+            den = 16;
             break;
         default:
-            vActive = 0;
+            num = 0;
+            den = 0;
             break;
         }
+        if (num == 0 || den == 0) {
+            continue;
+        }
+
+        const ULONGLONG prod = (ULONGLONG)hActive * num;
+        ULONG vActive = (ULONG)(prod / den);
+        const ULONGLONG rem = prod % den;
 
         if (hActive == 0 || vActive == 0) {
             continue;
@@ -480,7 +493,16 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
          * evenly; snap to a multiple of 8 lines to match how common modes are
          * represented in Windows (for example 1368x768 rather than 1368x769).
          */
-        vActive &= ~7u;
+        if (rem != 0) {
+            const ULONG down = vActive & ~7u;
+            const ULONG up = (vActive + 7u) & ~7u;
+            const ULONG diffDown = vActive - down;
+            const ULONG diffUp = up - vActive;
+            const ULONG aligned = (diffDown <= diffUp) ? down : up;
+            if (aligned != 0) {
+                vActive = aligned;
+            }
+        }
         if (vActive == 0) {
             continue;
         }
