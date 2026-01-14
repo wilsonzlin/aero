@@ -45,8 +45,8 @@ This is not perfect, but it’s a quick “are we even in the right mode?” che
 
 If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.exe`), it can report which interrupt mode Windows actually assigned **without** WinDbg/DbgView:
 
-- `virtio-blk-irq|INFO|mode=intx`
-- `virtio-blk-irq|INFO|mode=msi|messages=<n>`
+- `virtio-blk-irq|INFO|mode=intx` *(cfgmgr32 / PnP-assigned IRQ resources)*
+- `virtio-blk-irq|INFO|mode=msi|messages=<n>` *(cfgmgr32 / PnP-assigned IRQ resources)*
 - `virtio-net-irq|INFO|mode=intx`
 - `virtio-net-irq|INFO|mode=msi|messages=<n>`
 - `virtio-input-irq|INFO|mode=intx`
