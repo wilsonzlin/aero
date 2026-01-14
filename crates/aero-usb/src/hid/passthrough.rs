@@ -1927,13 +1927,22 @@ impl IoSnapshot for UsbHidPassthrough {
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
+            const MAX_REPORT_BYTES: usize = 128 * 1024;
+
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > self.max_pending_input_reports {
+            let count = d.u32()? as usize;
+            if count > self.max_pending_input_reports {
                 return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
             }
-            self.pending_input_reports = reports.into_iter().collect();
+            self.pending_input_reports.clear();
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len > MAX_REPORT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
+                }
+                self.pending_input_reports.push_back(d.bytes(len)?.to_vec());
+            }
+            d.finish()?;
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT_REPORTS) {
@@ -3385,5 +3394,39 @@ mod tests {
             panic!("expected data response, got {resp:?}");
         };
         assert_eq!(data.len(), w_length as usize);
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_pending_input_reports_count_over_limit() {
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 8;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 10;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_MAX_PENDING_INPUT_REPORTS, 1);
+            w.field_bytes(TAG_PENDING_INPUT_REPORTS, Encoder::new().u32(2).finish());
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("pending input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
     }
 }

@@ -2139,7 +2139,7 @@ impl IoSnapshot for XhciController {
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -2148,7 +2148,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 12;
+        const TAG_PORTS: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -2175,7 +2175,7 @@ impl IoSnapshot for XhciController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -2184,7 +2184,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 12;
+        const TAG_PORTS: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -2232,16 +2232,17 @@ impl IoSnapshot for XhciController {
 
         if let Some(buf) = r.bytes(TAG_PORTS) {
             let mut d = Decoder::new(buf);
-            let port_records = d.vec_bytes()?;
-            d.finish()?;
-
-            if port_records.len() != self.ports.len() {
+            let count = d.u32()? as usize;
+            if count != self.ports.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("xhci ports"));
             }
 
-            for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
-                port.load_snapshot_record(&rec)?;
+            for port in &mut self.ports {
+                let rec_len = d.u32()? as usize;
+                let rec = d.bytes(rec_len)?;
+                port.load_snapshot_record(rec)?;
             }
+            d.finish()?;
         }
 
         // Preserve older snapshot behaviour where pending interrupts were captured only in

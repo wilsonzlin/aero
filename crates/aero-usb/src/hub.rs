@@ -1185,15 +1185,15 @@ impl IoSnapshot for UsbHubDevice {
 
         if let Some(buf) = r.bytes(TAG_PORTS) {
             let mut d = Decoder::new(buf);
-            let port_records = d.vec_bytes()?;
-            d.finish()?;
-
-            if port_records.len() != self.ports.len() {
+            let count = d.u32()? as usize;
+            if count != self.ports.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("hub ports"));
             }
 
-            for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
-                let mut pd = Decoder::new(&rec);
+            for port in &mut self.ports {
+                let rec_len = d.u32()? as usize;
+                let rec = d.bytes(rec_len)?;
+                let mut pd = Decoder::new(rec);
                 port.connected = pd.bool()?;
                 port.connect_change = pd.bool()?;
                 port.enabled = pd.bool()?;
@@ -1229,6 +1229,7 @@ impl IoSnapshot for UsbHubDevice {
                     }
                 }
             }
+            d.finish()?;
         }
 
         Ok(())
