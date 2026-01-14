@@ -393,8 +393,8 @@ Dedicated EP0 unit tests also exist:
 - More complete event-ring servicing / “main loop” integration in wrappers: regularly call
   `tick_1ms` (alias `tick_1ms_and_service_event_ring`) or equivalent so port timers, transfer
   execution, command ring work, and event delivery make forward progress, with DMA gated on PCI BME.
-- Wiring xHCI into the canonical machine/topology (native). (PCI identity is already aligned across
-  web + native via the QEMU-style `1b36:000d` profile.)
+- Making xHCI enabled-by-default in the canonical machine/topology (native + web). Today it remains
+  opt-in/experimental (`MachineConfig.enable_xhci`, `PcPlatformConfig.enable_xhci`).
 
 ---
 
