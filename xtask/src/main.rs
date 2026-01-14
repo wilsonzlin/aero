@@ -214,28 +214,44 @@ fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>> {
 }
 
 fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
+    let path_display = display_rel_path(path);
     let existing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(err) if err.kind() == io::ErrorKind::NotFound => None,
         Err(err) => {
-            return Err(format!("read {path:?}: {err}").into());
+            return Err(format!("read {path_display}: {err}").into());
         }
     };
 
     if check {
         let Some(existing) = existing else {
-            return Err(format!("{path:?} is missing (run `cargo xtask fixtures`)").into());
+            return Err(format!("{path_display} is missing (run `cargo xtask fixtures`)").into());
         };
         if existing != expected {
-            return Err(format!("{path:?} is out of date (run `cargo xtask fixtures`)").into());
+            return Err(
+                format!("{path_display} is out of date (run `cargo xtask fixtures`)").into(),
+            );
         }
         return Ok(());
     }
 
     if existing.as_deref() != Some(expected) {
         fs::write(path, expected)
-            .map_err(|e| XtaskError::Message(format!("write {path:?}: {e}")))?;
+            .map_err(|e| XtaskError::Message(format!("write {path_display}: {e}")))?;
     }
 
     Ok(())
+}
+
+fn display_rel_path(path: &Path) -> String {
+    // Prefer a repo-relative path in errors for readability. This stays stable
+    // across machines and makes CI output more actionable.
+    match paths::repo_root() {
+        Ok(repo_root) => path
+            .strip_prefix(&repo_root)
+            .unwrap_or(path)
+            .display()
+            .to_string(),
+        Err(_) => path.display().to_string(),
+    }
 }
