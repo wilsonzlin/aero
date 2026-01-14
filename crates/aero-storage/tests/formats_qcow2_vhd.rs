@@ -435,7 +435,7 @@ struct SharedReadOnlyDisk<D> {
     inner: Arc<Mutex<D>>,
 }
 
-impl<D: VirtualDisk + Send> VirtualDisk for SharedReadOnlyDisk<D> {
+impl<D: VirtualDisk> VirtualDisk for SharedReadOnlyDisk<D> {
     fn capacity_bytes(&self) -> u64 {
         self.inner.lock().unwrap().capacity_bytes()
     }
