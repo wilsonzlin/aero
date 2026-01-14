@@ -12,7 +12,7 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
 - Guest-side install helpers:
   - `INSTALL_CERT.cmd` (installs a test cert into `Root` + `TrustedPublisher`; requires elevation)
-  - `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf`; requires elevation)
+  - `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf` when present; otherwise uses the per-arch INF; requires elevation)
 - An `INSTALL.txt` with minimal Windows 7 test-signing + “Have Disk…” install steps
 - (Optional) the public **test-signing certificate** `aero-virtio-input-test.cer` when `-IncludeTestCert` is specified
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
@@ -137,10 +137,6 @@ The script looks for either:
 
 - `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (unified INF), or
 - `drivers/windows7/virtio-input/inf/aero_virtio_input-<arch>.inf` (per-arch INF)
-
-Regardless of input naming, the packaged ZIP always includes the INF as:
-
-`aero_virtio_input.inf`
 
 ## Notes
 

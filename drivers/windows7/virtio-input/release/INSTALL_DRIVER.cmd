@@ -20,13 +20,34 @@ exit /b 1
 
 :elevated
 
-if not exist "aero_virtio_input.inf" (
-  echo ERROR: aero_virtio_input.inf was not found in:
-  echo   %CD%
-  echo.
-  echo Make sure you extracted the driver ZIP and are running this script from that folder.
-  exit /b 1
+set "INF=aero_virtio_input.inf"
+if exist "%INF%" goto :have_inf
+
+rem Support per-arch INF naming (aero_virtio_input-{x86,amd64}.inf).
+set "ARCH=%PROCESSOR_ARCHITECTURE%"
+if /I "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "ARCH=AMD64"
+
+if /I "%ARCH%"=="AMD64" (
+  set "PACK_ARCH=amd64"
+) else (
+  set "PACK_ARCH=x86"
 )
+
+set "INF=aero_virtio_input-%PACK_ARCH%.inf"
+if exist "%INF%" goto :have_inf
+
+echo ERROR: Could not find an INF file to install in:
+echo   %CD%
+echo.
+echo Expected one of:
+echo   - aero_virtio_input.inf
+echo   - aero_virtio_input-x86.inf
+echo   - aero_virtio_input-amd64.inf
+echo.
+echo Make sure you extracted the driver ZIP and are running this script from that folder.
+exit /b 1
+
+:have_inf
 
 where pnputil >nul 2>&1
 if not "%errorlevel%"=="0" (
@@ -36,10 +57,10 @@ if not "%errorlevel%"=="0" (
 )
 
 echo Running:
-echo   pnputil -i -a aero_virtio_input.inf
+echo   pnputil -i -a "%INF%"
 echo.
 
-pnputil -i -a aero_virtio_input.inf
+pnputil -i -a "%INF%"
 set "RC=%errorlevel%"
 echo.
 
