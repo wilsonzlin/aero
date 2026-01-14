@@ -1930,14 +1930,14 @@ pub fn decode_cmd_set_shader_constants_i_payload_le(
     let vec4_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
     let i32_count = vec4_count
         .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+        .ok_or(AerogpuCmdDecodeError::CountOverflow)? as usize;
     let payload_size_bytes = i32_count
         .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
     let payload_start = AerogpuCmdSetShaderConstantsI::SIZE_BYTES;
     let payload_end = payload_start
         .checked_add(payload_size_bytes)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
     if payload_end > packet_len {
         return Err(AerogpuCmdDecodeError::BadSizeBytes {
             found: hdr.size_bytes,
@@ -1985,11 +1985,11 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     let bool_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
     let payload_size_bytes = (bool_count as usize)
         .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
     let payload_start = AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
     let payload_end = payload_start
         .checked_add(payload_size_bytes)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
     if payload_end > packet_len {
         return Err(AerogpuCmdDecodeError::BadSizeBytes {
             found: hdr.size_bytes,
@@ -2663,14 +2663,14 @@ impl<'a> AerogpuCmdPacket<'a> {
 
         let float_count = vec4_count
             .checked_mul(4)
-            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)? as usize;
         let payload_size_bytes = float_count
             .checked_mul(4)
-            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
         let payload_start = 16usize;
         let payload_end = payload_start
             .checked_add(payload_size_bytes)
-            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
         if payload_end > self.payload.len() {
             return Err(AerogpuCmdDecodeError::BadSizeBytes {
                 found: self.hdr.size_bytes,
