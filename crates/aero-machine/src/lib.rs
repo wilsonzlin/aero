@@ -10778,23 +10778,18 @@ impl Machine {
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
                 // MMIO window.
-                let vram_size = self
-                    .vga
-                    .as_ref()
-                    .expect("VGA enabled")
-                    .borrow()
-                    .vram_size();
-                let bar0_base = if self.cfg.vga_lfb_base.is_some() || self.cfg.vga_vram_bar_base.is_some()
-                {
-                    let bar_size = self.legacy_vga_pci_bar_size_bytes();
-                    Some(Self::legacy_vga_lfb_base_for_cfg(&self.cfg, bar_size).1)
-                } else {
-                    None
-                };
-                pci_cfg
-                    .borrow_mut()
-                    .bus_mut()
-                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new(vram_size, bar0_base)));
+                let vram_size = self.vga.as_ref().expect("VGA enabled").borrow().vram_size();
+                let bar0_base =
+                    if self.cfg.vga_lfb_base.is_some() || self.cfg.vga_vram_bar_base.is_some() {
+                        let bar_size = self.legacy_vga_pci_bar_size_bytes();
+                        Some(Self::legacy_vga_lfb_base_for_cfg(&self.cfg, bar_size).1)
+                    } else {
+                        None
+                    };
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    VGA_PCI_BDF,
+                    Box::new(VgaPciConfigDevice::new(vram_size, bar0_base)),
+                );
             }
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
@@ -11138,12 +11133,8 @@ impl Machine {
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut allocator = PciResourceAllocator::new(pci_allocator_cfg.clone());
                 // `bios_post` is deterministic and keeps existing fixed BAR bases intact.
-                bios_post_with_extra_reservations(
-                    pci_cfg.bus_mut(),
-                    &mut allocator,
-                    None,
-                )
-                .expect("PCI BIOS POST resource assignment should succeed");
+                bios_post_with_extra_reservations(pci_cfg.bus_mut(), &mut allocator, None)
+                    .expect("PCI BIOS POST resource assignment should succeed");
             }
 
             // Keep the device model's internal PCI command register mirrored from the canonical PCI
@@ -19006,11 +18997,12 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let vga_bar_base = vga.pci_bar_base(VGA_PCI_BDF, VGA_PCI_BAR_INDEX).unwrap_or(0);
+        let vga_bar_base = vga
+            .pci_bar_base(VGA_PCI_BDF, VGA_PCI_BAR_INDEX)
+            .unwrap_or(0);
         assert_ne!(vga_bar_base, 0);
         assert_eq!(vga.vbe_lfb_base(), vga_bar_base);
-        let vga_bar_base_u32 =
-            u32::try_from(vga_bar_base).expect("VGA BAR base should fit in u32");
+        let vga_bar_base_u32 = u32::try_from(vga_bar_base).expect("VGA BAR base should fit in u32");
         assert_eq!(vga.bios.config().vbe_lfb_base, Some(vga_bar_base_u32));
     }
 

@@ -675,10 +675,8 @@ pub(super) trait BindGroupResourceProvider {
 
     fn dummy_uniform(&self) -> &wgpu::Buffer;
     fn dummy_storage(&self) -> &wgpu::Buffer;
-    fn dummy_storage_texture_view(
-        &self,
-        format: crate::StorageTextureFormat,
-    ) -> &wgpu::TextureView;
+    fn dummy_storage_texture_view(&self, format: crate::StorageTextureFormat)
+        -> &wgpu::TextureView;
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView;
     fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView;
     fn default_sampler(&self) -> &CachedSampler;
@@ -872,7 +870,10 @@ pub(super) fn build_bind_group(
                 let (id, view) = provider
                     .uav_texture2d(*slot)
                     .or_else(|| provider.texture2d(*slot))
-                    .unwrap_or((TextureViewId(0), provider.dummy_storage_texture_view(*format)));
+                    .unwrap_or((
+                        TextureViewId(0),
+                        provider.dummy_storage_texture_view(*format),
+                    ));
 
                 entries.push(BindGroupCacheEntry {
                     binding: binding.binding,

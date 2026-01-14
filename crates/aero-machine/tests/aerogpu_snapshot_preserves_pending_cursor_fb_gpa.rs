@@ -20,9 +20,7 @@ fn aerogpu_snapshot_preserves_pending_cursor_fb_gpa_lo_until_hi_commit() {
     };
 
     let mut vm = Machine::new(cfg.clone()).unwrap();
-    let bdf = vm
-        .aerogpu_bdf()
-        .expect("AeroGPU device should be present");
+    let bdf = vm.aerogpu_bdf().expect("AeroGPU device should be present");
     let bar0 = vm
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");

@@ -64,9 +64,7 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
 
     // Force VRAM into a deterministic state: clear the snapshotted VRAM prefix then dirty a single
     // page. This avoids depending on whatever the BIOS or device init may have drawn.
-    let aerogpu_bdf = vm
-        .aerogpu_bdf()
-        .expect("expected AeroGPU device present");
+    let aerogpu_bdf = vm.aerogpu_bdf().expect("expected AeroGPU device present");
 
     // Ensure BAR1 MMIO decode is enabled.
     {

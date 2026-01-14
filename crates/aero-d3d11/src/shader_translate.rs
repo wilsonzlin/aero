@@ -3257,10 +3257,7 @@ impl IoMaps {
                         format!("aero_hs_patch_constants[ds_pc_base + {reg}u]")
                     }
                 };
-                Ok(apply_sig_mask_to_vec4(
-                    &pc_expr,
-                    p.param.mask,
-                ))
+                Ok(apply_sig_mask_to_vec4(&pc_expr, p.param.mask))
             }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }

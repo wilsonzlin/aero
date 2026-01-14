@@ -41,7 +41,7 @@
 //! Resource support is also intentionally limited:
 //! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`, `resinfo`)
 //! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`, `bufinfo`)
-//! 
+//!
 //! Resource writes/stores/UAVs/atomics and barrier/synchronization instructions are not supported,
 //! and any
 //! unsupported instruction or operand shape is rejected by translation.
@@ -4774,12 +4774,10 @@ mod tests {
             ],
         };
 
-        let wgsl = translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
-            &module,
-            "cs_main",
-        )
-        .expect("translation should succeed")
-        .wgsl;
+        let wgsl =
+            translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(&module, "cs_main")
+                .expect("translation should succeed")
+                .wgsl;
         assert!(
             wgsl.contains(&format!(
                 "varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,"

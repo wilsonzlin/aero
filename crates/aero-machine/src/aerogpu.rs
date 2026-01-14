@@ -19,8 +19,7 @@ use aero_io_snapshot::io::state::{
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_bytes, cmd_stream_has_vsync_present_reader,
-    decode_cmd_stream_header_le,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    decode_cmd_stream_header_le, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
@@ -1964,8 +1963,7 @@ impl AeroGpuMmioDevice {
                         desc.cmd_size_bytes,
                     )
                     .unwrap_or(false)
-            }
-        {
+            } {
             PendingFenceKind::Vblank
         } else {
             PendingFenceKind::Immediate

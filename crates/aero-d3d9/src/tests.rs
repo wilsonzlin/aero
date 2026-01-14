@@ -3861,7 +3861,7 @@ fn translate_entrypoint_rejects_invalid_predicate_token_after_fallback() {
     // blindly drop the final operand token whenever the predicated flag was set, which could be
     // abused to hide malformed encodings behind SM3→legacy fallback.
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // (p0.x) mov r0, c0 ... but provide a non-predicate token as the "predicate".
     words.extend(enc_inst_with_extra(
@@ -3891,7 +3891,7 @@ fn translate_entrypoint_rejects_invalid_predicate_modifier_after_fallback() {
     // Predicate tokens only support None/Negate modifiers. Ensure invalid predicate modifier
     // encodings are still rejected as malformed even when legacy fallback runs.
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // (p0.x) mov r0, c0 with an invalid predicate modifier (bias).
     words.extend(enc_inst_with_extra(

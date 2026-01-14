@@ -1,8 +1,8 @@
 use aero_devices::pci::PciBdf;
 use aero_gpu_vga::DisplayOutput;
+use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
-use aero_gpu_vga::SVGA_LFB_BASE;
 
 fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];

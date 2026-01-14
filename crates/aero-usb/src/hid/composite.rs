@@ -2160,7 +2160,10 @@ mod tests {
 
         dev.mouse_button_event(0x08, true);
         assert!(dev.poll_remote_wakeup());
-        assert!(!dev.poll_remote_wakeup(), "remote wakeup should be edge-triggered");
+        assert!(
+            !dev.poll_remote_wakeup(),
+            "remote wakeup should be edge-triggered"
+        );
         assert_eq!(
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak

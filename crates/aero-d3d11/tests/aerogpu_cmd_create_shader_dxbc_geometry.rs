@@ -51,7 +51,7 @@ fn create_shader_dxbc_accepts_legacy_geometry_stage_value() {
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-             .expect("CREATE_SHADER_DXBC (legacy geometry stage=3) should succeed");
+            .expect("CREATE_SHADER_DXBC (legacy geometry stage=3) should succeed");
     });
 }
 

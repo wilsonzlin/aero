@@ -724,7 +724,10 @@ fn aerogpu_submission_bridge_vsync_present_fence_completes_on_next_vblank() {
         pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
         pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
     );
-    assert_eq!(completed_fence, 0, "vsync fence must not complete immediately");
+    assert_eq!(
+        completed_fence, 0,
+        "vsync fence must not complete immediately"
+    );
 
     // Advance to the next vblank; the vsync fence becomes eligible and completes.
     let period_ns = u64::from(
