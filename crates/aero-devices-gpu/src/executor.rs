@@ -519,6 +519,10 @@ impl AeroGpuExecutor {
                 .checked_add(u64::from(regs.ring_size_bytes))
                 .is_none()
         {
+            // Drop any pending work by syncing head -> tail where possible. We avoid reading the
+            // full ring header here because `ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES` may wrap.
+            let tail = AeroGpuRingHeader::read_tail(mem, regs.ring_gpa);
+            AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
             regs.record_error(AerogpuErrorCode::Oob, 0);
             return;

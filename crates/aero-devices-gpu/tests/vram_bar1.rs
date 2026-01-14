@@ -22,17 +22,33 @@ fn bar1_mmio_writes_back_device_vram() {
 }
 
 #[test]
-fn bar1_mmio_out_of_range_reads_return_zero_and_writes_are_ignored() {
+fn bar1_mmio_out_of_range_reads_float_high_and_backing_store_oob_reads_return_zero() {
     let dev = AeroGpuPciDevice::default();
+    let vram = dev.vram_shared();
     let mut bar1 = dev.bar1_mmio_handler();
 
     // Writes past the end should not panic and should have no effect.
     bar1.write(AEROGPU_VRAM_SIZE, 1, 0x00);
 
-    // Reads past the end return 0 (BAR size is fixed, but wasm32 builds may allocate a smaller
-    // backing store).
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0);
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0);
+    // Reads past the end of the guest-visible BAR aperture float high.
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0xFF);
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), u64::from(u32::MAX));
+
+    // Within the BAR aperture, reads beyond the allocated backing store return 0.
+    // (This happens on wasm32 builds, but we can simulate it by shrinking the backing store.)
+    {
+        let mut vram = vram.borrow_mut();
+        vram.truncate(16);
+    }
+
+    let oob_offset = 32u64;
+    assert!(oob_offset < AEROGPU_VRAM_SIZE);
+    assert_eq!(bar1.read(oob_offset, 1), 0);
+    assert_eq!(bar1.read(oob_offset, 4), 0);
+
+    // Writes beyond the backing store are ignored.
+    bar1.write(oob_offset, 1, 0xAA);
+    assert_eq!(bar1.read(oob_offset, 1), 0);
 }
 
 #[test]
