@@ -100,8 +100,8 @@ fn inject_browser_key_consumer_release_stays_on_usb_when_virtio_becomes_ready() 
 }
 
 #[test]
-fn inject_browser_key_consumer_release_after_snapshot_restore_clears_usb_even_if_virtio_becomes_ready()
-{
+fn inject_browser_key_consumer_release_after_snapshot_restore_clears_usb_even_if_virtio_becomes_ready(
+) {
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,

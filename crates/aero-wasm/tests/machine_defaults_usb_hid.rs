@@ -30,4 +30,3 @@ fn machine_new_enables_synthetic_usb_hid_by_default() {
     assert!(!m.usb_hid_gamepad_configured());
     assert!(!m.usb_hid_consumer_control_configured());
 }
-

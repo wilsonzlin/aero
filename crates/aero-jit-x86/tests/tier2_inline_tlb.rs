@@ -1559,9 +1559,8 @@ fn tier2_inline_tlb_high_ram_remap_uses_physical_address_not_vaddr() {
     let vaddr = 0x10u64;
     let vpn = vaddr >> PAGE_SHIFT;
     let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
-    let entry_addr = jit_ctx_ptr_usize
-        + (JitContext::TLB_OFFSET as usize)
-        + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let entry_addr =
+        jit_ctx_ptr_usize + (JitContext::TLB_OFFSET as usize) + idx * (JIT_TLB_ENTRY_SIZE as usize);
     let tag = (vpn ^ tlb_salt) | 1;
     let data = (HIGH_RAM_BASE & PAGE_BASE_MASK)
         | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
