@@ -91,6 +91,7 @@ New source files should include an SPDX identifier:
 
 When submitting a change:
 
+- Run `cargo fmt --all` before pushing (CI enforces `cargo fmt --all -- --check`).
 - Include unit tests where feasible.
 - For compatibility behavior, include a minimal reproducible test (even if it
   only runs in the emulator).
