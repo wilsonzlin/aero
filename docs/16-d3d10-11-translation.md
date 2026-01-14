@@ -771,7 +771,7 @@ Let:
   - Note: this is the number of *vertex shader invocations* in the expansion path. It is **not**
     the number of unique vertices (there is no vertex cache).
 
-For non-patch topologies, the number of *input primitives* (`input_prim_count`) is:
+For non-patch topologies, the number of *input primitives per instance* (`input_prim_count`) is:
 
 | Topology | Vertices consumed | Primitive count |
 |---|---:|---:|
@@ -788,6 +788,11 @@ For non-patch topologies, the number of *input primitives* (`input_prim_count`) 
 Rules:
 
 - Any leftover vertices that don’t form a full primitive are ignored (matching D3D behavior).
+- For instanced draws, the input primitive stream is replicated per instance. Many sizing and
+  dispatch formulas therefore use:
+  - `input_prim_count_total = input_prim_count * instance_count`
+  - and flatten `(instance_id, primitive_id_in_instance)` into a single `prim_id` in
+    `0..input_prim_count_total` for compute expansion (see GS pass sequence and `gs_inputs` packing).
 - `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
   `lineadj`/`triadj`). Until adjacency emulation is implemented, the runtime MUST NOT reinterpret
   them as non-adjacency topologies; it should either route through emulation-path scaffolding or
@@ -895,11 +900,15 @@ idx = ((prim_id * GS_INPUT_VERTS_PER_PRIM + vertex_in_prim) * GS_INPUT_REG_COUNT
 
 Where:
 
-- `prim_id` is the GS `SV_PrimitiveID` (`0..input_prim_count`).
-- If the draw uses D3D instancing and the implementation chooses to preserve instancing in the GS
-  phase, `prim_id` is typically flattened to include the instance dimension:
-  - `prim_id = instance_id * input_prim_count + primitive_id_in_instance`
-  - and `gs_inputs` must be packed for `input_prim_count * instance_count` primitives.
+- `prim_id` is the GS `SV_PrimitiveID` over the expanded input stream.
+  - In the baseline compute-expansion design we **flatten instancing** into `prim_id` so packing and
+    deterministic ordering are simple:
+    - `prim_id` ranges `0..(input_prim_count * instance_count)`
+    - `instance_id = prim_id / input_prim_count`
+    - `primitive_id_in_instance = prim_id % input_prim_count`
+  - Alternative: preserve instancing in the GS phase by treating `primitive_id_in_instance` as the
+    `prim_id` dimension and carrying `instance_id` separately; this requires a different dispatch
+    shape and a different `gs_inputs` packing scheme.
 - `vertex_in_prim` is the vertex index within the input primitive (`0..GS_INPUT_VERTS_PER_PRIM`),
   where `GS_INPUT_VERTS_PER_PRIM` depends on the GS declared input primitive:
   - point: 1
@@ -1694,10 +1703,13 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - `SV_DomainLocation`: computed from `domain_vertex_id` and the patch’s tess level(s) using
           the concrete enumeration rules above.
         - `SV_PrimitiveID = patch_instance_id`
-      - Dispatch mapping (recommended; conservative bounds):
-        - Use a 2D grid:
-          - `global_invocation_id.x` = `domain_vertex_id` (`0..V_patch_max`)
-          - `global_invocation_id.y` = `patch_instance_id` (`0..(patch_count * instance_count)`)
+      - Dispatch mapping (recommended; matches in-tree `runtime/tessellation/domain_eval.rs`):
+        - Use a 2D grid where:
+          - `global_invocation_id.x` = `patch_instance_id` (`0..(patch_count * instance_count)`)
+          - `global_invocation_id.y` = `domain_vertex_id` (`0..V_patch_max`)
+        - Choose a Y workgroup size (e.g. `DOMAIN_EVAL_WORKGROUP_SIZE_Y = 64`) and dispatch:
+          - `dispatch_x = patch_count * instance_count`
+          - `dispatch_y = ceil(V_patch_max / DOMAIN_EVAL_WORKGROUP_SIZE_Y)`
         - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count` (or
           if `tess_level_u == 0`).
         - Derive `patch_id`/`instance_id` from `patch_instance_id` when indexing per-instance inputs.
@@ -2079,6 +2091,13 @@ Indexing rule (normative):
 
 - `patch_instance_id = instance_id * patch_count + patch_id`
 - `tess_patch_state[patch_instance_id]` corresponds to `(patch_id, instance_id)`.
+
+Implementation note: the in-tree tessellation scaffolding currently uses a compact 20-byte per-patch
+metadata struct (`TriDomainPatchMeta` / `TessellationLayoutPatchMeta` in
+`crates/aero-d3d11/src/runtime/tessellation/*`) that stores:
+`{tess_level, vertex_base, index_base, vertex_count, index_count}` (5×`u32`). This doc’s 32-byte
+`TessPatchState` is a superset that reserves space for future quad-domain `(u, v)` levels. Either
+layout is valid as long as all passes agree on the same struct.
 
 **`tess_patch_constants` layout (concrete; `@binding(275)`)**
 
