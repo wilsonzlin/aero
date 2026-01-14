@@ -522,6 +522,9 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
     //
     // For scalar/vector float formats, D3D fills missing lanes with (0,0,0,1).
     // For normalized integer formats, we convert to float and fill missing lanes as needed.
+    // For integer formats, we preserve raw integer bits in `f32` lanes via `bitcast` so later
+    // stages can interpret them as `i32`/`u32` while keeping D3D missing-component defaults
+    // (0,0,0,1) in integer form.
     let load_expr = match attr.format.component_type {
         DxgiFormatComponentType::F32 => match attr.format.component_count {
             1 => "load_attr_f32".to_owned(),
@@ -605,6 +608,10 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
         }
     };
 
+    // Missing-component defaults for integer formats, encoded as raw integer bits in `f32` lanes.
+    let int0 = "bitcast<f32>(0u)";
+    let int1 = "bitcast<f32>(1u)";
+
     let (load_stmt, expand_stmt) = match (attr.format.component_type, attr.format.component_count) {
         // Float formats.
         (DxgiFormatComponentType::F32, 1) | (DxgiFormatComponentType::F16, 1) => (
@@ -667,62 +674,70 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             "return v;".to_owned(),
         ),
 
-        // Integer formats (convert to float).
+        // Integer formats (preserve raw bits).
         (DxgiFormatComponentType::U32, 1) => (
             format!(
                 "let v: u32 = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+            format!("return vec4<f32>(bitcast<f32>(v), {int0}, {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::U32, 2) => (
             format!(
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::U32, 3) => (
             format!(
                 "let v: vec3<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), bitcast<f32>(v.z), {int1});"
+            ),
         ),
         (DxgiFormatComponentType::U32, 4) => (
             format!(
                 "let v: vec4<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
         (DxgiFormatComponentType::I32, 1) => (
             format!(
                 "let v: i32 = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+            format!("return vec4<f32>(bitcast<f32>(v), {int0}, {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::I32, 2) => (
             format!(
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::I32, 3) => (
             format!(
                 "let v: vec3<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), bitcast<f32>(v.z), {int1});"
+            ),
         ),
         (DxgiFormatComponentType::I32, 4) => (
             format!(
                 "let v: vec4<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
 
         (DxgiFormatComponentType::U16, 1) => (
@@ -730,49 +745,55 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: u32 = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+            format!("return vec4<f32>(bitcast<f32>(v), {int0}, {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::U16, 2) => (
             format!(
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::U16, 3) => (
             format!(
                 "let v: vec3<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), bitcast<f32>(v.z), {int1});"
+            ),
         ),
         (DxgiFormatComponentType::U16, 4) => (
             format!(
                 "let v: vec4<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
         (DxgiFormatComponentType::I16, 1) => (
             format!(
                 "let v: i32 = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+            format!("return vec4<f32>(bitcast<f32>(v), {int0}, {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::I16, 2) => (
             format!(
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::I16, 4) => (
             format!(
                 "let v: vec4<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
 
         (DxgiFormatComponentType::U8, 2) => (
@@ -780,28 +801,32 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::U8, 4) => (
             format!(
                 "let v: vec4<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
         (DxgiFormatComponentType::I8, 2) => (
             format!(
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+            format!(
+                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
+            ),
         ),
         (DxgiFormatComponentType::I8, 4) => (
             format!(
                 "let v: vec4<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+            "return bitcast<vec4<f32>>(v);".to_owned(),
         ),
 
         _ => (
@@ -990,6 +1015,56 @@ mod tests {
         assert!(
             wgsl.contains("load_attr_unorm8x2(0u, addr)"),
             "expected VS-as-compute WGSL to call load_attr_unorm8x2 for loc0, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn vs_as_compute_preserves_integer_attr_bits_for_u32x3() {
+        let fmt = crate::input_layout::dxgi_format_info(7).expect("DXGI_FORMAT_R32G32B32_UINT");
+        assert_eq!(fmt.component_type, DxgiFormatComponentType::U32);
+        assert_eq!(fmt.component_count, 3);
+
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot: BTreeMap::from([(0u32, 0u32)]),
+            pulling_slot_to_d3d_slot: vec![0u32],
+            required_strides: vec![0u32],
+            attributes: vec![VertexPullingAttribute {
+                shader_location: 0,
+                pulling_slot: 0,
+                offset_bytes: 0,
+                format: fmt,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                instance_step_rate: 0,
+            }],
+        };
+
+        let wgsl = build_vs_as_compute_passthrough_wgsl(
+            &pulling,
+            VsAsComputeConfig {
+                control_point_count: 1,
+                out_reg_count: 1,
+                indexed: false,
+            },
+        );
+
+        // Validate the generated WGSL, and ensure integer formats are preserved as raw bits rather
+        // than converted to float values.
+        assert_wgsl_validates(&wgsl);
+        assert!(
+            wgsl.contains("load_attr_u32x3(0u, addr)"),
+            "expected WGSL to reference u32x3 loader: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<f32>(v.x)"),
+            "expected WGSL to bitcast integer lane x: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<f32>(1u)"),
+            "expected WGSL to use integer default w=1: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("f32(v.x)"),
+            "expected WGSL to avoid converting integer lane x to float: {wgsl}"
         );
     }
 
