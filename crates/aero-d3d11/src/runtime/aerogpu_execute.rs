@@ -1656,7 +1656,7 @@ impl AerogpuCmdRuntime {
             bail!("shader {ps_handle} is not a pixel/fragment shader");
         }
 
-        let (element_count, instance_count, draw_params) = match kind {
+        let (element_count, instance_count, draw_params, indexed_draw) = match kind {
             DrawKind::NonIndexed(args) => (
                 args.vertex_count,
                 args.instance_count,
@@ -1666,9 +1666,53 @@ impl AerogpuCmdRuntime {
                     base_vertex: 0,
                     first_index: 0,
                 },
+                false,
             ),
-            DrawKind::Indexed(_) => {
-                bail!("geometry shader emulation in AerogpuCmdRuntime does not support indexed draws yet");
+            DrawKind::Indexed(args) => {
+                // Fold the IASetIndexBuffer byte offset into `first_index` so compute-side index
+                // pulling can bind the full index buffer at offset 0 (storage buffer bindings often
+                // require 256-byte alignment, which D3D11 does not guarantee).
+                let ib = self
+                    .state
+                    .index_buffer
+                    .ok_or_else(|| anyhow!("DRAW_INDEXED without index buffer"))?;
+                let stride = match ib.format {
+                    wgpu::IndexFormat::Uint16 => 2u64,
+                    wgpu::IndexFormat::Uint32 => 4u64,
+                };
+                if (ib.offset % stride) != 0 {
+                    bail!(
+                        "index buffer offset {} is not aligned to index stride {}",
+                        ib.offset,
+                        stride
+                    );
+                }
+                let offset_indices_u64 = ib.offset / stride;
+                let offset_indices: u32 = offset_indices_u64.try_into().map_err(|_| {
+                    anyhow!(
+                        "index buffer offset {} is too large for u32 index math",
+                        ib.offset
+                    )
+                })?;
+                let first_index = args.first_index.checked_add(offset_indices).ok_or_else(
+                    || {
+                        anyhow!(
+                            "DRAW_INDEXED first_index overflows after applying index buffer offset"
+                        )
+                    },
+                )?;
+
+                (
+                    args.index_count,
+                    args.instance_count,
+                    super::vertex_pulling::VertexPullingDrawParams {
+                        first_vertex: 0,
+                        first_instance: args.first_instance,
+                        base_vertex: args.base_vertex,
+                        first_index,
+                    },
+                    true,
+                )
             }
         };
 
@@ -1924,6 +1968,7 @@ impl AerogpuCmdRuntime {
             verts_per_primitive,
             gs.input_reg_count,
             sig,
+            indexed_draw,
         );
         let (vs_cs_hash, _module) = self.pipelines.get_or_create_shader_module(
             &self.device,
@@ -1958,13 +2003,68 @@ impl AerogpuCmdRuntime {
             }],
         });
 
-        // Bind group 3: vertex pulling inputs.
-        let vp_bgl_entries = pulling.bind_group_layout_entries();
+        // Bind group 3: vertex pulling inputs (+ optional index pulling).
+        let mut vp_bgl_entries = pulling.bind_group_layout_entries();
+        let mut index_pulling_params: Option<wgpu::Buffer> = None;
+        let mut index_pulling_buffer: Option<&wgpu::Buffer> = None;
+        if indexed_draw {
+            let ib = self
+                .state
+                .index_buffer
+                .expect("indexed_draw implies IA index buffer is set");
+            let ib_buf = self
+                .resources
+                .buffers
+                .get(&ib.buffer)
+                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+            index_pulling_buffer = Some(&ib_buf.buffer);
+
+            let index_format = match ib.format {
+                wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+            };
+            let params = super::index_pulling::IndexPullingParams {
+                first_index: draw_params.first_index,
+                base_vertex: draw_params.base_vertex,
+                index_format,
+                _pad0: 0,
+            };
+            let params_bytes = params.to_le_bytes();
+            let params_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aero-d3d11 GS prepass index pulling params"),
+                size: params_bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue.write_buffer(&params_buf, 0, &params_bytes);
+            index_pulling_params = Some(params_buf);
+
+            vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: super::index_pulling::INDEX_PULLING_PARAMS_BINDING,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            });
+            vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: super::index_pulling::INDEX_PULLING_BUFFER_BINDING,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        }
         let vp_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &vp_bgl_entries);
         let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
-            Vec::with_capacity(vertex_buffers.len() + 1);
+            Vec::with_capacity(vertex_buffers.len() + 1 + if indexed_draw { 2 } else { 0 });
         for (slot, buf) in vertex_buffers.iter().enumerate() {
             vp_bg_entries.push(wgpu::BindGroupEntry {
                 binding: super::vertex_pulling::VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE
@@ -1976,6 +2076,18 @@ impl AerogpuCmdRuntime {
             binding: super::vertex_pulling::VERTEX_PULLING_UNIFORM_BINDING,
             resource: pulling_uniform.as_entire_binding(),
         });
+        if let (Some(params_buf), Some(ib_buf)) =
+            (index_pulling_params.as_ref(), index_pulling_buffer)
+        {
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: super::index_pulling::INDEX_PULLING_PARAMS_BINDING,
+                resource: params_buf.as_entire_binding(),
+            });
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: super::index_pulling::INDEX_PULLING_BUFFER_BINDING,
+                resource: ib_buf.as_entire_binding(),
+            });
+        }
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aero-d3d11 GS prepass vertex pulling bind group"),
             layout: vp_bgl.layout.as_ref(),
@@ -3538,10 +3650,19 @@ fn build_vs_as_compute_gs_input_wgsl(
     verts_per_primitive: u32,
     reg_count: u32,
     vs_signature: &[VsInputSignatureElement],
+    indexed_draw: bool,
 ) -> String {
     let mut wgsl = String::new();
     wgsl.push_str(&pulling.wgsl_prelude());
     wgsl.push('\n');
+    if indexed_draw {
+        wgsl.push_str(&super::index_pulling::wgsl_index_pulling_lib(
+            super::vertex_pulling::VERTEX_PULLING_GROUP,
+            super::index_pulling::INDEX_PULLING_PARAMS_BINDING,
+            super::index_pulling::INDEX_PULLING_BUFFER_BINDING,
+        ));
+        wgsl.push('\n');
+    }
 
     wgsl.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n\n");
     wgsl.push_str("@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n\n");
@@ -3614,12 +3735,17 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     wgsl.push_str(&format!(
         "    let vertex_index: u32 = {vertex_index_expr};\n"
     ));
-    wgsl.push_str(
-        r#"    let vertex_id_i32: i32 = i32(vertex_index + aero_vp_ia.first_vertex);
-    let instance_id: u32 = aero_vp_ia.first_instance;
-    let base_out: u32 = idx * GS_INPUT_REG_COUNT;
-"#,
-    );
+    if indexed_draw {
+        wgsl.push_str(
+            "    let vertex_id_i32: i32 = index_pulling_resolve_vertex_id(vertex_index);\n",
+        );
+    } else {
+        wgsl.push_str(
+            "    let vertex_id_i32: i32 = i32(vertex_index + aero_vp_ia.first_vertex);\n",
+        );
+    }
+    wgsl.push_str("    let instance_id: u32 = aero_vp_ia.first_instance;\n");
+    wgsl.push_str("    let base_out: u32 = idx * GS_INPUT_REG_COUNT;\n");
 
     // Write the GS input register payload.
     for reg in 0..reg_count {
