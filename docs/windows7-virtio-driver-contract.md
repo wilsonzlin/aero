@@ -1015,8 +1015,8 @@ Harness validation (non-normative, QEMU):
       `flags=0x...`, per-vector interrupt/DPC counters like `intr0=...|dpc0=...`, and drained buffer counts like
       `rx_drained=...|tx_drained=...`). Harness log parsers should ignore unknown fields for forward compatibility.
   - virtio-snd:
-    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
-    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
   - virtio-input:
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
