@@ -67,6 +67,9 @@ contract.
 
 See `docs/graphics/aerogpu-protocols.md` for the full mapping.
 
+For a repo-backed “what’s implemented vs what’s missing” checklist for the overall graphics stack,
+see [`docs/graphics/status.md`](./graphics/status.md).
+
 #### USB note (browser runtime)
 
 The repo contains multiple generations of USB host controller work. The **canonical browser runtime** USB
