@@ -544,6 +544,54 @@ static inline bool AerogpuQueryScanout(const D3DKMT_FUNCS* f,
   return AerogpuEscapeWithTimeout(f, adapter, out_scanout, sizeof(*out_scanout), 2000, out_status);
 }
 
+static inline bool AerogpuQueryScanoutV2(const D3DKMT_FUNCS* f,
+                                         D3DKMT_HANDLE adapter,
+                                         uint32_t vidpn_source_id,
+                                         aerogpu_escape_query_scanout_out_v2* out_scanout,
+                                         NTSTATUS* out_status) {
+  if (out_scanout) {
+    ZeroMemory(out_scanout, sizeof(*out_scanout));
+  }
+  if (!out_scanout) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  out_scanout->base.hdr.version = AEROGPU_ESCAPE_VERSION;
+  out_scanout->base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  out_scanout->base.hdr.size = sizeof(*out_scanout);
+  out_scanout->base.hdr.reserved0 = 0;
+  out_scanout->base.vidpn_source_id = vidpn_source_id;
+  out_scanout->base.reserved0 = 0;
+  out_scanout->cached_fb_gpa = 0;
+
+  NTSTATUS st = 0;
+  const bool ok = AerogpuEscapeWithTimeout(f, adapter, out_scanout, sizeof(*out_scanout), 2000, &st);
+  if (!ok && (st == kStatusInvalidParameter || st == kStatusNotSupported) && vidpn_source_id != 0) {
+    // Older KMDs may only support source 0; retry.
+    ZeroMemory(out_scanout, sizeof(*out_scanout));
+    out_scanout->base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    out_scanout->base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    out_scanout->base.hdr.size = sizeof(*out_scanout);
+    out_scanout->base.hdr.reserved0 = 0;
+    out_scanout->base.vidpn_source_id = 0;
+    out_scanout->base.reserved0 = 0;
+    out_scanout->cached_fb_gpa = 0;
+    const bool ok2 = AerogpuEscapeWithTimeout(f, adapter, out_scanout, sizeof(*out_scanout), 2000, &st);
+    if (out_status) {
+      *out_status = st;
+    }
+    return ok2;
+  }
+
+  if (out_status) {
+    *out_status = st;
+  }
+  return ok;
+}
+
 static inline bool AerogpuQueryCursor(const D3DKMT_FUNCS* f,
                                       D3DKMT_HANDLE adapter,
                                       aerogpu_escape_query_cursor_out* out_cursor,

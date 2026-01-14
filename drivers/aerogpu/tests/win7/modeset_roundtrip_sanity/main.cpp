@@ -164,25 +164,45 @@ static void PrintModeInfo(const char* label, const DEVMODEW& dm) {
       (unsigned long)dm.dmFields);
 }
 
-static void PrintScanoutInfo(const char* label, const aerogpu_escape_query_scanout_out& q) {
+static void PrintScanoutInfo(const char* label, const aerogpu_escape_query_scanout_out_v2& q) {
   const char* name = label ? label : "scanout";
   aerogpu_test::PrintfStdout(
       "INFO: %s: cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu",
       name,
-      (unsigned long)q.cached_enable,
-      (unsigned long)q.cached_width,
-      (unsigned long)q.cached_height,
-      (unsigned long)q.cached_format,
-      (unsigned long)q.cached_pitch_bytes);
+      (unsigned long)q.base.cached_enable,
+      (unsigned long)q.base.cached_width,
+      (unsigned long)q.base.cached_height,
+      (unsigned long)q.base.cached_format,
+      (unsigned long)q.base.cached_pitch_bytes);
   aerogpu_test::PrintfStdout(
       "INFO: %s: mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
       name,
-      (unsigned long)q.mmio_enable,
-      (unsigned long)q.mmio_width,
-      (unsigned long)q.mmio_height,
-      (unsigned long)q.mmio_format,
-      (unsigned long)q.mmio_pitch_bytes,
-      (unsigned long long)q.mmio_fb_gpa);
+      (unsigned long)q.base.mmio_enable,
+      (unsigned long)q.base.mmio_width,
+      (unsigned long)q.base.mmio_height,
+      (unsigned long)q.base.mmio_format,
+      (unsigned long)q.base.mmio_pitch_bytes,
+      (unsigned long long)q.base.mmio_fb_gpa);
+
+  const uint32_t flags = q.base.reserved0;
+  const bool flags_valid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+  const bool cached_fb_gpa_valid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool post_display_released = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+  if (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: flags=0x%08lX%s cached_fb_gpa=0x%I64X%s%s",
+        name,
+        (unsigned long)flags,
+        flags_valid ? " (valid)" : " (legacy)",
+        (unsigned long long)q.cached_fb_gpa,
+        (flags_valid && cached_fb_gpa_valid) ? " (cached_fb_gpa_valid)" : "",
+        (flags_valid && post_display_released) ? " (post_display_ownership_released)" : "");
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: flags=0x%08lX%s (no v2 cached_fb_gpa)",  //
+                              name,
+                              (unsigned long)flags,
+                              flags_valid ? " (valid)" : " (legacy)");
+  }
 }
 
 static bool GetCurrentDesktopMode(DEVMODEW* out, std::string* err) {
@@ -493,7 +513,7 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
                                 DWORD expected_w,
                                 DWORD expected_h,
                                 DWORD timeout_ms,
-                                aerogpu_escape_query_scanout_out* out_last,
+                                aerogpu_escape_query_scanout_out_v2* out_last,
                                 NTSTATUS* out_status,
                                 std::string* err) {
   if (err) {
@@ -513,31 +533,37 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
   }
 
   DWORD start = GetTickCount();
-  aerogpu_escape_query_scanout_out last;
+  aerogpu_escape_query_scanout_out_v2 last;
   ZeroMemory(&last, sizeof(last));
   NTSTATUS last_status = 0;
   bool got_any = false;
 
   for (;;) {
-    aerogpu_escape_query_scanout_out q;
+    aerogpu_escape_query_scanout_out_v2 q;
     NTSTATUS st = 0;
-    const bool ok = aerogpu_test::kmt::AerogpuQueryScanout(kmt, adapter, 0, &q, &st);
+    const bool ok = aerogpu_test::kmt::AerogpuQueryScanoutV2(kmt, adapter, 0, &q, &st);
     last_status = st;
     if (ok) {
       last = q;
       got_any = true;
     }
 
+    const uint32_t flags = q.base.reserved0;
+    const bool flags_valid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+    const bool post_display_released =
+        (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+
     const unsigned long long row_bytes = (unsigned long long)expected_w * 4ull;
     bool format_ok = true;
-    if (q.cached_format != 0 && q.mmio_format != 0 && q.cached_format != q.mmio_format) {
+    if (q.base.cached_format != 0 && q.base.mmio_format != 0 && q.base.cached_format != q.base.mmio_format) {
       format_ok = false;
     }
+    const bool released_ok = flags_valid ? !post_display_released : true;
     const bool match =
-        ok && (q.cached_enable != 0) && (q.mmio_enable != 0) && (q.cached_width == expected_w) &&
-        (q.cached_height == expected_h) && (q.mmio_width == expected_w) && (q.mmio_height == expected_h) &&
-        (q.mmio_fb_gpa != 0) && (q.cached_pitch_bytes != 0) && (q.mmio_pitch_bytes != 0) &&
-        (q.cached_pitch_bytes == q.mmio_pitch_bytes) && ((unsigned long long)q.cached_pitch_bytes >= row_bytes) &&
+        ok && released_ok && (q.base.cached_enable != 0) && (q.base.mmio_enable != 0) && (q.base.cached_width == expected_w) &&
+        (q.base.cached_height == expected_h) && (q.base.mmio_width == expected_w) && (q.base.mmio_height == expected_h) &&
+        (q.base.mmio_fb_gpa != 0) && (q.base.cached_pitch_bytes != 0) && (q.base.mmio_pitch_bytes != 0) &&
+        (q.base.cached_pitch_bytes == q.base.mmio_pitch_bytes) && ((unsigned long long)q.base.cached_pitch_bytes >= row_bytes) &&
         format_ok;
     if (match) {
       if (out_last) {
@@ -561,31 +587,33 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
   if (out_status) {
     *out_status = last_status;
   }
-  if (err) {
-    if (!got_any) {
-      *err = aerogpu_test::FormatString("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)",
-                                        (unsigned long)last_status);
-    } else {
-      *err = aerogpu_test::FormatString(
-          "scanout did not match within %lu ms (want=%lux%lu cached: en=%lu %lux%lu fmt=%lu pitch=%lu mmio: en=%lu %lux%lu fmt=%lu pitch=%lu fb_gpa=0x%I64X)",
-          (unsigned long)timeout_ms,
-          (unsigned long)expected_w,
-          (unsigned long)expected_h,
-          (unsigned long)last.cached_enable,
-          (unsigned long)last.cached_width,
-          (unsigned long)last.cached_height,
-          (unsigned long)last.cached_format,
-          (unsigned long)last.cached_pitch_bytes,
-          (unsigned long)last.mmio_enable,
-          (unsigned long)last.mmio_width,
-          (unsigned long)last.mmio_height,
-          (unsigned long)last.mmio_format,
-          (unsigned long)last.mmio_pitch_bytes,
-          (unsigned long long)last.mmio_fb_gpa);
+    if (err) {
+      if (!got_any) {
+        *err = aerogpu_test::FormatString("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)",
+                                          (unsigned long)last_status);
+      } else {
+        *err = aerogpu_test::FormatString(
+            "scanout did not match within %lu ms (want=%lux%lu flags=0x%08lX cached_fb_gpa=0x%I64X cached: en=%lu %lux%lu fmt=%lu pitch=%lu mmio: en=%lu %lux%lu fmt=%lu pitch=%lu fb_gpa=0x%I64X)",
+            (unsigned long)timeout_ms,
+            (unsigned long)expected_w,
+            (unsigned long)expected_h,
+            (unsigned long)last.base.reserved0,
+            (unsigned long long)last.cached_fb_gpa,
+            (unsigned long)last.base.cached_enable,
+            (unsigned long)last.base.cached_width,
+            (unsigned long)last.base.cached_height,
+            (unsigned long)last.base.cached_format,
+            (unsigned long)last.base.cached_pitch_bytes,
+            (unsigned long)last.base.mmio_enable,
+            (unsigned long)last.base.mmio_width,
+            (unsigned long)last.base.mmio_height,
+            (unsigned long)last.base.mmio_format,
+            (unsigned long)last.base.mmio_pitch_bytes,
+            (unsigned long long)last.base.mmio_fb_gpa);
+      }
     }
+    return false;
   }
-  return false;
-}
 
 static bool ApplyDisplayModeAndWait(const DEVMODEW& target, DWORD timeout_ms, std::string* err) {
   return ApplyDisplayModeAndWaitEx(target, timeout_ms, NULL, err);
@@ -721,9 +749,9 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   }
 
   // Validate that the scanout query escape exists before attempting to mode-set.
-  aerogpu_escape_query_scanout_out q0;
+  aerogpu_escape_query_scanout_out_v2 q0;
   NTSTATUS st0 = 0;
-  if (!aerogpu_test::kmt::AerogpuQueryScanout(&kmt, adapter, 0, &q0, &st0)) {
+  if (!aerogpu_test::kmt::AerogpuQueryScanoutV2(&kmt, adapter, 0, &q0, &st0)) {
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     if (st0 == aerogpu_test::kmt::kStatusNotSupported) {
@@ -735,7 +763,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   }
 
   // Baseline sanity: scanout should already match the current desktop mode before we mode-set.
-  aerogpu_escape_query_scanout_out q_init;
+  aerogpu_escape_query_scanout_out_v2 q_init;
   NTSTATUS st_init = 0;
   std::string scanout_err0;
   if (!WaitForScanoutMatch(&kmt,
@@ -750,10 +778,10 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s (cached=%lux%lu mmio=%lux%lu)",
                          scanout_err0.c_str(),
-                         (unsigned long)q_init.cached_width,
-                         (unsigned long)q_init.cached_height,
-                         (unsigned long)q_init.mmio_width,
-                         (unsigned long)q_init.mmio_height);
+                         (unsigned long)q_init.base.cached_width,
+                         (unsigned long)q_init.base.cached_height,
+                         (unsigned long)q_init.base.mmio_width,
+                         (unsigned long)q_init.base.mmio_height);
   }
   PrintScanoutInfo("baseline_scanout", q_init);
 
@@ -807,7 +835,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
         (unsigned long)switched_mode.dmPelsHeight);
   }
 
-  aerogpu_escape_query_scanout_out q1;
+  aerogpu_escape_query_scanout_out_v2 q1;
   NTSTATUS st1 = 0;
   std::string scanout_err1;
   if (!WaitForScanoutMatch(&kmt,
@@ -825,10 +853,10 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s (cached=%lux%lu mmio=%lux%lu)",
                          scanout_err1.c_str(),
-                         (unsigned long)q1.cached_width,
-                         (unsigned long)q1.cached_height,
-                         (unsigned long)q1.mmio_width,
-                         (unsigned long)q1.mmio_height);
+                         (unsigned long)q1.base.cached_width,
+                         (unsigned long)q1.base.cached_height,
+                         (unsigned long)q1.base.mmio_width,
+                         (unsigned long)q1.base.mmio_height);
   }
   PrintScanoutInfo("switched_scanout", q1);
 
@@ -869,7 +897,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
         (unsigned long)restored_mode.dmPelsHeight);
   }
 
-  aerogpu_escape_query_scanout_out q2;
+  aerogpu_escape_query_scanout_out_v2 q2;
   NTSTATUS st2 = 0;
   std::string scanout_err2;
   if (!WaitForScanoutMatch(&kmt,
@@ -884,10 +912,10 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s (cached=%lux%lu mmio=%lux%lu)",
                          scanout_err2.c_str(),
-                         (unsigned long)q2.cached_width,
-                         (unsigned long)q2.cached_height,
-                         (unsigned long)q2.mmio_width,
-                         (unsigned long)q2.mmio_height);
+                         (unsigned long)q2.base.cached_width,
+                         (unsigned long)q2.base.cached_height,
+                         (unsigned long)q2.base.mmio_width,
+                         (unsigned long)q2.base.mmio_height);
   }
   PrintScanoutInfo("restored_scanout", q2);
 
