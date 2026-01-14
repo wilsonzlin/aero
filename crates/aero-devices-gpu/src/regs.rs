@@ -1,5 +1,3 @@
-use crate::scanout::{AeroGpuCursorConfig, AeroGpuScanoutConfig};
-
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_pci.h` via `aero-protocol`.
@@ -15,6 +13,9 @@ pub use pci::{
 };
 
 pub const AEROGPU_PCI_BAR0_SIZE_BYTES: u64 = pci::AEROGPU_PCI_BAR0_SIZE_BYTES as u64;
+
+// Re-export scanout types so `AeroGpuRegs` and the scanout helpers share a single type family.
+pub use crate::scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
 
 pub const SUPPORTED_FEATURES: u64 = FEATURE_FENCE_PAGE
     | FEATURE_CURSOR
@@ -133,6 +134,7 @@ pub struct AeroGpuRegs {
     pub error_count: u32,
 
     pub current_submission_fence: u64,
+
     pub scanout0: AeroGpuScanoutConfig,
     pub scanout0_vblank_seq: u64,
     pub scanout0_vblank_time_ns: u64,
@@ -214,6 +216,12 @@ mod tests {
         assert_eq!(regs.error_code, AerogpuErrorCode::CmdDecode as u32);
         assert_eq!(regs.error_fence, 123);
         assert_eq!(regs.error_count, 1);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+        regs.record_error(AerogpuErrorCode::Oob, 456);
+        assert_eq!(regs.error_code, AerogpuErrorCode::Oob as u32);
+        assert_eq!(regs.error_fence, 456);
+        assert_eq!(regs.error_count, 2);
         assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
     }
 }
