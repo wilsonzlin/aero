@@ -7,6 +7,7 @@ import {
 } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "./src/ipc/scanout_state";
+import { VRAM_BASE_PADDR } from "./src/arch/guest_phys.ts";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./src/runtime/shared_layout";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
@@ -179,17 +180,19 @@ async function main(): Promise<void> {
     const width = 64;
     const height = 64;
     const pitchBytes = width * 4 + 16;
-    const basePaddr = 0x10_0000; // 1 MiB (stays clear of demo/shared framebuffer offsets)
 
     canvas.width = width;
     canvas.height = height;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
+    const params = new URLSearchParams(window.location.search);
+    const backingParam = (params.get("backing") ?? "").toLowerCase();
+    const vramParam = (params.get("vram") ?? "").toLowerCase();
+    const useVramBacking = backingParam === "vram" || vramParam === "1" || vramParam === "true";
+
     // Keep allocations small (but note the wasm32 runtime reserves a fixed 128MiB region).
-    // VRAM is unnecessary for this test (scanout points into guest RAM), so disable it to
-    // reduce memory pressure in CI.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 0 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: useVramBacking ? 1 : 0 });
     const views = createSharedMemoryViews(segments);
 
     if (!views.scanoutStateI32) {
@@ -197,18 +200,36 @@ async function main(): Promise<void> {
     }
 
     const requiredScanoutBytes = pitchBytes * height;
-    if (basePaddr + requiredScanoutBytes > views.guestLayout.guest_size) {
-      throw new Error("guest RAM too small for scanout test pattern");
+    let backing: Uint8Array;
+
+    let scanoutBasePaddr = 0;
+    if (useVramBacking) {
+      if (views.vramSizeBytes <= 0) {
+        throw new Error("VRAM segment was not allocated (expected vramMiB>0)");
+      }
+      // Keep a small non-zero offset so the test covers BAR1 address translation math.
+      const vramOffset = 0x1000;
+      if (vramOffset + requiredScanoutBytes > views.vramSizeBytes) {
+        throw new Error("VRAM segment too small for scanout test pattern");
+      }
+      backing = views.vramU8.subarray(vramOffset, vramOffset + requiredScanoutBytes);
+      writeBgrxTestPattern(backing, width, height, pitchBytes);
+      scanoutBasePaddr = VRAM_BASE_PADDR + vramOffset;
+    } else {
+      const basePaddr = 0x10_0000; // 1 MiB (stays clear of demo/shared framebuffer offsets)
+      if (basePaddr + requiredScanoutBytes > views.guestLayout.guest_size) {
+        throw new Error("guest RAM too small for scanout test pattern");
+      }
+      // Write BGRX pixels into guest RAM at base_paddr (with non-tight pitch).
+      backing = views.guestU8.subarray(basePaddr, basePaddr + requiredScanoutBytes);
+      writeBgrxTestPattern(backing, width, height, pitchBytes);
+      scanoutBasePaddr = basePaddr;
     }
 
-    // Write BGRX pixels into guest RAM at base_paddr (with non-tight pitch).
-    const backing = views.guestU8.subarray(basePaddr, basePaddr + requiredScanoutBytes);
-    writeBgrxTestPattern(backing, width, height, pitchBytes);
-
-    // Publish a WDDM scanout descriptor pointing at the guest RAM surface.
+    // Publish a WDDM scanout descriptor pointing at the backing surface.
     publishScanoutState(views.scanoutStateI32, {
       source: SCANOUT_SOURCE_WDDM,
-      basePaddrLo: basePaddr >>> 0,
+      basePaddrLo: scanoutBasePaddr >>> 0,
       basePaddrHi: 0,
       width,
       height,
@@ -276,6 +297,18 @@ async function main(): Promise<void> {
       role: "gpu",
       controlSab: segments.control,
       guestMemory: segments.guestMemory,
+      ...(useVramBacking
+        ? {
+            vram: (() => {
+              if (!(segments.vram instanceof SharedArrayBuffer)) {
+                throw new Error("VRAM segment missing from WorkerInitMessage");
+              }
+              return segments.vram;
+            })(),
+            vramBasePaddr: VRAM_BASE_PADDR,
+            vramSizeBytes: views.vramSizeBytes,
+          }
+        : {}),
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

@@ -4,13 +4,11 @@ async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
-test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=255)", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
-
-  await page.goto("/web/wddm-scanout-smoke.html", { waitUntil: "load" });
+async function runWddmScanoutSmoke(page: Page, url: string) {
+  await page.goto(url, { waitUntil: "load" });
   await waitForReady(page);
 
-  const result = await page.evaluate(async () => {
+  return await page.evaluate(async () => {
     const scanout = await import("/web/src/ipc/scanout_state.ts");
     const api = (window as any).__aeroTest;
     if (!api) throw new Error("__aeroTest missing");
@@ -34,7 +32,9 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
       scanoutSourceWddm: scanout.SCANOUT_SOURCE_WDDM,
     };
   });
+}
 
+function assertWddmScanoutSmokeResult(result: any) {
   expect(result.backend).toBe("webgl2_raw");
   expect(result.hash).toBe(result.expectedHash);
   expect(result.sourceHash).toBe(result.expectedSourceHash);
@@ -87,4 +87,18 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
   expect(result.metrics.outputSource).toBe("wddm_scanout");
   expect(result.metrics.scanout).toBeTruthy();
   expect(result.metrics.scanout.source).toBe(result.scanoutSourceWddm);
+}
+
+test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=255)", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+  const result = await runWddmScanoutSmoke(page, "/web/wddm-scanout-smoke.html");
+  assertWddmScanoutSmokeResult(result);
+});
+
+test("wddm scanout smoke: presents from VRAM BAR1 base_paddr (BGRX->RGBA, alpha=255)", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+  const result = await runWddmScanoutSmoke(page, "/web/wddm-scanout-smoke.html?backing=vram");
+  assertWddmScanoutSmokeResult(result);
 });
