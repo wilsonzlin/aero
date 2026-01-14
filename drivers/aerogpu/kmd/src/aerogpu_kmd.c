@@ -13194,7 +13194,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * most recent ring descriptors. This makes it easier to dump the most recent submission even on
          * fast devices where the pending submission list may already have been retired.
          */
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && AeroGpuV1SubmitPathUsable(adapter)) {
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             ULONGLONG allowBase = 0;
             ULONGLONG allowSize = 0;
             BOOLEAN found = FALSE;
@@ -13202,48 +13202,51 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
-            ULONG tail = ringHeader->tail;
-            ULONG window = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
-            if (window > adapter->RingEntryCount) {
-                window = adapter->RingEntryCount;
-            }
-            if (tail < window) {
-                window = tail;
-            }
+            /* Avoid racing teardown: re-check ring readiness under RingLock before dereferencing RingVa. */
+            if (AeroGpuV1SubmitPathUsable(adapter)) {
+                const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+                ULONG tail = ringHeader->tail;
+                ULONG window = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+                if (window > adapter->RingEntryCount) {
+                    window = adapter->RingEntryCount;
+                }
+                if (tail < window) {
+                    window = tail;
+                }
 
-            const struct aerogpu_submit_desc* ring =
-                (const struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
+                const struct aerogpu_submit_desc* ring =
+                    (const struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
 
-            for (ULONG i = 0; i < window && !found; ++i) {
-                const ULONG ringIndex = (tail - 1u - i) & (adapter->RingEntryCount - 1u);
-                const struct aerogpu_submit_desc entry = ring[ringIndex];
+                for (ULONG i = 0; i < window && !found; ++i) {
+                    const ULONG ringIndex = (tail - 1u - i) & (adapter->RingEntryCount - 1u);
+                    const struct aerogpu_submit_desc entry = ring[ringIndex];
 
-                struct range {
-                    ULONGLONG Base;
-                    ULONGLONG Size;
-                } ranges[] = {
-                    {(ULONGLONG)entry.cmd_gpa, (ULONGLONG)entry.cmd_size_bytes},
-                    {(ULONGLONG)entry.alloc_table_gpa, (ULONGLONG)entry.alloc_table_size_bytes},
-                };
+                    struct range {
+                        ULONGLONG Base;
+                        ULONGLONG Size;
+                    } ranges[] = {
+                        {(ULONGLONG)entry.cmd_gpa, (ULONGLONG)entry.cmd_size_bytes},
+                        {(ULONGLONG)entry.alloc_table_gpa, (ULONGLONG)entry.alloc_table_size_bytes},
+                    };
 
-                for (UINT j = 0; j < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++j) {
-                    const ULONGLONG base = ranges[j].Base;
-                    const ULONGLONG size = ranges[j].Size;
-                    if (base == 0 || size == 0) {
-                        continue;
+                    for (UINT j = 0; j < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++j) {
+                        const ULONGLONG base = ranges[j].Base;
+                        const ULONGLONG size = ranges[j].Size;
+                        if (base == 0 || size == 0) {
+                            continue;
+                        }
+                        if (gpa < base) {
+                            continue;
+                        }
+                        const ULONGLONG off = gpa - base;
+                        if (off >= size) {
+                            continue;
+                        }
+                        allowBase = base;
+                        allowSize = size;
+                        found = TRUE;
+                        break;
                     }
-                    if (gpa < base) {
-                        continue;
-                    }
-                    const ULONGLONG off = gpa - base;
-                    if (off >= size) {
-                        continue;
-                    }
-                    allowBase = base;
-                    allowSize = size;
-                    found = TRUE;
-                    break;
                 }
             }
 
