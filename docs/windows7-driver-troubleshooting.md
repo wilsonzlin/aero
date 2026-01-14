@@ -388,14 +388,14 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 **Common causes**
 
 - The disk image is not attached after the hardware profile change.
-- Boot order changed and the VM is trying to boot from the wrong device (for example, CD/DVD with no media).
+- The VM is trying to boot from the wrong device (for example, CD/DVD with no media).
 - The disk/controller change did not actually map the existing system disk to the new controller.
 
 **Fix**
 
 1. Power off the VM.
 2. Verify the system disk image is still attached.
-3. Verify the boot order still prefers the disk.
+3. Verify the VM is configured to boot from the disk.
    - Aero note: in Aero’s BIOS, this corresponds to booting from the first HDD (`DL=0x80`). Ensure
      the host/runtime sets the boot drive accordingly (e.g. `Machine::set_boot_drive(0x80)` then
      `reset()`).
