@@ -143,9 +143,10 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         &fixture_sources::bootsector::BIN,
         check,
     )?;
+    let realmode_vbe_test = boot_sector_from_code(fixture_sources::realmode_vbe_test::CODE)?;
     ensure_file(
         &fixtures_dir.join("realmode_vbe_test.bin"),
-        &fixture_sources::realmode_vbe_test::BIN,
+        &realmode_vbe_test,
         check,
     )?;
     ensure_file(
