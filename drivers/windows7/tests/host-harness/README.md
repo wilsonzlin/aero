@@ -71,6 +71,7 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -SerialLogPath ./win7-serial.log `
+  -HttpLogPath ./win7-http.log `
   -TimeoutSeconds 600
 ```
 
@@ -757,6 +758,11 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 ### Python alternative (Linux-friendly)
 
 If you prefer not to depend on PowerShell, `invoke_aero_virtio_win7_tests.py` provides the same core behavior:
+
+Both harnesses can optionally record per-request HTTP logs (useful for CI artifacts):
+
+- PowerShell: `-HttpLogPath ./win7-http.log`
+- Python: `--http-log ./win7-http.log`
 
 ```bash
 python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \

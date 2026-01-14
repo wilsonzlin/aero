@@ -228,6 +228,12 @@ param(
   # Base HTTP path. The harness also serves a deterministic 1 MiB payload at "${HttpPath}-large".
   [string]$HttpPath = "/aero-virtio-selftest",
 
+  # Optional per-request HTTP log output path (useful for CI artifacts).
+  # When set, the harness appends one line per request:
+  #   <method> <path> <status_code> <bytes>
+  [Parameter(Mandatory = $false)]
+  [string]$HttpLogPath = "",
+
   # UDP echo server port on the host (loopback).
   # Guest reaches it at:
   #   10.0.2.2:<port>
@@ -557,7 +563,8 @@ function Get-AeroSelftestLargePath {
 function Try-HandleAeroHttpRequest {
   param(
     [Parameter(Mandatory = $true)] $Listener,
-    [Parameter(Mandatory = $true)] [string]$Path
+    [Parameter(Mandatory = $true)] [string]$Path,
+    [Parameter(Mandatory = $false)] [string]$HttpLogPath = ""
   )
 
   if (-not $Listener.Pending()) { return $false }
@@ -717,6 +724,17 @@ function Try-HandleAeroHttpRequest {
         }
       }
       $stream.Flush()
+
+      if (-not [string]::IsNullOrEmpty($HttpLogPath)) {
+        # Best-effort logging: never fail the harness due to log I/O.
+        try {
+          $bytesSent = if ($isHead) { 0 } else { $bodyBytes.Length }
+          $logMethod = if ([string]::IsNullOrEmpty($method)) { "?" } else { $method }
+          $logPath = if ([string]::IsNullOrEmpty($reqPath)) { "?" } else { $reqPath }
+          $line = "$logMethod $logPath $statusCode $bytesSent$([Environment]::NewLine)"
+          [System.IO.File]::AppendAllText($HttpLogPath, $line, [System.Text.Encoding]::UTF8)
+        } catch { }
+      }
       return $true
     } catch {
       # Best-effort: never fail the harness due to an HTTP socket error; the guest selftest
@@ -757,6 +775,7 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $true)] [int]$TimeoutSeconds,
     [Parameter(Mandatory = $true)] $HttpListener,
     [Parameter(Mandatory = $true)] [string]$HttpPath,
+    [Parameter(Mandatory = $false)] [string]$HttpLogPath = "",
     [Parameter(Mandatory = $false)] $UdpSocket = $null,
     [Parameter(Mandatory = $true)] [bool]$FollowSerial,
     # When $true, require per-test markers so older selftest binaries cannot accidentally pass.
@@ -907,7 +926,7 @@ function Wait-AeroSelftestResult {
   }
 
   while ((Get-Date) -lt $deadline) {
-    $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath
+    $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath -HttpLogPath $HttpLogPath
     if ($null -ne $UdpSocket) {
       $null = Try-HandleAeroUdpEchoRequest -Socket $UdpSocket
     }
@@ -4822,6 +4841,27 @@ if ($DryRun) {
   exit 0
 }
 
+if (-not [string]::IsNullOrEmpty($HttpLogPath)) {
+  # Best-effort: never fail the harness due to HTTP log path issues.
+  try {
+    $httpLogParent = Split-Path -Parent $HttpLogPath
+    if ([string]::IsNullOrEmpty($httpLogParent)) { $httpLogParent = "." }
+    if (-not (Test-Path -LiteralPath $httpLogParent)) {
+      New-Item -ItemType Directory -Path $httpLogParent -Force | Out-Null
+    }
+    $HttpLogPath = Join-Path (Resolve-Path -LiteralPath $httpLogParent).Path (Split-Path -Leaf $HttpLogPath)
+    if (Test-Path -LiteralPath $HttpLogPath) {
+      Remove-Item -LiteralPath $HttpLogPath -Force
+    }
+    # Create an empty file so CI artifacts include it even if the guest never makes requests.
+    [System.IO.File]::WriteAllText($HttpLogPath, "", [System.Text.Encoding]::UTF8)
+    Write-Host "HTTP request log enabled: $HttpLogPath"
+  } catch {
+    Write-Warning "Failed to prepare HTTP request log at '$HttpLogPath' (disabling HTTP log): $_"
+    $HttpLogPath = ""
+  }
+}
+
 Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
 $httpLargePath = Get-AeroSelftestLargePath -Path $HttpPath
 Write-Host "  (large payload at 127.0.0.1:$HttpPort$httpLargePath, 1 MiB deterministic bytes)"
@@ -5197,6 +5237,7 @@ try {
         -TimeoutSeconds $TimeoutSeconds `
         -HttpListener $httpListener `
         -HttpPath $HttpPath `
+        -HttpLogPath $HttpLogPath `
         -UdpSocket $udpSocket `
         -FollowSerial ([bool]$FollowSerial) `
         -RequirePerTestMarkers (-not $VirtioTransitional) `
