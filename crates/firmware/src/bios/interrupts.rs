@@ -835,12 +835,15 @@ fn handle_int13(
                 }
                 let lba_2048 = bus.read_u64(dap_addr + 8);
 
-                let iso_total_2048 = disk.size_in_sectors() / 4;
+                let total_2048 = cdrom
+                    .as_deref()
+                    .map(|cdrom| cdrom.size_in_sectors())
+                    .unwrap_or_else(|| disk.size_in_sectors() / 4);
                 let Some(end_2048) = lba_2048.checked_add(count_2048) else {
                     set_error(bios, cpu, 0x04);
                     return;
                 };
-                if end_2048 > iso_total_2048 {
+                if end_2048 > total_2048 {
                     set_error(bios, cpu, 0x04);
                     return;
                 }
@@ -2605,6 +2608,42 @@ mod tests {
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
         assert_eq!(mem.read_u64(table_addr + 16), iso_sectors);
         assert_eq!(mem.read_u16(table_addr + 24), 2048);
+    }
+
+    #[test]
+    fn int13_ext_verify_cd_uses_cdrom_backend_size_when_provided() {
+        // When a real `CdromDevice` backend is supplied, use its size for bounds-checking rather
+        // than falling back to `disk.size_in_sectors()/4` (which is only meaningful for the
+        // in-memory ISO compatibility backend).
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]); // too small to back even 1 ISO sector
+        let mut cdrom = PatternCdrom::new(16);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4400; // AH=44h extended verify
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
+        mem.write_u16(dap_addr + 4, 0x0000); // dst offset (ignored for verify)
+        mem.write_u16(dap_addr + 6, 0x0000); // dst segment (ignored for verify)
+        mem.write_u64(dap_addr + 8, 0); // ISO LBA
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
     }
 
     #[test]
