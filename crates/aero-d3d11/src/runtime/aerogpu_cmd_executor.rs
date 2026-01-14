@@ -1945,33 +1945,6 @@ impl AerogpuD3d11Executor {
         let empty_bind_group =
             bind_group_cache.get_or_create(&device, &empty_bgl, &empty_bg_entries);
 
-        let (passthrough_vs_dummy_bind_group, passthrough_vs_dummy_bind_group_layout_hash) =
-            if caps.supports_compute && device.limits().max_storage_buffers_per_shader_stage > 0 {
-                let passthrough_vs_bgl_entries = [wgpu::BindGroupLayoutEntry {
-                    binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }];
-                let passthrough_vs_bgl =
-                    bind_group_layout_cache.get_or_create(&device, &passthrough_vs_bgl_entries);
-                let bg = Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("aerogpu_cmd passthrough VS dummy bind group"),
-                    layout: passthrough_vs_bgl.layout.as_ref(),
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                        resource: dummy_storage.as_entire_binding(),
-                    }],
-                }));
-                (Some(bg), Some(passthrough_vs_bgl.hash))
-            } else {
-                (None, None)
-            };
-
         Self {
             caps,
             device,
@@ -2035,8 +2008,8 @@ impl AerogpuD3d11Executor {
             bind_group_cache,
             empty_bind_group_layout_hash,
             empty_bind_group,
-            passthrough_vs_dummy_bind_group,
-            passthrough_vs_dummy_bind_group_layout_hash,
+            passthrough_vs_dummy_bind_group: None,
+            passthrough_vs_dummy_bind_group_layout_hash: None,
             pipeline_layout_cache: PipelineLayoutCache::new(),
             pipeline_cache,
             #[cfg(target_arch = "wasm32")]
@@ -2159,6 +2132,54 @@ impl AerogpuD3d11Executor {
 
     pub fn supports_compute(&self) -> bool {
         self.caps.supports_compute
+    }
+
+    fn ensure_passthrough_vs_dummy_bind_group(&mut self) -> Result<()> {
+        if self.passthrough_vs_dummy_bind_group.is_some() {
+            return Ok(());
+        }
+
+        // The passthrough VS path relies on storage-buffer vertex pulling, which only runs when
+        // compute is supported (expanded draws / GS-output vertex pulling).
+        if !self.caps.supports_compute {
+            bail!(
+                "internal passthrough VS dummy bind group requires compute support, but backend {:?} does not report wgpu::DownlevelFlags::COMPUTE_SHADERS",
+                self.backend
+            );
+        }
+        if self.device.limits().max_storage_buffers_per_shader_stage == 0 {
+            bail!(
+                "internal passthrough VS dummy bind group requires storage buffers, but this device reports max_storage_buffers_per_shader_stage=0"
+            );
+        }
+
+        let passthrough_vs_bgl_entries = [wgpu::BindGroupLayoutEntry {
+            binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }];
+
+        let passthrough_vs_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &passthrough_vs_bgl_entries);
+
+        let bg = Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd passthrough VS dummy bind group"),
+            layout: passthrough_vs_bgl.layout.as_ref(),
+            entries: &[wgpu::BindGroupEntry {
+                binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                resource: self.dummy_storage.as_entire_binding(),
+            }],
+        }));
+
+        self.passthrough_vs_dummy_bind_group = Some(bg);
+        self.passthrough_vs_dummy_bind_group_layout_hash = Some(passthrough_vs_bgl.hash);
+        Ok(())
     }
 
     #[doc(hidden)]
@@ -12531,6 +12552,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                                     let bg = if layout.hash == self.empty_bind_group_layout_hash {
                                         self.empty_bind_group.clone()
                                     } else if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                        self.ensure_passthrough_vs_dummy_bind_group()?;
                                         if let (Some(bg), Some(hash)) = (
                                             self.passthrough_vs_dummy_bind_group.as_ref(),
                                             self.passthrough_vs_dummy_bind_group_layout_hash,
@@ -12871,6 +12893,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                                     let bg = if layout.hash == self.empty_bind_group_layout_hash {
                                         self.empty_bind_group.clone()
                                     } else if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                        self.ensure_passthrough_vs_dummy_bind_group()?;
                                         if let (Some(bg), Some(hash)) = (
                                             self.passthrough_vs_dummy_bind_group.as_ref(),
                                             self.passthrough_vs_dummy_bind_group_layout_hash,
@@ -18364,6 +18387,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     continue;
                 }
                 if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                    self.ensure_passthrough_vs_dummy_bind_group()?;
                     if let (Some(bg), Some(hash)) = (
                         self.passthrough_vs_dummy_bind_group.as_ref(),
                         self.passthrough_vs_dummy_bind_group_layout_hash,

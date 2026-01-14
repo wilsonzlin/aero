@@ -115,7 +115,14 @@ impl BindGroupLayoutCache {
             .collect();
 
         if let Some(layout) = self.layouts.get(&key) {
-            self.hits += 1;
+            // The empty bind group layout is extremely common and often pre-seeded by runtimes
+            // during initialization. Treating it as a regular cache hit makes higher-level cache
+            // stats noisy (every pipeline that needs an empty placeholder group would report a hit).
+            //
+            // Keep `hits` focused on "real" reuse of non-empty layouts.
+            if !key.is_empty() {
+                self.hits += 1;
+            }
             return layout.clone();
         }
 
