@@ -92,6 +92,19 @@ fn malformed_dxbc_shader_chunk_too_large_errors() {
 }
 
 #[test]
+fn malformed_dxbc_shader_chunk_invalid_version_token_errors() {
+    // DXBC wrapper should propagate token-stream errors from inside the shader chunk.
+    let shader_bytes = words_to_bytes(&[0x0001_0200, 0x0000_FFFF]);
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidVersionToken { token: 0x0001_0200 }
+    );
+}
+
+#[test]
 fn malformed_dxbc_truncated_header_errors() {
     let err = D3d9Shader::parse(b"DXBC").unwrap_err();
     assert!(matches!(
@@ -479,6 +492,33 @@ fn parse_ps_3_0_texkill() {
 fn parse_dxbc_wrapped_sm2() {
     let shader_bytes = words_to_bytes(&VS_2_0_PASSTHROUGH);
     let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
+
+    let shader = D3d9Shader::parse(&dxbc).unwrap();
+    assert_eq!(shader.stage, ShaderStage::Vertex);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.instructions.len(), 2);
+}
+
+#[test]
+fn parse_dxbc_wrapped_shex_sm2() {
+    // Some toolchains wrap bytecode in a `SHEX` chunk instead of `SHDR`.
+    let shader_bytes = words_to_bytes(&VS_2_0_PASSTHROUGH);
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHEX"), shader_bytes.as_slice())]);
+
+    let shader = D3d9Shader::parse(&dxbc).unwrap();
+    assert_eq!(shader.stage, ShaderStage::Vertex);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.instructions.len(), 2);
+}
+
+#[test]
+fn parse_dxbc_skips_non_shader_chunks() {
+    // Ensure the parser finds `SHDR` even if other chunks come first.
+    let shader_bytes = words_to_bytes(&VS_2_0_PASSTHROUGH);
+    let dxbc = dxbc_test_utils::build_container(&[
+        (FourCC(*b"ISGN"), &[]),
+        (FourCC(*b"SHDR"), shader_bytes.as_slice()),
+    ]);
 
     let shader = D3d9Shader::parse(&dxbc).unwrap();
     assert_eq!(shader.stage, ShaderStage::Vertex);
