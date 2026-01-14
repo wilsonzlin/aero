@@ -250,8 +250,6 @@ export const AerogpuCmdOpcode = {
   CreateInputLayout: 0x204,
   DestroyInputLayout: 0x205,
   SetInputLayout: 0x206,
-  SetShaderConstantsI: 0x207,
-  SetShaderConstantsB: 0x208,
 
   SetBlendState: 0x300,
   SetDepthStencilState: 0x301,
