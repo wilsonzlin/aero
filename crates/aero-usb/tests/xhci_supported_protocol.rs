@@ -3,11 +3,8 @@ use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 mod util;
 
-use util::TestMemory;
-
 fn find_ext_cap(
     xhci: &mut XhciController,
-    mem: &mut TestMemory,
     first: u64,
     id: u8,
 ) -> Option<u64> {
@@ -16,7 +13,7 @@ fn find_ext_cap(
         if off == 0 {
             return None;
         }
-        let cap0 = xhci.mmio_read_u32(mem, off);
+        let cap0 = xhci.mmio_read_u32(off);
         let cap_id = (cap0 & 0xff) as u8;
         if cap_id == id {
             return Some(off);
@@ -50,23 +47,22 @@ impl UsbDeviceModel for DummyFullSpeedDevice {
 #[test]
 fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let mut xhci = XhciController::with_port_count(2);
-    let mut mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
+    let _mem = util::TestMemory::new(XhciController::MMIO_SIZE as usize);
 
     // Walk the extended capability list starting at HCCPARAMS1.xECP.
-    let hccparams1 = xhci.mmio_read_u32(&mut mem, regs::cap::HCCPARAMS1 as u64);
+    let hccparams1 = xhci.mmio_read_u32(regs::cap::HCCPARAMS1 as u64);
     let xecp_dwords = (hccparams1 >> 16) & 0xffff;
     assert_ne!(xecp_dwords, 0, "HCCPARAMS1.xECP must be non-zero");
     let xecp = (xecp_dwords as u64) * 4;
     let Some(xecp) = find_ext_cap(
         &mut xhci,
-        &mut mem,
         xecp,
         regs::EXT_CAP_ID_SUPPORTED_PROTOCOL,
     ) else {
         panic!("missing Supported Protocol extended capability");
     };
 
-    let cap0 = xhci.mmio_read_u32(&mut mem, xecp);
+    let cap0 = xhci.mmio_read_u32(xecp);
     assert_eq!(
         (cap0 & 0xff) as u8,
         regs::EXT_CAP_ID_SUPPORTED_PROTOCOL,
@@ -74,7 +70,7 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     );
 
     // DWORD3: speed ID count.
-    let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
+    let dword3 = xhci.mmio_read_u32(xecp + 12);
     let psic = (dword3 & 0xf) as u8;
     let psio = ((dword3 >> 16) & 0xffff) as u16;
     assert!(
@@ -89,7 +85,7 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let mut speed_ids = Vec::new();
     let psi_base = xecp + u64::from(psio) * 4;
     for i in 0..psic {
-        let psi = xhci.mmio_read_u32(&mut mem, psi_base + (i as u64) * 4);
+        let psi = xhci.mmio_read_u32(psi_base + (i as u64) * 4);
         speed_ids.push((psi & 0x0f) as u8);
     }
 
@@ -98,7 +94,7 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
 
     // xHCI port registers begin at OperationalBase (CAPLENGTH) + 0x400 with 0x10 bytes per port.
     let portsc_offset = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
-    let portsc = xhci.mmio_read_u32(&mut mem, portsc_offset);
+    let portsc = xhci.mmio_read_u32(portsc_offset);
     let ps = ((portsc >> 10) & 0x0f) as u8;
     assert!(
         speed_ids.contains(&ps),

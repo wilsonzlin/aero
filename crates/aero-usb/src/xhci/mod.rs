@@ -764,7 +764,7 @@ impl XhciController {
         }
     }
 
-    pub fn mmio_read_u32(&mut self, _mem: &mut dyn MemoryBus, offset: u64) -> u32 {
+    pub fn mmio_read_u32(&mut self, offset: u64) -> u32 {
         self.mmio_read(offset, 4) as u32
     }
 

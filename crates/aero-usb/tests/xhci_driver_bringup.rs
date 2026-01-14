@@ -177,14 +177,14 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
 
     // Verify CAPLENGTH is sane and fetch DBOFF/RTSOFF like a real guest driver would.
-    let caplen_hciver = xhci.mmio_read_u32(&mut mem, regs::REG_CAPLENGTH_HCIVERSION);
+    let caplen_hciver = xhci.mmio_read_u32(regs::REG_CAPLENGTH_HCIVERSION);
     assert_eq!(
         (caplen_hciver & 0xff) as u8,
         regs::CAPLENGTH_BYTES,
         "CAPLENGTH mismatch"
     );
-    let dboff = xhci.mmio_read_u32(&mut mem, regs::cap::DBOFF as u64);
-    let rtsoff = xhci.mmio_read_u32(&mut mem, regs::cap::RTSOFF as u64);
+    let dboff = xhci.mmio_read_u32(regs::cap::DBOFF as u64);
+    let rtsoff = xhci.mmio_read_u32(regs::cap::RTSOFF as u64);
 
     // Program operational registers.
     xhci.mmio_write(regs::REG_DCBAAP_LO, 4, dcbaa);
