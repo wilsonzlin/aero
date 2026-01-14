@@ -1041,6 +1041,10 @@ Harness validation (non-normative, QEMU):
 - The guest selftest’s virtio-net test includes deterministic large download/upload transfers and reports throughput
   and integrity fields (`large_*`, `upload_*`) on the `virtio-net` marker. These markers are intended to be used when
   comparing QEMU/device configurations (for example, with offloads enabled vs disabled).
+- The virtio-net marker may also include best-effort interrupt allocation fields (`msi*`, `irq_*`) so performance results
+  can be correlated with INTx vs MSI/MSI-X. The host harness mirrors these fields into stable host-side markers when present:
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|...`
 
 #### 3.5.3 virtio-snd: `eventq` robustness (optional)
 
