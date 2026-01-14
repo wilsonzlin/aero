@@ -305,6 +305,9 @@ function setDohCorsHeaders(
   const allowHeaders = requestedHeadersValue ? `Content-Type, ${requestedHeadersValue}` : "Content-Type";
   res.setHeader("Access-Control-Allow-Headers", allowHeaders);
 
+  // Allow browsers to read Content-Length cross-origin (useful for client-side size enforcement).
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length");
+
   // Cache preflight results in the browser to avoid an extra roundtrip for each DNS query during
   // local development.
   res.setHeader("Access-Control-Max-Age", "600");
