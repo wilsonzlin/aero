@@ -48,8 +48,10 @@ function New-IsoFile {
     $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
     $useRustIso = (-not $LegacyIso) -and -not [string]::IsNullOrWhiteSpace($cargoExe)
     if ($useRustIso) {
-        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
-        $manifestPath = Join-Path $repoRoot "tools\\packaging\\aero_packager\\Cargo.toml"
+        $ciDir = Split-Path -Parent $PSScriptRoot
+        $repoRoot = Split-Path -Parent $ciDir
+        $repoRoot = (Resolve-Path -LiteralPath $repoRoot).Path
+        $manifestPath = [System.IO.Path]::Combine($repoRoot, "tools", "packaging", "aero_packager", "Cargo.toml")
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
             throw "Missing aero_packager Cargo.toml: '$manifestPath'."
         }
