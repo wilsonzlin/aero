@@ -1183,6 +1183,25 @@ def _self_test_inf_alias_drift_excluding_sections_utf16() -> None:
             if drift is None:
                 fail("internal unit-test failed: check_inf_alias_drift_excluding_sections failed to detect functional drift")
 
+            # Regression test: semicolons inside quoted strings are data, not comment delimiters.
+            # A naive comment stripper (e.g. `line.split(";", 1)`) can incorrectly ignore drift
+            # after the semicolon inside quotes (false negative).
+            canonical_body_quotes = "[Version]\r\nSignature=\"$WINDOWS NT$\"\r\n\r\n[Strings]\r\nFoo=\"Aero; Project\"\r\n"
+            alias_body_quotes = "[Version]\r\nSignature=\"$WINDOWS NT$\"\r\n\r\n[Strings]\r\nFoo=\"Aero; Different\"\r\n"
+            canonical.write_bytes((canonical_header + canonical_body_quotes).encode(encoding))
+            alias.write_bytes((alias_header + alias_body_quotes).encode(encoding))
+            drift = check_inf_alias_drift_excluding_sections(
+                canonical=canonical,
+                alias=alias,
+                repo_root=repo_root,
+                label="unit-test",
+                drop_sections=set(),
+            )
+            if drift is None:
+                fail(
+                    "internal unit-test failed: check_inf_alias_drift_excluding_sections failed to detect drift when semicolons appear inside quoted strings"
+                )
+
     _run_case(encoding="utf-16")
     _run_case(encoding="utf-16-le")
 
