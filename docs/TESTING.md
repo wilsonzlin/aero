@@ -125,6 +125,9 @@ The conformance harness compares Aero instruction semantics against native host 
 # Run a small corpus
 cargo xtask conformance --cases 512
 
+# (Optional) same via `just`
+just test-conformance --cases 512
+
 # Reproduce a failure (seed is decimal or 0x-hex; `_` separators allowed)
 cargo xtask conformance \
   --cases 5000 \
