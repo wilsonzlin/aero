@@ -6107,12 +6107,24 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   }
   const FixedFuncVsTableEntry& vs_desc = kFixedFuncVsTable[variant_index];
 
-  // Some fixed-function vertex formats do not yet have fog-capable VS variants.
-  // In that case, disable fog in the fixed-function PS as well so we don't read
-  // an undefined fog coordinate from TEXCOORD0.z.
+  // Some fixed-function vertex formats may not have dedicated fog-capable VS
+  // variants. In that case, disable fog in the fixed-function PS as well so we
+  // don't read an invalid fog coordinate from TEXCOORD0.z.
+  //
+  // Note: pre-transformed (XYZRHW) variants without TEX1 already output a stable
+  // TEXCOORD0 sourced from position in the base VS, so they can support fog
+  // without a dedicated fog VS variant.
   if (use_fog_vs) {
-    const bool fog_vs_available = needs_lighting ? (vs_desc.lit_fog.bytes != nullptr) : (vs_desc.fog.bytes != nullptr);
-    if (!fog_vs_available) {
+    bool fog_coord_available =
+        needs_lighting ? (vs_desc.lit_fog.bytes != nullptr) : (vs_desc.fog.bytes != nullptr);
+    if (!fog_coord_available) {
+      // The fixed-function fog PS reads TEXCOORD0.z. For pre-transformed vertices
+      // without TEX1, the base VS already writes TEXCOORD0 from position, so fog
+      // can still work without a dedicated fog VS variant.
+      const uint32_t base_fvf = fixedfunc_fvf_from_variant(variant);
+      fog_coord_available = fixedfunc_variant_uses_rhw(variant) && ((base_fvf & kD3dFvfTex1) == 0);
+    }
+    if (!fog_coord_available) {
       ps_key.fog_enabled = false;
       use_fog_vs = false;
     }
