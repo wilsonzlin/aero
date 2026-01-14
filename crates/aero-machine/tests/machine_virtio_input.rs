@@ -4,7 +4,8 @@ use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::input::{
-    VirtioInput, VirtioInputEvent, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_B,
+    VirtioInput, VirtioInputEvent, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_B, LED_CAPSL,
+    SYN_REPORT,
     VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::pci::{
@@ -734,5 +735,127 @@ fn virtio_input_eventq_dma_is_gated_on_pci_bus_master_enable() {
     assert_eq!(
         pending, 0,
         "expected all pending events to be delivered once DMA is enabled"
+    );
+}
+
+#[test]
+fn virtio_input_statusq_dma_is_gated_on_pci_bus_master_enable() {
+    let mut m = new_test_machine();
+    enable_a20(&mut m);
+
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+
+    // Enable PCI memory decoding but keep Bus Master Enable (BME) clear initially.
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pci config ports should exist when pc platform is enabled");
+    let cmd = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+    };
+    set_pci_command(&m, bdf, (cmd | (1 << 1)) & !(1 << 2));
+
+    let bar0_base = read_bar0_base(&m, bdf);
+    assert_ne!(bar0_base, 0);
+
+    // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
+
+    // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
+    m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    m.write_physical_u32(bar0_base + COMMON, 0);
+    let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
+    m.write_physical_u32(bar0_base + COMMON, 1);
+    let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure statusq (queue 1) with one buffer containing:
+    // - EV_LED / LED_CAPSL / 1
+    // - EV_SYN / SYN_REPORT / 0
+    let desc = 0x00c0_0000;
+    let avail = 0x00c1_0000;
+    let used = 0x00c2_0000;
+    let buf0 = 0x00c3_0000;
+
+    let mut payload = [0u8; 16];
+    payload[0..2].copy_from_slice(&EV_LED.to_le_bytes());
+    payload[2..4].copy_from_slice(&LED_CAPSL.to_le_bytes());
+    payload[4..8].copy_from_slice(&1i32.to_le_bytes());
+    payload[8..10].copy_from_slice(&EV_SYN.to_le_bytes());
+    payload[10..12].copy_from_slice(&SYN_REPORT.to_le_bytes());
+    payload[12..16].copy_from_slice(&0i32.to_le_bytes());
+
+    let zero_page = vec![0u8; 0x1000];
+    m.write_physical(desc, &zero_page);
+    m.write_physical(avail, &zero_page);
+    m.write_physical(used, &zero_page);
+    m.write_physical(buf0, &payload);
+
+    m.write_physical_u16(bar0_base + COMMON + 0x16, 1); // queue_select = 1
+    m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
+    m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
+    m.write_physical_u64(bar0_base + COMMON + 0x30, used);
+    m.write_physical_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    write_desc(&mut m, desc, 0, buf0, payload.len() as u32, 0);
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, 1);
+    m.write_physical_u16(avail + 4, 0);
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 1, but DMA should be gated while BME=0, so the chain must not be consumed.
+    let notify_off = m.read_physical_u16(bar0_base + COMMON + 0x1e);
+    let notify_addr = bar0_base + NOTIFY + u64::from(notify_off) * NOTIFY_MULT;
+    m.write_physical_u16(notify_addr, 0);
+
+    m.process_virtio_input();
+    assert_eq!(
+        m.read_physical_u16(used + 2),
+        0,
+        "expected statusq not to be consumed while BME=0"
+    );
+    let virtio_kb = m.virtio_input_keyboard().expect("virtio-input enabled");
+    let leds = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .leds_mask();
+    assert_eq!(leds, 0, "expected no LED state update while BME=0");
+
+    // Enable Bus Master Enable and allow the device to DMA. The queued statusq buffer should be
+    // consumed immediately and update the LED state.
+    set_pci_command(&m, bdf, cmd | (1 << 1) | (1 << 2));
+    m.process_virtio_input();
+    assert_eq!(m.read_physical_u16(used + 2), 1);
+
+    let leds = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .leds_mask();
+    assert_eq!(
+        leds, 0x02,
+        "expected Caps Lock LED bit to be set once DMA is enabled"
     );
 }
