@@ -384,7 +384,11 @@ def parse_contract_major_version(md: str) -> int:
 
 def scan_text_tree_for_substrings(root: Path, needles: Iterable[str]) -> list[str]:
     hits: list[str] = []
+    # Windows filenames are case-insensitive, and docs often vary casing. Treat the
+    # needle scan as case-insensitive so we don't accidentally miss deprecated INF
+    # basenames due to casing differences (e.g. `AEROVBLK.INF` vs `aerovblk.inf`).
     needles = tuple(needles)
+    needles_lower = tuple(n.lower() for n in needles)
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -420,11 +424,13 @@ def scan_text_tree_for_substrings(root: Path, needles: Iterable[str]) -> list[st
                         text = data.decode(enc, errors="replace").lstrip("\ufeff")
                     except UnicodeDecodeError:
                         pass
-        if not any(needle in text for needle in needles):
+        text_lower = text.lower()
+        if not any(needle in text_lower for needle in needles_lower):
             continue
         for line_no, line in enumerate(text.splitlines(), start=1):
-            for needle in needles:
-                if needle in line:
+            line_lower = line.lower()
+            for needle, needle_lower in zip(needles, needles_lower):
+                if needle_lower in line_lower:
                     hits.append(f"{path.as_posix()}:{line_no}: contains {needle!r}")
     return hits
 
