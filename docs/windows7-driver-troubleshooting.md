@@ -75,28 +75,45 @@ If you hit a **GPU hang**, **TDR**, or **incorrect rendering** and need to debug
 This produces one or more small, shareable artifacts:
 
 - `cmd.bin`: the raw AeroGPU cmd stream for the submission (`cmd_gpa` region).
-- `alloc.bin`: the raw alloc table for the submission (`alloc_table_gpa` region, when present; AGPU only).
+- `alloc.bin` (or `cmd.bin.alloc_table.bin`): the raw alloc table for the submission (`alloc_table_gpa` region, when present; AGPU only).
 - `cmd.bin.txt`: a small text summary (ring index, fence, GPAs/sizes).
 
 ### 1) Guest (Windows 7): dump the last submission
  
 Run this inside the guest as soon as possible after reproducing:
- 
+
+From a default Aero Guest Tools ISO/zip mount (often `X:`), run the command that matches your guest OS:
+
+- Win7 x64:
+
+```bat
+X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
+```
+
+- Win7 x86:
+
+```bat
+X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
+```
+
+If you want a stable alloc-table output filename (`C:\alloc.bin`), you can use the newer `--dump-last-submit` spelling and explicitly set `--alloc-out`:
+
 ```bat
 :: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).
 :: Win7 x64:
-cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
 :: Win7 x86:
-:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools
+:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin
 
 aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
 ```
 
-Then copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host machine (shared folder, ISO, whatever is convenient).
+Then copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and any alloc-table dump that dbgctl produced (`C:\alloc.bin` if you used `--alloc-out`, or `C:\cmd.bin.alloc_table.bin` when present) to the host machine (shared folder, ISO, whatever is convenient).
 
 Notes:
 
-- On Win7 x64, dbgctl can be the **x86** build running under WOW64; the Guest Tools `drivers\amd64\...\tools\` directory also ships an x86 `aerogpu_dbgctl.exe` so you can run it directly from the mounted media without editing `PATH`.
+- On Win7 x64, `aerogpu_dbgctl.exe` is intentionally an **x86 (32-bit)** binary and runs under **WOW64**
+  (even when invoked from `X:\drivers\amd64\...`).
 - If dbgctl refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
   - `aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin --force`
 - To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
@@ -110,13 +127,13 @@ Notes:
 
 From the repo root on the host:
 
-If `alloc.bin` exists, decode the full submission:
+If `alloc.bin` exists (or you have `cmd.bin.alloc_table.bin`), decode the full submission (replace the `--alloc` path as needed):
 
 ```bash
 cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc alloc.bin
 ```
 
-To inspect the alloc table itself (alloc_id → gpa/size/flags), run:
+To inspect the alloc table itself (alloc_id → gpa/size/flags), run (replace the `alloc.bin` path as needed):
 
 ```bash
 cargo run -p aero-gpu-trace-replay -- decode-alloc-table alloc.bin
@@ -546,9 +563,9 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
 `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory in packaged outputs:
 
 - Guest Tools ISO/zip (often mounted as `X:`):
-  - x64: `X:\\drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe`
-  - x86: `X:\\drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
-- CI-staged packages (host-side): `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
+  - x64: `X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+  - x86: `X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- CI-staged packages (host-side): `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (and `...\x86\...`)
 
 Example (Guest Tools ISO/zip often mounted as `X:`; replace `X:` with your actual drive letter):
 

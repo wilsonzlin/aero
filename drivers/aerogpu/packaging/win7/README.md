@@ -409,8 +409,8 @@ onto Guest Tools media).
 
 Packaged driver directories include dbgctl at:
 
-- CI driver packages (`out\packages\...`): `tools\aerogpu_dbgctl.exe` (for example `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe`)
-- Guest Tools ISO/zip: `drivers\<arch>\aerogpu\tools\aerogpu_dbgctl.exe` (for example `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`)
+- CI driver packages (`out\packages\...`): `tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (for example `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`)
+- Guest Tools ISO/zip: `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (for example `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`)
 
 If `drivers\aerogpu\build\stage_packaging_win7.cmd` finds an already-built dbgctl
 binary at `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`, it will copy
