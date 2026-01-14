@@ -88,13 +88,8 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 //   mov oT0, v2
 //   end
 //
-// Legacy bring-up shader (not currently referenced by the driver):
+// This shader is used by fixed-function emulation for:
 //   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1
-//
-// The current fixed-function implementation CPU-transforms XYZ|DIFFUSE{,TEX1}
-// vertices to clip-space at draw time (see convert_xyz_to_clipspace_locked())
-// and draws them with a passthrough VS (kVsPassthroughPosColorTex1), so this
-// WVP+DIFFUSE+TEX1 VS is retained for reference/potential future use.
 //
 // This shader expects the UMD to upload the *columns* of the row-major
 // `world_view_proj` matrix into a reserved high VS constant range (c240..c243;
@@ -142,13 +137,8 @@ static constexpr uint32_t kVsWvpPosColorTex0[] = {
 //   mov oT0, v0
 //   end
 //
-// Legacy bring-up shader (not currently referenced by the driver):
+// This shader is used by fixed-function emulation for:
 //   D3DFVF_XYZ | D3DFVF_DIFFUSE
-//
-// The current fixed-function implementation CPU-transforms XYZ|DIFFUSE{,TEX1}
-// vertices to clip-space at draw time (see convert_xyz_to_clipspace_locked())
-// and draws them with a passthrough VS (kVsPassthroughPosColor), so this
-// WVP+DIFFUSE VS is retained for reference/potential future use.
 //
 // Notes:
 // - The input declaration supplies POSITION as float3; D3D9 expands it to float4

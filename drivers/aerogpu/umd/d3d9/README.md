@@ -402,9 +402,9 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
-- Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
+- Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
-- XYZ conversion path: `convert_xyz_to_clipspace_locked()` (CPU WVP → clip-space for `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` draws)
+- Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`c240..c243`)
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
     (see supported combinations above), so the draw path can bind a known input layout.
@@ -444,11 +444,7 @@ Implementation notes (bring-up):
   that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` fixed-function FVFs, the bring-up path applies the combined
-  WORLD/VIEW/PROJECTION transform on the CPU at draw time and uploads a clip-space copy of the referenced vertices into a
-  scratch UP buffer (`convert_xyz_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`), then draws using a passthrough
-  VS.
-- For `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse), the fixed-function fallback uses a small internal VS that applies WVP from a
+- For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fallback path uses internal VS variants that apply WVP from a
   reserved VS constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
   - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
     fixed-function and programmable paths.
@@ -469,11 +465,9 @@ Limitations (bring-up):
 - For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
   - The conversion uses the current viewport (`X/Y/Width/Height`) and treats `w = 1/rhw` (with a safe fallback when
     `rhw==0`); `z` is treated as D3D9 NDC depth (`0..1`) and currently ignores viewport `MinZ`/`MaxZ`.
-- For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` fixed-function FVFs, the bring-up path applies WVP on the CPU at draw time
-  (`convert_xyz_to_clipspace_locked()`). Fixed-function lighting/material is still not implemented.
-- For `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse), the bring-up path uses an internal VS that reads WVP from a reserved VS
-  constant range uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
-  (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
+- For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the bring-up path uses internal WVP vertex shaders with a reserved VS
+  constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
+  (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).) Fixed-function lighting/material is still not implemented.
 - The fixed-function fallback's `TEX1` path assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`).
   Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets require user shaders (layout translation
   is supported; fixed-function shading is not).

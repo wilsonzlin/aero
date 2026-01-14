@@ -10,37 +10,22 @@ It is referenced by:
 
 ## Draw-time WVP for fixed-function `D3DFVF_XYZ*` draws
 
-When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD applies WVP in one of two ways depending on the exact FVF:
+When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD binds an internal VS that applies the combined `WORLD0 * VIEW * PROJECTION` transform on the GPU.
 
-### CPU clip-space conversion (XYZ|DIFFUSE{,TEX1})
+Fixed-function `D3DFVF_XYZ*` FVF → internal VS mapping:
 
-For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}`, the draw paths apply the combined `WORLD0 * VIEW * PROJECTION` transform on the **CPU** and upload a clip-space copy of the referenced vertices into a scratch UP vertex buffer:
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE` → `fixedfunc::kVsWvpPosColor`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` → `fixedfunc::kVsWvpPosColorTex0`
+- `D3DFVF_XYZ | D3DFVF_TEX1` → `fixedfunc::kVsTransformPosWhiteTex1` (driver supplies default diffuse white)
 
-- CPU conversion helper: `convert_xyz_to_clipspace_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
-- Used by: `DrawPrimitive*`, `DrawPrimitiveUP`, `DrawIndexedPrimitive*`, `DrawIndexedPrimitiveUP` fixed-function branches.
-- The converted vertex data is drawn using a passthrough VS (so the GPU sees clip-space positions directly).
-- Scratch vertex layout (per-vertex): `float4 clip_xyzw` + `D3DCOLOR diffuse` + optional `float2 texcoord0` (20 or 28 bytes).
-  - The scratch upload binds an internal vertex declaration via `ensure_fixedfunc_fvf_vertex_decl_locked()`. Although the
-    decl uses `POSITIONT` for the `float4` position, the fallback path always binds a VS so it is treated as a semantic
-    rather than invoking true pre-transformed behavior.
+These shaders source the WVP matrix from a reserved high VS constant register range:
 
-### VS WVP constants (XYZ|TEX1, no diffuse)
-
-For `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse), the fixed-function fallback uses an internal VS that multiplies the input position by a WVP matrix sourced from a reserved high VS constant register range:
-
-- Shader: `fixedfunc::kVsTransformPosWhiteTex1` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
 - Computes `WORLD0 * VIEW * PROJECTION` from cached `Device::transform_matrices[...]` and uploads it via `ensure_fixedfunc_wvp_constants_locked()`.
 - Constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`)
   - The constants are intentionally placed in a high register range so they are unlikely to collide with app/user shader constants when switching between fixed-function and programmable paths.
   - The cached matrices are row-major; the upload transposes to column vectors so `dp4(v, cN)` computes row-vector multiplication.
 - Uploads are lazy and gated by `Device::fixedfunc_matrix_dirty`.
 - Upload path: `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` emitting `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`.
-
-This covers the fixed-function FVFs:
-
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE` (CPU clip-space conversion)
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (CPU clip-space conversion)
-- `D3DFVF_XYZ | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white)
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 
@@ -53,6 +38,7 @@ Conversion details (bring-up):
   (`x/y` are treated as pixel-center coordinates).
 - Uses `w = 1/rhw` (with a safe fallback when `rhw==0`) and writes `clip.xyzw = {ndc.x*w, ndc.y*w, z*w, w}`.
 - `z` is treated as D3D9 NDC depth (`0..1`); viewport `MinZ`/`MaxZ` are currently ignored.
+- Converted vertices are uploaded into a scratch UP VB with a simple internal decl (`POSITIONT=float4` + `COLOR0` + optional `TEXCOORD0`), and drawn with a passthrough VS.
 
 This is used by the fixed-function FVFs:
 
@@ -96,11 +82,10 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 - Fixed-function shader binding:
   - `ensure_fixedfunc_pipeline_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
 - Draw-time fixed-function CPU conversions:
-  - `convert_xyz_to_clipspace_locked()` (`XYZ` → clip-space for fixed-function `D3DFVF_XYZ | DIFFUSE{,TEX1}` draws)
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
 - Draw-time fixed-function scratch vertex decl:
   - `ensure_fixedfunc_fvf_vertex_decl_locked()` (`POSITIONT=float4` + `COLOR0` + optional `TEXCOORD0`)
-- Draw-time fixed-function constant upload (only for `D3DFVF_XYZ | D3DFVF_TEX1` fixed-function path):
+- Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
 - Existing CPU vertex processing:
   - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset: XYZ→XYZRHW transform, XYZRHW pass-through, optional diffuse fill, honors `D3DPV_DONOTCOPYDATA`)

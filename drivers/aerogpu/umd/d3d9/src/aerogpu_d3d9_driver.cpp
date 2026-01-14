@@ -15862,10 +15862,10 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // fixed-function GPU state in the AeroGPU command stream. However, the UMD does
 // emulate a minimal fixed-function pipeline:
 // - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior:
-//   - `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}`: CPU-transform vertices to clip-space at
-//     draw time (`convert_xyz_to_clipspace_locked()`).
-//   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse): internal VS using WVP constants in a
-//     reserved range (`c240..c243`).
+//   - Untransformed `D3DFVF_XYZ*`: internal WVP VS variants using a reserved high
+//     VS constant range (`c240..c243`).
+//   - Pre-transformed `D3DFVF_XYZRHW*`: CPU conversion of `XYZRHW` (`POSITIONT`) to
+//     clip-space at draw time (`convert_xyzrhw_to_clipspace_locked()`).
 // - Stage0 texture stage state selects a fixed-function PS variant.
 //
 // Cache state so Set*/Get* and state blocks round-trip for legacy apps that treat
