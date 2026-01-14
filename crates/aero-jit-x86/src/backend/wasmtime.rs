@@ -17,6 +17,16 @@ use crate::wasm::{
 };
 use crate::Tier1Bus;
 
+/// Optional callback invoked after Tier-1 code writes guest memory via the imported slow-path
+/// helpers (`env.mem_write_*`).
+///
+/// This can be used by embedders/tests to forward guest writes into a host-side tracker such as
+/// [`aero_cpu_core::jit::runtime::JitRuntime::on_guest_write`] (self-modifying code coherence).
+///
+/// Note: this callback is only invoked for the imported helper path. It does **not** cover the
+/// inline-TLB direct-store fast path.
+pub type WriteObserver = Box<dyn FnMut(u64, usize)>;
+
 #[derive(Debug, Default, Clone, Copy)]
 struct HostExitState {
     mmio_exit: bool,
@@ -32,6 +42,12 @@ impl HostExitState {
     fn should_rollback(self) -> bool {
         self.mmio_exit || self.jit_exit || self.page_fault
     }
+}
+
+#[derive(Default)]
+struct HostState {
+    exit: HostExitState,
+    write_observer: Option<WriteObserver>,
 }
 
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
@@ -55,8 +71,8 @@ impl HostExitState {
 /// This mirrors the existing sentinel-based contract used by the older baseline WASM codegen.
 pub struct WasmtimeBackend<Cpu> {
     engine: Engine,
-    store: Store<HostExitState>,
-    linker: Linker<HostExitState>,
+    store: Store<HostState>,
+    linker: Linker<HostState>,
     memory: Memory,
     cpu_ptr: i32,
     jit_ctx_ptr: i32,
@@ -94,7 +110,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         config.wasm_simd(true);
         config.memory_reservation(u64::from(memory_pages) * 65_536);
         let engine = Engine::new(&config).expect("create wasmtime engine");
-        let mut store = Store::new(&engine, HostExitState::default());
+        let mut store = Store::new(&engine, HostState::default());
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
@@ -215,6 +231,12 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         }
     }
 
+    /// Installs or clears the optional write observer invoked by the imported `env.mem_write_*`
+    /// helpers.
+    pub fn set_write_observer(&mut self, observer: Option<WriteObserver>) {
+        self.store.data_mut().write_observer = observer;
+    }
+
     /// Instantiate a Tier-1 block WASM module and append it to the internal table.
     ///
     /// Returns the table index used by `JitRuntime` and [`Self::execute`].
@@ -333,7 +355,7 @@ where
             }
         };
 
-        self.store.data_mut().reset();
+        self.store.data_mut().exit.reset();
         self.sync_cpu_to_wasm(cpu.tier1_state());
 
         let ret = func
@@ -341,7 +363,7 @@ where
             .expect("wasm tier1 block trapped");
 
         let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
-        let host_exit = *self.store.data();
+        let host_exit = self.store.data().exit;
         if exit_to_interpreter && host_exit.should_rollback() {
             // Restore guest RAM and CPU state snapshot.
             self.memory
@@ -383,7 +405,7 @@ impl<Cpu> Tier1WasmRegistry for WasmtimeBackend<Cpu> {
     }
 }
 
-fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
+fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
     fn read<const N: usize>(mem: &[u8], addr: usize) -> u64 {
         let mut v = 0u64;
         for i in 0..N {
@@ -452,7 +474,7 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U8,
-                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<1>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -464,7 +486,7 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U16,
-                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<2>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -476,7 +498,7 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U32,
-                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<4>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -488,7 +510,7 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U64,
-                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i64 {
+                move |caller: Caller<'_, HostState>, _cpu_ptr: i32, addr: i64| -> i64 {
                     read::<8>(mem.data(&caller), addr as usize) as i64
                 },
             )
@@ -502,14 +524,20 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                move |mut caller: Caller<'_, HostExitState>,
+                move |mut caller: Caller<'_, HostState>,
                       cpu_ptr: i32,
                       addr: i64,
                       value: i32| {
                     let addr_u = addr as u64;
-                    let mem_mut = mem.data_mut(&mut caller);
-                    write::<1>(mem_mut, addr_u as usize, value as u64);
-                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 1);
+                    {
+                        let mem_mut = mem.data_mut(&mut caller);
+                        write::<1>(mem_mut, addr_u as usize, value as u64);
+                        bump_code_versions(mem_mut, cpu_ptr, addr_u, 1);
+                    }
+
+                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
+                        obs(addr_u, 1);
+                    }
                 },
             )
             .expect("define mem_write_u8");
@@ -520,14 +548,19 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                move |mut caller: Caller<'_, HostExitState>,
+                move |mut caller: Caller<'_, HostState>,
                       cpu_ptr: i32,
                       addr: i64,
                       value: i32| {
                     let addr_u = addr as u64;
-                    let mem_mut = mem.data_mut(&mut caller);
-                    write::<2>(mem_mut, addr_u as usize, value as u64);
-                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 2);
+                    {
+                        let mem_mut = mem.data_mut(&mut caller);
+                        write::<2>(mem_mut, addr_u as usize, value as u64);
+                        bump_code_versions(mem_mut, cpu_ptr, addr_u, 2);
+                    }
+                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
+                        obs(addr_u, 2);
+                    }
                 },
             )
             .expect("define mem_write_u16");
@@ -538,14 +571,19 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                move |mut caller: Caller<'_, HostExitState>,
+                move |mut caller: Caller<'_, HostState>,
                       cpu_ptr: i32,
                       addr: i64,
                       value: i32| {
                     let addr_u = addr as u64;
-                    let mem_mut = mem.data_mut(&mut caller);
-                    write::<4>(mem_mut, addr_u as usize, value as u64);
-                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 4);
+                    {
+                        let mem_mut = mem.data_mut(&mut caller);
+                        write::<4>(mem_mut, addr_u as usize, value as u64);
+                        bump_code_versions(mem_mut, cpu_ptr, addr_u, 4);
+                    }
+                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
+                        obs(addr_u, 4);
+                    }
                 },
             )
             .expect("define mem_write_u32");
@@ -556,28 +594,33 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                move |mut caller: Caller<'_, HostExitState>,
+                move |mut caller: Caller<'_, HostState>,
                       cpu_ptr: i32,
                       addr: i64,
                       value: i64| {
                     let addr_u = addr as u64;
-                    let mem_mut = mem.data_mut(&mut caller);
-                    write::<8>(mem_mut, addr_u as usize, value as u64);
-                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 8);
+                    {
+                        let mem_mut = mem.data_mut(&mut caller);
+                        write::<8>(mem_mut, addr_u as usize, value as u64);
+                        bump_code_versions(mem_mut, cpu_ptr, addr_u, 8);
+                    }
+                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
+                        obs(addr_u, 8);
+                    }
                 },
             )
             .expect("define mem_write_u64");
     }
 }
 
-fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
+fn define_stub_helpers(linker: &mut Linker<HostState>, memory: Memory) {
     // Present for ABI completeness. When called, treat these as runtime exits and roll back state.
     linker
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_PAGE_FAULT,
-            |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, _addr: i64| -> i64 {
-                caller.data_mut().page_fault = true;
+            |mut caller: Caller<'_, HostState>, _cpu_ptr: i32, _addr: i64| -> i64 {
+                caller.data_mut().exit.page_fault = true;
                 JIT_EXIT_SENTINEL_I64
             },
         )
@@ -591,7 +634,7 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MMU_TRANSLATE,
-                move |mut caller: Caller<'_, HostExitState>,
+                move |mut caller: Caller<'_, HostState>,
                       cpu_ptr: i32,
                       jit_ctx_ptr: i32,
                       vaddr: i64,
@@ -635,7 +678,7 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT_MMIO,
-            |mut caller: Caller<'_, HostExitState>,
+            |mut caller: Caller<'_, HostState>,
              _cpu_ptr: i32,
              _vaddr: i64,
              _size: i32,
@@ -643,7 +686,7 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
              _value: i64,
              rip: i64|
              -> i64 {
-                caller.data_mut().mmio_exit = true;
+                caller.data_mut().exit.mmio_exit = true;
                 // Return the RIP the block should resume at after the runtime has handled the
                 // MMIO access. The Tier-1 code generator returns the sentinel separately.
                 rip
@@ -655,8 +698,8 @@ fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT,
-            |mut caller: Caller<'_, HostExitState>, _kind: i32, rip: i64| -> i64 {
-                caller.data_mut().jit_exit = true;
+            |mut caller: Caller<'_, HostState>, _kind: i32, rip: i64| -> i64 {
+                caller.data_mut().exit.jit_exit = true;
                 // Like `jit_exit_mmio`, return the RIP to resume at while the caller uses the
                 // sentinel return value to request an interpreter step.
                 rip

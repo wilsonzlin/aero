@@ -44,7 +44,7 @@ impl Tier1Cpu for CoreCpuState {
 
 mod wasmtime;
 
-pub use wasmtime::WasmtimeBackend;
+pub use wasmtime::{WasmtimeBackend, WriteObserver};
 
 /// A cloneable handle around [`WasmtimeBackend`] so compilation workers can add table entries while
 /// the [`JitRuntime`] owns a copy of the backend.
@@ -80,6 +80,12 @@ impl<Cpu> WasmBackend<Cpu> {
 
     pub fn add_compiled_block(&mut self, wasm_bytes: &[u8]) -> u32 {
         self.0.borrow_mut().add_compiled_block(wasm_bytes)
+    }
+
+    /// Installs or clears the optional guest-write observer invoked by the imported `env.mem_write_*`
+    /// helpers.
+    pub fn set_write_observer(&mut self, observer: Option<WriteObserver>) {
+        self.0.borrow_mut().set_write_observer(observer);
     }
 }
 
