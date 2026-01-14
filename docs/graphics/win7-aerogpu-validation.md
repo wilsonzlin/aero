@@ -446,6 +446,7 @@ On a default Aero Guest Tools ISO/zip mount (often `X:`), dbgctl is shipped at:
 
 - Win7 x64: `X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 - Win7 x86: `X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- Optional top-level tools payload (when present): `X:\tools\aerogpu_dbgctl.exe` (or under `X:\tools\*\aerogpu_dbgctl.exe`)
 
 **Packaged location (relative to the `aerogpu` driver directory / package root):**
 
@@ -457,6 +458,7 @@ Packaged locations:
 - Guest Tools ISO/zip:
   - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
   - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - Optional top-level tools payload (when present): `tools\\aerogpu_dbgctl.exe` (or `tools\\<arch>\\aerogpu_dbgctl.exe`)
 - CI-staged packages (after `ci/make-catalogs.ps1`):
   - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
   - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
