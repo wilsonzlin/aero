@@ -1015,6 +1015,7 @@ fn decode_known_fields(
             } else if stage_ex != 0 {
                 out.insert("reserved0".into(), json!(stage_ex));
             }
+            // Canonical encoding is a scalar u32 per bool register (0 or 1).
             let Some(data_len) = bool_count.checked_mul(4) else {
                 out.insert("decode_error".into(), json!("bool_count overflow"));
                 return out;
