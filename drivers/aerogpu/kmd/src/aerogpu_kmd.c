@@ -12348,9 +12348,41 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         /* Poll for ring head advancement. */
         NTSTATUS testStatus = STATUS_TIMEOUT;
         while (KeQueryInterruptTime() < deadline) {
-            ULONG headNow = (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader)
-                                ? adapter->RingHeader->head
-                                : AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            /*
+             * Be robust against teardown/power transitions while the selftest is running.
+             *
+             * - The ring header pointer can be detached/freed during StopDevice; take RingLock for
+             *   v1 ring head reads.
+             * - Avoid MMIO reads when leaving D0 or when submissions are blocked.
+             */
+            const BOOLEAN poweredOn =
+                ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) ==
+                 DxgkDevicePowerStateD0);
+            const BOOLEAN accepting = (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+            if (!poweredOn || !accepting || AeroGpuIsDeviceErrorLatched(adapter)) {
+                testStatus = STATUS_DEVICE_NOT_READY;
+                break;
+            }
+
+            ULONG headNow = headBefore;
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                KIRQL ringIrql;
+                KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+                if (!adapter->RingVa || adapter->RingSizeBytes < sizeof(struct aerogpu_ring_header) || adapter->RingEntryCount == 0) {
+                    KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+                    testStatus = STATUS_DEVICE_NOT_READY;
+                    break;
+                }
+                const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+                headNow = ringHeader->head;
+                KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+            } else {
+                if (!adapter->Bar0 || adapter->Bar0Length < (AEROGPU_LEGACY_REG_RING_HEAD + sizeof(ULONG))) {
+                    testStatus = STATUS_DEVICE_NOT_READY;
+                    break;
+                }
+                headNow = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            }
             if (headNow != headBefore) {
                 testStatus = STATUS_SUCCESS;
                 break;
@@ -12374,7 +12406,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
             }
             io->passed = 0;
-            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+            if (testStatus == STATUS_TIMEOUT) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+            } else {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+            }
             InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
