@@ -4024,7 +4024,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Tip: to make the guest fail-fast, provision the guest selftest with the guest flag --require-snd-msix "
             "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1); when provisioning via "
             "New-AeroWin7TestImage.ps1, use -RequireSndMsix. "
-            "(this option requires --with-virtio-snd)."
+            "(this option requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd)."
         ),
     )
     parser.add_argument(
@@ -4379,7 +4379,9 @@ def main() -> int:
         parser.error("--virtio-input-vectors must be a positive integer")
 
     if args.require_virtio_snd_msix and not args.enable_virtio_snd:
-        parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
+        parser.error(
+            "--require-virtio-snd-msix requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+        )
     if args.udp_port <= 0 or args.udp_port > 65535:
         parser.error("--udp-port must be in the range 1..65535")
     if args.http_port <= 0 or args.http_port > 65535:
@@ -4400,9 +4402,13 @@ def main() -> int:
 
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:
-            parser.error("--with-snd-buffer-limits requires --with-virtio-snd/--enable-virtio-snd")
+            parser.error(
+                "--with-snd-buffer-limits requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+            )
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
-            parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
+            parser.error(
+                "--virtio-snd-* options require --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+            )
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
     elif args.virtio_snd_audio_backend == "wav":
@@ -4424,7 +4430,9 @@ def main() -> int:
 
     if args.virtio_snd_verify_wav:
         if not args.enable_virtio_snd:
-            parser.error("--virtio-snd-verify-wav requires --with-virtio-snd/--enable-virtio-snd")
+            parser.error(
+                "--virtio-snd-verify-wav requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+            )
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
         if int(args.virtio_snd_wav_peak_threshold) < 0:
@@ -4434,12 +4442,14 @@ def main() -> int:
 
     if args.virtio_transitional and args.enable_virtio_snd:
         parser.error(
-            "--virtio-transitional is incompatible with --with-virtio-snd/--enable-virtio-snd "
+            "--virtio-transitional is incompatible with --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd "
             "(virtio-snd testing requires modern-only virtio-pci + contract revision overrides)"
         )
 
     if args.virtio_snd_vectors is not None and not args.enable_virtio_snd:
-        parser.error("--virtio-snd-vectors requires --with-virtio-snd/--enable-virtio-snd")
+        parser.error(
+            "--virtio-snd-vectors requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+        )
     if need_blk_resize:
         if args.virtio_transitional:
             parser.error(

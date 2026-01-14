@@ -47,7 +47,10 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 h.main()
             # argparse uses exit code 2 for CLI usage errors.
             self.assertEqual(cm.exception.code, 2)
-            self.assertIn("--virtio-snd-vectors requires --with-virtio-snd", stderr.getvalue())
+            self.assertIn(
+                "--virtio-snd-vectors requires --with-virtio-snd/--require-virtio-snd",
+                stderr.getvalue(),
+            )
         finally:
             sys.argv = old_argv
 
@@ -70,7 +73,10 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 h.main()
             # argparse uses exit code 2 for CLI usage errors.
             self.assertEqual(cm.exception.code, 2)
-            self.assertIn("--virtio-snd-vectors requires --with-virtio-snd", stderr.getvalue())
+            self.assertIn(
+                "--virtio-snd-vectors requires --with-virtio-snd/--require-virtio-snd",
+                stderr.getvalue(),
+            )
         finally:
             sys.argv = old_argv
 
@@ -91,7 +97,10 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
             with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
                 h.main()
             self.assertEqual(cm.exception.code, 2)
-            self.assertIn("--with-snd-buffer-limits requires --with-virtio-snd", stderr.getvalue())
+            self.assertIn(
+                "--with-snd-buffer-limits requires --with-virtio-snd/--require-virtio-snd",
+                stderr.getvalue(),
+            )
         finally:
             sys.argv = old_argv
 
