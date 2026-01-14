@@ -2849,6 +2849,8 @@ bool clamp_rect(const RECT* in, uint32_t width, uint32_t height, RECT* out) {
 
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+// D3DFVF_XYZW (float4 POSITION). The position-mask includes the high bit (0x4000).
+constexpr uint32_t kD3dFvfXyzw = 0x00004002u;
 constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfPSize = 0x00000020u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
@@ -2926,6 +2928,7 @@ constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
 constexpr uint8_t kD3dDeclUsageNormal = 3;
+constexpr uint8_t kD3dDeclUsagePSize = 4;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
@@ -3016,7 +3019,7 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
 // - SPECULAR: D3DFVF_SPECULAR (COLOR1)
 // - TEXn: D3DFVF_TEX0..D3DFVF_TEX8 with per-set D3DFVF_TEXCOORDSIZE[1..4]
 //
-// Unsupported bits (e.g. blending weights, PSIZE, XYZW) return false so callers
+// Unsupported bits (e.g. blending weights) return false so callers
 // can fall back to "cache-only" SetFVF behavior (GetFVF/state-block compatibility).
 struct FvfVertexDeclTranslation {
   std::array<D3DVERTEXELEMENT9_COMPAT, 16> elems{};
@@ -3079,10 +3082,11 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
 
   // Reject FVFs that include bits we don't understand. This keeps behavior
   // deterministic and avoids binding mismatched layouts for complicated legacy
-  // formats (e.g. XYZB*, XYZW, PSIZE, blend indices).
+  // formats (e.g. XYZB*, blend indices).
   constexpr uint32_t kSupportedMask =
       kD3dFvfPositionMask |
       kD3dFvfNormal |
+      kD3dFvfPSize |
       kD3dFvfDiffuse |
       kD3dFvfSpecular |
       kD3dFvfTexCountMask |
@@ -3095,7 +3099,8 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
   const uint32_t pos = fvf & kD3dFvfPositionMask;
   const bool pos_xyz = (pos == kD3dFvfXyz);
   const bool pos_xyzrhw = (pos == kD3dFvfXyzRhw);
-  if (!pos_xyz && !pos_xyzrhw) {
+  const bool pos_xyzw = (pos == kD3dFvfXyzw);
+  if (!pos_xyz && !pos_xyzrhw && !pos_xyzw) {
     return false;
   }
 
@@ -3133,6 +3138,11 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
       return false;
     }
     offset += 12;
+  } else if (pos_xyzw) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat4, kD3dDeclUsagePosition, 0)) {
+      return false;
+    }
+    offset += 16;
   } else {
     if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat4, kD3dDeclUsagePositionT, 0)) {
       return false;
@@ -3145,6 +3155,12 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
       return false;
     }
     offset += 12;
+  }
+  if (fvf & kD3dFvfPSize) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat1, kD3dDeclUsagePSize, 0)) {
+      return false;
+    }
+    offset += 4;
   }
   if (fvf & kD3dFvfDiffuse) {
     if (!add(/*stream=*/0, offset, kD3dDeclTypeD3dColor, kD3dDeclUsageColor, 0)) {
@@ -6271,9 +6287,12 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // when requested by the destination decl) and basic TEX0 relocation.
   //
   // For deterministic output, the fixed-function subset clears the full
-  // destination vertex stride (including padding / extra decl elements) when
-  // D3DPV_DONOTCOPYDATA is not set. When D3DPV_DONOTCOPYDATA is set, the UMD
-  // writes only POSITIONT and preserves all other destination bytes.
+  // destination vertex stride (including padding / extra decl elements, e.g.
+  // TEX0 present in the destination decl but not written by the source FVF) when
+  // D3DPV_DONOTCOPYDATA is not set.
+  //
+  // When D3DPV_DONOTCOPYDATA is set, the UMD writes only POSITIONT and preserves
+  // all other destination bytes.
   if (!(fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }

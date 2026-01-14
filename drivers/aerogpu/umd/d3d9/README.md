@@ -410,8 +410,9 @@ FVF-derived input layouts for user shaders:
 - `device_set_fvf()` therefore also translates a broader common subset of FVFs into an internal vertex declaration
   (input layout) even when the fixed-function fallback is not active.
 - Supported for **input layout translation only** (does *not* imply fixed-function lighting/stage-state emulation):
-  - `D3DFVF_XYZ` or `D3DFVF_XYZRHW`
+  - `D3DFVF_XYZ`, `D3DFVF_XYZW`, or `D3DFVF_XYZRHW`
   - optional `D3DFVF_NORMAL`
+  - optional `D3DFVF_PSIZE`
   - optional `D3DFVF_DIFFUSE` (COLOR0) and `D3DFVF_SPECULAR` (COLOR1)
   - `D3DFVF_TEX0..D3DFVF_TEX8` with per-set `D3DFVF_TEXCOORDSIZE1/2/3/4`
   - Note: internal decls are cached per-device keyed by the full FVF DWORD and capped at 256 entries.
