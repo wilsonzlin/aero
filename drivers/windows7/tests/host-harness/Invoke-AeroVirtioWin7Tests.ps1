@@ -473,16 +473,16 @@ if ($VirtioMsixVectors -lt 0) {
   throw "-VirtioMsixVectors must be a positive integer."
 }
 if ($VirtioNetVectors -lt 0) {
-  throw "-VirtioNetVectors must be a positive integer."
+  throw "-VirtioNetVectors must be a positive integer. Alias: -VirtioNetMsixVectors."
 }
 if ($VirtioBlkVectors -lt 0) {
-  throw "-VirtioBlkVectors must be a positive integer."
+  throw "-VirtioBlkVectors must be a positive integer. Alias: -VirtioBlkMsixVectors."
 }
 if ($VirtioSndVectors -lt 0) {
-  throw "-VirtioSndVectors must be a positive integer."
+  throw "-VirtioSndVectors must be a positive integer. Alias: -VirtioSndMsixVectors."
 }
 if ($VirtioInputVectors -lt 0) {
-  throw "-VirtioInputVectors must be a positive integer."
+  throw "-VirtioInputVectors must be a positive integer. Alias: -VirtioInputMsixVectors."
 }
 
 if ($RequireIntx -and $RequireMsi) {
@@ -497,7 +497,7 @@ if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
-  throw "-VirtioSndVectors requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
+  throw "-VirtioSndVectors requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd. Alias: -VirtioSndMsixVectors."
 }
 
 function Resolve-AeroWin7QemuMsixVectors {

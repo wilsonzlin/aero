@@ -38,25 +38,25 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
       - Pair these with host-side QMP injection flags (so the harness injects events and requires the corresponding
         markers to PASS):
-        - keyboard/mouse: PowerShell `-WithInputEvents` / Python `--with-input-events`
+        - keyboard/mouse: PowerShell `-WithInputEvents` (aliases: `-WithVirtioInputEvents`, `-RequireVirtioInputEvents`, `-EnableVirtioInputEvents`) / Python `--with-input-events`
           (aliases: `--with-virtio-input-events`, `--require-virtio-input-events`, `--enable-virtio-input-events`)
-        - wheel: PowerShell `-WithInputWheel` / Python `--with-input-wheel`
+        - wheel: PowerShell `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-RequireVirtioInputWheel`, `-EnableVirtioInputWheel`) / Python `--with-input-wheel`
           (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
         - extended events: PowerShell `-WithInputEventsExtended` / Python `--with-input-events-extended`
-          (alias: `--with-input-events-extra`)
-        - media keys: PowerShell `-WithInputMediaKeys` / Python `--with-input-media-keys`
+          (alias: PowerShell `-WithInputEventsExtra`; Python `--with-input-events-extra`)
+        - media keys: PowerShell `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-RequireVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`) / Python `--with-input-media-keys`
           (aliases: `--with-virtio-input-media-keys`, `--require-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
-        - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led`
+        - LED/statusq: PowerShell `-WithInputLed` (aliases: `-WithVirtioInputLed`, `-RequireVirtioInputLed`, `-EnableVirtioInputLed`) / Python `--with-input-led`
           (aliases: `--with-virtio-input-led`, `--require-virtio-input-led`, `--enable-virtio-input-led`; compat:
-          `-WithInputLeds` / `--with-input-leds`; compat aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`,
+          PowerShell `-WithInputLeds` (aliases: `-WithVirtioInputLeds`, `-RequireVirtioInputLeds`, `-EnableVirtioInputLeds`) / Python `--with-input-leds`; compat aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`,
           `--enable-virtio-input-leds`; no QMP injection required)
-        - tablet: PowerShell `-WithInputTabletEvents` / Python `--with-input-tablet-events`
+        - tablet: PowerShell `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-RequireVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`, `-WithTabletEvents`, `-EnableTabletEvents`) / Python `--with-input-tablet-events`
           (aliases: `--with-tablet-events`, `--with-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`, `--enable-virtio-input-tablet-events`)
     - To enable the optional end-to-end virtio-net link flap regression test (QMP `set_link` + guest link state polling),
       the guest selftest must be provisioned with:
       - `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`)
       - Pair this with the host flag:
-        - PowerShell: `-WithNetLinkFlap`
+        - PowerShell: `-WithNetLinkFlap` (aliases: `-WithVirtioNetLinkFlap`, `-RequireVirtioNetLinkFlap`, `-EnableVirtioNetLinkFlap`)
         - Python: `--with-net-link-flap` (aliases: `--with-virtio-net-link-flap`, `--require-virtio-net-link-flap`, `--enable-virtio-net-link-flap`)
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
@@ -66,11 +66,11 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       (`virtio-snd-duplex`) that runs render + capture concurrently
     - the guest selftest also includes an optional WASAPI buffer sizing stress test (`virtio-snd-buffer-limits`) that can be
       enabled via `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) and required by the
-      host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`
+      host harness with `-WithSndBufferLimits` (aliases: `-WithVirtioSndBufferLimits`, `-RequireVirtioSndBufferLimits`, `-EnableSndBufferLimits`, `-EnableVirtioSndBufferLimits`) / `--with-snd-buffer-limits`
       (aliases: `--with-virtio-snd-buffer-limits`, `--require-virtio-snd-buffer-limits`, `--enable-snd-buffer-limits`, `--enable-virtio-snd-buffer-limits`)
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
     - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
-      do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (aliases: `--require-virtio-snd`, `--enable-virtio-snd`) (capture is required)
+      do not use this when running the harness with `-WithVirtioSnd` (aliases: `-RequireVirtioSnd`, `-EnableVirtioSnd`) / `--with-virtio-snd` (aliases: `--require-virtio-snd`, `--enable-virtio-snd`) (capture is required)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -208,7 +208,7 @@ Provisioning:
 
 Running (requires QMP; enabled automatically by the flag):
 
-- PowerShell harness: `-WithNetLinkFlap`
+- PowerShell harness: `-WithNetLinkFlap` (aliases: `-WithVirtioNetLinkFlap`, `-RequireVirtioNetLinkFlap`, `-EnableVirtioNetLinkFlap`)
 - Python harness: `--with-net-link-flap` (aliases: `--with-virtio-net-link-flap`, `--require-virtio-net-link-flap`, `--enable-virtio-net-link-flap`)
 
 Behavior:
@@ -565,7 +565,7 @@ To enable end-to-end testing:
 
 1. Provision the guest image so the scheduled selftest runs with `--test-input-events`
    (for example via `New-AeroWin7TestImage.ps1 -TestInputEvents`).
-2. Run the host harness with `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events`
+2. Run the host harness with `-WithInputEvents` (aliases: `-WithVirtioInputEvents`, `-RequireVirtioInputEvents`, `-EnableVirtioInputEvents`) / `--with-input-events`
    (aliases: `--with-virtio-input-events`, `--require-virtio-input-events`, `--enable-virtio-input-events`) so it injects keyboard/mouse events via QMP and requires the guest marker:
    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
@@ -630,7 +630,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 To also regression-test **mouse scrolling** end-to-end (including **horizontal scrolling** via `REL_HWHEEL` /
 HID Consumer `AC Pan`), run the harness with:
 
-- PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
+- PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-RequireVirtioInputWheel`, `-EnableVirtioInputWheel`)
 - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 
 This:
@@ -691,7 +691,7 @@ the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INP
 To regression-test **Consumer Control / media keys** end-to-end (virtio-input event → KMDF HID → user-mode HID report read),
 run the harness with:
 
-- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
+- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-RequireVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
 - Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--require-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
 
 Guest image requirement:
@@ -783,12 +783,12 @@ To enable the check:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-led`
    (for example via `New-AeroWin7TestImage.ps1 -TestInputLed`, or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`).
    - Compatibility: `--test-input-leds` / `-TestInputLeds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
-2. Run the host harness with `-WithInputLed` / `--with-input-led`
+2. Run the host harness with `-WithInputLed` (aliases: `-WithVirtioInputLed`, `-RequireVirtioInputLed`, `-EnableVirtioInputLed`) / `--with-input-led`
    (aliases: `--with-virtio-input-led`, `--require-virtio-input-led`, `--enable-virtio-input-led`) so it requires the guest marker:
    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`.
-   - Compatibility: `-WithInputLeds` / `--with-input-leds`
-     (aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`, `--enable-virtio-input-leds`) instead requires
-     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
+   - Compatibility: `-WithInputLeds` (aliases: `-WithVirtioInputLeds`, `-RequireVirtioInputLeds`, `-EnableVirtioInputLeds`) / `--with-input-leds`
+      (aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`, `--enable-virtio-input-leds`) instead requires
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
 
 When enabled, a guest `virtio-input-led|SKIP|flag_not_set` / `virtio-input-leds|SKIP|flag_not_set` causes a hard failure:
 
@@ -843,10 +843,10 @@ To enable end-to-end testing:
      to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
      - The optional `*.inf.disabled` filename alias is not required for fallback binding; only include it if you are
        explicitly validating the filename-alias workflow.
-2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
+2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-RequireVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
          `-WithTabletEvents`, `-EnableTabletEvents`) /
          `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-        `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+         `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
     - requires the guest marker to PASS
@@ -854,7 +854,7 @@ To enable end-to-end testing:
 To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
 enumeration), use:
  
-- PowerShell: `-WithVirtioTablet`
+- PowerShell: `-WithVirtioTablet` (alias: `-EnableVirtioTablet`)
 - Python: `--with-virtio-tablet`
 
 The injected sequence is:
@@ -910,7 +910,7 @@ To enable end-to-end testing:
    - When generating provisioning media with `New-AeroWin7TestImage.ps1`, you can bake this in via:
      `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
 2. Run the host harness with blk-resize enabled so it:
-    - PowerShell: `-WithBlkResize`
+    - PowerShell: `-WithBlkResize` (aliases: `-WithVirtioBlkResize`, `-RequireVirtioBlkResize`, `-EnableVirtioBlkResize`)
     - Python: `--with-blk-resize` (aliases: `--with-virtio-blk-resize`, `--require-virtio-blk-resize`, `--enable-virtio-blk-resize`)
     - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
     - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
@@ -966,7 +966,7 @@ To enable end-to-end testing:
       `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
 2. Run the host harness with blk-reset gating enabled so it requires the guest marker to PASS
    (and treats SKIP/FAIL/missing as failure):
-   - PowerShell: `-WithBlkReset`
+   - PowerShell: `-WithBlkReset` (aliases: `-WithVirtioBlkReset`, `-RequireVirtioBlkReset`, `-EnableVirtioBlkReset`)
    - Python: `--with-blk-reset` (aliases: `--with-virtio-blk-reset`, `--require-virtio-blk-reset`, `--enable-virtio-blk-reset`)
 
 The guest emits one of:
@@ -1085,6 +1085,7 @@ To enable it end-to-end:
    for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 2. Run the host harness with:
    - PowerShell: `-WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd -WithSndBufferLimits`
+     (aliases for `-WithSndBufferLimits`: `-WithVirtioSndBufferLimits`, `-RequireVirtioSndBufferLimits`, `-EnableSndBufferLimits`, `-EnableVirtioSndBufferLimits`)
    - Python: `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd --with-snd-buffer-limits`
      (aliases for `--with-snd-buffer-limits`: `--with-virtio-snd-buffer-limits`, `--require-virtio-snd-buffer-limits`,
      `--enable-snd-buffer-limits`, `--enable-virtio-snd-buffer-limits`)
@@ -1668,8 +1669,8 @@ These counters are queried from the driver via the `\\.\AeroVirtioNetDiag` diagn
 By default this marker is informational and does not affect PASS/FAIL. This marker may be present even when checksum
 offload is not actually exercised (for example `tx_csum=0`).
 
-- PowerShell: `-RequireNetCsumOffload`
-- PowerShell: `-RequireNetUdpCsumOffload` (UDP TX only)
+- PowerShell: `-RequireNetCsumOffload` (alias: `-RequireVirtioNetCsumOffload`)
+- PowerShell: `-RequireNetUdpCsumOffload` (alias: `-RequireVirtioNetUdpCsumOffload`) (UDP TX only)
 - Python: `--require-net-csum-offload` (alias: `--require-virtio-net-csum-offload`)
 - Python: `--require-net-udp-csum-offload` (alias: `--require-virtio-net-udp-csum-offload`) (UDP TX only)
  
