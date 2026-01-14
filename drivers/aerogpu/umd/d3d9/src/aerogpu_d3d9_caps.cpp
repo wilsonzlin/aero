@@ -218,6 +218,27 @@ struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpC
 #ifndef D3DTEXOPCAPS_MODULATE
   #define D3DTEXOPCAPS_MODULATE 0x00000008u
 #endif
+#ifndef D3DTEXOPCAPS_MODULATE2X
+  #define D3DTEXOPCAPS_MODULATE2X 0x00000010u
+#endif
+#ifndef D3DTEXOPCAPS_MODULATE4X
+  #define D3DTEXOPCAPS_MODULATE4X 0x00000020u
+#endif
+#ifndef D3DTEXOPCAPS_ADD
+  #define D3DTEXOPCAPS_ADD 0x00000040u
+#endif
+#ifndef D3DTEXOPCAPS_ADDSIGNED
+  #define D3DTEXOPCAPS_ADDSIGNED 0x00000080u
+#endif
+#ifndef D3DTEXOPCAPS_SUBTRACT
+  #define D3DTEXOPCAPS_SUBTRACT 0x00000200u
+#endif
+#ifndef D3DTEXOPCAPS_BLENDDIFFUSEALPHA
+  #define D3DTEXOPCAPS_BLENDDIFFUSEALPHA 0x00000800u
+#endif
+#ifndef D3DTEXOPCAPS_BLENDTEXTUREALPHA
+  #define D3DTEXOPCAPS_BLENDTEXTUREALPHA 0x00001000u
+#endif
 
 #ifndef D3DPBLENDCAPS_DESTALPHA
   #define D3DPBLENDCAPS_DESTALPHA 0x00000040u
@@ -392,7 +413,14 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
                        D3DTEXOPCAPS_SELECTARG1 |
                        D3DTEXOPCAPS_SELECTARG2 |
-                       D3DTEXOPCAPS_MODULATE;
+                       D3DTEXOPCAPS_MODULATE |
+                       D3DTEXOPCAPS_MODULATE2X |
+                       D3DTEXOPCAPS_MODULATE4X |
+                       D3DTEXOPCAPS_ADD |
+                       D3DTEXOPCAPS_SUBTRACT |
+                       D3DTEXOPCAPS_ADDSIGNED |
+                       D3DTEXOPCAPS_BLENDTEXTUREALPHA |
+                       D3DTEXOPCAPS_BLENDDIFFUSEALPHA;
 
   out->MaxTextureWidth = 4096;
   out->MaxTextureHeight = 4096;

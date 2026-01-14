@@ -7573,7 +7573,7 @@ bool TestStage0NoTextureCanonicalizesAndReusesShader() {
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     initial_ps = dev->ps;
-    initial_sig_cache_size = dev->fixedfunc_stage0_ps_variant_cache.size();
+    initial_sig_cache_size = dev->fixedfunc_ps_variant_cache.size();
     if (!Check(initial_ps != nullptr, "PS bound after initial no-texture draw")) {
       return false;
     }
@@ -7598,7 +7598,7 @@ bool TestStage0NoTextureCanonicalizesAndReusesShader() {
     if (!Check(dev->ps == initial_ps, "PS unchanged after stage0 state change (texture0 null)")) {
       return false;
     }
-    if (!Check(dev->fixedfunc_stage0_ps_variant_cache.size() == initial_sig_cache_size,
+    if (!Check(dev->fixedfunc_ps_variant_cache.size() == initial_sig_cache_size,
                "stage0 signature cache size unchanged (texture0 null)")) {
       return false;
     }
@@ -7875,7 +7875,7 @@ bool TestStage0VariantCacheEvictsOldShaders() {
   size_t cached_variants = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+    for (Shader* ps : dev->fixedfunc_ps_variants) {
       if (ps) {
         ++cached_variants;
       }

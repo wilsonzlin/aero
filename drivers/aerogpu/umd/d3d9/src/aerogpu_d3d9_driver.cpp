@@ -4713,11 +4713,11 @@ static bool emit_set_shader_constants_f_locked(
     uint32_t vec4_count);
 
 // -----------------------------------------------------------------------------
-// Fixed-function fallback shader selection (stage0 COLOROP/ALPHAOP)
+// Fixed-function fallback shader selection (texture stage state -> ps_2_0)
 // -----------------------------------------------------------------------------
 namespace {
 
-// Stage0 `D3DTSS_*` (numeric values from d3d9types.h).
+// Texture stage state IDs (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
 constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
 constexpr uint32_t kD3dTssColorArg2 = 3u;  // D3DTSS_COLORARG2
@@ -4725,7 +4725,7 @@ constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
 constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
 constexpr uint32_t kD3dTssAlphaArg2 = 6u;  // D3DTSS_ALPHAARG2
 
-// Stage0 `D3DTOP_*` (numeric values from d3d9types.h).
+// D3DTOP_* (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;     // D3DTOP_DISABLE
 constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
 constexpr uint32_t kD3dTopSelectArg2 = 3u;  // D3DTOP_SELECTARG2
@@ -4738,10 +4738,10 @@ constexpr uint32_t kD3dTopSubtract = 10u;   // D3DTOP_SUBTRACT
 constexpr uint32_t kD3dTopBlendDiffuseAlpha = 12u;  // D3DTOP_BLENDDIFFUSEALPHA
 constexpr uint32_t kD3dTopBlendTextureAlpha = 13u;  // D3DTOP_BLENDTEXTUREALPHA
 
-// Stage0 `D3DTA_*` source selector/modifiers (numeric values from d3d9types.h).
+// `D3DTA_*` source selector/modifiers (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTaSelectMask = 0xFu;  // D3DTA_SELECTMASK
 constexpr uint32_t kD3dTaDiffuse = 0u;       // D3DTA_DIFFUSE
-constexpr uint32_t kD3dTaCurrent = 1u;       // D3DTA_CURRENT (stage0 treated as DIFFUSE)
+constexpr uint32_t kD3dTaCurrent = 1u;       // D3DTA_CURRENT
 constexpr uint32_t kD3dTaTexture = 2u;       // D3DTA_TEXTURE
 constexpr uint32_t kD3dTaTFactor = 3u;       // D3DTA_TFACTOR
 constexpr uint32_t kD3dTaComplement = 0x10u;      // D3DTA_COMPLEMENT
@@ -4751,11 +4751,14 @@ constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;  // D3DTA_ALPHAREPLICATE
 // *high* pixel-shader constant register. This avoids clobbering app-provided PS
 // constants in the commonly used low range (especially c0).
 constexpr uint32_t kFixedfuncStage0TextureFactorPsRegister = 255u; // c255
+// Keep this in sync with the caps we advertise (MaxTextureBlendStages).
+constexpr uint32_t kFixedfuncMaxTextureStages = 4u;
 
 enum class FixedfuncStageArgSrc : uint8_t {
   Diffuse = 0,
-  Texture = 1,
-  TextureFactor = 2,
+  Current = 1,
+  Texture = 2,
+  TextureFactor = 3,
 };
 
 struct FixedfuncStageArg {
@@ -4784,13 +4787,16 @@ struct FixedfuncStageState {
   FixedfuncStageArg arg2{};
 };
 
-struct FixedfuncStage0Key {
+struct FixedfuncPixelStageKey {
   FixedfuncStageState color{};
   FixedfuncStageState alpha{};
-  // True when the fixed-function stage state requires sampling texture0 or using
-  // its alpha channel (e.g., BLENDTEXTUREALPHA).
   bool uses_texture = false;
-  // True when stage state uses D3DRS_TEXTUREFACTOR (passed to the PS as `c255`).
+  bool uses_tfactor = false; // True when stage state uses D3DRS_TEXTUREFACTOR (passed to the PS as c255).
+};
+
+struct FixedfuncPixelShaderKey {
+  std::array<FixedfuncPixelStageKey, kFixedfuncMaxTextureStages> stages{};
+  uint32_t stage_count = 0;
   bool uses_tfactor = false;
   // False when the stage-state combination is not supported by the fixed-function
   // fallback path; callers must treat this as D3DERR_INVALIDCALL at draw time.
@@ -4817,19 +4823,41 @@ uint64_t fixedfunc_state_signature(const FixedfuncStageState& st) {
          (fixedfunc_arg_signature(st.arg2) << 8);
 }
 
-uint64_t fixedfunc_stage0_signature(const FixedfuncStage0Key& key) {
-  // Pack stage0 fixed-function state into a stable signature so we can reuse a
+uint64_t fixedfunc_ps_signature(const FixedfuncPixelShaderKey& key) {
+  // Hash fixed-function stage state into a stable signature so we can reuse a
   // cached PS without rebuilding the ps_2_0 token stream each time.
   //
-  // Values are canonicalized by `fixedfunc_stage0_key_locked()` (unused args are
-  // ignored, CURRENT is treated as DIFFUSE, and texture-using states are forced
-  // to DISABLE when texture0 is unbound), so different raw stage-state inputs
-  // that map to identical effective behavior share a signature.
-  uint64_t sig = fixedfunc_state_signature(key.color);
-  sig |= fixedfunc_state_signature(key.alpha) << 12;
-  sig |= static_cast<uint64_t>(key.uses_texture ? 1u : 0u) << 24;
-  sig |= static_cast<uint64_t>(key.uses_tfactor ? 1u : 0u) << 25;
-  return sig;
+  // This intentionally hashes only the *effective* stages: fixed-function stage
+  // disabling is keyed off COLOROP, so stage N with COLOROP=DISABLE disables that
+  // stage and all subsequent stages. `fixedfunc_ps_key_locked()` canonicalizes
+  // this by truncating `stage_count` accordingly.
+  constexpr uint64_t kFnvOffset = 14695981039346656037ull;
+  constexpr uint64_t kFnvPrime = 1099511628211ull;
+  uint64_t h = kFnvOffset;
+  auto write_u8 = [&](uint8_t v) {
+    h ^= static_cast<uint64_t>(v);
+    h *= kFnvPrime;
+  };
+  auto write_u32 = [&](uint32_t v) {
+    write_u8(static_cast<uint8_t>((v >> 0) & 0xFFu));
+    write_u8(static_cast<uint8_t>((v >> 8) & 0xFFu));
+    write_u8(static_cast<uint8_t>((v >> 16) & 0xFFu));
+    write_u8(static_cast<uint8_t>((v >> 24) & 0xFFu));
+  };
+
+  write_u32(key.stage_count);
+  write_u8(key.uses_tfactor ? 1u : 0u);
+  for (uint32_t i = 0; i < key.stage_count && i < kFixedfuncMaxTextureStages; ++i) {
+    const auto& st = key.stages[i];
+    write_u32(static_cast<uint32_t>(fixedfunc_state_signature(st.color)));
+    write_u32(static_cast<uint32_t>(fixedfunc_state_signature(st.alpha)));
+    // Include whether the stage actually samples its texture. This is redundant
+    // with the arg/op encoding, but keeps the hash resilient if the internal
+    // lowering logic changes (e.g. future canonicalization).
+    write_u8(st.uses_texture ? 1u : 0u);
+    write_u8(st.uses_tfactor ? 1u : 0u);
+  }
+  return h;
 }
 
 bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) {
@@ -4842,7 +4870,7 @@ bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) 
   return std::memcmp(sh->bytecode.data(), bytes, size) == 0;
 }
 
-bool fixedfunc_decode_arg(uint32_t arg, FixedfuncStageArg* out) {
+bool fixedfunc_decode_arg(uint32_t stage, uint32_t arg, FixedfuncStageArg* out) {
   if (!out) {
     return false;
   }
@@ -4856,8 +4884,12 @@ bool fixedfunc_decode_arg(uint32_t arg, FixedfuncStageArg* out) {
   out->alpha_replicate = (arg & kD3dTaAlphaReplicate) != 0;
   switch (arg & kD3dTaSelectMask) {
     case kD3dTaDiffuse:
-    case kD3dTaCurrent: // Stage0 CURRENT is diffuse.
       out->src = FixedfuncStageArgSrc::Diffuse;
+      return true;
+    case kD3dTaCurrent:
+      // Stage0 CURRENT is equivalent to DIFFUSE. Canonicalize it so different
+      // raw stage-state inputs that lower to identical behavior share a cache key.
+      out->src = (stage == 0) ? FixedfuncStageArgSrc::Diffuse : FixedfuncStageArgSrc::Current;
       return true;
     case kD3dTaTexture:
       out->src = FixedfuncStageArgSrc::Texture;
@@ -4995,94 +5027,90 @@ HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
   return S_OK;
 }
 
-FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
-  FixedfuncStage0Key key{};
+FixedfuncPixelShaderKey fixedfunc_ps_key_locked(const Device* dev) {
+  FixedfuncPixelShaderKey key{};
   if (!dev) {
     return key;
   }
 
-  const bool has_tex0 = (dev->textures[0] != nullptr);
+  key.stage_count = 0;
+  key.uses_tfactor = false;
+  key.supported = true;
 
-  const uint32_t colorop = dev->texture_stage_states[0][kD3dTssColorOp];
-  const uint32_t colorarg1 = dev->texture_stage_states[0][kD3dTssColorArg1];
-  const uint32_t colorarg2 = dev->texture_stage_states[0][kD3dTssColorArg2];
-  const uint32_t alphaop = dev->texture_stage_states[0][kD3dTssAlphaOp];
-  const uint32_t alphaarg1 = dev->texture_stage_states[0][kD3dTssAlphaArg1];
-  const uint32_t alphaarg2 = dev->texture_stage_states[0][kD3dTssAlphaArg2];
+  for (uint32_t stage = 0; stage < kFixedfuncMaxTextureStages; ++stage) {
+    FixedfuncPixelStageKey st{};
 
-  if (!fixedfunc_decode_op(colorop, &key.color.op)) {
-    key.supported = false;
-    return key;
-  }
+    const uint32_t colorop = dev->texture_stage_states[stage][kD3dTssColorOp];
+    const uint32_t colorarg1 = dev->texture_stage_states[stage][kD3dTssColorArg1];
+    const uint32_t colorarg2 = dev->texture_stage_states[stage][kD3dTssColorArg2];
+    const uint32_t alphaop = dev->texture_stage_states[stage][kD3dTssAlphaOp];
+    const uint32_t alphaarg1 = dev->texture_stage_states[stage][kD3dTssAlphaArg1];
+    const uint32_t alphaarg2 = dev->texture_stage_states[stage][kD3dTssAlphaArg2];
 
-  // D3D9 semantics: if COLOROP is DISABLE, the entire stage is disabled (both
-  // color and alpha come from the incoming diffuse/current value). Ignore ALPHAOP
-  // and args in that case so we don't accidentally sample the texture just to
-  // source alpha.
-  if (key.color.op == FixedfuncStageOp::Disable) {
-    key.alpha.op = FixedfuncStageOp::Disable;
-    key.uses_texture = false;
-    key.uses_tfactor = false;
-    return key;
-  }
-
-  if (!fixedfunc_decode_op(alphaop, &key.alpha.op)) {
-    key.supported = false;
-    return key;
-  }
-
-  // Decode only the arguments required for each op so unused args can't cause
-  // spurious INVALIDCALL failures.
-  if (fixedfunc_op_uses_arg1(key.color.op)) {
-    if (!fixedfunc_decode_arg(colorarg1, &key.color.arg1)) {
+    if (!fixedfunc_decode_op(colorop, &st.color.op)) {
       key.supported = false;
       return key;
     }
-  }
-  if (fixedfunc_op_uses_arg2(key.color.op)) {
-    if (!fixedfunc_decode_arg(colorarg2, &key.color.arg2)) {
+
+    // D3D9 semantics: if COLOROP is DISABLE, that stage and all subsequent stages
+    // are disabled. Ignore ALPHAOP/args so we don't accidentally sample textures.
+    if (st.color.op == FixedfuncStageOp::Disable) {
+      break;
+    }
+
+    if (!fixedfunc_decode_op(alphaop, &st.alpha.op)) {
       key.supported = false;
       return key;
     }
-  }
 
-  if (fixedfunc_op_uses_arg1(key.alpha.op)) {
-    if (!fixedfunc_decode_arg(alphaarg1, &key.alpha.arg1)) {
-      key.supported = false;
-      return key;
+    // Decode only the arguments required for each op so unused args can't cause
+    // spurious INVALIDCALL failures.
+    if (fixedfunc_op_uses_arg1(st.color.op)) {
+      if (!fixedfunc_decode_arg(stage, colorarg1, &st.color.arg1)) {
+        key.supported = false;
+        return key;
+      }
     }
-  }
-  if (fixedfunc_op_uses_arg2(key.alpha.op)) {
-    if (!fixedfunc_decode_arg(alphaarg2, &key.alpha.arg2)) {
-      key.supported = false;
-      return key;
+    if (fixedfunc_op_uses_arg2(st.color.op)) {
+      if (!fixedfunc_decode_arg(stage, colorarg2, &st.color.arg2)) {
+        key.supported = false;
+        return key;
+      }
     }
-  }
+    if (fixedfunc_op_uses_arg1(st.alpha.op)) {
+      if (!fixedfunc_decode_arg(stage, alphaarg1, &st.alpha.arg1)) {
+        key.supported = false;
+        return key;
+      }
+    }
+    if (fixedfunc_op_uses_arg2(st.alpha.op)) {
+      if (!fixedfunc_decode_arg(stage, alphaarg2, &st.alpha.arg2)) {
+        key.supported = false;
+        return key;
+      }
+    }
 
-  key.uses_texture = fixedfunc_state_uses_texture(key.color) || fixedfunc_state_uses_texture(key.alpha);
-  key.uses_tfactor = fixedfunc_state_uses_tfactor(key.color) || fixedfunc_state_uses_tfactor(key.alpha);
+    st.uses_texture = fixedfunc_state_uses_texture(st.color) || fixedfunc_state_uses_texture(st.alpha);
+    st.uses_tfactor = fixedfunc_state_uses_tfactor(st.color) || fixedfunc_state_uses_tfactor(st.alpha);
 
-  // Defensive: avoid selecting a texture-sampling shader when stage0 has no
-  // bound texture. This prevents regressions in non-textured fixed-function
-  // tests that leave default COLOROP=MODULATE but never bind texture0.
-  if (!has_tex0 && key.uses_texture) {
-    // Preserve behavior: treat stage0 as disabled (passthrough diffuse), which
-    // avoids binding an invalid texture-sampling shader when texture0 is null.
-    key.color.op = FixedfuncStageOp::Disable;
-    key.alpha.op = FixedfuncStageOp::Disable;
-    key.color.arg1 = {};
-    key.color.arg2 = {};
-    key.alpha.arg1 = {};
-    key.alpha.arg2 = {};
-    key.uses_texture = false;
-    key.uses_tfactor = false;
+    // Defensive: avoid selecting a texture-sampling shader when the stage's
+    // texture is unbound. Treat the stage chain as disabled/passthrough to avoid
+    // emitting texld from an invalid slot.
+    const bool has_tex = (dev->textures[stage] != nullptr);
+    if (!has_tex && st.uses_texture) {
+      break;
+    }
+
+    key.stages[stage] = st;
+    key.stage_count = stage + 1;
+    key.uses_tfactor = key.uses_tfactor || st.uses_tfactor;
   }
 
   return key;
 }
 
 // -----------------------------------------------------------------------------
-// Minimal ps_2_0 token builder used for fixed-function stage0 shaders.
+// Minimal ps_2_0 token builder used for fixed-function texture stage state.
 // -----------------------------------------------------------------------------
 namespace fixedfunc_ps20 {
 
@@ -5148,9 +5176,10 @@ constexpr uint32_t src_texcoord(uint32_t reg, uint32_t swz = swizzle_xyzw(), Src
   return src_reg(/*reg_type=*/3, reg, swz, mod);
 }
 
-constexpr uint32_t src_sampler0() {
-  // s0 token (sampler), with the same encoding used by existing fixed-function shaders.
-  return 0x20E40800u;
+constexpr uint32_t src_sampler(uint32_t reg) {
+  // sN token (sampler), with the same encoding used by existing fixed-function
+  // shaders (e.g. s0 == 0x20E40800).
+  return 0x20E40800u + reg;
 }
 
 struct Builder {
@@ -5193,10 +5222,12 @@ struct Builder {
   }
 };
 
-uint32_t arg_src_token(const FixedfuncStageArg& arg) {
+uint32_t arg_src_token(const FixedfuncStageArg& arg, uint32_t current_reg) {
   const uint32_t swz = arg.alpha_replicate ? swizzle_wwww() : swizzle_xyzw();
   const SrcMod mod = arg.complement ? SrcMod::Comp : SrcMod::None;
   switch (arg.src) {
+    case FixedfuncStageArgSrc::Current:
+      return src_temp(current_reg, swz, mod);
     case FixedfuncStageArgSrc::Texture:
       // r0 contains texld result.
       return src_temp(/*reg=*/0, swz, mod);
@@ -5208,14 +5239,14 @@ uint32_t arg_src_token(const FixedfuncStageArg& arg) {
   }
 }
 
-bool build_stage_state(Builder& b, const FixedfuncStageState& st, uint32_t out_reg, uint32_t out_mask) {
+bool build_stage_state(Builder& b, const FixedfuncStageState& st, uint32_t current_reg, uint32_t out_reg, uint32_t out_mask) {
   // Stage-state argument temporaries.
   constexpr uint32_t kArg1Reg = 1;
   constexpr uint32_t kArg2Reg = 2;
   constexpr uint32_t kTmpReg = 4;
 
   const auto materialize = [&](uint32_t dst_reg, const FixedfuncStageArg& arg) {
-    b.mov(dst_temp(dst_reg, /*mask=*/0xFu), arg_src_token(arg));
+    b.mov(dst_temp(dst_reg, /*mask=*/0xFu), arg_src_token(arg, current_reg));
   };
 
   switch (st.op) {
@@ -5300,7 +5331,7 @@ bool build_stage_state(Builder& b, const FixedfuncStageState& st, uint32_t out_r
   }
 }
 
-bool build_stage0_ps(FixedfuncStage0Key key, std::vector<uint32_t>* out_tokens) {
+bool build_fixedfunc_ps(const FixedfuncPixelShaderKey& key, std::vector<uint32_t>* out_tokens) {
   if (!out_tokens) {
     return false;
   }
@@ -5311,24 +5342,28 @@ bool build_stage0_ps(FixedfuncStage0Key key, std::vector<uint32_t>* out_tokens) 
   Builder b;
   b.begin();
 
-  // r0 = tex0
-  if (key.uses_texture) {
-    b.texld(dst_temp(/*reg=*/0, /*mask=*/0xFu), src_texcoord(/*reg=*/0), src_sampler0());
+  // r3 = diffuse (baseline current)
+  constexpr uint32_t kCurReg = 3;
+  b.mov(dst_temp(kCurReg, /*mask=*/0xFu), src_input(/*reg=*/0));
+
+  for (uint32_t stage = 0; stage < key.stage_count && stage < kFixedfuncMaxTextureStages; ++stage) {
+    const auto& st = key.stages[stage];
+
+    // r0 = texN
+    if (st.uses_texture) {
+      b.texld(dst_temp(/*reg=*/0, /*mask=*/0xFu), src_texcoord(/*reg=*/0), src_sampler(stage));
+    }
+
+    // StageN RGB into r3.xyz (mask 0x7), alpha into r3.w (mask 0x8).
+    if (!build_stage_state(b, st.color, kCurReg, kCurReg, /*mask=*/0x7u)) {
+      return false;
+    }
+    if (!build_stage_state(b, st.alpha, kCurReg, kCurReg, /*mask=*/0x8u)) {
+      return false;
+    }
   }
 
-  // r3 = diffuse (baseline passthrough)
-  constexpr uint32_t kOutReg = 3;
-  b.mov(dst_temp(kOutReg, /*mask=*/0xFu), src_input(/*reg=*/0));
-
-  // Stage0 RGB into r3.xyz (mask 0x7), alpha into r3.w (mask 0x8).
-  if (!build_stage_state(b, key.color, kOutReg, /*mask=*/0x7u)) {
-    return false;
-  }
-  if (!build_stage_state(b, key.alpha, kOutReg, /*mask=*/0x8u)) {
-    return false;
-  }
-
-  b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kOutReg));
+  b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kCurReg));
   b.end();
 
   *out_tokens = std::move(b.tokens);
@@ -5337,21 +5372,18 @@ bool build_stage0_ps(FixedfuncStage0Key key, std::vector<uint32_t>* out_tokens) 
 
 } // namespace fixedfunc_ps20
 
-bool fixedfunc_build_stage0_ps_bytes(FixedfuncStage0Key key, std::vector<uint32_t>* out_words) {
-  return fixedfunc_ps20::build_stage0_ps(key, out_words);
+bool fixedfunc_build_ps_bytes(const FixedfuncPixelShaderKey& key, std::vector<uint32_t>* out_words) {
+  return fixedfunc_ps20::build_fixedfunc_ps(key, out_words);
 }
 
-HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
+HRESULT ensure_fixedfunc_pixel_shader_for_key_locked(Device* dev, const FixedfuncPixelShaderKey& key, Shader** ps_slot) {
   if (!dev || !ps_slot) {
     return E_FAIL;
   }
-
-  const FixedfuncStage0Key key = fixedfunc_stage0_key_locked(dev);
   if (!key.supported) {
     return kD3DErrInvalidCall;
   }
-
-  const uint64_t sig = fixedfunc_stage0_signature(key);
+  const uint64_t sig = fixedfunc_ps_signature(key);
 
   if (key.uses_tfactor) {
     const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
@@ -5360,22 +5392,21 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     }
   }
 
-  // Stage0 fixed-function PS variants are cached per-device in
-  // `fixedfunc_stage0_ps_variants` so toggling texture-stage-state does not spam
-  // CREATE_SHADER_DXBC/DESTROY_SHADER.
+  // Fixed-function PS variants are cached per-device in `fixedfunc_ps_variants`
+  // so toggling texture stage state does not spam CREATE_SHADER_DXBC/DESTROY_SHADER.
   Shader* desired_ps = nullptr;
 
-  // Fast path: reuse a cached mapping from the stage0 signature to a previously
-  // created shader variant. This avoids rebuilding the ps_2_0 token stream on
-  // every draw when stage0 state is stable.
-  if (const auto it = dev->fixedfunc_stage0_ps_variant_cache.find(sig);
-      it != dev->fixedfunc_stage0_ps_variant_cache.end()) {
+  // Fast path: reuse a cached mapping from the stage-state signature to a
+  // previously created shader variant. This avoids rebuilding the ps_2_0 token
+  // stream on every draw when stage state is stable.
+  if (const auto it = dev->fixedfunc_ps_variant_cache.find(sig);
+      it != dev->fixedfunc_ps_variant_cache.end()) {
     desired_ps = it->second;
   }
 
   if (!desired_ps) {
     std::vector<uint32_t> ps_words;
-    if (!fixedfunc_build_stage0_ps_bytes(key, &ps_words) || ps_words.empty()) {
+    if (!fixedfunc_build_ps_bytes(key, &ps_words) || ps_words.empty()) {
       return E_FAIL;
     }
     const void* ps_bytes = ps_words.data();
@@ -5383,7 +5414,7 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
 
     // Look for an existing cached PS with identical bytecode so different
     // signature keys that lower to the same shader can alias a single Shader*.
-    for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+    for (Shader* ps : dev->fixedfunc_ps_variants) {
       if (!ps) {
         continue;
       }
@@ -5400,7 +5431,7 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
       }
 
       bool inserted = false;
-      for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+      for (Shader*& slot : dev->fixedfunc_ps_variants) {
         if (!slot) {
           slot = desired_ps;
           inserted = true;
@@ -5409,9 +5440,9 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
       }
 
       // In the extremely unlikely event that a device uses more than the reserved
-      // number of stage0 variants, evict an unreferenced cached PS.
+      // number of fixed-function variants, evict an unreferenced cached PS.
       if (!inserted) {
-        for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+        for (Shader*& slot : dev->fixedfunc_ps_variants) {
           Shader* cand = slot;
           if (!cand) {
             continue;
@@ -5428,10 +5459,10 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
 
           // Drop any cached signature mappings that referenced the evicted shader
           // so lookups can't return a freed pointer.
-          for (auto it = dev->fixedfunc_stage0_ps_variant_cache.begin();
-               it != dev->fixedfunc_stage0_ps_variant_cache.end();) {
+          for (auto it = dev->fixedfunc_ps_variant_cache.begin();
+               it != dev->fixedfunc_ps_variant_cache.end();) {
             if (it->second == cand) {
-              it = dev->fixedfunc_stage0_ps_variant_cache.erase(it);
+              it = dev->fixedfunc_ps_variant_cache.erase(it);
             } else {
               ++it;
             }
@@ -5455,23 +5486,23 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   // Cache the signature → shader mapping even if `desired_ps` came from the
   // bytecode-dedup search above (multiple signatures can alias the same Shader*).
   //
-  // Keep the map bounded: `fixedfunc_stage0_ps_variants` is already capped (100),
-  // but a pathological app could cycle through a large number of stage-state
-  // signatures that all alias the same limited shader set. The map is a pure
-  // optimization, so evicting it is always safe (it only causes more token
-  // rebuilding on subsequent misses).
-  constexpr size_t kMaxStage0SignatureCacheEntries = 1024;
-  if (dev->fixedfunc_stage0_ps_variant_cache.size() >= kMaxStage0SignatureCacheEntries &&
-      dev->fixedfunc_stage0_ps_variant_cache.find(sig) == dev->fixedfunc_stage0_ps_variant_cache.end()) {
-    dev->fixedfunc_stage0_ps_variant_cache.clear();
-    dev->fixedfunc_stage0_ps_variant_cache.reserve(128);
+  // Keep the map bounded: `fixedfunc_ps_variants` is already capped (100), but a
+  // pathological app could cycle through a large number of stage-state signatures
+  // that all alias the same limited shader set. The map is a pure optimization,
+  // so evicting it is always safe (it only causes more token rebuilding on
+  // subsequent misses).
+  constexpr size_t kMaxSignatureCacheEntries = 1024;
+  if (dev->fixedfunc_ps_variant_cache.size() >= kMaxSignatureCacheEntries &&
+      dev->fixedfunc_ps_variant_cache.find(sig) == dev->fixedfunc_ps_variant_cache.end()) {
+    dev->fixedfunc_ps_variant_cache.clear();
+    dev->fixedfunc_ps_variant_cache.reserve(128);
   }
-  if (dev->fixedfunc_stage0_ps_variant_cache.empty()) {
+  if (dev->fixedfunc_ps_variant_cache.empty()) {
     // First use: keep the signature cache small and avoid rehashing in the common
-    // steady-state case where stage0 settings don't churn.
-    dev->fixedfunc_stage0_ps_variant_cache.reserve(128);
+    // steady-state case where stage state doesn't churn.
+    dev->fixedfunc_ps_variant_cache.reserve(128);
   }
-  dev->fixedfunc_stage0_ps_variant_cache[sig] = desired_ps;
+  dev->fixedfunc_ps_variant_cache[sig] = desired_ps;
 
   if (*ps_slot == desired_ps) {
     return S_OK;
@@ -5497,6 +5528,19 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   }
 
   return S_OK;
+}
+
+HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
+  if (!dev || !ps_slot) {
+    return E_FAIL;
+  }
+
+  const FixedfuncPixelShaderKey key = fixedfunc_ps_key_locked(dev);
+  if (!key.supported) {
+    return kD3DErrInvalidCall;
+  }
+
+  return ensure_fixedfunc_pixel_shader_for_key_locked(dev, key, ps_slot);
 }
 
 } // namespace
@@ -5802,10 +5846,10 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   // must not cause spurious INVALIDCALL failures.
   const bool need_fixedfunc_ps = (dev->user_ps == nullptr);
   if (need_fixedfunc_ps) {
-    // Validate stage0 texture stage state before emitting any shader creation /
-    // bind commands so unsupported fixed-function draws fail cleanly.
-    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-    if (!stage0_key.supported) {
+    // Validate texture stage state before emitting any shader creation / bind
+    // commands so unsupported fixed-function draws fail cleanly.
+    const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+    if (!ps_key.supported) {
       return D3DERR_INVALIDCALL;
     }
   }
@@ -6018,78 +6062,18 @@ HRESULT ensure_passthrough_pixel_shader_locked(Device* dev, Shader** out_ps) {
   }
 
   // This fallback PS is used only to keep the host command stream valid when we
-  // cannot derive a fixed-function stage0 PS variant (e.g. stage-state combo is
-  // unsupported). Draws will still fail with INVALIDCALL via strict validation
-  // paths; this is for non-draw shader binding (SetShader, state blocks, teardown).
-  const void* ps_bytes = reinterpret_cast<const void*>(fixedfunc::kPsPassthroughColor);
-  const uint32_t ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor));
+  // cannot derive a fixed-function PS variant (e.g. unsupported stage state). It
+  // must be independent of current stage state.
+  FixedfuncPixelShaderKey key{};
+  key.stage_count = 0;
+  key.uses_tfactor = false;
+  key.supported = true;
 
-  // Look for an existing cached PS with identical bytecode so multiple fallback
-  // sites can reuse one Shader*.
-  for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
-    if (!ps) {
-      continue;
-    }
-    if (shader_bytecode_equals(ps, ps_bytes, ps_size)) {
-      *out_ps = ps;
-      return S_OK;
-    }
+  Shader* ps = nullptr;
+  const HRESULT hr = ensure_fixedfunc_pixel_shader_for_key_locked(dev, key, &ps);
+  if (FAILED(hr)) {
+    return hr;
   }
-
-  Shader* ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
-  if (!ps) {
-    return E_OUTOFMEMORY;
-  }
-
-  bool inserted = false;
-  for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
-    if (!slot) {
-      slot = ps;
-      inserted = true;
-      break;
-    }
-  }
-
-  if (!inserted) {
-    // Evict an unreferenced cached stage0 PS variant to make room.
-    for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
-      Shader* cand = slot;
-      if (!cand) {
-        continue;
-      }
-      if (cand == dev->ps ||
-          cand == dev->fixedfunc_ps ||
-          cand == dev->fixedfunc_ps_tex1 ||
-          cand == dev->fixedfunc_ps_xyz_diffuse_tex1 ||
-          cand == dev->fixedfunc_ps_interop) {
-        continue;
-      }
-      (void)emit_destroy_shader_locked(dev, cand->handle);
-      delete cand;
-
-      // Drop any cached signature mappings that referenced the evicted shader so
-      // lookups can't return a freed pointer.
-      for (auto it = dev->fixedfunc_stage0_ps_variant_cache.begin();
-           it != dev->fixedfunc_stage0_ps_variant_cache.end();) {
-        if (it->second == cand) {
-          it = dev->fixedfunc_stage0_ps_variant_cache.erase(it);
-        } else {
-          ++it;
-        }
-      }
-
-      slot = ps;
-      inserted = true;
-      break;
-    }
-  }
-
-  if (!inserted) {
-    (void)emit_destroy_shader_locked(dev, ps->handle);
-    delete ps;
-    return E_OUTOFMEMORY;
-  }
-
   *out_ps = ps;
   return S_OK;
 }
@@ -6114,43 +6098,19 @@ HRESULT ensure_passthrough_shaders_locked(Device* dev, Shader** vs_out, Shader**
     }
   }
 
-  Shader* ps_out_value = nullptr;
+  Shader* passthrough_ps = nullptr;
   if (ps_out) {
-    // Prefer the stage0-selected fixed-function PS when possible so non-strict
-    // callers (SetShader/state blocks/teardown) see the same kind of interop PS
-    // the draw path would select. However, this helper must always succeed in
-    // providing a minimal non-null VS+PS pair even when stage0 state is
-    // unsupported; draws remain guarded by strict validation.
-    Shader** ps_slot = &dev->fixedfunc_ps_interop;
-    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-    if (stage0_key.supported) {
-      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-      if (FAILED(ps_hr)) {
-        // If stage0 selection fails for any reason, fall back to a known-good
-        // passthrough PS so the caller still receives a valid bind pair.
-        Shader* fallback_ps = nullptr;
-        const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
-        if (FAILED(fb_hr)) {
-          return fb_hr;
-        }
-        *ps_slot = fallback_ps;
-      }
-    } else {
-      Shader* fallback_ps = nullptr;
-      const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
-      if (FAILED(fb_hr)) {
-        return fb_hr;
-      }
-      *ps_slot = fallback_ps;
+    const HRESULT ps_hr = ensure_passthrough_pixel_shader_locked(dev, &passthrough_ps);
+    if (FAILED(ps_hr)) {
+      return ps_hr;
     }
-    ps_out_value = *ps_slot;
   }
 
   if (vs_out) {
     *vs_out = dev->fixedfunc_vs;
   }
   if (ps_out) {
-    *ps_out = ps_out_value;
+    *ps_out = passthrough_ps;
   }
   return S_OK;
 }
@@ -6178,13 +6138,12 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
     const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
     if (FAILED(ps_hr)) {
       if (strict_draw_validation) {
+        // E_FAIL historically represented "unsupported fixed-function stage state";
+        // map it to the D3D9-visible INVALIDCALL for draws.
         return (ps_hr == E_FAIL) ? kD3DErrInvalidCall : ps_hr;
       }
-      // Non-draw bindings must tolerate unsupported stage0 combinations: preserve
-      // state-setting (SetShader, state blocks, DestroyShader, etc) must not fail
-      // just because stage0 fixed-function PS selection is unsupported. Bind a
-      // known-good passthrough PS so the command stream remains valid; the strict
-      // draw path will still fail with INVALIDCALL.
+      // Non-draw bindings must tolerate unsupported fixed-function stage state so
+      // state-setting (SetShader, state blocks, DestroyShader, etc) doesn't fail.
       if (ps_hr != kD3DErrInvalidCall) {
         return ps_hr;
       }
@@ -6194,8 +6153,10 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
         return fb_hr;
       }
       *ps_slot = fallback_ps;
+      desired_ps = fallback_ps;
+    } else {
+      desired_ps = *ps_slot;
     }
-    desired_ps = *ps_slot;
   } else if (!dev->user_vs && dev->user_ps) {
     // PS-only: fixed-function VS fallback derived from current FVF/decl.
     desired_ps = dev->user_ps;
@@ -9923,16 +9884,16 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit;
       dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit = nullptr;
     }
-    // Stage0 cache entries can alias the same Shader* (e.g. if two different keys
-    // map to the same fallback bytecode). Deduplicate deletes so device teardown
-    // can't double-free.
-    std::unordered_set<Shader*> freed_stage0;
-    freed_stage0.reserve(sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
-    for (Shader*& ps : dev->fixedfunc_stage0_ps_variants) {
+    // Fixed-function PS cache entries can alias the same Shader* (e.g. if two
+    // different keys map to the same fallback bytecode). Deduplicate deletes so
+    // device teardown can't double-free.
+    std::unordered_set<Shader*> freed_fixedfunc_ps;
+    freed_fixedfunc_ps.reserve(sizeof(dev->fixedfunc_ps_variants) / sizeof(dev->fixedfunc_ps_variants[0]));
+    for (Shader*& ps : dev->fixedfunc_ps_variants) {
       if (!ps) {
         continue;
       }
-      if (freed_stage0.insert(ps).second) {
+      if (freed_fixedfunc_ps.insert(ps).second) {
         (void)emit_destroy_shader_locked(dev, ps->handle);
         delete ps;
       }
@@ -13783,9 +13744,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
   cmd->texture = tex ? tex->handle : 0;
   cmd->reserved0 = 0;
 
-  // If the app is using a fixed-function pixel stage (no user PS), stage0 texture
-  // binding/unbinding affects the selected internal pixel shader variant.
-  if (stage == 0 && !dev->user_ps) {
+  // If the app is using a fixed-function pixel stage (no user PS), texture
+  // binding/unbinding can affect the selected internal pixel shader variant.
+  if (stage < kFixedfuncMaxTextureStages && !dev->user_ps) {
     Shader** ps_slot = nullptr;
     if (dev->user_vs) {
       // VS-only interop path: use the dedicated fixed-function PS cache.
@@ -13819,8 +13780,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       // Stage0 stage-state selection is guarded: if the app configured an
       // unsupported stage-state combination, tolerate state changes (including
       // texture binds) and fail draws with INVALIDCALL instead.
-      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-      if (stage0_key.supported) {
+      const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+      if (ps_key.supported) {
         const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
         if (FAILED(ps_hr)) {
           return trace.ret(ps_hr);
@@ -13971,8 +13932,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
   // TEXTUREFACTOR without touching stage-state still render correctly.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
   if (state == kD3dRsTextureFactor && !dev->user_ps) {
-    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-    if (stage0_key.supported && stage0_key.uses_tfactor) {
+    const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+    if (ps_key.supported && ps_key.uses_tfactor) {
       const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
       if (FAILED(hr)) {
         return trace.ret(hr);
@@ -15536,7 +15497,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 #endif
 
   // Samplers/textures.
-  bool stage0_tss_dirty = false;
+  bool fixedfunc_ps_dirty = false;
   for (uint32_t stage = 0; stage < 16; ++stage) {
     if (sb->texture_mask.test(stage)) {
       Resource* tex = sb->textures[stage];
@@ -15550,6 +15511,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->texture = tex ? tex->handle : 0;
       cmd->reserved0 = 0;
       stateblock_record_texture_locked(dev, stage, tex);
+      if (stage < kFixedfuncMaxTextureStages) {
+        fixedfunc_ps_dirty = true;
+      }
     }
 
     for (uint32_t s = 0; s < 16; ++s) {
@@ -15582,10 +15546,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       const uint32_t value = sb->texture_stage_state_values[idx];
       dev->texture_stage_states[stage][s] = value;
       stateblock_record_texture_stage_state_locked(dev, stage, s, value);
-      if (stage == 0 &&
+      if (stage < kFixedfuncMaxTextureStages &&
           (s == kD3dTssColorOp || s == kD3dTssColorArg1 || s == kD3dTssColorArg2 ||
            s == kD3dTssAlphaOp || s == kD3dTssAlphaArg1 || s == kD3dTssAlphaArg2)) {
-        stage0_tss_dirty = true;
+        fixedfunc_ps_dirty = true;
       }
     }
   }
@@ -15893,35 +15857,32 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
   }
 
-  // Stage0 texture stage state drives the fixed-function PS selection logic (and
-  // thus shader-stage interop when the app binds only a VS).
+  // Texture stage state drives the fixed-function PS selection logic (and thus
+  // shader-stage interop when the app binds only a VS).
   //
-  // State-block apply bypasses SetTextureStageState, so keep the cached stage0
-  // PS selection in sync and re-bind if the currently bound PS changes.
-  //
-  // Note: stage0 PS selection also depends on whether texture0 is bound (stage0
-  // references to D3DTA_TEXTURE are treated as disabled when texture0 is null).
+  // State-block apply bypasses SetTextureStageState/SetTexture, so keep the
+  // cached fixed-function PS selection in sync and re-bind if the currently bound
+  // PS changes.
   //
   // Also handle D3DRS_TEXTUREFACTOR updates: state blocks often include
   // TEXTUREFACTOR without changing stage state, so the fixed-function PS constant
   // (c255) must be refreshed when needed.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
   const bool tfactor_dirty = sb->render_state_mask.test(kD3dRsTextureFactor);
-  const bool stage0_texture_dirty = sb->texture_mask.test(0);
-  FixedfuncStage0Key stage0_key{};
-  if (!dev->user_ps && (stage0_tss_dirty || stage0_texture_dirty || tfactor_dirty)) {
-    stage0_key = fixedfunc_stage0_key_locked(dev);
-    if (tfactor_dirty && stage0_key.supported && stage0_key.uses_tfactor) {
+  FixedfuncPixelShaderKey ps_key{};
+  if (!dev->user_ps && (fixedfunc_ps_dirty || tfactor_dirty)) {
+    ps_key = fixedfunc_ps_key_locked(dev);
+    if (tfactor_dirty && ps_key.supported && ps_key.uses_tfactor) {
       const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
       if (FAILED(hr)) {
         return hr;
       }
     }
   }
-  if ((stage0_tss_dirty || stage0_texture_dirty) && !dev->user_ps) {
+  if (fixedfunc_ps_dirty && !dev->user_ps) {
     Shader** ps_slot = nullptr;
     if (dev->user_vs) {
-      // VS-only shader-stage interop uses the stage0 fixed-function PS fallback.
+      // VS-only shader-stage interop uses the fixed-function PS fallback.
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
       const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
@@ -15954,7 +15915,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     // Stage0 stage-state selection is guarded: if the app applied an unsupported
     // stage-state combination via a state block, tolerate the apply and fail
     // draws (not ApplyStateBlock) with INVALIDCALL.
-    if (ps_slot && stage0_key.supported) {
+    if (ps_slot && ps_key.supported) {
       const HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
       if (FAILED(hr)) {
         return hr;
@@ -16404,7 +16365,7 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
 //   `XYZRHW` (`POSITIONT`) to clip-space on the CPU at draw time
 //   (`convert_xyzrhw_to_clipspace_locked()`).
-// - Stage0 texture stage state selects a fixed-function PS variant.
+  // - Texture stage state selects a fixed-function PS variant.
 //
 // Cache state so Set*/Get* and state blocks round-trip for legacy apps that treat
 // Get* failures as fatal.
@@ -16430,10 +16391,10 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
   dev->texture_stage_states[st][ss] = v;
   stateblock_record_texture_stage_state_locked(dev, st, ss, v);
 
-  // If the fixed-function fallback path is active, stage0 COLOROP/ALPHAOP changes
-  // must affect rendering. Select an internal PS variant that approximates the
+  // If the fixed-function fallback path is active, COLOROP/ALPHAOP changes must
+  // affect rendering. Select an internal PS variant that approximates the
   // fixed-function texture combiner for the supported subset.
-  if (st == 0 &&
+  if (st < kFixedfuncMaxTextureStages &&
       (ss == kD3dTssColorOp || ss == kD3dTssColorArg1 || ss == kD3dTssColorArg2 ||
        ss == kD3dTssAlphaOp || ss == kD3dTssAlphaArg1 || ss == kD3dTssAlphaArg2) &&
       !dev->user_ps) {
@@ -16468,10 +16429,10 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
       }
     }
     if (ps_slot) {
-      // Stage0 stage-state selection is guarded: if the app sets an unsupported
+      // Fixed-function stage-state selection is guarded: if the app sets an unsupported
       // stage-state combination, fail draws (not state setting) with INVALIDCALL.
-      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-      if (stage0_key.supported) {
+      const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+      if (ps_key.supported) {
         const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
         if (FAILED(ps_hr)) {
           return trace.ret(ps_hr);
@@ -27247,8 +27208,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
   dev->texture_stage_states[stage][state] = value;
   stateblock_record_texture_stage_state_locked(dev, stage, state, value);
 
-  // Mirror the stage0 fixed-function PS update hook from the DDI paths.
-  if (stage == 0 &&
+  // Mirror the fixed-function PS update hook from the DDI paths.
+  if (stage < kFixedfuncMaxTextureStages &&
       (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
        state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
       !dev->user_ps) {
@@ -27283,10 +27244,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
       }
     }
     if (ps_slot) {
-      // Guard stage0 PS selection (same as the DDI paths): unsupported stage-state
+      // Guard fixed-function PS selection (same as the DDI paths): unsupported stage-state
       // combinations must not make SetTextureStageState fail.
-      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
-      if (stage0_key.supported) {
+      const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+      if (ps_key.supported) {
         const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
         if (FAILED(ps_hr)) {
           return ps_hr;
@@ -27382,18 +27343,18 @@ HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   const uint32_t capacity = static_cast<uint32_t>(
-      sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
+      sizeof(dev->fixedfunc_ps_variants) / sizeof(dev->fixedfunc_ps_variants[0]));
   if (src_index >= capacity || dst_index >= capacity || src_index == dst_index) {
     return kD3DErrInvalidCall;
   }
-  Shader* shared = dev->fixedfunc_stage0_ps_variants[src_index];
+  Shader* shared = dev->fixedfunc_ps_variants[src_index];
   if (!shared) {
     return kD3DErrInvalidCall;
   }
-  if (dev->fixedfunc_stage0_ps_variants[dst_index]) {
+  if (dev->fixedfunc_ps_variants[dst_index]) {
     return kD3DErrInvalidCall;
   }
-  dev->fixedfunc_stage0_ps_variants[dst_index] = shared;
+  dev->fixedfunc_ps_variants[dst_index] = shared;
   return S_OK;
 }
 

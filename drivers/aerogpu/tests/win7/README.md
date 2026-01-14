@@ -104,6 +104,7 @@ drivers/aerogpu/tests/win7/
   d3d9_texture_16bit_sampling/
   d3d9_fixedfunc_xyz_diffuse/
   d3d9_fixedfunc_xyz_diffuse_tex1/
+  d3d9_fixedfunc_multitexture/
   d3d9_fixedfunc_vertexdecl_patterns/
   d3d9_fixedfunc_textured_wvp/
   d3d9_fixedfunc_wvp_triangle/

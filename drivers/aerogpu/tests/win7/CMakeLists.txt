@@ -251,6 +251,11 @@ aerogpu_add_win7_test(d3d9_fixedfunc_xyz_diffuse_tex1
 )
 target_link_libraries(d3d9_fixedfunc_xyz_diffuse_tex1 PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_fixedfunc_multitexture
+  d3d9_fixedfunc_multitexture/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_multitexture PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9_fixedfunc_vertexdecl_patterns
   d3d9_fixedfunc_vertexdecl_patterns/main.cpp
 )

@@ -17189,9 +17189,9 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
   size_t dup_index = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
-      if (dev->fixedfunc_stage0_ps_variants[i]) {
-        shared = dev->fixedfunc_stage0_ps_variants[i];
+    for (size_t i = 0; i < std::size(dev->fixedfunc_ps_variants); ++i) {
+      if (dev->fixedfunc_ps_variants[i]) {
+        shared = dev->fixedfunc_ps_variants[i];
         shared_index = i;
         break;
       }
@@ -17201,11 +17201,11 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
     }
 
     bool dup_found = false;
-    for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
+    for (size_t i = 0; i < std::size(dev->fixedfunc_ps_variants); ++i) {
       if (i == shared_index) {
         continue;
       }
-      if (!dev->fixedfunc_stage0_ps_variants[i]) {
+      if (!dev->fixedfunc_ps_variants[i]) {
         dup_index = i;
         dup_found = true;
         break;
@@ -17226,7 +17226,7 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_stage0_ps_variants[dup_index] == shared, "duplicate stage0 cache slot shares Shader*")) {
+    if (!Check(dev->fixedfunc_ps_variants[dup_index] == shared, "duplicate stage0 cache slot shares Shader*")) {
       return false;
     }
   }

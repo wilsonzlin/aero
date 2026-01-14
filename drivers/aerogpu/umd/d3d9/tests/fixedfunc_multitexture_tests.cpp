@@ -1,0 +1,435 @@
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <vector>
+ 
+#include "aerogpu_cmd_stream_writer.h"
+#include "aerogpu_d3d9_objects.h"
+ 
+namespace aerogpu {
+ 
+// Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
+// test entrypoints"). Unit tests may call this directly when the device vtable
+// does not expose SetTextureStageState in a given build configuration.
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value);
+ 
+} // namespace aerogpu
+ 
+namespace {
+ 
+// Portable D3D9 FVF bits (from d3d9types.h).
+constexpr uint32_t kD3dFvfXyzrhw = 0x00000004u;
+constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzrhw | kD3dFvfDiffuse | kD3dFvfTex1;
+ 
+// D3DTSS_* texture stage state IDs (from d3d9types.h).
+constexpr uint32_t kD3dTssColorOp = 1u;
+constexpr uint32_t kD3dTssColorArg1 = 2u;
+constexpr uint32_t kD3dTssColorArg2 = 3u;
+constexpr uint32_t kD3dTssAlphaOp = 4u;
+constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+constexpr uint32_t kD3dTssAlphaArg2 = 6u;
+ 
+// D3DTEXTUREOP values (from d3d9types.h).
+constexpr uint32_t kD3dTopDisable = 1u;
+constexpr uint32_t kD3dTopSelectArg1 = 2u;
+constexpr uint32_t kD3dTopModulate = 4u;
+constexpr uint32_t kD3dTopAdd = 7u;
+ 
+// D3DTA_* sources (from d3d9types.h).
+constexpr uint32_t kD3dTaCurrent = 1u;
+constexpr uint32_t kD3dTaTexture = 2u;
+ 
+// Pixel shader instruction token (ps_2_0).
+constexpr uint32_t kPsOpTexld = 0x04000042u;
+ 
+bool Check(bool cond, const char* msg) {
+  if (!cond) {
+    std::fprintf(stderr, "FAIL: %s\n", msg);
+    return false;
+  }
+  return true;
+}
+ 
+size_t CountToken(const aerogpu::Shader* shader, uint32_t token) {
+  if (!shader) {
+    return 0;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return 0;
+  }
+  size_t count = 0;
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    if (w == token) {
+      ++count;
+    }
+  }
+  return count;
+}
+ 
+size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
+  if (!buf || capacity < sizeof(aerogpu_cmd_stream_header)) {
+    return 0;
+  }
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t used = stream->size_bytes;
+  if (used < sizeof(aerogpu_cmd_stream_header) || used > capacity) {
+    return 0;
+  }
+  return used;
+}
+ 
+std::vector<const aerogpu_cmd_hdr*> CollectOpcodes(const uint8_t* buf, size_t capacity, uint32_t opcode) {
+  std::vector<const aerogpu_cmd_hdr*> out;
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return out;
+  }
+ 
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == opcode) {
+      out.push_back(hdr);
+    }
+    if (hdr->size_bytes == 0 || (hdr->size_bytes & 3u) != 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return out;
+}
+ 
+struct CleanupDevice {
+  D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+  D3D9DDI_DEVICEFUNCS device_funcs{};
+  D3DDDI_HADAPTER hAdapter{};
+  D3DDDI_HDEVICE hDevice{};
+  std::vector<D3DDDI_HRESOURCE> resources{};
+  bool has_adapter = false;
+  bool has_device = false;
+ 
+  ~CleanupDevice() {
+    if (has_device && device_funcs.pfnDestroyResource) {
+      for (auto& r : resources) {
+        if (r.pDrvPrivate) {
+          device_funcs.pfnDestroyResource(hDevice, r);
+        }
+      }
+    }
+    if (has_device && device_funcs.pfnDestroyDevice) {
+      device_funcs.pfnDestroyDevice(hDevice);
+    }
+    if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+      adapter_funcs.pfnCloseAdapter(hAdapter);
+    }
+  }
+};
+ 
+bool CreateDevice(CleanupDevice* cleanup) {
+  if (!cleanup) {
+    return false;
+  }
+ 
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup->adapter_funcs;
+ 
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup->hAdapter = open.hAdapter;
+  cleanup->has_adapter = true;
+ 
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+ 
+  hr = cleanup->adapter_funcs.pfnCreateDevice(&create_dev, &cleanup->device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup->hDevice = create_dev.hDevice;
+  cleanup->has_device = true;
+ 
+  if (!Check(cleanup->device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnSetTexture != nullptr, "pfnSetTexture is available")) {
+    return false;
+  }
+  return true;
+}
+ 
+bool CreateDummyTexture(CleanupDevice* cleanup, D3DDDI_HRESOURCE* out_tex) {
+  if (!cleanup || !out_tex) {
+    return false;
+  }
+ 
+  // D3DFMT_X8R8G8B8 = 22.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 3u; // D3DRTYPE_TEXTURE
+  create_res.format = 22u;
+  create_res.width = 2;
+  create_res.height = 2;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+ 
+  HRESULT hr = cleanup->device_funcs.pfnCreateResource(cleanup->hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(texture2d)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned hResource")) {
+    return false;
+  }
+ 
+  cleanup->resources.push_back(create_res.hResource);
+  *out_tex = create_res.hResource;
+  return true;
+}
+ 
+struct VertexXyzrhwDiffuseTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  uint32_t color;
+  float u;
+  float v;
+};
+ 
+bool TestFixedfuncTwoStageEmitsTwoTexldAndRebinds() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+ 
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+ 
+  dev->cmd.reset();
+ 
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+ 
+  D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
+  if (!CreateDummyTexture(&cleanup, &hTex0) || !CreateDummyTexture(&cleanup, &hTex1)) {
+    return false;
+  }
+ 
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+ 
+  // Stage0: CURRENT = tex0 (both color and alpha).
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+ 
+  // Stage1: CURRENT = tex1 * CURRENT (modulate). This forces stage1 active and
+  // requires sampling both stage0 and stage1 textures.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopModulate);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=MODULATE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage1 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorArg2, kD3dTaCurrent);
+  if (!Check(hr == S_OK, "TSS stage1 COLORARG2=CURRENT")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaArg1, kD3dTaCurrent);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAARG1=CURRENT")) {
+    return false;
+  }
+ 
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+ 
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(first)")) {
+    return false;
+  }
+ 
+  aerogpu_handle_t ps_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) >= 2, "fixed-function PS contains >= 2 texld")) {
+      return false;
+    }
+    ps_before = dev->ps->handle;
+  }
+  if (!Check(ps_before != 0, "first draw bound non-zero PS handle")) {
+    return false;
+  }
+ 
+  // Change stage1 state to force a different shader variant.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopAdd);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=ADD")) {
+    return false;
+  }
+  // Ensure stage2 is explicitly disabled so the stage chain ends deterministically.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 2, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage2 COLOROP=DISABLE")) {
+    return false;
+  }
+ 
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(second)")) {
+    return false;
+  }
+ 
+  aerogpu_handle_t ps_after = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound after stage1 change")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) >= 2, "second fixed-function PS contains >= 2 texld")) {
+      return false;
+    }
+    ps_after = dev->ps->handle;
+  }
+  if (!Check(ps_after != 0, "second draw bound non-zero PS handle")) {
+    return false;
+  }
+  if (!Check(ps_before != ps_after, "stage1 state change causes PS handle change")) {
+    return false;
+  }
+ 
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+ 
+  // Validate that both textures were bound.
+  bool saw_tex0 = false;
+  bool saw_tex1 = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_TEXTURE)) {
+    const auto* st = reinterpret_cast<const aerogpu_cmd_set_texture*>(hdr);
+    if (st->shader_stage != AEROGPU_SHADER_STAGE_PIXEL) {
+      continue;
+    }
+    if (st->slot == 0 && st->texture != 0) {
+      saw_tex0 = true;
+    }
+    if (st->slot == 1 && st->texture != 0) {
+      saw_tex1 = true;
+    }
+  }
+  if (!Check(saw_tex0, "command stream binds texture slot 0")) {
+    return false;
+  }
+  if (!Check(saw_tex1, "command stream binds texture slot 1")) {
+    return false;
+  }
+ 
+  // Validate shader binds.
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs != 0 && last_bind->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
+    return false;
+  }
+ 
+  bool saw_ps_before = false;
+  bool saw_ps_after = false;
+  for (const auto* hdr : binds) {
+    const auto* b = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+    if (b->ps == ps_before) {
+      saw_ps_before = true;
+    }
+    if (b->ps == ps_after) {
+      saw_ps_after = true;
+    }
+  }
+  if (!Check(saw_ps_before, "command stream contains a bind for the first PS")) {
+    return false;
+  }
+  if (!Check(saw_ps_after, "command stream contains a bind for the updated PS")) {
+    return false;
+  }
+ 
+  return true;
+}
+ 
+} // namespace
+ 
+int main() {
+  return TestFixedfuncTwoStageEmitsTwoTexldAndRebinds() ? 0 : 1;
+}
+
