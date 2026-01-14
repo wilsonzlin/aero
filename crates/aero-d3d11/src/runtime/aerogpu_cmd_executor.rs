@@ -3963,7 +3963,7 @@ impl AerogpuD3d11Executor {
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
-
+ 
         let gs_prepass = if opcode == OPCODE_DRAW
             && self.state.primitive_topology == CmdPrimitiveTopology::PointList
         {
