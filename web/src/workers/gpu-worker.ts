@@ -618,6 +618,12 @@ type SnapshotGuestMemoryBackup = {
   guestU32: Uint32Array | null;
   vramU8: Uint8Array | null;
   vramU32: Uint32Array | null;
+  scanoutState: Int32Array | null;
+  hwCursorState: Int32Array | null;
+  sharedFramebufferViews: SharedFramebufferViews | null;
+  sharedFramebufferLayoutKey: string | null;
+  framebufferProtocolViews: FramebufferProtocolViews | null;
+  framebufferProtocolLayoutKey: string | null;
 };
 
 // When snapshot-paused, we must not touch guest RAM/VRAM. To enforce this across all
@@ -627,11 +633,31 @@ let snapshotGuestMemoryBackup: SnapshotGuestMemoryBackup | null = null;
 
 const disableGuestMemoryAccessForSnapshot = (): void => {
   if (snapshotGuestMemoryBackup) return;
-  snapshotGuestMemoryBackup = { guestU8, guestU32, vramU8, vramU32 };
+  snapshotGuestMemoryBackup = {
+    guestU8,
+    guestU32,
+    vramU8,
+    vramU32,
+    scanoutState,
+    hwCursorState,
+    sharedFramebufferViews,
+    sharedFramebufferLayoutKey,
+    framebufferProtocolViews,
+    framebufferProtocolLayoutKey,
+  };
   guestU8 = null;
   guestU32 = null;
   vramU8 = null;
   vramU32 = null;
+  scanoutState = null;
+  (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = undefined;
+  hwCursorState = null;
+  (globalThis as unknown as { __aeroCursorState?: Int32Array }).__aeroCursorState = undefined;
+  sharedFramebufferViews = null;
+  sharedFramebufferLayoutKey = null;
+  framebufferProtocolViews = null;
+  framebufferProtocolLayoutKey = null;
+  (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = undefined;
   if (aerogpuWasm) {
     try {
       syncAerogpuWasmMemoryViews(aerogpuWasm);
@@ -649,6 +675,16 @@ const restoreGuestMemoryAccessAfterSnapshot = (): void => {
   guestU32 = backup.guestU32;
   vramU8 = backup.vramU8;
   vramU32 = backup.vramU32;
+  scanoutState = backup.scanoutState;
+  (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = scanoutState ?? undefined;
+  hwCursorState = backup.hwCursorState;
+  (globalThis as unknown as { __aeroCursorState?: Int32Array }).__aeroCursorState = hwCursorState ?? undefined;
+  sharedFramebufferViews = backup.sharedFramebufferViews;
+  sharedFramebufferLayoutKey = backup.sharedFramebufferLayoutKey;
+  framebufferProtocolViews = backup.framebufferProtocolViews;
+  framebufferProtocolLayoutKey = backup.framebufferProtocolLayoutKey;
+  (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer =
+    sharedFramebufferViews ?? undefined;
   if (aerogpuWasm) {
     try {
       syncAerogpuWasmMemoryViews(aerogpuWasm);
@@ -1336,6 +1372,7 @@ const refreshFramebufferProtocolViews = (shared: SharedArrayBuffer, offsetBytes:
 };
 
 const refreshFramebufferViews = (): void => {
+  if (snapshotPaused) return;
   const init = runtimeInit;
   if (!init) return;
 
@@ -1450,6 +1487,7 @@ const ensureScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null => 
 };
 
 const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null => {
+  if (snapshotPaused) return null;
   const source = snap.source >>> 0;
   const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
   if (!wantsScanout) return null;
@@ -1807,6 +1845,7 @@ function backendKindForEvent(): string {
 }
 
 function trySnapshotScanoutState(): ScanoutStateSnapshot | null {
+  if (snapshotPaused) return null;
   const words = scanoutState;
   if (!words) return null;
   try {
@@ -2100,6 +2139,7 @@ function formatU64Hex(hi: number, lo: number): string {
 }
 
 function snapshotScanoutForTelemetry(): GpuRuntimeScanoutSnapshotV1 | undefined {
+  if (snapshotPaused) return undefined;
   if (!scanoutState) return undefined;
   let snap: ScanoutStateSnapshot | null;
   try {
@@ -2460,37 +2500,44 @@ async function attemptRecovery(reason: string): Promise<void> {
   if (recoveryPromise) return recoveryPromise;
 
   recoveriesAttempted += 1;
-  const scanoutAtStart = trySnapshotScanoutState();
-  const scanoutWasWddm =
-    scanoutAtStart?.source === SCANOUT_SOURCE_WDDM ||
-    (!scanoutAtStart &&
-      (() => {
-        const words = scanoutState;
-        if (!words) return wddmOwnsScanoutFallback;
-        try {
-          return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
-        } catch {
-          return wddmOwnsScanoutFallback;
-        }
-      })());
-  if (scanoutWasWddm) recoveriesAttemptedWddm += 1;
-  emitGpuEvent({
-    time_ms: performance.now(),
-    backend_kind: backendKindForEvent(),
-    severity: "info",
-    category: "DeviceLost",
-    message: `Attempting GPU recovery (${reason})`,
-    details: {
-      reason,
-      ...(scanoutAtStart ? { scanout: { ...scanoutAtStart, format_str: aerogpuFormatToString(scanoutAtStart.format >>> 0) } } : {}),
-      scanout_is_wddm: scanoutWasWddm,
-      wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
-      aerogpu_last_output_source: aerogpuLastOutputSource,
-      aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
-    },
-  });
 
   recoveryPromise = (async () => {
+    // Snapshot pause is a guest-memory access barrier. Defer recovery work (which may inspect
+    // scanout/framebuffer state) until the coordinator resumes the GPU worker.
+    await waitUntilSnapshotResumed();
+
+    const scanoutAtStart = trySnapshotScanoutState();
+    const scanoutWasWddm =
+      scanoutAtStart?.source === SCANOUT_SOURCE_WDDM ||
+      (!scanoutAtStart &&
+        (() => {
+          const words = scanoutState;
+          if (!words) return wddmOwnsScanoutFallback;
+          try {
+            return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+          } catch {
+            return wddmOwnsScanoutFallback;
+          }
+        })());
+    if (scanoutWasWddm) recoveriesAttemptedWddm += 1;
+    emitGpuEvent({
+      time_ms: performance.now(),
+      backend_kind: backendKindForEvent(),
+      severity: "info",
+      category: "DeviceLost",
+      message: `Attempting GPU recovery (${reason})`,
+      details: {
+        reason,
+        ...(scanoutAtStart
+          ? { scanout: { ...scanoutAtStart, format_str: aerogpuFormatToString(scanoutAtStart.format >>> 0) } }
+          : {}),
+        scanout_is_wddm: scanoutWasWddm,
+        wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
+        aerogpu_last_output_source: aerogpuLastOutputSource,
+        aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
+      },
+    });
+
     if (presenterInitPromise) {
       try {
         await presenterInitPromise;
@@ -2730,6 +2777,7 @@ const tryReadScanoutFrame = (snap: ScanoutStateSnapshot): ScanoutFrameInfo | nul
 };
 
 const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
+  if (snapshotPaused) return null;
   refreshFramebufferViews();
 
   if (scanoutState) {
@@ -2979,7 +3027,12 @@ const presentOnce = async (): Promise<boolean> => {
       // framebuffer dirty flag: the frame was consumed by the worker and retrying immediately can cause
       // tick storms / stall producers. Drops are still accounted for via the returned boolean and worker
       // metrics.
-      clearSharedFramebufferDirty();
+      //
+      // However, snapshot pause is a guest-memory access barrier; avoid mutating the shared framebuffer
+      // while snapshot save/restore is in progress.
+      if (!snapshotPaused) {
+        clearSharedFramebufferDirty();
+      }
       return didPresent;
     }
 
@@ -3345,6 +3398,11 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 const handleTick = async () => {
   syncPerfFrame();
   const perfEnabled = !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+  if (snapshotPaused) {
+    // Snapshot pause is a guest-memory access barrier: avoid touching the shared framebuffer,
+    // scanout descriptors, or cursor state until resumed.
+    return;
+  }
   refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
   await maybeSendReady();
@@ -4198,7 +4256,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "tick": {
       void (msg as { frameTimeMs?: unknown }).frameTimeMs;
       flushAerogpuSubmitCompleteOnTick();
-      void handleTick();
+      if (!snapshotPaused) {
+        void handleTick();
+      }
       break;
     }
 
