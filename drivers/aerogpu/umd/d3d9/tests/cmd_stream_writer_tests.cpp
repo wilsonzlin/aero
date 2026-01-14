@@ -1888,6 +1888,108 @@ bool TestCreateResourceRejectsNon2dDepth() {
   return ok;
 }
 
+bool TestCreateResourceMipLevelsZeroOverflowReturnsOutOfMemory() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can assert that no CREATE_TEXTURE2D
+  // packets are emitted when CreateResource fails validation.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  constexpr uint32_t kD3dRTypeTexture = 3u;
+
+  // Width chosen so width*4 overflows a 32-bit row pitch (and should be caught
+  // safely by calc_texture2d_layout), even though MipLevels==0 expands to a full
+  // chain.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 0x80000000u;
+  create_res.height = 1;
+  create_res.depth = 1;
+  create_res.mip_levels = 0; // full chain => would be 32 if size were representable
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == E_OUTOFMEMORY, "CreateResource(huge, MipLevels==0) returns E_OUTOFMEMORY")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed CreateResource")) {
+    return false;
+  }
+  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0,
+               "failed CreateResource must not emit CREATE_TEXTURE2D");
+}
+
 bool TestCreateResourceComputesBcTexturePitchAndSize() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -19229,6 +19331,7 @@ int main() {
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestCreateResourceRejectsNon2dDepth();
+  failures += !aerogpu::TestCreateResourceMipLevelsZeroOverflowReturnsOutOfMemory();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
   failures += !aerogpu::TestLockMipmappedTextureReportsSubresourcePitch();
