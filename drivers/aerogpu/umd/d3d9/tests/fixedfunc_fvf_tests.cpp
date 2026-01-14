@@ -13889,6 +13889,132 @@ bool TestFvfXyzNormalDiffuseLightingOffDoesNotUploadLightingConstants() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseProjectionChangeReuploadsWvpButNotLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // First draw: emits both WVP and lighting constant uploads.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(initial)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(initial)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
+             "initial: emits WVP constant upload")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 1,
+             "initial: emits lighting constant upload")) {
+    return false;
+  }
+
+  // Change only PROJECTION. This must re-upload the WVP constants but must NOT
+  // re-upload the lighting constants (lighting depends only on WORLD0 and VIEW).
+  D3DMATRIX proj = identity;
+  proj.m[0][0] = 2.0f;
+
+  // Important: SetTransform may upload the WVP constants eagerly for fixed-function
+  // draws. Capture the SetTransform and subsequent draw in the same command stream
+  // so we can assert that:
+  // - WVP is uploaded exactly once,
+  // - lighting constants are not re-uploaded.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &proj);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION scaled)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after projection change)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(after projection change)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
+             "projection change: re-uploads WVP constants")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 0,
+             "projection change: does not re-upload lighting constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -17197,6 +17323,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseLightingOffDoesNotUploadLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseProjectionChangeReuploadsWvpButNotLightingConstants()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights()) {
