@@ -94,6 +94,13 @@ export type IoInputTelemetrySnapshot = {
   mouseBackendSwitches: number;
 };
 
+export type BootDeviceKind = "hdd" | "cdrom";
+
+export type BootDiskSelectionSnapshot = {
+  mounts: { hddId?: string; cdId?: string };
+  bootDevice?: BootDeviceKind;
+};
+
 export interface AeroDebugApi {
   /**
    * Reads input telemetry counters from the given shared status view.
@@ -112,6 +119,18 @@ export interface AeroDebugApi {
    * unavailable).
    */
   getIoInputTelemetry?: () => IoInputTelemetrySnapshot | null;
+
+  /**
+   * Returns the current boot disk selection (mount IDs + requested boot-device policy) when
+   * available.
+   */
+  getBootDisks?: () => BootDiskSelectionSnapshot | null;
+
+  /**
+   * Returns what firmware actually booted from for the current machine runtime session (CD vs HDD),
+   * or null if unknown/unavailable.
+   */
+  getMachineCpuActiveBootDevice?: () => BootDeviceKind | null;
 }
 
 export interface AeroGlobalApi {
