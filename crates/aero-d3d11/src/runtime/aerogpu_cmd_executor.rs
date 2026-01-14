@@ -22005,10 +22005,12 @@ fn cs_main() {
             }
             exec.queue.write_buffer(&src, 0, &data);
 
+            let id = BufferId(exec.next_buffer_id);
+            exec.next_buffer_id = exec.next_buffer_id.wrapping_add(1);
             exec.resources.buffers.insert(
                 BUF,
                 BufferResource {
-                    id: BufferId(BUF as u64),
+                    id,
                     buffer: src,
                     size: buf_size,
                     gpu_size: buf_size,
