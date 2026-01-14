@@ -33,6 +33,14 @@ Optional legacy filename alias:
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
 distinct keyboard vs mouse `DeviceDesc` strings, and MSI interrupt settings).
 
+The validator currently targets only the **keyboard/mouse** INF (`aero_virtio_input.inf`)
+and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and
+`[Aero.NTamd64]`:
+
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
+
 Run it from any PowerShell prompt:
 
 ```powershell

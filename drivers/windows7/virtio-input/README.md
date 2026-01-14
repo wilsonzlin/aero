@@ -598,10 +598,10 @@ driver enforces at runtime (PCI IDs + `REV_01`, fixed BAR0 layout, and 2×64 vir
 Under QEMU, you typically also need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start (INF gates
 the Aero contract major version via `REV_01`).
 
-Also note that the canonical INFs match only Aero subsystem IDs; stock QEMU devices typically use different subsystem
-IDs. If you want the driver to bind in QEMU without modifying the canonical INFs, use the legacy alias INF with the
-`PCI\VEN_1AF4&DEV_1052&REV_01` fallback match (rename `inf/virtio-input.inf.disabled` to `virtio-input.inf`).
-Unknown subsystem IDs are allowed by the driver.
+Also note that stock QEMU virtio-input devices typically expose different (non-Aero) PCI subsystem IDs. The canonical
+`inf/aero_virtio_input.inf` includes a revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so the
+driver can still bind when subsystem IDs are unavailable or do not match Aero's. Unknown subsystem IDs are allowed by
+the driver.
 
 For authoritative PCI-ID and contract rules, see:
 

@@ -278,9 +278,17 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
+# The canonical keyboard/mouse INF includes SUBSYS-gated contract IDs (so the
+# keyboard/mouse functions get distinct, stable Device Manager names), plus a
+# revision-gated generic fallback ID so the driver can still bind in
+# environments that do not expose the Aero subsystem IDs.
 $requiredHwids = @(
+  # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
+  # Aero contract v1 mouse (SUBSYS_0011)
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
+  # Aero contract v1 generic fallback (no SUBSYS)
+  'PCI\VEN_1AF4&DEV_1052&REV_01'
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -342,7 +350,6 @@ foreach ($m in $requiredModelMappings) {
     Add-Failure -Failures $failures -Message $m.Message
   }
 }
- 
 
 $requiredStrings = @(
   @{ Name = 'AeroVirtioKeyboard.DeviceDesc'; Regex = '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*".*"$' },
