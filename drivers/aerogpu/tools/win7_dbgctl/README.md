@@ -15,6 +15,9 @@ alongside the AeroGPU driver package:
 - Guest Tools ISO/zip:
   - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
   - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+  - Optional top-level tools payload (when present):
+    - `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe`
+    - `<GuestToolsDrive>:\tools\<arch>\aerogpu_dbgctl.exe`
 - CI-staged driver packages:
   - `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
   - `out\packages\aerogpu\x86\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`

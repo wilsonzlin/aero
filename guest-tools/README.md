@@ -44,10 +44,12 @@ cargo run -p device-contract-validator --locked
 
 Guest Tools media can optionally ship additional **guest-side utilities** (debugging, selftests, diagnostics) under `tools\...` without placing them inside any driver package directory.
 
-Note: the AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongside the AeroGPU driver package under `drivers\...` (not under the optional top-level `tools\` directory). It is shipped as a single **x86** binary and copied into both the x86 and amd64 driver trees (on amd64 it runs via **WOW64**):
+The AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongside the AeroGPU driver package under `drivers\...`. It is shipped as a single **x86** binary and copied into both the x86 and amd64 driver trees (on amd64 it runs via **WOW64**):
 
 - `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 - `drivers\<arch>\aerogpu\tools\win7_dbgctl\README.md` (tool documentation)
+
+Some Guest Tools builds also include a convenience copy in the optional top-level `tools\` payload (for example `tools\aerogpu_dbgctl.exe` or `tools\<arch>\aerogpu_dbgctl.exe`). If both are present, prefer the driver-packaged copy under `drivers\<arch>\...` since it is versioned alongside the installed driver package.
 
 Example (run directly from a mounted Guest Tools ISO/zip; if your mount letter differs from `X:`, replace it):
 
