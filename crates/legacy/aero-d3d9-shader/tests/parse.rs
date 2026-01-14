@@ -760,6 +760,30 @@ fn malformed_predicated_mov_missing_src_token_errors() {
 }
 
 #[test]
+fn malformed_predicated_relative_src_missing_token_errors() {
+    // Predicated instruction where a source parameter requests relative addressing, but the length
+    // nibble is too small to include the required extra token (predicate must remain last).
+    let words = [
+        0xFFFE_0200,
+        0x1400_0001, // mov len=4 + predicated
+        0x800F_0000, // r0 (dst)
+        0xA0E4_2000, // c0 (src, relative) - missing relative register token
+        0xB000_1000, // p0.x (predicate)
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 4,
+            remaining_tokens: 3,
+        }
+    );
+}
+
+#[test]
 fn malformed_if_missing_src_token_errors() {
     // `if` requires a condition source operand.
     let words = [0xFFFE_0300, 0x0000_0028, 0x0000_FFFF];
