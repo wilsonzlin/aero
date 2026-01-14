@@ -2007,6 +2007,69 @@ fn decodes_and_translates_ult_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_uge_shader_from_dxbc() {
+    // No declarations needed for this minimal shader; the signature drives IO.
+    let mut body = Vec::<u32>::new();
+
+    // uge o0, l(2), l(1)
+    body.push(opcode_token(OPCODE_UGE, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(2));
+    body.extend_from_slice(&imm32_scalar(1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Output,
+                    index: 0,
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            a: SrcOperand {
+                kind: SrcKind::ImmediateF32([2, 2, 2, 2]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::ImmediateF32([1, 1, 1, 1]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            op: CmpOp::Ge,
+            ty: CmpType::U32,
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated.wgsl.contains("vec4<u32>"));
+    assert!(translated
+        .wgsl
+        .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"));
+}
+
+#[test]
 fn decodes_and_translates_discard_and_clip_in_pixel_shader() {
     let mut body = Vec::<u32>::new();
 
