@@ -23,8 +23,8 @@ Status:
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - The web runtime currently exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge`
   (wrapping `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO
-  registers, USB2 root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery), but it does
-  **not** yet execute command/transfer rings (no doorbell array), so treat it as a
+  registers, USB2 root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, snapshot/restore),
+  but it does **not** yet execute command/transfer rings (no doorbell array), so treat it as a
   bring-up/placeholder surface for now.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
@@ -70,10 +70,15 @@ The xHCI controller is exposed as a **PCI function** with a single MMIO BAR for 
 Rust controller/model building blocks:
 
 - xHCI core module: `crates/aero-usb/src/xhci/*`
-  - `XhciController` (minimal MMIO surface): `crates/aero-usb/src/xhci/mod.rs`
+  - Controller MMIO model: `crates/aero-usb/src/xhci/mod.rs` (`XhciController`)
+  - Register offsets/constants: `crates/aero-usb/src/xhci/regs.rs`
+  - Root hub port model + PORTSC bits: `crates/aero-usb/src/xhci/port.rs`
+  - Interrupter 0 runtime regs (IMAN/ERST/ERDP): `crates/aero-usb/src/xhci/interrupter.rs`
+  - Guest event ring producer (ERST-backed): `crates/aero-usb/src/xhci/event_ring.rs`
   - TRB helpers: `crates/aero-usb/src/xhci/trb.rs`
   - Ring helpers: `crates/aero-usb/src/xhci/ring.rs`
-  - Transfer executor (Normal TRBs): `crates/aero-usb/src/xhci/transfer.rs`
+  - Command helpers: `crates/aero-usb/src/xhci/command_ring.rs`, `crates/aero-usb/src/xhci/command.rs`
+  - Transfer helpers (Normal TRBs + EP0 control): `crates/aero-usb/src/xhci/transfer.rs`
 
 Web runtime integration:
 
@@ -159,7 +164,8 @@ Notes:
 
 The current xHCI effort is intentionally staged. The long-term goal is a real xHCI host controller
 for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
-**scaffolding** (TRB/ring helpers + small controller stubs).
+**scaffolding** (a minimal-but-realistic MMIO register model, plus TRB/ring/command/transfer helpers
+used by tests and harnesses).
 
 ### What exists today
 
@@ -292,7 +298,8 @@ Dedicated EP0 unit tests also exist:
 - Full command ring + event ring integration (today, command-ring processing exists as staged
   helpers/tests, but the controller does not yet expose a complete driver-friendly model).
 - Endpoint 0 control transfer engine wired into the controller (doorbells + endpoint contexts), beyond the standalone `Ep0TransferEngine`.
-- Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
+- Wiring xHCI into the canonical machine/topology (native). (PCI identity is already aligned across
+  web + native via the QEMU-style `1b36:000d` profile.)
 
 ---
 
@@ -325,7 +332,9 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
-  - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`, `CRCR`, `PORT_COUNT`, `DCBAAP`, and Interrupter 0 configuration/state) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
+  - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`,
+    `CRCR`, `PORT_COUNT`, `DCBAAP`, and Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`)
+    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
   - Current limitations: the `XHCI` snapshot does **not** yet capture per-port state, pending event
     TRBs, or slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather
     than a bit-perfect resume of an in-flight xHCI driver.
@@ -365,6 +374,8 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_context_parse.rs`
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
+- `crates/aero-usb/tests/xhci_ports.rs`
+- `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
