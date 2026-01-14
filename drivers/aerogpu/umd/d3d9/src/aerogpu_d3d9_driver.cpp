@@ -14927,7 +14927,8 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
   }
 
-  // Stream source frequency (instancing). Cached-only.
+  // Stream source frequency (instancing). Cached for Get*/state blocks and
+  // consulted by the CPU instancing expansion path when non-default.
   for (uint32_t stream = 0; stream < 16; ++stream) {
     if (!sb->stream_source_freq_mask.test(stream)) {
       continue;
