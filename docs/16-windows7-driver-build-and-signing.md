@@ -153,20 +153,25 @@ See also the examples under `drivers/_template/`:
 >
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 > The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`).
-> The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes:
-> - the Aero keyboard/mouse subsystem-qualified contract v1 HWIDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, and
-> - the strict revision-gated generic fallback model line (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`.
+> The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally **SUBSYS-only**: it matches only the Aero
+> contract keyboard/mouse subsystem IDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, and does **not**
+> include a strict generic (no `SUBSYS`) fallback entry.
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over the generic fallback match when both packages are present.
+> over any generic fallback match when both packages are present.
 >
 > The repo also carries an optional legacy filename alias checked in disabled-by-default
 > (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) for compatibility with workflows/tools that still
-> reference `virtio-input.inf`.
-> - Policy: filename alias only. From the first section header (`[Version]`) onward, it is expected to be byte-for-byte identical to
->   `aero_virtio_input.inf` (banner/comments above `[Version]` may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-> - Because it is identical, enabling the alias does **not** change HWID matching behavior, and is **not** required for generic fallback
->   binding (the canonical INF already includes it).
+> reference `virtio-input.inf`. The alias INF is allowed to differ from `aero_virtio_input.inf` in the models sections
+> (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an opt-in strict revision-gated generic fallback match
+> (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`) for environments where subsystem IDs are not exposed/recognized.
+>
+> Outside the models sections, from the first section header (`[Version]`) onward, the alias INF must remain byte-for-byte
+> identical to `aero_virtio_input.inf` (banner/comments above `[Version]` may differ; see
+> `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+>
+> Enabling the alias **does** change HWID matching behavior (it enables generic fallback binding), so only one of the two INF
+> basenames should be packaged/installed.
 >
 > Avoid shipping/installing both filenames at once (they overlap and can cause confusing driver selection). Prefer explicit
 > `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
