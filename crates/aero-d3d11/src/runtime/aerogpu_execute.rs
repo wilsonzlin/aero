@@ -607,7 +607,7 @@ impl AerogpuCmdRuntime {
 
         if let Some(handle) = gs {
             eprintln!(
-                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} bound but geometry shaders are not supported; ignoring"
+                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} bound but this runtime does not execute GS; ignoring"
             );
         }
     }
@@ -820,7 +820,7 @@ impl AerogpuCmdRuntime {
 
         if let Some(handle) = self.state.gs {
             eprintln!(
-                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} is currently ignored"
+                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} is ignored by this runtime"
             );
         }
 
