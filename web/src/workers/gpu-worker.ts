@@ -3272,21 +3272,23 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
-              postToMain(
-                {
-                  type: "screenshot",
-                  requestId: req.requestId,
-                  width,
-                  height,
-                  rgba8: out.buffer,
-                  origin: "top-left",
-                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-                },
-                [out.buffer],
-              );
-              return true;
-            } catch {
-              // If scanout was WDDM-owned but we couldn't read/convert the buffer, do not throw.
+                postToMain(
+                  {
+                    type: "screenshot",
+                    requestId: req.requestId,
+                    width,
+                    height,
+                    // `Uint8Array.buffer` is typed as `ArrayBufferLike` (because views can be backed
+                    // by SharedArrayBuffer), but this `out` buffer is always a fresh ArrayBuffer.
+                    rgba8: out.buffer as ArrayBuffer,
+                    origin: "top-left",
+                    ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+                  },
+                  [out.buffer as ArrayBuffer],
+                );
+                return true;
+              } catch {
+                // If scanout was WDDM-owned but we couldn't read/convert the buffer, do not throw.
               postStub(typeof seq === "number" ? seq : undefined);
               return true;
             }

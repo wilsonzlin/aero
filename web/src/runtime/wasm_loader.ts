@@ -328,32 +328,6 @@ export type UhciControllerBridgeHandle = {
     free(): void;
 };
 
-export type EhciControllerBridgeHandle = {
-    mmio_read(offset: number, size: number): number;
-    mmio_write(offset: number, size: number, value: number): void;
-    /**
-     * Advance the controller by the given number of 1ms USB frames.
-     */
-    step_frames(frames: number): void;
-    /**
-     * Update the device model's PCI command register (offset 0x04, low 16 bits).
-     *
-     * Optional for older WASM builds.
-     */
-    set_pci_command?(command: number): void;
-    irq_asserted(): boolean;
-    save_state?(): Uint8Array;
-    load_state?(bytes: Uint8Array): void;
-    /**
-     * Deterministic USB device/controller snapshot bytes.
-     *
-     * Optional for older WASM builds.
-     */
-    snapshot_state?: () => Uint8Array;
-    restore_state?: (bytes: Uint8Array) => void;
-    free(): void;
-};
-
 /**
  * Guest-visible xHCI controller bridge handle.
  *
@@ -780,17 +754,6 @@ export interface WasmApi {
     XhciControllerBridge?: {
         new (guestBase: number): XhciControllerBridgeHandle;
         new (guestBase: number, guestSize: number): XhciControllerBridgeHandle;
-    };
-
-    /**
-     * Guest-visible EHCI controller bridge.
-     *
-     * Optional until all deployed WASM builds include the EHCI device model.
-     */
-    EhciControllerBridge?: {
-        new (guestBase: number): EhciControllerBridgeHandle;
-        new (guestBase: number, guestSize: number): EhciControllerBridgeHandle;
-        new (): EhciControllerBridgeHandle;
     };
 
     /**
