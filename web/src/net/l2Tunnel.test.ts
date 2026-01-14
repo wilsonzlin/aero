@@ -21,6 +21,16 @@ function microtask(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve));
 }
 
+const FAKE_NOW_MS = 1_000_000;
+
+function useDeterministicFakeTimers(): void {
+  vi.useFakeTimers();
+  // Under fake timers, `Date.now()` defaults to 0 which can interact badly with
+  // throttled error emission (e.g. `errorIntervalMs`). Set an explicit fake
+  // wall-clock so first errors are not accidentally suppressed.
+  vi.setSystemTime(FAKE_NOW_MS);
+}
+
 class FakeRtcDataChannel {
   label = L2_TUNNEL_DATA_CHANNEL_LABEL;
   ordered = true;
@@ -278,8 +288,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("disables keepalive when keepaliveMinMs=keepaliveMaxMs=0", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
+    useDeterministicFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -344,8 +353,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("sends keepalive PINGs with empty payload when maxControlSize < 4", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
+    useDeterministicFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -388,8 +396,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("closes the tunnel when keepalive pings go unanswered", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
+    useDeterministicFakeTimers();
     // `BaseL2TunnelClient` uses `performance.now()` for idle/RTT timing when available. Ensure
     // the clock source advances with fake timers even in environments where `performance.now`
     // is not patched by the timer shim.
@@ -753,8 +760,7 @@ describe("net/l2Tunnel", () => {
   });
 
   it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
+    useDeterministicFakeTimers();
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
