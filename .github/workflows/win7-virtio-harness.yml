@@ -593,6 +593,23 @@ jobs:
             blk_resize_delta_mib="${blk_resize_delta_mib#"${blk_resize_delta_mib%%[![:space:]]*}"}"
             blk_resize_delta_mib="${blk_resize_delta_mib%"${blk_resize_delta_mib##*[![:space:]]}"}"
 
+            if [[ -n "${virtio_snd_wav_peak_threshold}" && "${with_virtio_snd}" != "true" ]]; then
+              echo "ERROR: workflow input virtio_snd_wav_peak_threshold requires with_virtio_snd=true" >&2
+              exit 1
+            fi
+            if [[ -n "${virtio_snd_wav_rms_threshold}" && "${with_virtio_snd}" != "true" ]]; then
+              echo "ERROR: workflow input virtio_snd_wav_rms_threshold requires with_virtio_snd=true" >&2
+              exit 1
+            fi
+            if [[ -n "${virtio_snd_wav_peak_threshold}" && ! "${virtio_snd_wav_peak_threshold}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input virtio_snd_wav_peak_threshold must be a non-negative integer, got: '${virtio_snd_wav_peak_threshold}'" >&2
+              exit 1
+            fi
+            if [[ -n "${virtio_snd_wav_rms_threshold}" && ! "${virtio_snd_wav_rms_threshold}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input virtio_snd_wav_rms_threshold must be a non-negative integer, got: '${virtio_snd_wav_rms_threshold}'" >&2
+              exit 1
+            fi
+
             if [[ "${require_intx}" == "true" && "${require_msi}" == "true" ]]; then
               echo "ERROR: workflow inputs require_intx=true and require_msi=true are mutually exclusive" >&2
               exit 1
