@@ -1000,12 +1000,50 @@ inline void SetRenderTargetsStateLocked(Device* dev,
   }
 }
 
+// The current AeroGPU host executors only support render target bindings that
+// are a contiguous prefix starting at slot 0 (i.e. there must not be a non-zero
+// RTV handle after a null slot). D3D11 allows such "gaps", typically produced
+// when the runtime unbinds outputs to resolve hazards (SRV/RTV aliasing).
+//
+// Normalize this state by truncating the RTV list at the first null slot and
+// clearing any subsequent slots.
+inline void NormalizeRenderTargetsNoGapsLocked(Device* dev) {
+  if (!dev) {
+    return;
+  }
+
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  uint32_t new_count = 0;
+  bool seen_gap = false;
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_handle_t h = dev->current_rtvs[i];
+    if (h == 0) {
+      seen_gap = true;
+      continue;
+    }
+    if (seen_gap) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+    } else {
+      new_count = i + 1;
+    }
+  }
+  for (uint32_t i = new_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+    dev->current_rtv_resources[i] = nullptr;
+  }
+  dev->current_rtv_count = new_count;
+}
+
 // Emits an AEROGPU_CMD_SET_RENDER_TARGETS packet based on the device's current
 // cached RTV/DSV state. Returns false if the command could not be appended.
 inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
   if (!dev) {
     return false;
   }
+
+  NormalizeRenderTargetsNoGapsLocked(dev);
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
     return false;

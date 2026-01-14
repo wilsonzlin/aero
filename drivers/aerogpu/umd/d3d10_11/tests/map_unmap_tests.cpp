@@ -1939,6 +1939,40 @@ bool TestMapFlagsValidation() {
   return true;
 }
 
+bool TestStagingMapFlagsValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(staging map flags)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev,
+                                    /*width=*/3,
+                                    /*height=*/2,
+                                    AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                    &tex),
+             "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  const HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                            tex.hResource,
+                                                            /*subresource=*/0,
+                                                            AEROGPU_DDI_MAP_WRITE,
+                                                            /*map_flags=*/0x1,
+                                                            &mapped);
+  if (!Check(hr == E_INVALIDARG, "StagingResourceMap with unknown MapFlags bits should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestMapDoNotWaitReportsStillDrawing() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/true),
@@ -8711,6 +8745,7 @@ int main() {
   ok &= TestMapUsageValidation();
   ok &= TestMapCpuAccessValidation();
   ok &= TestMapFlagsValidation();
+  ok &= TestStagingMapFlagsValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
