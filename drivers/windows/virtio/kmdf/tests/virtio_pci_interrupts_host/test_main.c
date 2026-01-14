@@ -469,6 +469,50 @@ static void TestMsixLimitedVectorRouting(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixLimitedVectorProgramming(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    WDFSPINLOCK commonCfgLock;
+    NTSTATUS st;
+    ULONG q;
+    ULONG commonCfgLockAcquireBefore;
+    ULONG commonCfgLockReleaseBefore;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 4);
+
+    commonCfgLock = NULL;
+    PrepareMsix(&interrupts, &dev, &cb, 4 /* queues */, 2 /* config + 1 queue vector */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 2);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(interrupts.u.Msix.QueueVectors[q] == 1);
+    }
+
+    commonCfgLockAcquireBefore = commonCfgLock->AcquireCalls;
+    commonCfgLockReleaseBefore = commonCfgLock->ReleaseCalls;
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+
+    /* Program should serialize the queue_select programming sequence. */
+    assert(commonCfgLock->AcquireCalls == commonCfgLockAcquireBefore + 1);
+    assert(commonCfgLock->ReleaseCalls == commonCfgLockReleaseBefore + 1);
+
+    assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == interrupts.u.Msix.QueueVectors[q]);
+    }
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 static void TestMsixVectorUtilizationPartialQueueVectors(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -638,6 +682,12 @@ static void TestResetInProgressGating(void)
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 0);
     assert(WdfTestReadRegisterUcharCount == 1);
+    assert(interrupts.ConfigLock->AcquireCalls == 0);
+    assert(interrupts.ConfigLock->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 0);
 
     /*
      * INTx DPC gating: if a DPC is already queued when reset begins, the DPC
@@ -659,6 +709,12 @@ static void TestResetInProgressGating(void)
     assert(cb.QueueCallsTotal == 0);
     assert(interrupts.u.Intx.PendingIsrStatus == 0);
     assert(WdfTestReadRegisterUcharCount == 1);
+    assert(interrupts.ConfigLock->AcquireCalls == 0);
+    assert(interrupts.ConfigLock->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 0);
 
     Cleanup(&interrupts, dev);
 
@@ -675,6 +731,12 @@ static void TestResetInProgressGating(void)
     assert(interrupts.u.Msix.Interrupts[1]->DpcQueued == FALSE);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 0);
+    assert(interrupts.ConfigLock->AcquireCalls == 0);
+    assert(interrupts.ConfigLock->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 0);
 
     /*
      * MSI-X DPC gating: if reset begins after the ISR queues a DPC, the DPC must
@@ -691,6 +753,12 @@ static void TestResetInProgressGating(void)
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 0);
+    assert(interrupts.ConfigLock->AcquireCalls == 0);
+    assert(interrupts.ConfigLock->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 0);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 0);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 0);
 
     Cleanup(&interrupts, dev);
 }
@@ -954,6 +1022,7 @@ int main(void)
     TestIntxRealInterruptDispatch();
     TestMsixDispatchAndRouting();
     TestMsixLimitedVectorRouting();
+    TestMsixLimitedVectorProgramming();
     TestMsixVectorUtilizationPartialQueueVectors();
     TestMsixVectorUtilizationOnePerQueueWhenPossible();
     TestMsixSingleVectorFallbackRouting();
