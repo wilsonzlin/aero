@@ -1,25 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-
-function withStubbedDocument<T>(run: (doc: any) => T): T {
-  const original = (globalThis as any).document;
-  const doc = {
-    pointerLockElement: null,
-    visibilityState: "visible",
-    hasFocus: () => true,
-    activeElement: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    exitPointerLock: () => {},
-  };
-  (globalThis as any).document = doc;
-  try {
-    return run(doc);
-  } finally {
-    (globalThis as any).document = original;
-  }
-}
+import { withStubbedDocument } from "./test_utils";
 
 function withStubbedWindow<T>(run: (win: any) => T): T {
   const original = (globalThis as any).window;

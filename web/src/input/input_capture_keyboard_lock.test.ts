@@ -1,24 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-
-async function withStubbedDocument<T>(run: (doc: any) => Promise<T> | T): Promise<T> {
-  const original = (globalThis as any).document;
-  const doc = {
-    pointerLockElement: null,
-    visibilityState: "visible",
-    hasFocus: () => true,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    exitPointerLock: () => {},
-  };
-  (globalThis as any).document = doc;
-  try {
-    return await run(doc);
-  } finally {
-    (globalThis as any).document = original;
-  }
-}
+import { withStubbedDocument } from "./test_utils";
 
 async function withFakeNavigatorKeyboard<T>(keyboard: unknown, run: () => Promise<T> | T): Promise<T> {
   const nav = globalThis.navigator as unknown as Record<string, unknown>;
