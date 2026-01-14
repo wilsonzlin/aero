@@ -13,6 +13,11 @@ on:
         required: false
         default: qemu-system-x86_64
         type: string
+      qemu_extra_args:
+        description: Optional extra QEMU args to pass through to qemu-system-* (one arg per line; forwarded after --)
+        required: false
+        default: ""
+        type: string
       dry_run:
         description: Print the computed QEMU argv and exit 0 without starting QEMU/HTTP/QMP (debugging helper)
         required: false
@@ -313,6 +318,16 @@ jobs:
             echo "Inputs:"
             echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
             echo "  qemu_system: '${{ inputs.qemu_system }}'"
+            if [[ -n "${{ inputs.qemu_extra_args }}" ]]; then
+              echo "  qemu_extra_args:"
+              while IFS= read -r line; do
+                if [[ -n "${line}" ]]; then
+                  echo "    - ${line}"
+                fi
+              done <<<"${{ inputs.qemu_extra_args }}"
+            else
+              echo "  qemu_extra_args: ''"
+            fi
             echo "  dry_run: '${{ inputs.dry_run }}'"
             echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
             echo "  memory_mb: '${{ inputs.memory_mb }}'"
@@ -367,6 +382,7 @@ jobs:
 
             disk_image_path="${{ inputs.disk_image_path }}"
             qemu_system="${{ inputs.qemu_system }}"
+            qemu_extra_args="${{ inputs.qemu_extra_args }}"
             dry_run="${{ inputs.dry_run }}"
             timeout_seconds="${{ inputs.timeout_seconds }}"
             memory_mb="${{ inputs.memory_mb }}"
@@ -763,6 +779,14 @@ jobs:
                 exit 1
               fi
               args+=(--with-snd-buffer-limits)
+            fi
+            if [[ -n "${qemu_extra_args}" ]]; then
+              args+=(--)
+              while IFS= read -r line; do
+                if [[ -n "${line}" ]]; then
+                  args+=("${line}")
+                fi
+              done <<<"${qemu_extra_args}"
             fi
 
             echo "Executing harness:"

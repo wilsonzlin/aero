@@ -1201,6 +1201,9 @@ runner has different resource constraints.
 If your guest image was provisioned with a non-default `--http-path`, override it via the workflow input `http_path`
 (the default matches the harness default `/aero-virtio-selftest`).
 
+For debugging, you can pass extra QEMU args through the workflow input `qemu_extra_args` (one argument per line).
+These are forwarded to QEMU **after `--`**, so they are not parsed as harness flags.
+
 To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
 
