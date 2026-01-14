@@ -4278,6 +4278,32 @@ def main() -> int:
                         if virtio_blk_marker_time is None:
                             virtio_blk_marker_time = time.monotonic()
 
+                    # Prefer the incrementally captured marker line (virtio_blk_resize_marker_line) so we
+                    # don't miss the READY/PASS/FAIL/SKIP token when the rolling tail buffer truncates.
+                    if virtio_blk_resize_marker_line is not None:
+                        toks = virtio_blk_resize_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_blk_resize_pass and status_tok == "PASS":
+                            saw_virtio_blk_resize_pass = True
+                        if not saw_virtio_blk_resize_fail and status_tok == "FAIL":
+                            saw_virtio_blk_resize_fail = True
+                        if not saw_virtio_blk_resize_skip and status_tok == "SKIP":
+                            saw_virtio_blk_resize_skip = True
+                        if not saw_virtio_blk_resize_ready and status_tok == "READY":
+                            fields = _parse_marker_kv_fields(virtio_blk_resize_marker_line)
+                            if "old_bytes" in fields:
+                                try:
+                                    blk_resize_old_bytes = int(fields["old_bytes"], 0)
+                                except Exception:
+                                    blk_resize_old_bytes = None
+                                if blk_resize_old_bytes is not None:
+                                    saw_virtio_blk_resize_ready = True
+                                    if need_blk_resize:
+                                        delta_bytes = int(args.blk_resize_delta_mib) * 1024 * 1024
+                                        blk_resize_new_bytes = _virtio_blk_resize_compute_new_bytes(
+                                            blk_resize_old_bytes, delta_bytes
+                                        )
+
                     if not saw_virtio_blk_resize_ready:
                         ready = _try_extract_virtio_blk_resize_ready(tail)
                         if ready is not None:
@@ -6053,6 +6079,32 @@ def main() -> int:
                             saw_virtio_blk_fail = True
                             if virtio_blk_marker_time is None:
                                 virtio_blk_marker_time = time.monotonic()
+
+                        # Prefer the incrementally captured marker line (virtio_blk_resize_marker_line) so we
+                        # don't miss the READY/PASS/FAIL/SKIP token when the rolling tail buffer truncates.
+                        if virtio_blk_resize_marker_line is not None:
+                            toks = virtio_blk_resize_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_blk_resize_pass and status_tok == "PASS":
+                                saw_virtio_blk_resize_pass = True
+                            if not saw_virtio_blk_resize_fail and status_tok == "FAIL":
+                                saw_virtio_blk_resize_fail = True
+                            if not saw_virtio_blk_resize_skip and status_tok == "SKIP":
+                                saw_virtio_blk_resize_skip = True
+                            if not saw_virtio_blk_resize_ready and status_tok == "READY":
+                                fields = _parse_marker_kv_fields(virtio_blk_resize_marker_line)
+                                if "old_bytes" in fields:
+                                    try:
+                                        blk_resize_old_bytes = int(fields["old_bytes"], 0)
+                                    except Exception:
+                                        blk_resize_old_bytes = None
+                                    if blk_resize_old_bytes is not None:
+                                        saw_virtio_blk_resize_ready = True
+                                        if need_blk_resize:
+                                            delta_bytes = int(args.blk_resize_delta_mib) * 1024 * 1024
+                                            blk_resize_new_bytes = _virtio_blk_resize_compute_new_bytes(
+                                                blk_resize_old_bytes, delta_bytes
+                                            )
 
                         if not saw_virtio_blk_resize_ready:
                             ready = _try_extract_virtio_blk_resize_ready(tail)
