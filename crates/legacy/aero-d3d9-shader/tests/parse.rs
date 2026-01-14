@@ -159,6 +159,29 @@ fn malformed_dxbc_chunk_offset_into_header_errors() {
 }
 
 #[test]
+fn malformed_dxbc_chunk_offset_into_offset_table_errors() {
+    // DXBC container with a chunk offset that points into the chunk offset table should be
+    // rejected as a malformed offset table.
+    //
+    // total_size: 36 bytes (header + 1 offset entry)
+    // chunk_count: 1
+    // chunk_offset: 32 (DXBC_HEADER_LEN) -> inside the offset table
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&36u32.to_le_bytes()); // total_size
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    dxbc.extend_from_slice(&32u32.to_le_bytes()); // chunk_offset[0]
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::MalformedOffsets { .. })
+    ));
+}
+
+#[test]
 fn malformed_dxbc_chunk_header_truncated_errors() {
     // DXBC container with a chunk offset pointing at the first byte after the offset table but
     // without enough remaining bytes for a full chunk header (8 bytes).
@@ -171,6 +194,30 @@ fn malformed_dxbc_chunk_header_truncated_errors() {
     dxbc.extend_from_slice(&total_size.to_le_bytes());
     dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
     dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
+    dxbc.resize(total_size as usize, 0);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::OutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn malformed_dxbc_chunk_data_out_of_bounds_errors() {
+    // DXBC container with a valid chunk header but a chunk size that would extend beyond the
+    // declared total_size should be rejected as OutOfBounds.
+    let chunk_offset = 36u32;
+    let total_size = 44u32; // enough for header + offset table + chunk header (8 bytes), but no data
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&total_size.to_le_bytes());
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
+    dxbc.extend_from_slice(b"SHDR");
+    dxbc.extend_from_slice(&4u32.to_le_bytes()); // chunk size (would require 4 bytes of data)
     dxbc.resize(total_size as usize, 0);
 
     let err = D3d9Shader::parse(&dxbc).unwrap_err();
