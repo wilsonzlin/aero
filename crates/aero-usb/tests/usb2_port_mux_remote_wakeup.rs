@@ -431,6 +431,10 @@ fn usb2_port_mux_ehci_remote_wakeup_propagates_through_external_hub_without_hub_
         0b01 << 10,
         "expected K-state while resuming"
     );
+    assert!(
+        ehci.hub_mut().device_mut_for_address(2).is_none(),
+        "device should not be reachable while the root port remains suspended"
+    );
 
     // After the resume timer expires, the port should exit suspend/resume and return to J state.
     for _ in 0..20 {
