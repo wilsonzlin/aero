@@ -196,6 +196,11 @@ static void test_connect_validation(void)
     status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
+    /* INTx requires a mapped ISR status register. */
+    desc = make_int_desc();
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
     /* Parameter validation failures must not call through to WDK interrupt routines. */
     assert(WdkTestGetIoConnectInterruptCount() == 0);
     assert(WdkTestGetIoDisconnectInterruptCount() == 0);
