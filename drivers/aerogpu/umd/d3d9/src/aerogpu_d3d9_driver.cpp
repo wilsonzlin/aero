@@ -162,17 +162,6 @@ struct StateBlock {
   bool n_patch_mode_set = false;
   float n_patch_mode = 0.0f;
 
-  // Device cursor state (SetCursorProperties/SetCursorPosition/ShowCursor).
-  bool cursor_properties_set = false;
-  Resource* cursor_bitmap = nullptr;
-  uint32_t cursor_hot_x = 0;
-  uint32_t cursor_hot_y = 0;
-  bool cursor_position_set = false;
-  int32_t cursor_x = 0;
-  int32_t cursor_y = 0;
-  bool cursor_visible_set = false;
-  BOOL cursor_visible = FALSE;
-
   // Fixed-function lighting/material state. Cached-only and not currently
   // consumed by the AeroGPU command stream directly, but tracked for Get*/state-block
   // compatibility with legacy apps and consulted by the minimal fixed-function
@@ -3511,36 +3500,6 @@ inline void stateblock_record_npatch_mode_locked(Device* dev, float mode) {
   StateBlock* sb = dev->recording_state_block;
   sb->n_patch_mode_set = true;
   sb->n_patch_mode = mode;
-}
-
-inline void stateblock_record_cursor_properties_locked(Device* dev, Resource* bitmap, uint32_t hot_x, uint32_t hot_y) {
-  if (!dev || !dev->recording_state_block) {
-    return;
-  }
-  StateBlock* sb = dev->recording_state_block;
-  sb->cursor_properties_set = true;
-  sb->cursor_bitmap = bitmap;
-  sb->cursor_hot_x = hot_x;
-  sb->cursor_hot_y = hot_y;
-}
-
-inline void stateblock_record_cursor_position_locked(Device* dev, int32_t x, int32_t y) {
-  if (!dev || !dev->recording_state_block) {
-    return;
-  }
-  StateBlock* sb = dev->recording_state_block;
-  sb->cursor_position_set = true;
-  sb->cursor_x = x;
-  sb->cursor_y = y;
-}
-
-inline void stateblock_record_show_cursor_locked(Device* dev, BOOL visible) {
-  if (!dev || !dev->recording_state_block) {
-    return;
-  }
-  StateBlock* sb = dev->recording_state_block;
-  sb->cursor_visible_set = true;
-  sb->cursor_visible = visible ? TRUE : FALSE;
 }
 
 inline void stateblock_record_material_locked(Device* dev, const D3DMATERIAL9& material, bool valid) {
@@ -14626,18 +14585,6 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->render_state_values[i] = dev->render_states[i];
   }
 
-  if (is_all) {
-    sb->cursor_properties_set = true;
-    sb->cursor_bitmap = dev->cursor_bitmap;
-    sb->cursor_hot_x = dev->cursor_hot_x;
-    sb->cursor_hot_y = dev->cursor_hot_y;
-    sb->cursor_position_set = true;
-    sb->cursor_x = dev->cursor_x;
-    sb->cursor_y = dev->cursor_y;
-    sb->cursor_visible_set = true;
-    sb->cursor_visible = dev->cursor_visible ? TRUE : FALSE;
-  }
-
   if (is_pixel) {
     for (uint32_t stage = 0; stage < 16; ++stage) {
       sb->texture_mask.set(stage);
@@ -14816,18 +14763,6 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   }
   if (sb->n_patch_mode_set) {
     sb->n_patch_mode = dev->n_patch_mode;
-  }
-  if (sb->cursor_properties_set) {
-    sb->cursor_bitmap = dev->cursor_bitmap;
-    sb->cursor_hot_x = dev->cursor_hot_x;
-    sb->cursor_hot_y = dev->cursor_hot_y;
-  }
-  if (sb->cursor_position_set) {
-    sb->cursor_x = dev->cursor_x;
-    sb->cursor_y = dev->cursor_y;
-  }
-  if (sb->cursor_visible_set) {
-    sb->cursor_visible = dev->cursor_visible ? TRUE : FALSE;
   }
 
   if (sb->material_set) {
@@ -15193,22 +15128,6 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->n_patch_mode_set) {
     dev->n_patch_mode = sb->n_patch_mode;
     stateblock_record_npatch_mode_locked(dev, dev->n_patch_mode);
-  }
-
-  if (sb->cursor_properties_set) {
-    dev->cursor_bitmap = sb->cursor_bitmap;
-    dev->cursor_hot_x = sb->cursor_hot_x;
-    dev->cursor_hot_y = sb->cursor_hot_y;
-    stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
-  }
-  if (sb->cursor_position_set) {
-    dev->cursor_x = sb->cursor_x;
-    dev->cursor_y = sb->cursor_y;
-    stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
-  }
-  if (sb->cursor_visible_set) {
-    dev->cursor_visible = sb->cursor_visible ? TRUE : FALSE;
-    stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   }
 
   if (sb->material_set) {
@@ -17535,7 +17454,6 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
     cur_y = dev->cursor_y;
     cur_visible = dev->cursor_visible;
     shape_packet_ok = build_cursor_shape_escape_packet(dev, cursor, hot_x, hot_y, &shape_packet);
-    stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
   }
 
   bool hw_ok = false;
@@ -17673,7 +17591,6 @@ HRESULT device_set_cursor_position_values_impl(D3DDDI_HDEVICE hDevice, X x, Y y,
     dev->cursor_x = x_i32;
     dev->cursor_y = y_i32;
     hw_active = dev->cursor_hw_active;
-    stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
   }
 
   // Only emit hardware cursor updates when the hardware cursor path is active.
@@ -17759,7 +17676,6 @@ HRESULT device_show_cursor_impl(D3DDDI_HDEVICE hDevice, ShowT show) {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->cursor_visible = visible;
     hw_active = dev->cursor_hw_active;
-    stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   }
 
   // Only emit hardware cursor updates when the hardware cursor path is active.
@@ -19342,7 +19258,6 @@ HRESULT AEROGPU_D3D9_CALL device_set_cursor_properties(D3DDDI_HDEVICE hDevice,
   dev->cursor_hot_x = x_hotspot;
   dev->cursor_hot_y = y_hotspot;
   dev->cursor_bitmap_serial++;
-  stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
   return trace.ret(S_OK);
 }
 
@@ -19367,7 +19282,6 @@ HRESULT AEROGPU_D3D9_CALL device_set_cursor_position(D3DDDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->cursor_x = x;
   dev->cursor_y = y;
-  stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
   return trace.ret(S_OK);
 }
 
@@ -19386,7 +19300,6 @@ HRESULT AEROGPU_D3D9_CALL device_show_cursor(D3DDDI_HDEVICE hDevice, BOOL bShow)
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->cursor_visible = bShow ? TRUE : FALSE;
-  stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   return trace.ret(S_OK);
 }
 #endif
