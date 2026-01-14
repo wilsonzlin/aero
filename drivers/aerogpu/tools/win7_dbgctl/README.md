@@ -67,6 +67,7 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-version` (alias: `--query-device`)  
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (when exposed) device feature bits.
   Also prints an UMDRIVERPRIVATE summary (type + ABI + features), a fence snapshot, a ring0 snapshot, a scanout0 snapshot (cached vs MMIO),
+  a last-error snapshot (when supported; includes `latched=true/false` on newer KMDs),
   a cursor MMIO summary (when supported),
   a scanout0 vblank timing snapshot (when available), and a short CreateAllocation trace summary (`write_index` / `entry_count`).
 
@@ -98,6 +99,8 @@ Minimum supported commands:
   - IRQ delivery counters (fence/vblank/spurious + error IRQ snapshot when available; dbgctl may fall back to `--query-fence` on older builds),
   - reset counts, vblank counters, and selftest stats (count + last error when available), and
   - sticky device error state (`device_error.latched` + `device_error.last_time_10ms`; packed into `reserved0` for ABI stability).
+  It also prints a best-effort last-error snapshot (QUERY_ERROR) when supported; on newer KMDs this includes
+  `latched=true/false` to distinguish the current device-lost state from historical error counters.
   On older KMD builds this may print `(not supported)`; upgrade the driver to enable it.
 
 - `aerogpu_dbgctl --query-scanout`  
