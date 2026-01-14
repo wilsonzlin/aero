@@ -1075,6 +1075,7 @@ impl IoSnapshot for PlatformInterrupts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_interrupts::apic::{DeliveryMode, DestinationShorthand, Icr, Level};
 
     fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
         let redtbl_low = 0x10u32 + gsi * 2;
@@ -1473,24 +1474,60 @@ mod tests {
     fn lapic_icr_notifier_fires_with_decoded_vector_and_destination() {
         let ints = PlatformInterrupts::new_with_cpu_count(2);
 
-        let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
-        let seen_clone = seen.clone();
-        ints.register_icr_notifier(
-            0,
-            Arc::new(move |icr| {
-                seen_clone.lock().unwrap().push(icr);
-            }),
+        // Unknown APIC IDs should be a no-op.
+        ints.register_icr_notifier(5, Arc::new(|_| panic!("unexpected ICR notifier call")));
+
+        let seen: Arc<Mutex<Vec<Icr>>> = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen = seen.clone();
+            ints.register_icr_notifier(
+                0,
+                Arc::new(move |icr| {
+                    seen.lock().unwrap().push(icr);
+                }),
+            );
+        }
+
+        // Fixed IPI: vector 0x40 -> destination 1, destination shorthand AllExcludingSelf.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &(1u32 << 24).to_le_bytes());
+
+        let icr_low = 0x40u32 | (1 << 14) | (3u32 << 18);
+        let bytes = icr_low.to_le_bytes();
+        ints.lapic_mmio_write_for_apic(0, 0x300, &bytes[0..2]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Icr {
+                vector: 0x40,
+                delivery_mode: DeliveryMode::Fixed,
+                destination_mode: false,
+                level: Level::Assert,
+                destination_shorthand: DestinationShorthand::None,
+                destination: 1,
+            }]
         );
 
-        // Program destination APIC ID = 1 in ICR_HIGH.
-        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
-        // Send fixed IPI vector 0x45.
-        ints.lapic_mmio_write_for_apic(0, 0x300, &(0x45u32.to_le_bytes()));
-
-        let events = seen.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].destination, 1);
-        assert_eq!(events[0].vector, 0x45);
+        ints.lapic_mmio_write_for_apic(0, 0x302, &bytes[2..4]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                Icr {
+                    vector: 0x40,
+                    delivery_mode: DeliveryMode::Fixed,
+                    destination_mode: false,
+                    level: Level::Assert,
+                    destination_shorthand: DestinationShorthand::None,
+                    destination: 1,
+                },
+                Icr {
+                    vector: 0x40,
+                    delivery_mode: DeliveryMode::Fixed,
+                    destination_mode: false,
+                    level: Level::Assert,
+                    destination_shorthand: DestinationShorthand::AllExcludingSelf,
+                    destination: 1,
+                }
+            ]
+        );
     }
 
     #[test]
