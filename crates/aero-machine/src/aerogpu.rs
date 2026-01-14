@@ -1,10 +1,15 @@
 #![forbid(unsafe_code)]
 
 use core::mem::offset_of;
+use std::collections::VecDeque;
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::ring::write_fence_page;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
+};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
@@ -38,6 +43,19 @@ fn supported_features() -> u64 {
         | pci::AEROGPU_FEATURE_SCANOUT
         | pci::AEROGPU_FEATURE_VBLANK
         | pci::AEROGPU_FEATURE_ERROR_INFO
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingFenceKind {
+    Immediate,
+    Vblank,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingFenceCompletion {
+    fence_value: u64,
+    wants_irq: bool,
+    kind: PendingFenceKind,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -442,6 +460,12 @@ pub struct AeroGpuMmioDevice {
     cursor_fb_gpa: u64,
     cursor_pitch_bytes: u32,
 
+    // ---------------------------------------------------------------------
+    // Fence completion pacing
+    // ---------------------------------------------------------------------
+    pending_fence_completions: VecDeque<PendingFenceCompletion>,
+    fence_page_dirty: bool,
+
     doorbell_pending: bool,
     ring_reset_pending: bool,
 }
@@ -548,6 +572,9 @@ impl Default for AeroGpuMmioDevice {
             cursor_format: 0,
             cursor_fb_gpa: 0,
             cursor_pitch_bytes: 0,
+
+            pending_fence_completions: VecDeque::new(),
+            fence_page_dirty: false,
 
             doorbell_pending: false,
             ring_reset_pending: false,
@@ -908,6 +935,8 @@ impl AeroGpuMmioDevice {
         // Snapshot v1 does not preserve these internal execution latches.
         self.doorbell_pending = false;
         self.ring_reset_pending = false;
+        self.pending_fence_completions.clear();
+        self.fence_page_dirty = false;
     }
 
     pub fn tick_vblank(&mut self, now_ns: u64) {
@@ -940,6 +969,8 @@ impl AeroGpuMmioDevice {
             if (self.irq_enable & pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0 {
                 self.irq_status |= pci::AEROGPU_IRQ_SCANOUT_VBLANK;
             }
+
+            self.process_pending_fences_on_vblank();
 
             next = next.saturating_add(interval_ns);
             ticks += 1;
@@ -991,6 +1022,8 @@ impl AeroGpuMmioDevice {
             self.error_code = pci::AerogpuErrorCode::None as u32;
             self.error_fence = 0;
             self.error_count = 0;
+            self.pending_fence_completions.clear();
+            self.fence_page_dirty = true;
 
             if dma_enabled && self.ring_gpa != 0 {
                 let tail = mem.read_u32(self.ring_gpa + RING_TAIL_OFFSET);
@@ -1002,6 +1035,7 @@ impl AeroGpuMmioDevice {
                 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
             {
                 write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
+                self.fence_page_dirty = false;
             }
         }
 
@@ -1010,92 +1044,219 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        if !self.doorbell_pending {
-            return;
-        }
-        self.doorbell_pending = false;
+        if self.doorbell_pending {
+            self.doorbell_pending = false;
 
-        if (self.ring_control & pci::AEROGPU_RING_CONTROL_ENABLE) == 0 {
-            return;
-        }
-        if self.ring_gpa == 0 || self.ring_size_bytes == 0 {
-            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
-            return;
-        }
-
-        let mut hdr_buf = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
-        mem.read_physical(self.ring_gpa, &mut hdr_buf);
-        let Ok(ring_hdr) = ring::AerogpuRingHeader::decode_from_le_bytes(&hdr_buf) else {
-            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
-            return;
-        };
-        if ring_hdr.validate_prefix().is_err() {
-            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
-            return;
-        }
-
-        // The guest-declared ring size must not exceed the MMIO-programmed ring mapping size. The
-        // mapping may be larger due to page rounding / extension space.
-        if u64::from(ring_hdr.size_bytes) > u64::from(self.ring_size_bytes) {
-            self.record_error(pci::AerogpuErrorCode::Oob, 0);
-            return;
-        }
-
-        let mut head = ring_hdr.head;
-        let tail = ring_hdr.tail;
-        let pending = tail.wrapping_sub(head);
-        if pending == 0 {
-            return;
-        }
-
-        if pending > ring_hdr.entry_count {
-            // Driver and device are out of sync; drop all pending work to avoid looping forever.
-            mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, tail);
-            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
-            return;
-        }
-
-        let mut processed = 0u32;
-        let max = ring_hdr.entry_count.min(pending);
-
-        while head != tail && processed < max {
-            // entry_count is validated as a power-of-two.
-            let slot = head & (ring_hdr.entry_count - 1);
-            let desc_gpa = self.ring_gpa
-                + RING_HEADER_SIZE_BYTES
-                + (u64::from(slot) * u64::from(ring_hdr.entry_stride_bytes));
-
-            let mut desc_buf = [0u8; ring::AerogpuSubmitDesc::SIZE_BYTES];
-            mem.read_physical(desc_gpa, &mut desc_buf);
-            if let Ok(desc) = ring::AerogpuSubmitDesc::decode_from_le_bytes(&desc_buf) {
-                // Treat the command stream as a no-op for now. The goal is transport + fence
-                // completion so the Win7 KMD doesn't deadlock.
-                if desc.validate_prefix().is_err() {
-                    self.record_error(pci::AerogpuErrorCode::CmdDecode, desc.signal_fence);
+            'doorbell: {
+                if (self.ring_control & pci::AEROGPU_RING_CONTROL_ENABLE) == 0 {
+                    break 'doorbell;
                 }
-                if desc.signal_fence != 0 && desc.signal_fence > self.completed_fence {
-                    self.completed_fence = desc.signal_fence;
+                if self.ring_gpa == 0 || self.ring_size_bytes == 0 {
+                    self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
+                    break 'doorbell;
+                }
 
-                    let wants_irq = (desc.flags & ring::AEROGPU_SUBMIT_FLAG_NO_IRQ) == 0;
-                    if wants_irq && (self.irq_enable & pci::AEROGPU_IRQ_FENCE) != 0 {
-                        self.irq_status |= pci::AEROGPU_IRQ_FENCE;
+                let mut hdr_buf = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
+                mem.read_physical(self.ring_gpa, &mut hdr_buf);
+                let Ok(ring_hdr) = ring::AerogpuRingHeader::decode_from_le_bytes(&hdr_buf) else {
+                    self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
+                    break 'doorbell;
+                };
+                if ring_hdr.validate_prefix().is_err() {
+                    self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
+                    break 'doorbell;
+                }
+
+                // The guest-declared ring size must not exceed the MMIO-programmed ring mapping size. The
+                // mapping may be larger due to page rounding / extension space.
+                if u64::from(ring_hdr.size_bytes) > u64::from(self.ring_size_bytes) {
+                    self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                    break 'doorbell;
+                }
+
+                let mut head = ring_hdr.head;
+                let tail = ring_hdr.tail;
+                let pending = tail.wrapping_sub(head);
+                if pending == 0 {
+                    break 'doorbell;
+                }
+
+                if pending > ring_hdr.entry_count {
+                    // Driver and device are out of sync; drop all pending work to avoid looping forever.
+                    mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, tail);
+                    self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
+                    break 'doorbell;
+                }
+
+                let mut processed = 0u32;
+                let max = ring_hdr.entry_count.min(pending);
+
+                while head != tail && processed < max {
+                    // entry_count is validated as a power-of-two.
+                    let slot = head & (ring_hdr.entry_count - 1);
+                    let desc_gpa = self.ring_gpa
+                        + RING_HEADER_SIZE_BYTES
+                        + (u64::from(slot) * u64::from(ring_hdr.entry_stride_bytes));
+
+                    let mut desc_buf = [0u8; ring::AerogpuSubmitDesc::SIZE_BYTES];
+                    mem.read_physical(desc_gpa, &mut desc_buf);
+                    if let Ok(desc) = ring::AerogpuSubmitDesc::decode_from_le_bytes(&desc_buf) {
+                        self.consume_submission(mem, &desc);
+                    } else {
+                        self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
                     }
+
+                    head = head.wrapping_add(1);
+                    processed += 1;
                 }
-            } else {
-                self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
+
+                self.process_pending_fences_on_doorbell();
+
+                // Publish the new head after processing submissions.
+                mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, head);
+
+                // Mirror the emulator device model: after consuming a doorbell, publish the current fence
+                // value even if it did not advance (initialization / keeping the fence page coherent).
+                if self.fence_gpa != 0
+                    && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
+                {
+                    write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
+                    self.fence_page_dirty = false;
+                }
             }
-
-            head = head.wrapping_add(1);
-            processed += 1;
         }
 
-        // Publish the new head after processing submissions.
-        mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, head);
+        // If vblank-paced work completed without a doorbell (or scanout was disabled while a vsync fence
+        // was pending), ensure the fence page is still updated.
+        self.write_fence_page_if_dirty(mem, dma_enabled);
+    }
 
-        if self.fence_gpa != 0 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
+    fn consume_submission(&mut self, mem: &mut dyn MemoryBus, desc: &ring::AerogpuSubmitDesc) {
+        // Preserve upstream behaviour: invalid descriptors still count as consumed, but latch an
+        // error payload if supported.
+        if desc.validate_prefix().is_err() {
+            self.record_error(pci::AerogpuErrorCode::CmdDecode, desc.signal_fence);
+        }
+
+        if desc.signal_fence == 0 {
+            return;
+        }
+
+        let mut max_seen = self.completed_fence;
+        if let Some(back) = self.pending_fence_completions.back() {
+            max_seen = max_seen.max(back.fence_value);
+        }
+        if desc.signal_fence <= max_seen {
+            return;
+        }
+
+        let kind = if self.vblank_pacing_active()
+            && desc.cmd_gpa != 0
+            && desc.cmd_size_bytes != 0
+            && cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes).unwrap_or(false)
         {
-            write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
+            PendingFenceKind::Vblank
+        } else {
+            PendingFenceKind::Immediate
+        };
+
+        let wants_irq = (desc.flags & ring::AEROGPU_SUBMIT_FLAG_NO_IRQ) == 0;
+        self.pending_fence_completions
+            .push_back(PendingFenceCompletion {
+                fence_value: desc.signal_fence,
+                wants_irq,
+                kind,
+            });
+    }
+
+    fn vblank_pacing_active(&self) -> bool {
+        (self.supported_features() & pci::AEROGPU_FEATURE_VBLANK) != 0
+            && self.scanout0_enable
+            && self.vblank_interval_ns.is_some()
+    }
+
+    fn process_pending_fences_on_doorbell(&mut self) {
+        // On doorbell, immediately complete all non-vblank fences until the first pending vblank
+        // fence. This mirrors the emulator device model: vsynced presents block subsequent
+        // immediate submissions from completing early.
+        while matches!(
+            self.pending_fence_completions.front().map(|f| f.kind),
+            Some(PendingFenceKind::Immediate)
+        ) {
+            if let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.complete_fence(fence.fence_value, fence.wants_irq);
+            }
         }
+    }
+
+    fn process_pending_fences_on_vblank(&mut self) {
+        // Defensive: complete any immediates that were queued without a doorbell drain.
+        while matches!(
+            self.pending_fence_completions.front().map(|f| f.kind),
+            Some(PendingFenceKind::Immediate)
+        ) {
+            if let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.complete_fence(fence.fence_value, fence.wants_irq);
+            }
+        }
+
+        // Complete at most one vblank-paced fence per vblank tick.
+        if matches!(
+            self.pending_fence_completions.front().map(|f| f.kind),
+            Some(PendingFenceKind::Vblank)
+        ) {
+            if let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.complete_fence(fence.fence_value, fence.wants_irq);
+            }
+        }
+
+        // After completing the vblank fence, flush any immediates queued behind it.
+        while matches!(
+            self.pending_fence_completions.front().map(|f| f.kind),
+            Some(PendingFenceKind::Immediate)
+        ) {
+            if let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.complete_fence(fence.fence_value, fence.wants_irq);
+            }
+        }
+    }
+
+    fn flush_pending_fences(&mut self) {
+        while let Some(fence) = self.pending_fence_completions.pop_front() {
+            self.complete_fence(fence.fence_value, fence.wants_irq);
+        }
+    }
+
+    fn complete_fence(&mut self, fence_value: u64, wants_irq: bool) {
+        if fence_value != 0 && fence_value > self.completed_fence {
+            self.completed_fence = fence_value;
+            self.fence_page_dirty = true;
+        }
+
+        // Only latch IRQ status when the enable bit is set to avoid stale delivery when
+        // re-enabled.
+        if wants_irq && (self.irq_enable & pci::AEROGPU_IRQ_FENCE) != 0 {
+            self.irq_status |= pci::AEROGPU_IRQ_FENCE;
+        }
+    }
+
+    pub(crate) fn write_fence_page_if_dirty(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        dma_enabled: bool,
+    ) {
+        if !self.fence_page_dirty {
+            return;
+        }
+        if !dma_enabled {
+            return;
+        }
+        if self.fence_gpa == 0 || (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) == 0
+        {
+            return;
+        }
+        write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
+        self.fence_page_dirty = false;
     }
 
     fn mmio_read_dword(&self, offset: u64) -> u32 {
@@ -1247,6 +1408,8 @@ impl AeroGpuMmioDevice {
                 if self.scanout0_enable && !new_enable {
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+                    // Do not leave any vsync-paced fences blocked forever once scanout is disabled.
+                    self.flush_pending_fences();
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
@@ -1403,6 +1566,63 @@ impl PciDevice for AeroGpuMmioDevice {
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
     }
+}
+
+fn cmd_stream_has_vsync_present(
+    mem: &mut dyn MemoryBus,
+    cmd_gpa: u64,
+    cmd_size_bytes: u32,
+) -> Result<bool, ()> {
+    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
+    if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
+        return Err(());
+    }
+
+    let mut stream_hdr_bytes = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+    mem.read_physical(cmd_gpa, &mut stream_hdr_bytes);
+    let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
+
+    let declared_size = stream_hdr.size_bytes as usize;
+    if declared_size > cmd_size {
+        return Err(());
+    }
+
+    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
+    while offset < declared_size {
+        let rem = declared_size - offset;
+        if rem < AerogpuCmdHdr::SIZE_BYTES {
+            return Err(());
+        }
+
+        let cmd_hdr_gpa = cmd_gpa.checked_add(offset as u64).ok_or(())?;
+        let mut cmd_hdr_bytes = [0u8; AerogpuCmdHdr::SIZE_BYTES];
+        mem.read_physical(cmd_hdr_gpa, &mut cmd_hdr_bytes);
+        let cmd_hdr = decode_cmd_hdr_le(&cmd_hdr_bytes).map_err(|_| ())?;
+
+        let cmd_size = cmd_hdr.size_bytes as usize;
+        let end = offset.checked_add(cmd_size).ok_or(())?;
+        if end > declared_size {
+            return Err(());
+        }
+
+        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
+            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
+            // `flags` is always at offset 12 (hdr + scanout_id).
+            if cmd_size < 16 {
+                return Err(());
+            }
+            let flags_gpa = cmd_hdr_gpa.checked_add(12).ok_or(())?;
+            let flags = mem.read_u32(flags_gpa);
+            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
+                return Ok(true);
+            }
+        }
+
+        offset += cmd_size;
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]
