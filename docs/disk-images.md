@@ -98,7 +98,9 @@ To generate a chunked image (manifest + chunks) from a local disk image, use the
 - [`tools/image-chunker/`](../tools/image-chunker/README.md) (`aero-image-chunker publish`)
   - Supports `publish --format` to publish the **logical disk byte stream** for container formats
     (qcow2/VHD/AeroSparse), not just raw `.img` files.
-  - Provides `aero-image-chunker verify` to validate a published image end-to-end.
+    - Note: images that require an explicit parent (QCOW2 backing files, VHD differencing) should be flattened before chunking.
+    - `--format aerosparse` also accepts the legacy alias `aerospar`.
+  - Provides `aero-image-chunker verify` to validate a published image end-to-end (S3 mode via `--bucket`, or direct HTTP via `--manifest-url`).
 
 ## Inspecting streaming performance (telemetry + controls)
 
