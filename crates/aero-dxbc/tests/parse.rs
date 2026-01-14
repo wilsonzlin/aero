@@ -240,6 +240,25 @@ fn malformed_second_chunk_offset_is_error_and_mentions_index() {
 }
 
 #[test]
+fn malformed_second_chunk_offset_out_of_bounds_mentions_index() {
+    let mut bytes = build_dxbc(&[
+        (FourCC(*b"SHDR"), &[1, 2, 3, 4]),
+        (FourCC(*b"JUNK"), &[0xaa]),
+    ]);
+    // Overwrite the second chunk offset to point at the end of the container,
+    // leaving no room for the chunk header.
+    let bad_off = bytes.len() as u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    let second_offset_pos = offset_table_pos + 4;
+    bytes[second_offset_pos..second_offset_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 1"));
+    assert!(err.context().contains("header"));
+}
+
+#[test]
 fn malformed_chunk_offset_out_of_bounds_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     // Overwrite the first chunk offset to point outside the container.
