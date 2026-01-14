@@ -459,7 +459,9 @@ WebGPU exposes only **vertex** + **fragment** (render) and **compute** pipelines
 **GS/HS/DS** stages are therefore implemented by an explicit **compute-expansion pipeline** that:
 
 > Quick overview + current limitations: see
-> [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+>
+> - [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md)
+> - [`docs/graphics/tessellation-emulation.md`](./graphics/tessellation-emulation.md)
 
 1. Pulls vertices in compute (using the bound IA state and input layout).
 2. Runs the missing D3D stages (VS → HS/DS → GS) as compute kernels, writing expanded vertices (and

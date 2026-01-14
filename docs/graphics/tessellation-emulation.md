@@ -1,34 +1,62 @@
 # Tessellation Emulation (D3D11 HS/DS → WebGPU)
 
-WebGPU does **not** expose:
+WebGPU does **not** expose hardware tessellation: there is no hull shader (HS), domain shader (DS),
+or fixed-function tessellator stage. To support D3D11 tessellation (`VS → HS → Tessellator → DS`),
+Aero emulates tessellation by running the missing stages as **compute kernels**, expanding patches
+into explicit vertex/index buffers, and then drawing those buffers with a normal WebGPU render
+pipeline.
 
-- a **hull shader (HS)** / **domain shader (DS)** programmable tessellation pipeline, or
-- the **fixed-function tessellator** that turns patches into triangles/lines.
+This document describes the chosen HS/DS emulation approach so future contributors can extend it
+(quads, fractional partitioning, performance). It focuses on:
 
-To support D3D11 tessellation, the intended design is for Aero to emulate HS/DS and the tessellator
-using a **multi-pass compute pipeline** that produces vertex/index buffers, then draws them with a
-normal WebGPU render pipeline.
+- trigger conditions (when draws route through HS/DS emulation),
+- pass sequencing (VS-as-compute → HS CP → HS PC → layout → DS → index → render),
+- buffer layouts (register files, expanded geometry, indirect args),
+- binding model decisions (`@group(3)` for extended stages, plus per-pass internal bind groups),
+- limits/clamps and tuning knobs,
+- and testing/fixtures.
 
-This document describes the intended architecture for contributors: **pass sequence**, **buffer
-layouts**, the **bind group + ABI model**, the initial **supported subset**, and the **testing
-strategy**.
-
-> Current repo status: tessellation (HS/DS) execution is **not** wired up yet in the host-side D3D11
-> executor.
-> - Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`.
-> - When HS/DS are bound, the draw currently fails with a clear error (instead of executing
->   tessellation).
-> - The GS/HS/DS compute-prepass path is still placeholder scaffolding; patchlist draws without
->   HS/DS currently produce a placeholder triangle to exercise render-pass splitting + indirect draw
->   plumbing, not tessellation semantics.
+> Current repo status (important):
 >
-> Treat the rest of this document as the target design until HS/DS execution lands; see
-> [`docs/graphics/status.md`](./status.md). For adjacency/patchlist bring-up behavior notes, see
-> [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
+> - The D3D11 executor already routes draws through a compute prepass when GS/HS/DS emulation is
+>   required (see `gs_hs_ds_emulation_required()` in
+>   `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+> - Patchlist topology and/or HS/DS bindings currently run a **placeholder** compute prepass that
+>   expands a synthetic triangle (to validate render-pass splitting + indirect draw plumbing), not
+>   real tessellation semantics.
+> - The in-progress tessellation runtime lives under
+>   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
+>   tri-domain integer index generation, DS evaluation templates, sizing/guardrails), but is not yet
+>   fully wired into the command-stream draw path.
+>
+> See [`docs/graphics/status.md`](./status.md) for an implementation-status checklist.
 
 > Related:
-> - [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D11→WebGPU mapping)
-> - [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (compute expansion pattern + indirect draw)
+>
+> - High-level D3D10/11 mapping: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)
+> - GS compute expansion notes: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
+
+---
+
+## When tessellation emulation triggers
+
+Tessellation emulation is required when **either** of these are true:
+
+1. A **patch-list primitive topology** is selected:
+   - `AEROGPU_TOPOLOGY_*_CONTROL_POINT_PATCHLIST` (values 33–64)
+   - Host-side enum: `CmdPrimitiveTopology::PatchList { control_points }`
+2. A **Hull Shader** and/or **Domain Shader** is bound:
+   - `hs != 0` and/or `ds != 0` in the extended `AEROGPU_CMD_BIND_SHADERS` packet.
+
+The executor currently uses a single predicate (`gs_hs_ds_emulation_required()`) that triggers the
+compute-expansion path for **all** “missing WebGPU stages / topologies” cases:
+
+- GS/HS/DS bound, **or**
+- adjacency topologies, **or**
+- patchlists.
+
+Patchlists and HS/DS bindings additionally set `tessellation_placeholder = true` inside
+`exec_draw_with_compute_prepass`, which selects the synthetic-triangle placeholder compute shader.
 
 ---
 
@@ -47,7 +75,7 @@ Vertex -> Fragment -> OM
 ```
 
 There is no programmable HS/DS stage, and there is no fixed-function tessellator. Therefore, when a
-D3D11 draw uses a patchlist topology or binds an HS/DS, Aero must:
+D3D11 draw uses patchlists or binds an HS/DS, Aero must:
 
 1. **Execute the missing stages in compute** (VS/HS/DS compiled to WGSL compute entry points).
 2. **Explicitly materialize tessellated geometry** into buffers (storage → vertex/index).
@@ -64,17 +92,20 @@ At a high level, tessellation emulation is a fixed sequence of compute passes fo
 pass:
 
 ```
-VS (compute) ->
-  HS control-point phase (compute) ->
-  HS patch-constant phase (compute) ->
-  tessellator layout (compute) ->
-  DS evaluation (compute) ->
-  index generation (compute) ->
+VS-as-compute ->
+  HS control-point phase ->
+  HS patch-constant phase ->
+  tessellator layout ->
+  DS evaluation ->
+  index generation ->
 render (passthrough VS + original PS)
 ```
 
 If a GS is bound, an additional **GS-as-compute** expansion pass runs after DS and before render
 (see the GS doc).
+
+The remainder of this section describes the *target* HS/DS pipeline; some passes exist today only as
+unit-testable building blocks.
 
 ### 0) Input assembler: patchlists
 
@@ -84,9 +115,10 @@ Tessellation draws come from the D3D11 IA stage with a **patchlist** topology:
 - The patch count is:
   - non-indexed: `patch_count = vertex_count / N`
   - indexed: `patch_count = index_count / N`
-  - instanced: `patch_count_total = patch_count * instance_count` (the patch stream is replicated per
-    instance). Many compute passes flatten `(instance_id, patch_id)` into a single
-    `patch_instance_id = instance_id * patch_count + patch_id` (see `docs/16-d3d10-11-translation.md`).
+  - instanced: `patch_count_total = patch_count * instance_count` (the patch stream is replicated
+    per instance). Many compute passes flatten `(instance_id, patch_id)` into a single
+    `patch_instance_id = instance_id * patch_count + patch_id` (see
+    `docs/16-d3d10-11-translation.md`).
 
 In native D3D11, VS runs per control point, HS runs per patch (and per output control point), and
 DS runs per generated domain point.
@@ -97,10 +129,13 @@ Compute shaders cannot consume WebGPU’s vertex input interface. For any draw t
 compute expansion (GS/HS/DS), Aero runs the D3D VS as a compute kernel using **vertex pulling**:
 
 - Manually load vertex attributes from the bound IA vertex buffers / index buffer.
-- Execute the translated VS logic.
+- Execute the translated VS logic (or a placeholder during bring-up).
 - Write VS outputs into a storage buffer (`vs_out`).
 
-Implementation reference: `crates/aero-d3d11/src/runtime/vertex_pulling.rs`.
+Implementation references:
+
+- shared vertex pulling ABI: `crates/aero-d3d11/src/runtime/vertex_pulling.rs`
+- tessellation VS-as-compute placeholder: `crates/aero-d3d11/src/runtime/tessellation/vs_as_compute.rs`
 
 ### 2) HS control-point phase (HS CP)
 
@@ -110,7 +145,9 @@ D3D11 hull shaders have a control-point phase that runs once for each **output c
 - Output: the patch’s output control points (`hs_cp_out`).
 - System values: at minimum `SV_OutputControlPointID`, `SV_PrimitiveID`.
 
-In emulation this is a compute pass with `patch_count * hs_output_cp_count` invocations.
+In emulation this is a compute pass with `patch_count_total * hs_output_cp_count` invocations.
+
+Host-side dispatch plumbing lives in `crates/aero-d3d11/src/runtime/tessellation/hull.rs`.
 
 ### 3) HS patch-constant phase (HS PC)
 
@@ -122,7 +159,7 @@ Hull shaders also have a patch-constant function that runs **once per patch**:
   - user patch constants (arbitrary HS `patchconstant` output struct)
 - System values: `SV_PrimitiveID`.
 
-In emulation this is a compute pass with `patch_count` invocations.
+In emulation this is a compute pass with `patch_count_total` invocations.
 
 ### 4) Tessellator layout (fixed-function emulation)
 
@@ -135,11 +172,14 @@ The native D3D11 tessellator is fixed-function hardware that:
 
 In Aero, this is a compute pass that produces metadata needed by DS + index generation:
 
-- Per-patch **clamped tess factors** (after rounding rules).
-- Per-patch **output counts** (how many domain points and how many triangles/indices).
-- Per-patch **base offsets** into the global DS-vertex and index buffers (see “Offsets” below).
-- Optionally, an explicit list of generated domain points, or an implicit encoding that DS can
-  reconstruct deterministically.
+- Per-patch **derived tess level** and clamped tess factors (after rounding rules).
+- Per-patch **output counts** (how many domain points and indices).
+- Per-patch **base offsets** into the global vertex/index buffers.
+- Final **indirect draw args** (so render can be indirect without CPU readback).
+
+Current implementation note: the repo contains a deterministic prefix-sum layout pass for
+triangle-domain integer tessellation in
+`crates/aero-d3d11/src/runtime/tessellation/layout_pass.rs`.
 
 ### 5) DS evaluation (domain shader as compute)
 
@@ -155,6 +195,8 @@ The D3D11 domain shader runs once per generated domain point:
 In Aero, DS is executed as compute and writes to a storage buffer that is also used as the final
 vertex buffer for the render pass.
 
+Implementation reference: `crates/aero-d3d11/src/runtime/tessellation/domain_eval.rs`.
+
 ### 6) Index generation
 
 WebGPU rasterization consumes triangles through either:
@@ -165,11 +207,9 @@ WebGPU rasterization consumes triangles through either:
 For tessellation, indexed rendering is preferred because the tessellator generates a regular mesh
 with shared vertices.
 
-The index generation pass:
-
-- emits a triangle list index buffer for each patch, and
-- writes the final **indirect draw args** struct so the subsequent render pass can draw without CPU
-  readback.
+Current implementation note: `crates/aero-d3d11/src/runtime/tessellation/tri_domain_integer.rs`
+implements a compute pass that writes a packed `u32` triangle-list index buffer for triangle-domain
+integer tessellation.
 
 ### 7) Render pass
 
@@ -185,102 +225,82 @@ Finally, the draw is rendered with a normal WebGPU render pipeline:
 
 ## Buffer layouts
 
-Tessellation emulation relies on a set of per-draw scratch buffers. The runtime allocates them
-either as separate `wgpu::Buffer`s or (preferably) as slices of a transient arena:
+Tessellation emulation is “buffer-first”: each stage writes explicit results into storage buffers.
+The runtime sources transient allocations from the per-frame scratch allocator
+`ExpansionScratchAllocator` (`crates/aero-d3d11/src/runtime/expansion_scratch.rs`) so these buffers
+do not churn per draw.
 
-Implementation reference: `crates/aero-d3d11/src/runtime/expansion_scratch.rs`.
+### Register files (“register-file stride”)
 
-### Register-based `vec4` storage (DXBC-friendly layout)
-
-DXBC is register-based. To avoid having to exactly reproduce HLSL packing rules (and to keep
-byte-for-byte compatibility with register addressing), Aero represents shader-visible structured
-data as arrays of 16-byte “registers”:
-
-```wgsl
-// Conceptual: 16-byte registers.
-struct RegFile {
-    regs: array<vec4<u32>, N>;
-}
-```
-
-This model is used for:
-
-- D3D constant buffers (`cb#`) (as `var<uniform>`),
-- per-stage I/O stored in scratch buffers (as `var<storage>`),
-- HS patch constant data.
-
-Typed access is done via `bitcast`:
+DXBC stages communicate via **register files** (e.g. `o0..oN` outputs). When running a stage as
+compute, Aero models a register file as a runtime-sized array of **16-byte registers**:
 
 ```wgsl
-fn load_f32(r: vec4<u32>, lane: u32) -> f32 {
-    return bitcast<f32>(r[lane]);
-}
+// One register = 16 bytes (4x u32) so float/int/bool bit patterns are preserved.
+struct AeroRegFile {
+  regs: array<vec4<u32>>,
+};
 ```
 
-### Scratch buffers (logical)
+Each invocation (control point, patch, or domain point) owns a contiguous slice of `regs`:
 
-Conceptually, tessellation emulation needs:
+- `REG_STRIDE_REGS`: number of `vec4<u32>` registers per invocation
+- `REG_STRIDE_BYTES = REG_STRIDE_REGS * 16`
+- `linear_index = invocation_index * REG_STRIDE_REGS + reg_index`
 
-| Buffer | Usage | Produced by | Consumed by |
-|---|---|---|---|
-| `vs_out` | `STORAGE` | VS compute | HS CP/PC |
-| `hs_cp_out` | `STORAGE` | HS CP | HS PC + DS |
-| `hs_pc_out` | `STORAGE` | HS PC | tess layout + DS |
-| `tess_meta` | `STORAGE` | tess layout | DS + index gen |
-| `ds_vertices` | `STORAGE \| VERTEX` | DS | render (or GS) |
-| `ds_indices` | `STORAGE \| INDEX` | index gen | render |
-| `indirect_args` | `STORAGE \| INDIRECT` | index gen (or final stage) | render |
-| `counters` | `STORAGE` (atomics) | multiple | multiple |
+In tessellation code, this addressing scheme is used for:
+
+- `vs_out`: VS outputs per **input control point**
+- `hs_out`: HS outputs per **output control point**
+- `hs_patch_constants`: HS patch constants per **patch**
+
+### Expanded vertices + indices
+
+The final render pass needs a WebGPU vertex buffer. Aero’s compute-expansion paths use an
+**expanded-vertex record** that matches the passthrough VS ABI:
+
+```wgsl
+struct ExpandedVertex {
+  pos: vec4<f32>,                       // SV_Position (clip space)
+  varyings: array<vec4<f32>, 32>,        // v0..v31 / @location(0..31)
+}
+```
 
 Notes:
 
-- The executor already has a shared scratch allocator that supports vertex/index/indirect output
-  (`ExpansionScratchAllocator`).
-- Final vertex/index buffers must include `VERTEX`/`INDEX` usage because the render pass binds them
-  as vertex/index buffers, not just storage.
+- `32` is `EXPANDED_VERTEX_MAX_VARYINGS` in `crates/aero-d3d11/src/binding_model.rs`.
+- The stride is `(1 + EXPANDED_VERTEX_MAX_VARYINGS) * 16` bytes.
+- The vertex buffer must be created with `STORAGE | VERTEX` usage.
+- Index buffers are typically `u32` triangle lists with `STORAGE | INDEX` usage.
 
-### Offsets within scratch allocations
+### Indirect draw args
 
-When scratch is sub-allocated from a larger arena, each logical buffer is represented as:
+Compute expansion avoids CPU readback by writing a single indirect args struct at offset 0. Aero
+uses the canonical layouts in `crates/aero-d3d11/src/runtime/indirect_args.rs`:
 
-- a `wgpu::Buffer` handle (shared backing), plus
-- a base `offset` (bytes) and `size` (bytes) within that buffer.
+- `DrawIndirectArgs` (16 bytes) for `draw_indirect`
+- `DrawIndexedIndirectArgs` (20 bytes) for `draw_indexed_indirect`
 
-These offsets must satisfy WebGPU alignment requirements (`COPY_BUFFER_ALIGNMENT`, and if using
-dynamic offsets, `min_storage_buffer_offset_alignment`).
-
-### Per-patch offsets (vertex/index base)
+### Per-patch offsets and `PatchMeta`
 
 Because WebGPU cannot allocate buffers dynamically on the GPU, tessellation must write into
-pre-allocated output buffers. To allow each patch to write a variable amount of output, the tess
-layout pass establishes per-patch offsets.
+pre-allocated output buffers. The tessellator layout pass establishes per-patch offsets using a
+deterministic prefix sum:
 
-Two common strategies are valid; the intended design is to support either:
+- `vertex_base`/`index_base` are element offsets (not bytes) into the expanded buffers.
+- `vertex_count`/`index_count` encode the patch’s contribution.
+- the layout pass also writes the final `DrawIndexedIndirectArgs` total counts.
 
-1. **Prefix-sum (deterministic)**
-   - HS PC produces per-patch vertex/index counts.
-   - Tess layout computes a prefix sum to assign `(base_vertex, base_index)` per patch.
-2. **Atomic allocation (simple)**
-   - Each patch uses `atomicAdd` on global counters to reserve a contiguous range.
-   - Stores the returned base offsets in `tess_meta`.
+See:
 
-In both cases, downstream DS and index generation use `tess_meta[patch_id]` to compute the final
-write addresses.
-
-### Indirect draw args layout
-
-The indirect args buffer stores one of the WebGPU-defined structs at offset 0:
-
-- `DrawIndirectArgs` (16 bytes) for `draw_indirect`, or
-- `DrawIndexedIndirectArgs` (20 bytes) for `draw_indexed_indirect`.
-
-Implementation reference: `crates/aero-d3d11/src/runtime/indirect_args.rs`.
+- Rust layout: `TessellationLayoutPatchMeta` in `crates/aero-d3d11/src/runtime/tessellation/mod.rs`
+- WGSL layout pass: `crates/aero-d3d11/src/runtime/tessellation/layout_pass.rs`
 
 ---
 
 ## Bind group model
 
-### Stage-scoped bind groups
+### Stage-scoped bind groups + `@group(3)` for extended stages
 
 Aero’s DXBC→WGSL translation and command-stream executor share a stable binding model:
 
@@ -288,18 +308,24 @@ Aero’s DXBC→WGSL translation and command-stream executor share a stable bind
 - `@group(1)`: PS resources
 - `@group(2)`: CS resources
 
-Reference: `crates/aero-d3d11/src/binding_model.rs`.
+WebGPU guarantees `maxBindGroups >= 4`, so Aero uses `@group(3)` as a reserved internal/emulation
+group (`BIND_GROUP_INTERNAL_EMULATION`) that hosts:
 
-### Extended stages (GS/HS/DS) and `stage_ex`
+- **extended D3D stages**: GS/HS/DS resources (bound via `stage_ex`), and
+- internal emulation helpers (vertex pulling, expansion scratch, indirect args, etc).
 
-The AeroGPU command stream has legacy `shader_stage` enums that mirror WebGPU (VS/PS/CS) and also
-includes an explicit Geometry stage (`shader_stage = GEOMETRY`).
+Within a group, binding numbers are derived from D3D register indices (see
+`crates/aero-d3d11/src/binding_model.rs`), and internal bindings use
+`@binding >= BINDING_BASE_INTERNAL` to avoid collisions.
+
+### `stage_ex` and binding the HS/DS tables
 
 To support additional D3D programmable stages (HS/DS) without breaking the ABI, some
 resource-binding packets overload their trailing reserved field as a **`stage_ex` selector** when
-`shader_stage == COMPUTE`.
+`shader_stage == COMPUTE` (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
 
-Packets that currently support the `stage_ex` encoding (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+Packets that currently support the `stage_ex` encoding:
+
 - `CREATE_SHADER_DXBC`
 - `SET_TEXTURE`
 - `SET_SAMPLERS`
@@ -308,7 +334,7 @@ Packets that currently support the `stage_ex` encoding (see `drivers/aerogpu/pro
 - `SET_UNORDERED_ACCESS_BUFFERS` (UAV buffers, `u#` where the UAV is a buffer view)
 - `SET_SHADER_CONSTANTS_F`
 
-Encoding invariant (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+Encoding invariant:
 
 - If `shader_stage != COMPUTE`, the `stage_ex`/`reserved0` field must be 0 and is ignored.
 - If `shader_stage == COMPUTE`:
@@ -329,110 +355,138 @@ not overwritten by graphics emulation state.
 
 Implementation references:
 
-- `emulator/protocol/aerogpu/aerogpu_cmd.rs` (`AerogpuShaderStageEx`, `encode_stage_ex`, `decode_stage_ex`)
-- `crates/aero-d3d11/src/runtime/bindings.rs` (`ShaderStage::from_aerogpu_u32_with_stage_ex`)
+- protocol enums/encoding: `emulator/protocol/aerogpu/aerogpu_cmd.rs`
+- executor decoding: `ShaderStage::from_aerogpu_u32_with_stage_ex` in
+  `crates/aero-d3d11/src/runtime/bindings.rs`
 
-### Where HS/DS resources live in WGSL
+### Internal resources: per-pass internal groups (and the “group 3” exception)
 
-Even though HS/DS run as compute, they keep the normal D3D register model (`b#`, `t#`, `s#`, `u#`).
-To stay within WebGPU’s minimum `maxBindGroups == 4`, Aero routes all extended stages into the
-fourth group:
+Tessellation emulation needs many non-D3D bindings (register files, counters, patch metadata,
+domain points, vertex pulling inputs). These are **not** part of the guest-visible D3D binding
+model.
 
-- HS/DS/GS resources: `@group(3)`
-- Internal expansion scratch bindings: also `@group(3)`, but in a reserved binding-number range to
-  avoid collisions with D3D register bindings.
+Decision: internal resources are bound using **per-pass internal bind groups** with layouts owned by
+the executor, rather than reserving additional global bind-group indices.
 
-The group index mapping is encoded in `ShaderStage::as_bind_group_index()`:
+In practice, there are two patterns in the current codebase:
 
-- VS → 0
-- PS → 1
-- CS → 2
-- GS/HS/DS → 3
+1. **Separate internal group (preferred when possible)**  
+   Example: DS evaluation uses `@group(0)` for internal buffers and `@group(3)` for DS resources
+   (`DOMAIN_EVAL_INTERNAL_GROUP = 0`, `DOMAIN_EVAL_DOMAIN_GROUP = 3` in
+   `runtime/tessellation/domain_eval.rs`).
+2. **Share `@group(3)` for internal + stage resources**  
+   Some kernels reuse `@group(3)` for everything because:
+   - vertex pulling is already defined to live at `VERTEX_PULLING_GROUP = 3`, and/or
+   - HS kernels currently build bind groups via the generic D3D binding-provider machinery and bind
+     internal scratch buffers via `internal_buffer()` (see the comment in
+     `runtime/tessellation/hull.rs`).
 
-Because `@group(3)` is shared by multiple “logical things”, the important invariant is:
-
-- **For a given compute pipeline**, the runtime and the translated WGSL must agree on which
-  `@binding` numbers correspond to:
-  - D3D-style HS/DS resources (`b#/t#/s#/u#`), and
-  - internal buffers (`vs_out`, `hs_cp_out`, `tess_meta`, `ds_vertices`, indices, counters, args).
-
----
-
-## Supported subset (initial) and known limitations
-
-Initial target subset:
-
-- **Domain:** `tri`
-- **Partitioning:** `integer`
-- **Tess factor clamp:** clamp and round tess factors to the D3D11-valid range (max tess factor is
-  **64**) and apply an additional runtime clamp if needed to keep scratch allocations bounded.
-
-Expected limitations / non-goals for the first implementation:
-
-- **No quad or isoline domains** (`domain("quad")` / `domain("isoline")`).
-- **No fractional partitioning modes** (`fractional_even`, `fractional_odd`, `pow2`).
-- **Edge-factor mismatch behavior may be incomplete**:
-  - native D3D tessellation has precise crack-free rules when neighboring patches share edges;
-    initial emulation may require “reasonable” factor usage (e.g. matching outer factors on shared
-    edges) or may approximate by using a single effective tess factor per patch.
-- **Index format:** initial implementation may emit `u32` indices unconditionally (simpler); `u16`
-  can be added later when safe.
-- **Backend support:** WebGL2 has no compute shaders; tessellation emulation is WebGPU-only unless a
-  separate CPU fallback is added.
+Both approaches preserve the key ABI invariant: D3D register-space bindings (`b#/t#/s#/u#`) remain
+stable, and internal resources are always in executor-owned layouts/ranges.
 
 ---
 
-## Testing strategy
+## Limits, clamps, and tuning knobs
+
+Tessellation can amplify geometry dramatically. The emulation must enforce deterministic limits to
+avoid unbounded scratch allocations or invalid dispatch sizes.
+
+### Tess factor clamps
+
+- D3D11 hardware tessellation clamps to a maximum factor of **64** (`MAX_TESS_FACTOR` in
+  `runtime/tessellator.rs`).
+- The current WebGPU emulation path additionally clamps tessellation to a smaller, conservative
+  limit: `MAX_TESS_FACTOR_SUPPORTED` (currently **16**) in `runtime/tessellation/mod.rs`.
+
+Raising `MAX_TESS_FACTOR_SUPPORTED` increases scratch usage and can easily exceed default scratch
+budgets; do so together with scratch sizing/tuning.
+
+### Output-budget clamps (scratch guardrails)
+
+The GPU layout pass (`runtime/tessellation/layout_pass.rs`) is parameterized by:
+
+- `patch_count`
+- `max_vertices`
+- `max_indices`
+
+It will clamp the derived tess level down per patch to keep the total expanded output within these
+budgets, and writes a debug flag when clamping occurs.
+
+On the CPU, `TessellationRuntime::alloc_draw_scratch` computes conservative worst-case sizes and
+returns a structured `TessellationScratchOomError` when scratch capacity is insufficient.
+
+### Scratch allocator tuning
+
+`ExpansionScratchAllocator` is configured by `ExpansionScratchDescriptor`:
+
+- `per_frame_size`: increase for tessellation-heavy workloads (default is small because most draws
+  don’t yet use GS/HS/DS emulation)
+- `frames_in_flight`: typically 2–3; should be ≥ the number of GPU frames that can be in flight to
+  avoid reuse hazards
+
+### Dispatch-size limits
+
+HS/DS compute passes must respect `device.limits().max_compute_workgroups_per_dimension`.
+Host-side helpers like `compute_dispatch_x` in `runtime/tessellation/hull.rs` validate this and
+error early with actionable messages.
+
+---
+
+## Testing strategy (and adding fixtures)
 
 Tessellation emulation has two orthogonal correctness surfaces:
 
-1. **The tessellator layout algorithm** (domain point generation + triangle connectivity).
-2. **The end-to-end pipeline plumbing** (bindings, scratch offsets, indirect args, stage linking).
-
-Recommended test coverage:
+1. **Tessellator math/layout correctness** (domain points + connectivity + clamping).
+2. **End-to-end pipeline plumbing** (bindings, scratch offsets, indirect args, stage linking).
 
 ### Unit tests (CPU-side, deterministic)
 
-- Implement a small, pure-Rust reference tessellator for the supported subset (tri + integer).
-- Unit test:
-  - tess factor clamping/rounding rules,
-  - vertex/index counts for small factors (1, 2, 3…),
-  - a few exact domain point sets / connectivity patterns.
-
-These tests should run in `cargo test` without requiring a GPU.
-
-Current in-tree examples:
-
-- `crates/aero-d3d11/src/runtime/tessellator.rs` (unit tests for tri-domain integer tessellation math)
+- `crates/aero-d3d11/src/runtime/tessellator.rs`: tri-domain integer tessellation math tests.
+- `crates/aero-d3d11/src/runtime/tessellation/buffers.rs`: sizing/overflow tests.
 
 ### GPU tests (building blocks)
 
-While the executor does not yet run HS/DS in draws, GPU tests focus on the pieces that will be used
-by tessellation expansion:
+- `crates/aero-d3d11/tests/tessellation_layout_pass.rs`: runs WGSL layout pass and validates patch
+  meta + indirect args.
+- `crates/aero-d3d11/tests/tessellation_tri_domain_integer_index_gen.rs`: validates GPU index
+  generation against the CPU reference tessellator.
+- `crates/aero-d3d11/tests/tessellation_vs_as_compute.rs`: VS-as-compute vertex pulling + register
+  addressing.
+- `crates/aero-d3d11/tests/tessellation_scratch_guardrails.rs`: validates scratch OOM errors include
+  computed sizes and clamped tess factors.
 
-- `crates/aero-d3d11/tests/tessellation_layout_pass.rs` (runs the WGSL layout pass and validates its outputs)
-- `crates/aero-d3d11/tests/tessellation_vs_as_compute.rs` (VS-as-compute plumbing / vertex pulling)
-- `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs` (documents current executor behavior: HS/DS binding returns a clear error)
+### Executor tests (command-stream integration)
 
-### Pixel-compare tests (GPU integration; future)
+- `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_smoke.rs`: patchlist+HS/DS routes through the
+  compute prepass (currently placeholder expansion).
+- `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`: despite the
+  name, this currently documents that HS/DS-bound draws run the placeholder prepass.
+- `crates/aero-d3d11/tests/aerogpu_cmd_stage_ex_bindings_hs_ds.rs`: validates `stage_ex` routing for
+  HS/DS resource binding packets.
 
-Add `aero-d3d11` tests that:
+### Adding HS/DS DXBC fixtures
 
-1. Upload minimal VS/HS/DS/PS DXBC fixtures.
-2. Bind a patchlist topology.
-3. Execute a draw through the tessellation emulation path.
-4. Render to a small offscreen RT and read back pixels.
-5. Compare against a reference image (or a generated expected pattern with tolerances).
+Fixture binaries live in `crates/aero-d3d11/tests/fixtures/` (see `README.md` in that directory).
+The repo already includes:
 
-Suggested fixtures and tests (naming pattern aligns with existing docs/tests):
+- `hs_minimal.dxbc`, `hs_tri_integer.dxbc`
+- `ds_tri_passthrough.dxbc`, `ds_tri_integer.dxbc`
 
-- Existing fixture: `crates/aero-d3d11/tests/fixtures/hs_minimal.dxbc`
-- Future fixtures: `crates/aero-d3d11/tests/fixtures/{hs,ds}_*.dxbc`
-- Future pixel-compare tests: add additional `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*` tests that render via the tessellation expansion path and compare readback pixels
+To add new tessellation fixtures:
 
-For early bring-up, it’s also useful to add a “buffer readback” test that validates:
+1. Keep them tiny and deterministic (avoid texture sampling for early tests).
+2. Prefer constant tess factors and simple interpolation patterns.
+3. Add the new `hs_*.dxbc` / `ds_*.dxbc` files to the fixtures directory.
+4. Document the behavior and (if applicable) the compilation command in
+   `crates/aero-d3d11/tests/fixtures/README.md`.
 
-- `indirect_args` matches expected vertex/index counts, and
-- index buffer contents follow the expected topology,
+---
 
-before relying on rasterization correctness.
+## Future work (expected extensions)
+
+- **Quad domain** tessellation (different domain coordinate mapping + index generation).
+- **Isoline domain** tessellation.
+- **Fractional partitioning** (`fractional_even`, `fractional_odd`, `pow2`) with D3D-compatible
+  rounding rules.
+- **Performance work**: fuse passes, cache index patterns, use workgroup shared memory for control
+  points/patch constants, reduce register-file bandwidth by packing only live outputs.
