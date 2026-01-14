@@ -17,8 +17,11 @@ constexpr uint32_t kD3d9ShaderStagePs = 1u;
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
+constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 constexpr uint32_t kFvfUnsupportedXyz = kD3dFvfXyz;
 
 // Trivial vs_2_0 token stream (no declaration):
@@ -253,6 +256,23 @@ struct VertexXyzrhwDiffuse {
   uint32_t color;
 };
 
+struct VertexXyzrhwTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  float u;
+  float v;
+};
+
+struct VertexXyzTex1 {
+  float x;
+  float y;
+  float z;
+  float u;
+  float v;
+};
+
 bool TestVsOnlyBindsFixedfuncPs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -427,6 +447,178 @@ bool TestPsOnlyBindsFixedfuncVs() {
   return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
 }
 
+bool TestPsOnlyBindsFixedfuncVsTex1() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            kUserPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(kUserPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader(PS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  auto* ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+  const aerogpu_handle_t ps_handle = ps ? ps->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only, XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only, TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+
+  bool saw_user_ps_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
+        return false;
+      }
+      if (bind->ps == ps_handle) {
+        saw_user_ps_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
+}
+
+bool TestPsOnlyBindsFixedfuncVsXyzTex1() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            kUserPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(kUserPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader(PS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  auto* ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+  const aerogpu_handle_t ps_handle = ps ? ps->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only, XYZ|TEX1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only, XYZ|TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+
+  bool saw_user_ps_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
+        return false;
+      }
+      if (bind->ps == ps_handle) {
+        saw_user_ps_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
+}
+
 bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -512,6 +704,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyBindsFixedfuncVsTex1()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyBindsFixedfuncVsXyzTex1()) {
     return 1;
   }
   if (!aerogpu::TestUnsupportedFvfPsOnlyFailsWithoutDraw()) {
