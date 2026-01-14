@@ -256,6 +256,54 @@ fn tier2_shr_count_1_sets_cf_from_old_lsb() {
 }
 
 #[test]
+fn tier2_masks_8bit_shift_count_for_flag_updates() {
+    // mov al, 0x81
+    // shl al, 33        ; x86 masks to 5 bits => count==1
+    // jc +3             ; must take (CF=1)
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x81, // mov al, 0x81
+        0xC0, 0xE0, 0x21, // shl al, 33
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_masks_64bit_shift_count_for_flag_updates() {
+    // mov rax, 0x8000_0000 (sign-extended to 0xFFFF_FFFF_8000_0000 => MSB=1)
+    // shl rax, 65        ; x86 masks to 6 bits => count==1
+    // jc +3              ; must take (CF=1)
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000_0000
+        0x48, 0xC1, 0xE0, 0x41, // shl rax, 65
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 18 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shr_count_1_sets_of_from_old_msb() {
     // mov al, 0x81
     // shr al, 1
