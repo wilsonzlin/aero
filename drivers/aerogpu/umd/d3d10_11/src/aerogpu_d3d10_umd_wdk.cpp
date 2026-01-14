@@ -2733,7 +2733,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       SetError(hDevice, E_OUTOFMEMORY);
       deallocate_if_needed();
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     cmd->buffer_handle = res->handle;
@@ -3232,7 +3232,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       SetError(hDevice, E_OUTOFMEMORY);
       deallocate_if_needed();
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     cmd->texture_handle = res->handle;
