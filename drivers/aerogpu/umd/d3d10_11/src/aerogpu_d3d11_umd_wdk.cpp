@@ -3838,6 +3838,23 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     }
   }
 
+  // Render targets / depth-stencil (outputs). These cached pointers are used by
+  // draw-state tracking and the bring-up software renderer; never allow them to
+  // dangle past resource destruction even if unbind command emission failed
+  // earlier (e.g. due to OOM).
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if ((res->handle != 0 && dev->current_rtvs[i] == res->handle) ||
+        ResourcesAlias(dev->current_rtv_resources[i], res)) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+    }
+  }
+  if ((res->handle != 0 && dev->current_dsv == res->handle) ||
+      ResourcesAlias(dev->current_dsv_resource, res)) {
+    dev->current_dsv = 0;
+    dev->current_dsv_resource = nullptr;
+  }
+
   if (res->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     if (!cmd) {
