@@ -1,3 +1,5 @@
+import { encodeLinearRgba8ToSrgbInPlace } from '../utils/srgb';
+
 const TEST_WIDTH = 64;
 const TEST_HEIGHT = 64;
 
@@ -92,9 +94,15 @@ async function main() {
     const ok = screenshot.hash === EXPECTED_TEST_PATTERN_SHA256;
 
     const rgba = new Uint8ClampedArray(screenshot.rgba);
+    // The worker readback is treated as linear RGBA8 bytes. Canvas2D expects sRGB-encoded bytes,
+    // so encode on a copy before displaying the screenshot.
+    const rgbaDisplay = new Uint8ClampedArray(rgba);
+    encodeLinearRgba8ToSrgbInPlace(
+      new Uint8Array(rgbaDisplay.buffer, rgbaDisplay.byteOffset, rgbaDisplay.byteLength),
+    );
     const ctx2d = screenshotCanvas.getContext('2d', { alpha: false });
     if (!ctx2d) throw new Error('Failed to acquire 2D context for screenshot canvas');
-    ctx2d.putImageData(new ImageData(rgba, screenshot.width, screenshot.height), 0, 0);
+    ctx2d.putImageData(new ImageData(rgbaDisplay, screenshot.width, screenshot.height), 0, 0);
 
     statusEl.textContent = [
       `backend: ${screenshot.backend}`,
