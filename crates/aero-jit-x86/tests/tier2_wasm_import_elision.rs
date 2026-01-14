@@ -143,6 +143,49 @@ fn tier2_inline_tlb_cross_page_only_trace_elides_mmu_translate_import() {
 }
 
 #[test]
+fn tier2_inline_tlb_cross_page_only_trace_with_value_const_elides_mmu_translate_import() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::Const {
+                dst: ValueId(0),
+                value: aero_jit_x86::PAGE_SIZE - 2,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    let imports = import_names(&wasm);
+
+    assert!(
+        imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MEM_READ_U32),
+        "expected env.mem_read_u32 import for cross-page load, got {imports:?}"
+    );
+    assert!(
+        !imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
+        "expected cross-page-only trace to not import env.mmu_translate, got {imports:?}"
+    );
+}
+
+#[test]
 fn tier2_inline_tlb_cross_page_only_store_elides_mmu_translate_import() {
     let trace = TraceIr {
         prologue: Vec::new(),
@@ -271,6 +314,40 @@ fn tier2_inline_tlb_constant_same_page_access_elides_cross_page_check() {
 }
 
 #[test]
+fn tier2_inline_tlb_constant_same_page_value_address_elides_cross_page_check() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::Const {
+                dst: ValueId(0),
+                value: 0,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_i64_gt_u(&wasm),
+        0,
+        "expected constant same-page access to not emit a cross-page check"
+    );
+}
+
+#[test]
 fn tier2_inline_tlb_constant_cross_page_access_skips_unreachable_mmu_translate_calls() {
     let trace = TraceIr {
         prologue: Vec::new(),
@@ -286,6 +363,50 @@ fn tier2_inline_tlb_constant_cross_page_access_skips_unreachable_mmu_translate_c
             Instr::LoadMem {
                 dst: ValueId(1),
                 addr: Operand::Const(aero_jit_x86::PAGE_SIZE - 2),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    let mmu_translate = imported_func_index(&wasm, IMPORT_MODULE, IMPORT_MMU_TRANSLATE)
+        .expect("expected env.mmu_translate import");
+    assert_eq!(
+        count_calls_to(&wasm, mmu_translate),
+        2,
+        "expected only the same-page access to emit mmu_translate call sites"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_constant_cross_page_value_address_skips_unreachable_mmu_translate_calls() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // Keep inline-TLB enabled by including a same-page access.
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0),
+                width: Width::W8,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: aero_jit_x86::PAGE_SIZE - 2,
+            },
+            // A constant cross-page load always takes the slow helper path, so it should not emit
+            // inline-TLB scaffolding (including calls to `env.mmu_translate`).
+            Instr::LoadMem {
+                dst: ValueId(2),
+                addr: Operand::Value(ValueId(1)),
                 width: Width::W32,
             },
         ],

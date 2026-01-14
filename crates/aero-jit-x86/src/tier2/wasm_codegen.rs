@@ -153,6 +153,9 @@ impl Tier2WasmCodegen {
             .validate()
             .expect("Tier-2 TraceIr failed validation before WASM codegen");
 
+        let value_count = max_value_id(trace).max(1);
+        let mut const_values: Vec<Option<u64>> = vec![None; value_count as usize];
+
         let mut has_load_mem = false;
         let mut has_store_mem = false;
         let mut needs_fast_path = false;
@@ -168,11 +171,11 @@ impl Tier2WasmCodegen {
         let mut has_code_version_guards = false;
         let mut uses_rflags = false;
 
-        let always_cross_page = |addr: Operand, size_bytes: u32| -> bool {
+        let always_cross_page = |addr: Operand, size_bytes: u32, const_values: &[Option<u64>]| -> bool {
             if size_bytes <= 1 {
                 return false;
             }
-            let Operand::Const(addr) = addr else {
+            let Some(addr) = operand_const_value(addr, const_values) else {
                 return false;
             };
             let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
@@ -181,8 +184,54 @@ impl Tier2WasmCodegen {
 
         for inst in trace.iter_instrs() {
             match *inst {
-                Instr::LoadMem { width, addr, .. } => {
+                Instr::Const { dst, value } => {
+                    const_values[dst.index()] = Some(value);
+                }
+                Instr::BinOp {
+                    dst,
+                    op,
+                    lhs,
+                    rhs,
+                    flags,
+                } => {
+                    if !flags.is_empty() {
+                        uses_rflags = true;
+                    }
+                    if let (Some(lhs), Some(rhs)) = (
+                        operand_const_value(lhs, &const_values),
+                        operand_const_value(rhs, &const_values),
+                    ) {
+                        const_values[dst.index()] = Some(super::ir::eval_binop(op, lhs, rhs).0);
+                    }
+                }
+                Instr::Addr {
+                    dst,
+                    base,
+                    index,
+                    scale,
+                    disp,
+                } => {
+                    if let (Some(base), Some(index)) = (
+                        operand_const_value(base, &const_values),
+                        operand_const_value(index, &const_values),
+                    ) {
+                        let scaled = index.wrapping_mul(u64::from(scale));
+                        let res = base
+                            .wrapping_add(scaled)
+                            .wrapping_add(disp as u64);
+                        const_values[dst.index()] = Some(res);
+                    }
+                }
+                Instr::LoadReg { dst, .. } => {
+                    const_values[dst.index()] = None;
+                }
+                Instr::LoadFlag { dst, .. } => {
+                    uses_rflags = true;
+                    const_values[dst.index()] = None;
+                }
+                Instr::LoadMem { dst, width, addr } => {
                     has_load_mem = true;
+                    const_values[dst.index()] = None;
                     match width {
                         Width::W8 => uses_read_u8 = true,
                         Width::W16 => uses_read_u16 = true,
@@ -195,7 +244,7 @@ impl Tier2WasmCodegen {
                         Width::W32 => 4u32,
                         Width::W64 => 8u32,
                     };
-                    if !always_cross_page(addr, size_bytes) {
+                    if !always_cross_page(addr, size_bytes, &const_values) {
                         needs_fast_path = true;
                     }
                 }
@@ -213,14 +262,13 @@ impl Tier2WasmCodegen {
                         Width::W32 => 4u32,
                         Width::W64 => 8u32,
                     };
-                    if !always_cross_page(addr, size_bytes) {
+                    if !always_cross_page(addr, size_bytes, &const_values) {
                         needs_fast_path = true;
                         store_needs_fast_path = true;
                     }
                 }
                 Instr::GuardCodeVersion { .. } => has_code_version_guards = true,
-                Instr::LoadFlag { .. } | Instr::SetFlags { .. } => uses_rflags = true,
-                Instr::BinOp { flags, .. } if !flags.is_empty() => uses_rflags = true,
+                Instr::SetFlags { .. } => uses_rflags = true,
                 _ => {}
             }
         }
@@ -240,7 +288,6 @@ impl Tier2WasmCodegen {
         let needs_code_version_table = (options.inline_tlb && store_needs_fast_path)
             || (!options.code_version_guard_import && has_code_version_guards);
 
-        let value_count = max_value_id(trace).max(1);
         let code_version_locals: u32 = if needs_code_version_table { 2 } else { 0 };
         let tlb_locals: u32 = if options.inline_tlb { 5 } else { 0 };
         let fixed_locals = 1 + u32::from(uses_rflags); // next_rip + optional rflags
@@ -518,6 +565,7 @@ impl Tier2WasmCodegen {
             imported,
             depth: 0,
             options,
+            const_values,
         };
 
         emitter.emit_instrs(&trace.prologue);
@@ -760,6 +808,7 @@ struct Emitter<'a> {
     /// Current nesting depth inside the exit block.
     depth: u32,
     options: Tier2WasmOptions,
+    const_values: Vec<Option<u64>>,
 }
 
 impl Emitter<'_> {
@@ -1027,6 +1076,10 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalGet(self.layout.value_local(v)));
             }
         }
+    }
+
+    fn operand_const(&self, op: Operand) -> Option<u64> {
+        operand_const_value(op, &self.const_values)
     }
 
     fn emit_load_flag(&mut self, flag: Flag) {
@@ -1320,12 +1373,13 @@ impl Emitter<'_> {
             Width::W64 => (8u32, self.imported.mem_read_u64),
         };
         let slow_read = slow_read.expect("memory read helper import missing");
+        let addr_const = self.operand_const(addr);
 
         // If this is a constant cross-page access, we know it will always fall back to the slow
         // helper for correctness. Emit the helper call directly instead of emitting a runtime
         // cross-page check with an unreachable inline-TLB fast path.
         if size_bytes > 1 {
-            if let Operand::Const(vaddr) = addr {
+            if let Some(vaddr) = addr_const {
                 let cross_limit =
                     PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 if (vaddr & PAGE_OFFSET_MASK) > cross_limit {
@@ -1398,7 +1452,7 @@ impl Emitter<'_> {
         //
         // We skip emitting a runtime cross-page check when the result is statically known (8-bit
         // accesses never cross pages and constant vaddrs have a constant page offset).
-        let needs_cross_page_check = size_bytes > 1 && !matches!(addr, Operand::Const(_));
+        let needs_cross_page_check = size_bytes > 1 && addr_const.is_none();
         if needs_cross_page_check {
             let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
             self.f
@@ -1483,12 +1537,13 @@ impl Emitter<'_> {
             Width::W64 => (8u32, self.imported.mem_write_u64),
         };
         let slow_write = slow_write.expect("memory write helper import missing");
+        let addr_const = self.operand_const(addr);
 
         // If this is a constant cross-page access, we know it will always fall back to the slow
         // helper for correctness. Emit the helper call directly instead of emitting a runtime
         // cross-page check with an unreachable inline-TLB fast path.
         if size_bytes > 1 {
-            if let Operand::Const(vaddr) = addr {
+            if let Some(vaddr) = addr_const {
                 let cross_limit =
                     PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
                 if (vaddr & PAGE_OFFSET_MASK) > cross_limit {
@@ -1605,7 +1660,7 @@ impl Emitter<'_> {
         //
         // We skip emitting a runtime cross-page check when the result is statically known (8-bit
         // accesses never cross pages and constant vaddrs have a constant page offset).
-        let needs_cross_page_check = size_bytes > 1 && !matches!(addr, Operand::Const(_));
+        let needs_cross_page_check = size_bytes > 1 && addr_const.is_none();
         if needs_cross_page_check {
             let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
             self.f
@@ -1687,6 +1742,13 @@ fn next(idx: &mut u32) -> u32 {
     let cur = *idx;
     *idx += 1;
     cur
+}
+
+fn operand_const_value(op: Operand, const_values: &[Option<u64>]) -> Option<u64> {
+    match op {
+        Operand::Const(v) => Some(v),
+        Operand::Value(v) => const_values.get(v.index()).copied().flatten(),
+    }
 }
 
 fn max_value_id(trace: &TraceIr) -> u32 {
