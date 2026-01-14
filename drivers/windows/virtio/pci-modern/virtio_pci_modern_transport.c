@@ -1106,8 +1106,11 @@ NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT
 	 * When disabling MSI-X routing for this source (vector == VIRTIO_PCI_MSI_NO_VECTOR),
 	 * accept a VIRTIO_PCI_MSI_NO_VECTOR readback.
 	 *
-	 * Note: on Aero Win7 contract devices, NO_VECTOR disables MSI-X delivery but the
-	 * device may still deliver interrupts via INTx + ISR fallback.
+	 * Note: VIRTIO_PCI_MSI_NO_VECTOR disables MSI-X routing for this interrupt source.
+	 * If the PCI MSI-X capability is enabled, the device must suppress interrupts for
+	 * this source (no MSI-X message and no INTx fallback). If MSI-X is disabled, the
+	 * device delivers interrupts via legacy INTx + ISR semantics (see
+	 * docs/windows7-virtio-driver-contract.md §1.8).
 	 */
 	if (vector == VIRTIO_PCI_MSI_NO_VECTOR) {
 		return (read_vector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
