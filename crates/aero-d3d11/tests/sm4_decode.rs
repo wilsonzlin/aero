@@ -2600,6 +2600,15 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
         OPCODE_ISHR,
         OPCODE_USHR,
     ];
+    let int_bitwise_set = int_bitwise_opcodes
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        int_bitwise_set.len(),
+        int_bitwise_opcodes.len(),
+        "duplicate integer/bitwise opcode"
+    );
     let compare_opcodes = [
         OPCODE_IEQ, OPCODE_INE, OPCODE_ILT, OPCODE_IGE, OPCODE_ULT, OPCODE_UGE,
     ];
