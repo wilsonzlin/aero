@@ -82,12 +82,19 @@ Notes:
 For native integration tests (or headless hosts) that want the device model to drive fence progress
 without an external worker, install an in-process backend:
 
+- `Machine::aerogpu_set_backend(Box<dyn AeroGpuCommandBackend>)` — install a custom backend (for
+  experiments or future worker-based/native backends).
 - `Machine::aerogpu_set_backend_immediate()` — completes fences synchronously, performs no rendering
   (headless-friendly).
+- `Machine::aerogpu_set_backend_null()` — drops submissions and never completes fences (useful for
+  testing fence/IRQ gating behavior).
 - `Machine::aerogpu_set_backend_wgpu()` — feature-gated (`aerogpu-wgpu-backend`), wgpu-backed
   execution for end-to-end tests.
 
 Installing an in-process backend is mutually exclusive with the submission bridge.
+
+The selected backend is preserved across `Machine::reset()` calls (the backend is reset, but remains
+installed).
 
 ## Relevant tests
 
