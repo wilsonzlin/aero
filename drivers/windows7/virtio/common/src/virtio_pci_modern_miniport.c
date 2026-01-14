@@ -122,6 +122,13 @@ VirtioPciSelectQueueLocked(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueInde
 {
     WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_select, QueueIndex);
     KeMemoryBarrier();
+    /*
+     * Flush the posted MMIO write so subsequent accesses to queue-specific
+     * registers (queue_size, queue_msix_vector, etc) reliably observe the
+     * selected queue on all chipsets.
+     */
+    (VOID)READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_select);
+    KeMemoryBarrier();
 }
 
 NTSTATUS
