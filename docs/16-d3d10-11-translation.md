@@ -868,7 +868,13 @@ file” buffer that the translated GS code can index with a simple formula.
 
 **Layout**
 
-`gs_inputs` is a read-only storage buffer of `vec4<f32>` registers:
+`gs_inputs` is a read-only storage buffer of `vec4<f32>` registers.
+
+In the baseline internal binding scheme, this buffer is bound at:
+
+- `@group(3) @binding(276)` (optional; only required when using this packed-input GS path).
+
+Example declaration:
 
 ```wgsl
 struct Vec4F32Buffer { data: array<vec4<f32>>; }
@@ -1269,6 +1275,14 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Layout: `array<TessPatchConstants>` (see below), 32 bytes per entry.
     - Entry count: `patch_count * instance_count`.
 
+8. **GS input payload (`gs_inputs`, optional)**
+    - Purpose: packed per-primitive GS inputs when using a GS translator that expects a dense
+      register-file buffer (see “GS input register payload layout”).
+    - Usage: `STORAGE` (read-only).
+    - Layout: `array<vec4<f32>>` registers packed by `((prim_id * verts_per_prim + vertex) * reg_count + reg)`.
+    - Capacity sizing:
+      - `input_prim_count * instance_count * GS_INPUT_VERTS_PER_PRIM * GS_INPUT_REG_COUNT` registers.
+
 **GS output sizing: strip → list**
 
 Geometry shaders typically declare output topology as `line_strip` or `triangle_strip`. WebGPU can
@@ -1598,6 +1612,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Trigger: `gs != 0` or adjacency topology.
     - Reads primitive inputs from the previous stage output (`vs_out_regs` for no tessellation,
       otherwise `tess_out_vertices` + `tess_out_indices`).
+      - Optionally, implementations may pack upstream stage output registers into a dense `gs_inputs`
+        buffer (see “GS input register payload layout”) and have the translated GS read from that.
     - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
       before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
     - Dispatch shape / ordering:
@@ -1743,6 +1759,7 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(273)`: `counters` (read_write storage; atomics)
 - `@binding(274)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
 - `@binding(275)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
+- `@binding(276)`: `gs_inputs` (read-only storage; optional packed GS input register payload)
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
@@ -1969,6 +1986,12 @@ struct TessPatchConstants {
 
 HS writes `f32` tess factors directly. Unused lanes MUST be written as `0.0` so tools and debug
 readbacks are deterministic.
+
+Implementation note: the in-tree tessellation layout pass (`runtime/tessellation/layout_pass.rs`)
+currently models tri-domain tess factors using a compact `array<vec4<f32>>` layout where the four
+lanes are `(edge0, edge1, edge2, inside)` (16 bytes per patch). This doc’s 32-byte layout extends
+that scheme to cover quad-domain factors while keeping P2a tri-domain values compatible (unused
+lanes are zero).
 
 Indexing rule (same as `tess_patch_state`):
 
