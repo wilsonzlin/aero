@@ -198,6 +198,8 @@ The GPU worker:
 4. Uploads either:
    - a full frame (`present()`), or
    - rect updates (`presentDirtyRects()` when the selected backend supports it).
+   - The worker may still choose to fall back to a full-frame upload even when dirty rects are available (e.g. too many rects or estimated upload bytes too high). Policy helper:
+     - `chooseDirtyRectsForUpload()` in `web/src/gpu/dirty-rect-policy.ts`
 5. Clears the producer→consumer `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) after consuming a frame.
 
 Code pointers:
