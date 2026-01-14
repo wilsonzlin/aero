@@ -261,10 +261,26 @@ def main() -> int:
     # of a larger hex literal like 0xFFFFFFFFFFFFFFFFull.
     u32_max_re = r"(?:UINT32_MAX|0x[Ff]{8}(?![0-9A-Fa-f])[uUlL]{0,3})"
 
-    if not re.search(r"(?m)^\s*#\s*define\s+AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT\b", text):
+    m_max_count = re.search(
+        r"(?m)^\s*#\s*define\s+AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT\s+\(?\s*(?P<val>0x[0-9A-Fa-f]+|[0-9]+|UINT16_MAX)\s*\)?\s*[uUlL]*\b",
+        text,
+    )
+    if not m_max_count:
         errors.append(
-            f"{SRC.relative_to(ROOT)}: missing AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT definition"
+            f"{SRC.relative_to(ROOT)}: missing or non-literal AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT definition"
         )
+    else:
+        raw = m_max_count.group("val")
+        try:
+            cap_value = 0xFFFF if raw == "UINT16_MAX" else int(raw, 0)
+            if cap_value > 0xFFFF:
+                errors.append(
+                    f"{SRC.relative_to(ROOT)}: AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT is too large: {raw} (max allowed: 0xFFFF)"
+                )
+        except Exception:  # pragma: no cover
+            errors.append(
+                f"{SRC.relative_to(ROOT)}: unable to parse AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT value: {raw}"
+            )
 
     # --- AeroGpuSubmissionMetaTotalBytes (meta byte accounting) ---
     try:
