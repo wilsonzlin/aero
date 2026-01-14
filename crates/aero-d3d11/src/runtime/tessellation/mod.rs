@@ -227,7 +227,7 @@ impl std::error::Error for TessellationScratchOomError {}
 pub enum TessellationRuntimeError {
     Sizing(buffers::TessellationSizingError),
     Scratch(ExpansionScratchError),
-    ScratchOom(TessellationScratchOomError),
+    ScratchOom(Box<TessellationScratchOomError>),
 }
 
 impl core::fmt::Display for TessellationRuntimeError {
@@ -274,11 +274,11 @@ impl TessellationRuntime {
         scratch
             .init(device)
             .map_err(TessellationRuntimeError::Scratch)?;
-        let scratch_per_frame_capacity = scratch.per_frame_capacity().ok_or_else(|| {
+        let scratch_per_frame_capacity = scratch.per_frame_capacity().ok_or(
             TessellationRuntimeError::Scratch(ExpansionScratchError::InvalidDescriptor(
                 "scratch allocator did not report per-frame capacity after init",
-            ))
-        })?;
+            )),
+        )?;
 
         let device_max_buffer_size = device.limits().max_buffer_size;
         let debug_counters_bytes: u64 =
@@ -304,7 +304,7 @@ impl TessellationRuntime {
 
         if exceeds_device_limit || exceeds_scratch_capacity {
             return Err(TessellationRuntimeError::ScratchOom(
-                TessellationScratchOomError {
+                Box::new(TessellationScratchOomError {
                     patch_count_total: params.patch_count_total,
                     tess_factor_clamped,
                     scratch_per_frame_capacity,
@@ -312,7 +312,7 @@ impl TessellationRuntime {
                     sizes,
                     debug_counters_bytes,
                     total_scratch_bytes,
-                },
+                }),
             ));
         }
 
