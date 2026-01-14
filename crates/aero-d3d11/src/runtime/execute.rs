@@ -526,20 +526,20 @@ impl D3D11Runtime {
             wgpu_usage |= wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
         }
 
+        // When required by the underlying wgpu backend (notably wgpu-gl), keep a CPU shadow of
+        // index buffers so we can emulate primitive restart by rewriting strips into list indices.
+        let shadow = if self.emulate_strip_restart && usage.contains(BufferUsage::INDEX) {
+            usize::try_from(size).ok().map(|shadow_len| vec![0u8; shadow_len])
+        } else {
+            None
+        };
+
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 buffer"),
             size,
             usage: wgpu_usage,
             mapped_at_creation: false,
         });
-
-        let shadow = if self.emulate_strip_restart {
-            usize::try_from(size)
-                .ok()
-                .map(|shadow_len| vec![0u8; shadow_len])
-        } else {
-            None
-        };
         self.resources.buffers.insert(
             id,
             BufferResource {
@@ -1280,12 +1280,22 @@ impl D3D11Runtime {
         } else {
             RenderPipelineVariants::NonStrip(create_pipeline(topology, None))
         };
-
+        let strip_to_list_pipeline = if self.emulate_strip_restart && is_strip_topology {
+            let list_topology = match topology {
+                wgpu::PrimitiveTopology::LineStrip => wgpu::PrimitiveTopology::LineList,
+                wgpu::PrimitiveTopology::TriangleStrip => wgpu::PrimitiveTopology::TriangleList,
+                _ => unreachable!("non-strip topology passed is_strip_topology check"),
+            };
+            Some(create_pipeline(list_topology, None))
+        } else {
+            None
+        };
         self.resources.render_pipelines.insert(
             pipeline_id,
             RenderPipelineResource {
                 pipelines,
                 topology,
+                strip_to_list_pipeline,
                 bind_group_layout,
                 bindings,
             },
@@ -1740,75 +1750,66 @@ impl D3D11Runtime {
             );
         }
 
-        // Update the CPU shadow copies so later commands (e.g. strip primitive-restart emulation)
-        // see the same buffer contents that the GPU will.
-        let should_update_shadow = self
+        // Keep CPU shadows in sync for buffer copies (used by primitive-restart emulation).
+        if self
             .resources
             .buffers
-            .get(&src)
+            .get(&dst)
             .is_some_and(|b| b.shadow.is_some())
-            && self
-                .resources
-                .buffers
-                .get(&dst)
-                .is_some_and(|b| b.shadow.is_some());
-
-        if should_update_shadow {
+        {
+            // Best-effort: if the copy range doesn't fit in usize or the source shadow isn't
+            // available, invalidate the destination shadow to avoid using stale bytes later.
             if let (Ok(shadow_src_start), Ok(shadow_dst_start), Ok(shadow_size)) = (
                 usize::try_from(src_offset),
                 usize::try_from(dst_offset),
                 usize::try_from(size),
             ) {
                 let shadow_src_end =
-                    shadow_src_start.checked_add(shadow_size).ok_or_else(|| {
-                        anyhow!("CopyBufferToBuffer src shadow range overflows usize")
-                    })?;
+                    shadow_src_start
+                        .checked_add(shadow_size)
+                        .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range overflows usize"))?;
                 let shadow_dst_end =
-                    shadow_dst_start.checked_add(shadow_size).ok_or_else(|| {
-                        anyhow!("CopyBufferToBuffer dst shadow range overflows usize")
-                    })?;
+                    shadow_dst_start
+                        .checked_add(shadow_size)
+                        .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range overflows usize"))?;
 
                 if src == dst {
-                    let buf = self
-                        .resources
-                        .buffers
-                        .get_mut(&src)
-                        .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
-                    if let Some(shadow) = buf.shadow.as_mut() {
-                        shadow.copy_within(shadow_src_start..shadow_src_end, shadow_dst_start);
-                    }
-                } else {
-                    let tmp = {
-                        let src_buf = self
-                            .resources
-                            .buffers
-                            .get(&src)
-                            .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
-                        let src_shadow = src_buf
-                            .shadow
-                            .as_deref()
-                            .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow missing"))?;
-                        src_shadow
-                            .get(shadow_src_start..shadow_src_end)
-                            .ok_or_else(|| {
-                                anyhow!("CopyBufferToBuffer src shadow range out of bounds")
-                            })?
-                            .to_vec()
-                    };
                     let dst_buf = self
                         .resources
                         .buffers
                         .get_mut(&dst)
                         .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
-                    if let Some(dst_shadow) = dst_buf.shadow.as_mut() {
-                        dst_shadow
-                            .get_mut(shadow_dst_start..shadow_dst_end)
-                            .ok_or_else(|| {
-                                anyhow!("CopyBufferToBuffer dst shadow range out of bounds")
-                            })?
-                            .copy_from_slice(&tmp);
+                    if let Some(shadow) = dst_buf.shadow.as_mut() {
+                        shadow.copy_within(shadow_src_start..shadow_src_end, shadow_dst_start);
+                    }
+                } else {
+                    let src_bytes = self
+                        .resources
+                        .buffers
+                        .get(&src)
+                        .and_then(|b| b.shadow.as_ref())
+                        .and_then(|shadow| shadow.get(shadow_src_start..shadow_src_end))
+                        .map(|s| s.to_vec());
+
+                    let dst_buf = self
+                        .resources
+                        .buffers
+                        .get_mut(&dst)
+                        .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+                    match (src_bytes, dst_buf.shadow.as_mut()) {
+                        (Some(bytes), Some(dst_shadow)) => {
+                            dst_shadow
+                                .get_mut(shadow_dst_start..shadow_dst_end)
+                                .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range out of bounds"))?
+                                .copy_from_slice(&bytes);
+                        }
+                        _ => {
+                            dst_buf.shadow = None;
+                        }
                     }
                 }
+            } else if let Some(dst_buf) = self.resources.buffers.get_mut(&dst) {
+                dst_buf.shadow = None;
             }
         }
 
@@ -1829,7 +1830,6 @@ impl D3D11Runtime {
             dst_offset,
             size,
         );
-
         self.encoder_has_commands = true;
         Ok(())
     }
@@ -1849,6 +1849,7 @@ impl D3D11Runtime {
 
         self.encoder_has_commands = true;
         let device = &self.device;
+        let queue = &self.queue;
         let resources = &self.resources;
         let emulate_strip_restart = self.emulate_strip_restart;
         let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
@@ -1897,6 +1898,9 @@ impl D3D11Runtime {
         let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
         let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
         let mut bind_group_dirty = true;
+        // wgpu requires resources referenced by a render pass to stay alive until the pass ends.
+        // Keep any temporary strip-to-list index buffers alive for the duration of this pass.
+        let mut strip_index_buffer_arena: Vec<Arc<wgpu::Buffer>> = Vec::new();
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("aero-d3d11 render pass"),
@@ -1938,7 +1942,9 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        state.index_buffer.map(|ib| ib.format),
+                        RenderPipelineVariant::Normal {
+                            strip_index_format: state.index_buffer.map(|ib| ib.format),
+                        },
                         &mut bound_pipeline,
                     )?;
                     if pipeline_changed {
@@ -2003,7 +2009,9 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        state.index_buffer.map(|ib| ib.format),
+                        RenderPipelineVariant::Normal {
+                            strip_index_format: state.index_buffer.map(|ib| ib.format),
+                        },
                         &mut bound_pipeline,
                     )?;
                     let pipeline = resources
@@ -2073,11 +2081,45 @@ impl D3D11Runtime {
                         bail!("DrawIndexed without an index buffer bound");
                     };
 
+                    // Primitive restart (strip cuts) is required for D3D-style indexed strip
+                    // topologies. Some wgpu backends have historically not honored the native
+                    // WebGPU restart semantics, so we expand strips into list primitives on the CPU
+                    // (using a shadow copy of the index buffer contents) and use a list-topology
+                    // pipeline variant.
+                    let expanded_strip_indices = if emulate_strip_restart
+                        && matches!(
+                            pipeline.topology,
+                            wgpu::PrimitiveTopology::LineStrip
+                                | wgpu::PrimitiveTopology::TriangleStrip
+                        )
+                    {
+                        let index_buf = resources
+                            .buffers
+                            .get(&index.buffer)
+                            .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+                        expand_indexed_strip_to_list(
+                            pipeline.topology,
+                            index_buf,
+                            index,
+                            first_index,
+                            index_count,
+                        )?
+                    } else {
+                        None
+                    };
+
+                    let pipeline_variant = if expanded_strip_indices.is_some() {
+                        RenderPipelineVariant::StripToList
+                    } else {
+                        RenderPipelineVariant::Normal {
+                            strip_index_format: Some(index.format),
+                        }
+                    };
                     sync_render_pipeline(
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        Some(index.format),
+                        pipeline_variant,
                         &mut bound_pipeline,
                     )?;
 
@@ -2113,38 +2155,61 @@ impl D3D11Runtime {
                         vertex_buffers_synced = true;
                     }
 
-                    sync_index_buffer(&mut render_pass, resources, index, &mut bound_index_buffer)?;
-
                     let instances = first_instance..first_instance + instance_count;
+                    if let Some(expanded) = expanded_strip_indices {
+                        if expanded.is_empty() {
+                            continue;
+                        }
 
-                    // Primitive restart (strip cuts) is required for D3D-style indexed strip
-                    // topologies. wgpu's GL backend has historically had correctness issues with
-                    // native primitive restart, so emulate restart by splitting the draw into
-                    // multiple segments that omit restart indices entirely.
-                    if emulate_strip_restart
-                        && matches!(
-                            pipeline.topology,
-                            wgpu::PrimitiveTopology::LineStrip
-                                | wgpu::PrimitiveTopology::TriangleStrip
-                        )
-                        && draw_indexed_strip_restart_emulated(
+                        let byte_len = expanded
+                            .len()
+                            .checked_mul(std::mem::size_of::<u32>())
+                            .ok_or_else(|| anyhow!("expanded index buffer size overflows usize"))?;
+                        let size = u64::try_from(byte_len).map_err(|_| {
+                            anyhow!("expanded index buffer size does not fit in u64")
+                        })?;
+
+                        // wgpu disallows `MAP_WRITE|INDEX` buffers (mapped buffers can only be used
+                        // with COPY), so upload with `queue.write_buffer`.
+                        let tmp = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("aero-d3d11 strip-to-list index buffer"),
+                            size,
+                            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
+                        let mut data: Vec<u8> = Vec::with_capacity(byte_len);
+                        for &idx in &expanded {
+                            data.extend_from_slice(&idx.to_le_bytes());
+                        }
+                        queue.write_buffer(&tmp, 0, &data);
+                        let tmp = Arc::new(tmp);
+                        let buf_ptr = Arc::as_ptr(&tmp);
+                        strip_index_buffer_arena.push(tmp);
+                        let buf_ref = unsafe { &*buf_ptr };
+                        render_pass.set_index_buffer(buf_ref.slice(..), wgpu::IndexFormat::Uint32);
+                        // Ensure future draws that rely on `state.index_buffer` rebind it.
+                        bound_index_buffer = None;
+
+                        let index_len = u32::try_from(expanded.len()).map_err(|_| {
+                            anyhow!(
+                                "expanded index count does not fit in u32 (len={})",
+                                expanded.len()
+                            )
+                        })?;
+                        render_pass.draw_indexed(0..index_len, base_vertex, instances);
+                    } else {
+                        sync_index_buffer(
                             &mut render_pass,
                             resources,
                             index,
-                            first_index,
-                            index_count,
+                            &mut bound_index_buffer,
+                        )?;
+                        render_pass.draw_indexed(
+                            first_index..first_index + index_count,
                             base_vertex,
-                            instances.clone(),
-                        )?
-                    {
-                        continue;
+                            instances,
+                        );
                     }
-
-                    render_pass.draw_indexed(
-                        first_index..first_index + index_count,
-                        base_vertex,
-                        instances,
-                    );
                 }
                 _ => bail!(
                     "opcode {:?} not allowed inside render pass",
@@ -2505,16 +2570,26 @@ fn build_bind_group(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderPipelineVariant {
+    Normal {
+        strip_index_format: Option<wgpu::IndexFormat>,
+    },
+    /// Use the list-topology fallback pipeline for indexed strip draws (handles primitive restart
+    /// by explicit index expansion).
+    StripToList,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BoundRenderPipeline {
     id: u32,
-    strip_index_format: Option<wgpu::IndexFormat>,
+    variant: RenderPipelineVariant,
 }
 
 fn sync_render_pipeline<'a>(
     pass: &mut wgpu::RenderPass<'a>,
     resources: &'a D3D11Resources,
     pipeline_id: u32,
-    strip_index_format: Option<wgpu::IndexFormat>,
+    variant: RenderPipelineVariant,
     bound: &mut Option<BoundRenderPipeline>,
 ) -> Result<()> {
     let pipeline = resources
@@ -2522,21 +2597,37 @@ fn sync_render_pipeline<'a>(
         .get(&pipeline_id)
         .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
 
-    let strip_index_format = if pipeline.pipelines.uses_strip_index_format() {
-        strip_index_format
-    } else {
-        None
+    let variant = match variant {
+        RenderPipelineVariant::Normal { strip_index_format } => {
+            let strip_index_format = if pipeline.pipelines.uses_strip_index_format() {
+                strip_index_format
+            } else {
+                None
+            };
+            RenderPipelineVariant::Normal { strip_index_format }
+        }
+        RenderPipelineVariant::StripToList => RenderPipelineVariant::StripToList,
     };
 
     let desired = BoundRenderPipeline {
         id: pipeline_id,
-        strip_index_format,
+        variant,
     };
     if bound == &Some(desired) {
         return Ok(());
     }
 
-    pass.set_pipeline(pipeline.pipelines.get(strip_index_format));
+    match variant {
+        RenderPipelineVariant::Normal { strip_index_format } => {
+            pass.set_pipeline(pipeline.pipelines.get(strip_index_format));
+        }
+        RenderPipelineVariant::StripToList => {
+            let list_pipeline = pipeline.strip_to_list_pipeline.as_ref().ok_or_else(|| {
+                anyhow!("render pipeline {pipeline_id} does not have a strip-to-list variant")
+            })?;
+            pass.set_pipeline(list_pipeline);
+        }
+    }
     *bound = Some(desired);
     Ok(())
 }
@@ -2609,56 +2700,47 @@ fn sync_index_buffer<'a>(
     Ok(())
 }
 
-fn draw_indexed_strip_restart_emulated<'a>(
-    pass: &mut wgpu::RenderPass<'a>,
-    resources: &'a D3D11Resources,
-    index: BoundIndexBuffer,
+fn expand_indexed_strip_to_list(
+    topology: wgpu::PrimitiveTopology,
+    index_buf: &BufferResource,
+    index_binding: BoundIndexBuffer,
     first_index: u32,
     index_count: u32,
-    base_vertex: i32,
-    instances: std::ops::Range<u32>,
-) -> Result<bool> {
+) -> Result<Option<Vec<u32>>> {
+    let Some(shadow) = index_buf.shadow.as_deref() else {
+        return Ok(None);
+    };
     if index_count == 0 {
-        return Ok(false);
+        return Ok(None);
     }
 
-    let buf = resources
-        .buffers
-        .get(&index.buffer)
-        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
-    let Some(shadow) = buf.shadow.as_deref() else {
-        // Shadow is optional; fall back to wgpu's built-in behavior if we cannot inspect the index
-        // data.
-        return Ok(false);
+    let index_size_bytes: u64 = match index_binding.format {
+        wgpu::IndexFormat::Uint16 => 2,
+        wgpu::IndexFormat::Uint32 => 4,
     };
 
-    let (stride_bytes, restart_value) = match index.format {
-        wgpu::IndexFormat::Uint16 => (2u64, u16::MAX as u32),
-        wgpu::IndexFormat::Uint32 => (4u64, u32::MAX),
-    };
-
-    let start_byte = index
+    let start_byte = index_binding
         .offset
-        .checked_add(u64::from(first_index) * stride_bytes)
-        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice start overflows u64"))?;
+        .checked_add(u64::from(first_index) * index_size_bytes)
+        .ok_or_else(|| anyhow!("strip index buffer slice start overflows u64"))?;
     let slice_len_bytes = u64::from(index_count)
-        .checked_mul(stride_bytes)
-        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice length overflows u64"))?;
+        .checked_mul(index_size_bytes)
+        .ok_or_else(|| anyhow!("strip index buffer slice length overflows u64"))?;
     let end_byte = start_byte
         .checked_add(slice_len_bytes)
-        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice end overflows u64"))?;
+        .ok_or_else(|| anyhow!("strip index buffer slice end overflows u64"))?;
 
-    if end_byte > buf.size {
+    if end_byte > index_buf.size {
         bail!(
             "DrawIndexed index buffer slice out of bounds: start={start_byte} end={end_byte} buffer_size={}",
-            buf.size
+            index_buf.size
         );
     }
 
     let start = usize::try_from(start_byte)
-        .map_err(|_| anyhow!("DrawIndexed index buffer slice start does not fit in usize"))?;
+        .map_err(|_| anyhow!("index buffer slice start does not fit in usize"))?;
     let end = usize::try_from(end_byte)
-        .map_err(|_| anyhow!("DrawIndexed index buffer slice end does not fit in usize"))?;
+        .map_err(|_| anyhow!("index buffer slice end does not fit in usize"))?;
     if end > shadow.len() {
         bail!(
             "DrawIndexed index buffer slice out of bounds for shadow copy: end={end} shadow_size={}",
@@ -2668,59 +2750,73 @@ fn draw_indexed_strip_restart_emulated<'a>(
 
     let bytes = &shadow[start..end];
 
-    let mut seg_start = 0u32;
-    let mut did_restart = false;
+    let has_restart = match index_binding.format {
+        wgpu::IndexFormat::Uint16 => bytes
+            .chunks_exact(2)
+            .any(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) == 0xFFFF),
+        wgpu::IndexFormat::Uint32 => bytes.chunks_exact(4).any(|chunk| {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) == 0xFFFF_FFFF
+        }),
+    };
+    if !has_restart {
+        return Ok(None);
+    }
 
-    match index.format {
+    let mut indices_with_cuts: Vec<u32> = Vec::with_capacity(index_count as usize);
+
+    match index_binding.format {
         wgpu::IndexFormat::Uint16 => {
-            for (i, chunk) in bytes.chunks_exact(2).enumerate() {
-                let idx = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
-                if idx == restart_value {
-                    did_restart = true;
-                    let i = i as u32;
-                    if i > seg_start {
-                        pass.draw_indexed(
-                            first_index + seg_start..first_index + i,
-                            base_vertex,
-                            instances.clone(),
-                        );
-                    }
-                    seg_start = i + 1;
+            if !bytes.len().is_multiple_of(2) {
+                bail!("index buffer slice is not a multiple of 2 bytes");
+            }
+            for chunk in bytes.chunks_exact(2) {
+                let v = u16::from_le_bytes([chunk[0], chunk[1]]);
+                if v == 0xFFFF {
+                    indices_with_cuts.push(super::strip_to_list::CUT);
+                } else {
+                    indices_with_cuts.push(u32::from(v));
                 }
             }
         }
         wgpu::IndexFormat::Uint32 => {
-            for (i, chunk) in bytes.chunks_exact(4).enumerate() {
-                let idx = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                if idx == restart_value {
-                    did_restart = true;
-                    let i = i as u32;
-                    if i > seg_start {
-                        pass.draw_indexed(
-                            first_index + seg_start..first_index + i,
-                            base_vertex,
-                            instances.clone(),
-                        );
-                    }
-                    seg_start = i + 1;
+            if !bytes.len().is_multiple_of(4) {
+                bail!("index buffer slice is not a multiple of 4 bytes");
+            }
+            for chunk in bytes.chunks_exact(4) {
+                let v = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                if v == 0xFFFF_FFFF {
+                    indices_with_cuts.push(super::strip_to_list::CUT);
+                } else {
+                    indices_with_cuts.push(v);
                 }
             }
         }
     }
 
-    if !did_restart {
-        return Ok(false);
-    }
+    let out = match topology {
+        wgpu::PrimitiveTopology::TriangleStrip => {
+            super::strip_to_list::strip_to_triangle_list(&indices_with_cuts)
+        }
+        wgpu::PrimitiveTopology::LineStrip => {
+            let mut out = Vec::new();
+            let mut prev: Option<u32> = None;
+            for idx in indices_with_cuts {
+                if idx == super::strip_to_list::CUT {
+                    prev = None;
+                    continue;
+                }
+                if let Some(p) = prev {
+                    out.push(p);
+                    out.push(idx);
+                }
+                prev = Some(idx);
+            }
+            out
+        }
+        _ => return Ok(None),
+    };
 
-    if seg_start < index_count {
-        pass.draw_indexed(
-            first_index + seg_start..first_index + index_count,
-            base_vertex,
-            instances,
-        );
-    }
-
-    Ok(true)
+    Ok(Some(out))
 }
 
 fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {

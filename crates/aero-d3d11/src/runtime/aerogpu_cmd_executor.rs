@@ -3797,6 +3797,12 @@ impl AerogpuD3d11Executor {
                 )
             })?;
 
+        // NOTE: Avoid allocating uniform buffers from `expansion_scratch`.
+        // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch, and
+        // will reject binding different slices of the same underlying buffer as both storage and
+        // uniform. The GS prepass uses storage buffers from `expansion_scratch`, so its uniforms
+        // must come from a separate buffer (see `expansion_uniform_scratch`).
+
         let mut slots: Vec<VertexPullingSlot> =
             Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
         let mut buffers: Vec<&wgpu::Buffer> =
@@ -8170,12 +8176,13 @@ impl AerogpuD3d11Executor {
         if self.state.ds.is_some() && self.state.hs.is_none() {
             bail!("tessellation draw requires a bound HS (DS is bound without HS)");
         }
-
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
         // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
         // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
         // topologies) do not crash.
+
+        self.validate_gs_hs_ds_emulation_capabilities()?;
 
         let Some(next) = stream.iter.peek() else {
             return Ok(());
@@ -10231,6 +10238,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 &mut self.resources,
                 &self.state,
                 layout_key,
+                None,
             );
             self.state.emulated_expanded_vertex_buffer = prev_emulated;
             self.state.primitive_topology = prev_topology;
@@ -10739,7 +10747,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
         // the original D3D11 value, but reject attempts to draw through the non-emulated path.
         //
         // This is prerequisite plumbing for future HS/DS + GS emulation.
-        let _topology = self.state.primitive_topology.validate_direct_draw()?;
+        let _wgpu_topology = self.state.primitive_topology.validate_direct_draw()?;
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -10954,15 +10962,16 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
         };
 
         let (strip_pipeline_ptr, list_pipeline_ptr, wgpu_slot_to_d3d_slot) = {
-            let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
-                get_or_create_render_pipeline_for_state(
-                    &self.device,
-                    &mut self.pipeline_cache,
-                    pipeline_layout.as_ref(),
-                    &mut self.resources,
-                    &self.state,
-                    layout_key.clone(),
-                )?;
+                let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
+                    get_or_create_render_pipeline_for_state(
+                        &self.device,
+                        &mut self.pipeline_cache,
+                        pipeline_layout.as_ref(),
+                        &mut self.resources,
+                        &self.state,
+                        layout_key.clone(),
+                        None,
+                    )?;
             let strip_ptr = pipeline as *const wgpu::RenderPipeline;
             let list_ptr = if let Some(list_state) = list_state.as_ref() {
                 let (_pipeline_key, pipeline, _mapping) = get_or_create_render_pipeline_for_state(
@@ -10972,6 +10981,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     &mut self.resources,
                     list_state,
                     layout_key.clone(),
+                    None,
                 )?;
                 Some(pipeline as *const wgpu::RenderPipeline)
             } else {
@@ -11074,6 +11084,9 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 }),
             }
         });
+
+        // Bind groups referenced by `set_bind_group` must remain alive for the entire render pass.
+        let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
 
         self.encoder_has_commands = true;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -11236,8 +11249,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             pass.set_index_buffer(buf.slice(ib.offset_bytes..), ib.format);
         }
 
-        // Bind groups referenced by `set_bind_group` must remain alive for the entire render pass.
-        let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
+        // Track the currently-built bind groups (pointers into `bind_group_arena`).
         let mut current_bind_groups: Vec<Option<*const wgpu::BindGroup>> =
             vec![None; pipeline_bindings.group_layouts.len()];
         let mut bound_bind_groups: Vec<Option<*const wgpu::BindGroup>> =
@@ -20640,6 +20652,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     resources: &mut AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
     layout_key: PipelineLayoutKey,
+    topology_override: Option<wgpu::PrimitiveTopology>,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
     let ps_handle = state
         .ps
@@ -21008,7 +21021,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     //
     // Note: The placeholder compute shader always outputs a triangle; full GS/HS/DS correctness
     // will replace this mapping as the emulation pipeline matures.
-    let topology = match state.primitive_topology {
+    let mut topology = match state.primitive_topology {
         CmdPrimitiveTopology::PointList => wgpu::PrimitiveTopology::PointList,
         CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => {
             wgpu::PrimitiveTopology::LineList
@@ -21024,6 +21037,9 @@ fn get_or_create_render_pipeline_for_state<'a>(
             wgpu::PrimitiveTopology::TriangleStrip
         }
     };
+    if let Some(override_topology) = topology_override {
+        topology = override_topology;
+    }
     let strip_index_format = match topology {
         wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
             state.index_buffer.map(|ib| ib.format)
@@ -23651,6 +23667,7 @@ mod tests {
                 &mut exec.resources,
                 &exec.state,
                 layout_key,
+                None,
             );
             exec.device.poll(wgpu::Maintain::Wait);
             let err = exec.device.pop_error_scope().await;
@@ -23910,6 +23927,7 @@ mod tests {
                 &mut exec.resources,
                 &exec.state,
                 layout_key,
+                None,
             );
             exec.device.poll(wgpu::Maintain::Wait);
             let err = exec.device.pop_error_scope().await;
@@ -24116,6 +24134,7 @@ mod tests {
                 &mut exec.resources,
                 &exec.state,
                 layout_key,
+                None,
             );
             exec.device.poll(wgpu::Maintain::Wait);
             let err = exec.device.pop_error_scope().await;

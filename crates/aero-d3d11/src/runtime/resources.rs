@@ -9,12 +9,6 @@ use aero_gpu::protocol_d3d11::ResourceId;
 pub struct BufferResource {
     pub buffer: wgpu::Buffer,
     pub size: u64,
-    /// CPU shadow copy of the buffer contents (when required).
-    ///
-    /// The protocol D3D11 runtime uses this to emulate behaviors that require inspecting index
-    /// buffers on the CPU (e.g. primitive-restart handling for strip topologies on wgpu GL).
-    ///
-    /// This is kept up to date by `UpdateBuffer` and `CopyBufferToBuffer` opcodes.
     pub shadow: Option<Vec<u8>>,
 }
 
@@ -110,6 +104,8 @@ impl RenderPipelineVariants {
 #[derive(Debug)]
 pub struct RenderPipelineResource {
     pub pipelines: RenderPipelineVariants,
+    /// Optional list-topology variant used for strip primitive restart emulation.
+    pub strip_to_list_pipeline: Option<wgpu::RenderPipeline>,
     pub topology: wgpu::PrimitiveTopology,
     pub bind_group_layout: CachedBindGroupLayout,
     pub bindings: Vec<BindingDef>,
