@@ -41,10 +41,18 @@ impl ErstEntry {
     fn read(mem: &mut dyn MemoryBus, erstba: u64, idx: u16) -> Option<Self> {
         let off = (idx as u64).checked_mul(16)?;
         let paddr = erstba.checked_add(off)?;
-        let base = mem.read_u64(paddr);
+        let base_raw = mem.read_u64(paddr);
         let size = mem.read_u32(paddr + 8) & 0xffff;
+        // ERST entry segment base pointers must be 16-byte aligned. Treat reserved low bits as
+        // invalid rather than masking them away so a malformed guest configuration cannot alias a
+        // different segment.
+        if size != 0 {
+            if base_raw == 0 || (base_raw & 0x0f) != 0 {
+                return None;
+            }
+        }
         Some(Self {
-            base: base & !0x0f,
+            base: base_raw & !0x0f,
             size_trbs: size,
         })
     }

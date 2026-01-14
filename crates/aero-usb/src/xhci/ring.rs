@@ -119,6 +119,9 @@ impl RingCursor {
 
             if matches!(trb.trb_type(), TrbType::Link) {
                 // Link TRB parameter contains the next segment pointer; low bits are reserved.
+                if (trb.parameter & 0x0f) != 0 {
+                    return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);
+                }
                 let next = trb.link_segment_ptr();
                 if next == 0 {
                     return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);
@@ -182,6 +185,9 @@ impl RingCursor {
             }
 
             if matches!(trb.trb_type(), TrbType::Link) {
+                if (trb.parameter & 0x0f) != 0 {
+                    return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);
+                }
                 let next = trb.link_segment_ptr();
                 if next == 0 {
                     return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);

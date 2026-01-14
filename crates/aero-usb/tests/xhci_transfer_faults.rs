@@ -88,6 +88,32 @@ fn xhci_transfer_executor_rejects_null_link_target() {
 }
 
 #[test]
+fn xhci_transfer_executor_halts_on_link_trb_reserved_bits() {
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
+
+    let mut mem = SparseMem::default();
+    // Malformed ring: Link TRB segment pointer has reserved low bits set. The controller must treat
+    // this as invalid and must not mask the address down to an aligned pointer.
+    write_trb(&mut mem, RING_BASE, make_link_trb(RING_BASE + 0x10 + 1, true, false));
+    // If the executor incorrectly masks the link pointer, it would follow it and process this TRB.
+    write_trb(&mut mem, RING_BASE + 0x10, make_normal_trb(0x2000, 8, true, false));
+
+    exec.add_endpoint(0x81, RING_BASE);
+    exec.tick_1ms(&mut mem);
+
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].completion_code, CompletionCode::TrbError);
+    assert_eq!(events[0].trb_ptr, RING_BASE);
+    assert!(exec.endpoint_state(0x81).unwrap().halted);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
+}
+
+#[test]
 fn xhci_transfer_executor_halts_on_all_ones_trb_fetch() {
     let keyboard = UsbHidKeyboardHandle::new();
     let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));

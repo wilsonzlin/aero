@@ -449,6 +449,17 @@ impl XhciTransferExecutor {
                 return SkipLinkTrbsResult::Ok;
             }
 
+            if (trb.parameter & 0x0f) != 0 {
+                ep.halted = true;
+                self.pending_events.push(TransferEvent {
+                    ep_addr: ep.ep_addr,
+                    trb_ptr: ep.ring.dequeue_ptr,
+                    event_data: None,
+                    residual: 0,
+                    completion_code: CompletionCode::TrbError,
+                });
+                return SkipLinkTrbsResult::Fault;
+            }
             let target = trb.link_segment_ptr();
             if target == 0 {
                 ep.halted = true;
@@ -518,6 +529,9 @@ impl XhciTransferExecutor {
             match trb.trb_type() {
                 TrbType::Link => {
                     // Link TRBs are not data buffers; follow them and keep gathering.
+                    if (trb.parameter & 0x0f) != 0 {
+                        return GatherTdResult::Fault { trb_ptr: ptr };
+                    }
                     let target = trb.link_segment_ptr();
                     if target == 0 {
                         return GatherTdResult::Fault { trb_ptr: ptr };
