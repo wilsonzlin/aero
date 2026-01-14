@@ -33,7 +33,7 @@ Quick reality check (as of this repo revision):
   to route the VBE LFB through PCI MMIO (stub BAR mirrors the configured LFB base; legacy default
   `0xE000_0000`).
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` / `MachineConfig::win7_graphics(...)`
-  exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM** and VRAM-backed legacy VGA/VBE decode (`0xA0000..0xC0000`),
+  exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM** and VRAM-backed legacy VGA/VBE decode (`0xA0000..0xBFFFF`),
   **minimal BAR0 MMIO + ring/fence transport** (no-op command execution; no vblank tick / WDDM scanout output yet),
   and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/{lib.rs,aerogpu.rs}` and
   `crates/aero-machine/tests/{aerogpu_*,boot_int10_aerogpu_vbe_115_sets_mode}.rs`).
