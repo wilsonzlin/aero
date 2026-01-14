@@ -1587,6 +1587,210 @@ bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
   return true;
 }
 
+bool TestFvfXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr, "pfnLock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnUnlock != nullptr, "pfnUnlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitive != nullptr, "pfnDrawPrimitive is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  // Set a non-identity transform so the fixed-function WVP constant upload is
+  // easy to spot (WVP columns are uploaded into c240..c243).
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    float* m = dev->transform_matrices[kD3dTransformWorld0];
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+    m[12] = tx;
+    m[13] = ty;
+    m[14] = tz;
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Create a vertex buffer (non-UP path) and populate it via Lock/Unlock.
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0u;   // Buffer type is inferred from `size` by the UMD.
+  create_vb.format = 0u; // Unused for buffers.
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(tri);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pPrivateDriverData = nullptr;
+  create_vb.PrivateDriverDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(create_vb.hResource.pDrvPrivate != nullptr, "CreateResource returned vb handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_vb.hResource);
+
+  aerogpu_handle_t expected_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* vb = reinterpret_cast<Resource*>(create_vb.hResource.pDrvPrivate);
+    expected_vb = vb ? vb->handle : 0;
+  }
+  if (!Check(expected_vb != 0, "vb handle non-zero")) {
+    return false;
+  }
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, tri, sizeof(tri));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(
+      cleanup.hDevice, /*stream=*/0, create_vb.hResource, /*offset=*/0, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=vb)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*start_vertex=*/0, /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawPrimitive(triangle xyz tex1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|TEX1 VB draw)")) {
+    return false;
+  }
+
+  bool saw_expected_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzTex1)) {
+        saw_expected_vb = true;
+        break;
+      }
+    }
+    if (saw_expected_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds the created VB")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (VB draw)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -3550,6 +3754,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzTex1EmitsTransformConstantsAndDecl()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {
