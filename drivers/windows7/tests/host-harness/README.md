@@ -1383,9 +1383,10 @@ in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver
 
 - Preferred/contract binding: `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01` (wins when it matches).
 - If the device does not expose the Aero contract tablet subsystem ID (`SUBSYS_0012`), `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
-  In that case, it can still bind via the opt-in strict fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`) if you
-  enable the optional legacy alias INF (the `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/`). It will appear as
-  the generic **Aero VirtIO Input Device**.
+  In that case, it can still bind via the strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`) included in
+  `aero_virtio_input.inf`, and will appear as the generic **Aero VirtIO Input Device**.
+  (The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename-only alias for legacy tooling; enabling it
+  does **not** change HWID matching behavior.)
   Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
