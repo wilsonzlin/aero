@@ -3527,6 +3527,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
 
+              const requiredSrcBytesBig = BigInt(pitchBytes) * BigInt(height);
+              if (requiredSrcBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              const requiredSrcBytes = Number(requiredSrcBytesBig);
+
               const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
               if (basePaddr === 0n) {
                 postStub(typeof seq === "number" ? seq : undefined);
@@ -3554,29 +3561,50 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
-              // Validate that the descriptor rows are actually backed by guest RAM before using
-              // the cached last-presented scanout buffer. Without this, a corrupt `base_paddr`
-              // could cause us to return stale cached pixels instead of falling back to the stub.
-              const ramBytes = guest.byteLength;
-              for (let y = 0; y < height; y += 1) {
-                const rowPaddr = basePaddrNum + y * pitchBytes;
-                if (!Number.isSafeInteger(rowPaddr)) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                try {
-                  if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+              // Determine whether the scanout surface is backed by VRAM (BAR1 aperture) or guest RAM.
+              // This affects validation: guest RAM has PCI holes/high-RAM remap, while VRAM is a
+              // separate contiguous SharedArrayBuffer.
+              const scanoutIsInVram = (() => {
+                const vram = vramU8;
+                if (!vram || vramSizeBytes === 0) return false;
+                const vramBase = BigInt(vramBasePaddr >>> 0);
+                const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
+                const endPaddr = basePaddr + requiredSrcBytesBig;
+                if (basePaddr < vramBase || endPaddr > vramEnd) return false;
+                const startBig = basePaddr - vramBase;
+                if (startBig > BigInt(Number.MAX_SAFE_INTEGER)) return false;
+                const start = Number(startBig);
+                const end = start + requiredSrcBytes;
+                if (end < start || end > vram.byteLength) return false;
+                return true;
+              })();
+
+              if (!scanoutIsInVram) {
+                // Guest RAM-backed scanout: validate that the descriptor rows are actually backed by
+                // guest RAM before using the cached last-presented scanout buffer. Without this, a
+                // corrupt `base_paddr` could cause us to return stale cached pixels instead of
+                // falling back to the stub.
+                const ramBytes = guest.byteLength;
+                for (let y = 0; y < height; y += 1) {
+                  const rowPaddr = basePaddrNum + y * pitchBytes;
+                  if (!Number.isSafeInteger(rowPaddr)) {
                     postStub(typeof seq === "number" ? seq : undefined);
                     return true;
                   }
-                } catch {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-                if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
+                  try {
+                    if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+                      postStub(typeof seq === "number" ? seq : undefined);
+                      return true;
+                    }
+                  } catch {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
+                  const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
+                  if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
                 }
               }
               const outBytes = rowBytes * height;
