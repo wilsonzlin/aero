@@ -5301,7 +5301,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: true, ...res.meta }, null, 2)),
             });
             summaryLines.push(
-              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} ctx=${res.meta.audioContextState ?? "n/a"} baseLatMs=${formatMsOrNa(res.meta.baseLatencySeconds)} outputLatMs=${formatMsOrNa(res.meta.outputLatencySeconds)} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
+              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} avail=${res.meta.availableFrames} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} ctx=${res.meta.audioContextState ?? "n/a"} baseLatMs=${formatMsOrNa(res.meta.baseLatencySeconds)} outputLatMs=${formatMsOrNa(res.meta.outputLatencySeconds)} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
             );
           }
 
@@ -5313,7 +5313,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: true, ...micRes.meta }, null, 2)),
             });
             summaryLines.push(
-              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate} ctx=${micRes.meta.audioContextState ?? "n/a"} backend=${micRes.meta.backend ?? "n/a"} muted=${micRes.meta.muted ?? "n/a"} trackMuted=${micRes.meta.trackMuted ?? "n/a"} trackReadyState=${micRes.meta.trackReadyState ?? "n/a"} deviceIdHash=${micRes.meta.deviceIdHash ?? "n/a"} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
+              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} avail=${micRes.meta.availableSamples} dropped=${micRes.meta.droppedSamples} sr=${micRes.meta.sampleRate} ctx=${micRes.meta.audioContextState ?? "n/a"} backend=${micRes.meta.backend ?? "n/a"} muted=${micRes.meta.muted ?? "n/a"} trackMuted=${micRes.meta.trackMuted ?? "n/a"} trackReadyState=${micRes.meta.trackReadyState ?? "n/a"} deviceIdHash=${micRes.meta.deviceIdHash ?? "n/a"} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
             );
           } else {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
