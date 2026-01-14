@@ -10,6 +10,7 @@ It prints ABI-critical details for Win7 WDDM 1.1 display miniport bring-up, incl
 - Enum values for vblank-related `DXGK_INTERRUPT_TYPE_*` constants.
 - The bitmask values for key flag bitfields:
   - `DXGK_ALLOCATIONINFO::Flags.Value` (decoded by setting individual bitfields)
+  - `DXGK_ALLOCATIONLIST::Flags.Value` (notably `WriteOperation`, used for alloc-table READONLY propagation)
   - `DXGKARG_CREATEALLOCATION::Flags.Value`
 
 This makes header/version drift obvious before debugging a Win7 VM.

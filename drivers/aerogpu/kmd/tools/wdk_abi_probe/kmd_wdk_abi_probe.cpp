@@ -154,6 +154,45 @@ static void probe_createallocation_flag_masks() {
 #endif
 }
 
+static void probe_allocation_list_flag_masks() {
+  print_header("DXGK_ALLOCATIONLIST::Flags masks");
+
+  typedef decltype(((DXGK_ALLOCATIONLIST*)0)->Flags) FlagsT;
+
+  print_sizeof("DXGK_ALLOCATIONLIST", sizeof(DXGK_ALLOCATIONLIST));
+  print_offsetof("DXGK_ALLOCATIONLIST", "hAllocation", offsetof(DXGK_ALLOCATIONLIST, hAllocation));
+  print_offsetof("DXGK_ALLOCATIONLIST", "PhysicalAddress", offsetof(DXGK_ALLOCATIONLIST, PhysicalAddress));
+  print_offsetof("DXGK_ALLOCATIONLIST", "SegmentId", offsetof(DXGK_ALLOCATIONLIST, SegmentId));
+  print_offsetof("DXGK_ALLOCATIONLIST", "Flags", offsetof(DXGK_ALLOCATIONLIST, Flags));
+
+  print_sizeof("DXGK_ALLOCATIONLIST::Flags", sizeof(FlagsT));
+
+#if defined(_MSC_VER)
+  printf("  DXGK_ALLOCATIONLIST_FLAGS masks (field -> Flags.Value):\n");
+
+  #define PRINT_MASK(FieldName)                                                      \
+    __if_exists(FlagsT::FieldName) {                                                \
+      FlagsT f = {};                                                                \
+      f.Value = 0;                                                                  \
+      f.FieldName = 1;                                                              \
+      printf("    %-28s 0x%08X\n", #FieldName, (unsigned)f.Value);                  \
+    }                                                                               \
+    __if_not_exists(FlagsT::FieldName) {                                            \
+      printf("    %-28s <n/a>\n", #FieldName);                                      \
+    }
+
+  // The critical bit for AeroGPU alloc-table READONLY propagation:
+  // `WriteOperation==1` indicates the DMA buffer writes to the allocation.
+  PRINT_MASK(WriteOperation);
+
+  // Other flags may exist depending on header vintage; print a few common ones.
+  PRINT_MASK(Accessed);
+  PRINT_MASK(UseResidentPriority);
+
+  #undef PRINT_MASK
+#endif
+}
+
 static void probe_commitvidpn() {
   print_header("DXGKARG_COMMITVIDPN");
   print_sizeof("DXGKARG_COMMITVIDPN", sizeof(DXGKARG_COMMITVIDPN));
@@ -213,6 +252,7 @@ int main() {
   probe_interrupt_type_enums();
   probe_notify_interrupt();
   probe_allocation_flag_masks();
+  probe_allocation_list_flag_masks();
   probe_createallocation_flag_masks();
   probe_commitvidpn();
   probe_vidpn_source_mode();
