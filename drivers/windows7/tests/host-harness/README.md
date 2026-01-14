@@ -683,18 +683,36 @@ virtio-input also has an **output** path used for keyboard LED state (CapsLock/N
 stack this is transported over the virtio-input **status queue** (statusq).
 
 To regression-test this path end-to-end (user-mode HID `WriteFile` → KMDF HID minidriver → virtio statusq → device
-consumes/completes), the guest selftest includes an optional `virtio-input-leds` section.
+consumes/completes), the guest selftest includes an optional `virtio-input-led` section (compat: `virtio-input-leds`).
+
+The guest selftest emits **both** markers (so either harness spelling can gate it):
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS|...` (newer)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>` (compat)
 
 To enable the check:
 
-1. Provision the guest image so the scheduled selftest runs with `--test-input-leds`
-   (for example via `New-AeroWin7TestImage.ps1 -TestInputLeds`, or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`).
-2. Run the host harness with `-WithInputLeds` / `--with-input-leds` so it requires the guest marker:
-   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
+1. Provision the guest image so the scheduled selftest runs with `--test-input-led`
+   (for example via `New-AeroWin7TestImage.ps1 -TestInputLed`, or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`).
+   - Compatibility: `--test-input-leds` / `-TestInputLeds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
+2. Run the host harness with `-WithInputLed` / `--with-input-led` so it requires the guest marker:
+   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`.
+   - Compatibility: `-WithInputLeds` / `--with-input-leds` instead requires
+     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
 
-When enabled, a guest `virtio-input-leds|SKIP|flag_not_set` causes a hard failure (PowerShell: `VIRTIO_INPUT_LEDS_SKIPPED`;
-Python: `FAIL: VIRTIO_INPUT_LEDS_SKIPPED: ...`). If the guest emits no marker at all after `virtio-input` completes, the
-harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_LEDS`; Python: `FAIL: MISSING_VIRTIO_INPUT_LEDS: ...`).
+When enabled, a guest `virtio-input-led|SKIP|flag_not_set` / `virtio-input-leds|SKIP|flag_not_set` causes a hard failure:
+
+- When gating `virtio-input-led` (`-WithInputLed` / `--with-input-led`):
+  - PowerShell: `VIRTIO_INPUT_LED_SKIPPED`
+  - Python: `FAIL: VIRTIO_INPUT_LED_SKIPPED: ...`
+- When gating `virtio-input-leds` (`-WithInputLeds` / `--with-input-leds`):
+  - PowerShell: `VIRTIO_INPUT_LEDS_SKIPPED`
+  - Python: `FAIL: VIRTIO_INPUT_LEDS_SKIPPED: ...`
+
+If the guest emits no marker at all after `virtio-input` completes, the harness fails early:
+
+- `-WithInputLed` / `--with-input-led`: `MISSING_VIRTIO_INPUT_LED`
+- `-WithInputLeds` / `--with-input-leds`: `MISSING_VIRTIO_INPUT_LEDS`
 ### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
 
 When a virtio tablet device (`virtio-tablet-pci`) is attached, the guest selftest can optionally validate **absolute
