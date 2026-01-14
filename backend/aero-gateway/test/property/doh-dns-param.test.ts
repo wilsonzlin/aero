@@ -5,6 +5,7 @@ import fastify from 'fastify';
 import fc from 'fast-check';
 
 import { loadConfig } from '../../src/config.js';
+import { decodeDnsHeader } from '../../src/dns/codec.js';
 import { setupMetrics } from '../../src/metrics.js';
 import { decodeBase64UrlToBuffer, setupDohRoutes } from '../../src/routes/doh.js';
 import { SESSION_COOKIE_NAME, createSessionManager } from '../../src/session.js';
@@ -56,15 +57,21 @@ describe('DoH GET dns= decoding and size limits (property)', () => {
         const numRuns = process.env.CI ? 50 : 100;
         await fc.assert(
           fc.asyncProperty(
-            fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 513, maxLength: 600 }),
-            async (arr) => {
-              const dnsParam = encodeBase64Url(Buffer.from(arr));
-              const res = await app.inject({ method: 'GET', url: `/dns-query?dns=${dnsParam}`, headers: { cookie } });
-              assert.equal(res.statusCode, 413);
-            },
-          ),
-          { numRuns, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
-        );
+             fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 513, maxLength: 600 }),
+             async (arr) => {
+               const query = Buffer.from(arr);
+               const dnsParam = encodeBase64Url(query);
+               const res = await app.inject({ method: 'GET', url: `/dns-query?dns=${dnsParam}`, headers: { cookie } });
+               assert.equal(res.statusCode, 413);
+
+               // The handler should preserve the query ID in the error response (best-effort header
+               // parsing without decoding the full payload).
+               const header = decodeDnsHeader(res.rawPayload);
+               assert.equal(header.id, query.readUInt16BE(0));
+             },
+           ),
+           { numRuns, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
+         );
       } finally {
         await app.close();
       }

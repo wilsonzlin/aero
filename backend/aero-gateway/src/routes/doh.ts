@@ -121,19 +121,23 @@ export function setupDohRoutes(
               // in the 413 response without allocating the entire message.
               const prefix = base64UrlPrefixForHeader(dns, 16);
               let id = 0;
+              let queryFlags = 0;
               if (prefix) {
                 try {
                   const headerBytes = decodeBase64UrlToBuffer(prefix);
                   try {
-                    id = decodeDnsHeader(headerBytes).id;
+                    const header = decodeDnsHeader(headerBytes);
+                    id = header.id;
+                    queryFlags = header.flags;
                   } catch {
                     if (headerBytes.length >= 2) id = headerBytes.readUInt16BE(0);
+                    if (headerBytes.length >= 4) queryFlags = headerBytes.readUInt16BE(2);
                   }
                 } catch {
                   // ignore
                 }
               }
-              return sendDnsError(reply, 413, { id, rcode: 1 });
+              return sendDnsError(reply, 413, { id, queryFlags, rcode: 1 });
             }
 
             query = decodeBase64UrlToBuffer(dns);
@@ -156,12 +160,16 @@ export function setupDohRoutes(
       if (query.length > config.DNS_MAX_QUERY_BYTES) {
         // If the client sent a huge payload, avoid parsing more than the header.
         let id = 0;
+        let queryFlags = 0;
         try {
-          id = decodeDnsHeader(query).id;
+          const header = decodeDnsHeader(query);
+          id = header.id;
+          queryFlags = header.flags;
         } catch {
           if (query.length >= 2) id = query.readUInt16BE(0);
+          if (query.length >= 4) queryFlags = query.readUInt16BE(2);
         }
-        return sendDnsError(reply, 413, { id, rcode: 1 });
+        return sendDnsError(reply, 413, { id, queryFlags, rcode: 1 });
       }
 
       let id = 0;
