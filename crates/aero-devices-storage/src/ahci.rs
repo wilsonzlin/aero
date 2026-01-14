@@ -426,9 +426,10 @@ impl AhciController {
                 //   Poll PxSSTS/PxTFD for device present/ready.
                 //
                 // We emulate this synchronously: DET=1 immediately forces the port into a
-                // transient "resetting" view (DET=0, BSY set). A subsequent transition back to
-                // DET=0 immediately completes the reset, restoring the link status and task file
-                // status for any attached drive.
+                // transient "resetting" view (DET=1 with no negotiated speed/power state, and
+                // PxTFD.BSY set when a drive is present). A subsequent transition back to DET=0
+                // immediately completes the reset, restoring the link status and task file status
+                // for any attached drive.
                 let old_det = port.regs.sctl & SCTL_DET_MASK;
                 let new_det = val & SCTL_DET_MASK;
 
