@@ -1631,6 +1631,20 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_truncated_after_ep_inflight_count() {
+        // Truncate after `ep_count=1` but omit the first endpoint entry.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(0) // completion_count
+            .bool(false) // has_control
+            .u32(1) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_load_rejects_ep_inflight_count_over_limit() {
         // Intentionally truncate the snapshot after `ep_count`. Without the guard, this would
         // attempt to decode 65 endpoint entries and hit UnexpectedEof.
@@ -2313,6 +2327,52 @@ mod tests {
             .u16(0)
             .u16(0)
             .bool(true) // has_data
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_control_inflight_before_ep_count_no_data_stage() {
+        // Truncate after a complete inflight control transfer (no DATA stage) but before `ep_count`.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(0) // completion_count
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(false) // has_data
+            // (missing ep_count)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_control_inflight_before_ep_count_with_data_stage() {
+        // Truncate after a complete inflight control transfer (with DATA stage) but before `ep_count`.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(0) // completion_count
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            .bool(true) // has_data
+            .u32(1) // data length
+            .u8(0xaa) // data bytes
+            // (missing ep_count)
             .finish();
         let err = snapshot_load_err(bytes);
         assert_eq!(err, SnapshotError::UnexpectedEof);
