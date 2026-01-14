@@ -189,8 +189,8 @@ fn snapshot_restore_clears_xhci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_xhci_attach_root(0, Box::new(webusb.clone()))
-        .expect("attach webusb device at root port 0");
+    vm.usb_xhci_attach_root(1, Box::new(webusb.clone()))
+        .expect("attach webusb device at root port 1");
 
     // Queue a host action so there is host-side asynchronous state to clear.
     let setup = SetupPacket {
