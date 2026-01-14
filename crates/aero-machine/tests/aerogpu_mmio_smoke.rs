@@ -154,4 +154,67 @@ fn aerogpu_mmio_scanout_and_cursor_present() {
             0xFFFF_FFFF, // white
         ]
     );
+
+    // Hotspot/offscreen/alpha blend: program a 2x2 cursor with hotspot (1, 1) at position (0, 0).
+    // Only the cursor pixel at (1, 1) should land at the top-left of the scanout.
+    let scanout_green: [u8; 16] = [
+        0x00, 0xFF, 0x00, 0xFF, // BGRA green
+        0x00, 0xFF, 0x00, 0xFF, // BGRA green
+        0x00, 0xFF, 0x00, 0xFF, // BGRA green
+        0x00, 0xFF, 0x00, 0xFF, // BGRA green
+    ];
+    m.write_physical(fb_gpa, &scanout_green);
+
+    // Cursor pixels are RGBA. Make only the bottom-right pixel semi-transparent red.
+    let cursor2_gpa = 0x202000u64;
+    let cursor2_bytes: [u8; 16] = [
+        0x00, 0x00, 0x00, 0x00, // (0,0) transparent
+        0x00, 0x00, 0x00, 0x00, // (1,0) transparent
+        0x00, 0x00, 0x00, 0x00, // (0,1) transparent
+        0xFF, 0x00, 0x00, 0x80, // (1,1) red @ alpha=0.5
+    ];
+    m.write_physical(cursor2_gpa, &cursor2_bytes);
+
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_WIDTH), 2);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT),
+        2,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FORMAT),
+        pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES),
+        8,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO),
+        cursor2_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI),
+        (cursor2_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_X), 0);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_Y), 0);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_X), 1);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y), 1);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE),
+        1,
+    );
+
+    m.display_present();
+    assert_eq!(m.display_resolution(), (2, 2));
+    assert_eq!(
+        m.display_framebuffer(),
+        &[
+            // blend(red@0.5 over green) = r=128,g=127,b=0 with full alpha
+            0xFF00_7F80,
+            0xFF00_FF00, // green
+            0xFF00_FF00, // green
+            0xFF00_FF00, // green
+        ]
+    );
 }
