@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -59,16 +59,14 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     // Write a few pixels (packed 32bpp BGRX).
     let base = u64::from(lfb_base);
     assert_eq!(vm.vbe_lfb_base(), base);
-    let vga = vm.vga().expect("pc platform should include VGA");
-    assert_eq!(vga.borrow().lfb_base(), lfb_base);
     vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
     vm.write_physical_u32(base + 12, 0x00FF_FFFF); // (3,0) white
 
-    vga.borrow_mut().present();
-    let (width, height) = vga.borrow().get_resolution();
-    let hash_before = framebuffer_hash_rgba8888(vga.borrow().get_framebuffer());
+    vm.display_present();
+    let (width, height) = vm.display_resolution();
+    let hash_before = framebuffer_hash_rgba8888(vm.display_framebuffer());
 
     let snap = vm.take_snapshot_full().unwrap();
 
@@ -76,12 +74,8 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     vm2.reset();
     vm2.restore_snapshot_bytes(&snap).unwrap();
 
-    let vga2 = vm2
-        .vga()
-        .expect("pc platform should include VGA after restore");
-    assert_eq!(vga2.borrow().lfb_base(), lfb_base);
-    vga2.borrow_mut().present();
-    assert_eq!(vga2.borrow().get_resolution(), (width, height));
-    let hash_after = framebuffer_hash_rgba8888(vga2.borrow().get_framebuffer());
+    vm2.display_present();
+    assert_eq!(vm2.display_resolution(), (width, height));
+    let hash_after = framebuffer_hash_rgba8888(vm2.display_framebuffer());
     assert_eq!(hash_after, hash_before);
 }

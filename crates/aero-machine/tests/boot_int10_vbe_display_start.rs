@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, PortIO, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -85,38 +85,41 @@ fn run_until_halt(m: &mut Machine) {
 
 #[test]
 fn boot_int10_vbe_display_start() {
-    let mut m = Machine::new(MachineConfig {
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        // Keep the test output deterministic.
-        enable_serial: false,
-        enable_i8042: false,
-        ..Default::default()
-    })
-    .unwrap();
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            // Keep the test output deterministic.
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            enable_virtio_net: false,
+            ..Default::default()
+        };
 
-    let boot = build_int10_vbe_display_start_boot_sector(m.vbe_lfb_base_u32());
-    m.set_disk_image(boot.to_vec()).unwrap();
-    m.reset();
-    run_until_halt(&mut m);
+        let mut m = Machine::new(cfg).unwrap();
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1024, 768));
+        let boot = build_int10_vbe_display_start_boot_sector(m.vbe_lfb_base_u32());
+        m.set_disk_image(boot.to_vec()).unwrap();
+        m.reset();
+        run_until_halt(&mut m);
 
-    {
         // Verify the BIOS VBE display-start state is mirrored into the Bochs VBE_DISPI x/y offset
-        // registers on the VGA device.
-        let mut vga = vga.borrow_mut();
-        vga.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0008);
-        let x_off = vga.port_read(VBE_DISPI_DATA_PORT, 2) as u16;
-        vga.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0009);
-        let y_off = vga.port_read(VBE_DISPI_DATA_PORT, 2) as u16;
+        // registers (regardless of whether the underlying device is the standalone VGA model or
+        // the AeroGPU legacy Bochs VBE frontend).
+        m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0008);
+        let x_off = m.io_read(VBE_DISPI_DATA_PORT, 2) as u16;
+        m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0009);
+        let y_off = m.io_read(VBE_DISPI_DATA_PORT, 2) as u16;
         assert_eq!((x_off, y_off), (1, 0));
 
-        vga.present();
+        m.display_present();
+        assert_eq!(m.display_resolution(), (1024, 768));
         // The guest wrote red at (0,0) and green at (1,0), then panned to x=1.
         // The top-left visible pixel should therefore be green.
-        assert_eq!(vga.get_framebuffer()[0], 0xFF00_FF00);
+        assert_eq!(m.display_framebuffer()[0], 0xFF00_FF00);
     }
 }
