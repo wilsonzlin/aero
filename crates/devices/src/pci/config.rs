@@ -586,7 +586,23 @@ impl PciConfigSpace {
     }
 
     pub fn restore_state(&mut self, state: &PciConfigSpaceState) {
+        // Several PCI header bytes are read-only and defined by the device model (vendor/device
+        // ID, class code, header type, subsystem IDs, interrupt pin). Guests cannot change them,
+        // but snapshots may be corrupt/hostile. Preserve the model-defined values from the
+        // currently constructed config space rather than trusting the snapshot bytes.
+        let ro_vendor_device: [u8; 4] = self.bytes[0x00..0x04].try_into().unwrap();
+        let ro_class_code: [u8; 4] = self.bytes[0x08..0x0c].try_into().unwrap();
+        let ro_header_type = self.bytes[usize::from(Self::HEADER_TYPE_OFFSET)];
+        let ro_subsystem: [u8; 4] = self.bytes[0x2c..0x30].try_into().unwrap();
+        let ro_interrupt_pin = self.bytes[usize::from(Self::INTERRUPT_PIN_OFFSET)];
+
         self.bytes = state.bytes;
+        self.bytes[0x00..0x04].copy_from_slice(&ro_vendor_device);
+        self.bytes[0x08..0x0c].copy_from_slice(&ro_class_code);
+        self.bytes[usize::from(Self::HEADER_TYPE_OFFSET)] = ro_header_type;
+        self.bytes[0x2c..0x30].copy_from_slice(&ro_subsystem);
+        self.bytes[usize::from(Self::INTERRUPT_PIN_OFFSET)] = ro_interrupt_pin;
+
         for i in 0..self.bars.len() {
             // BAR base alignment is a guest-visible hardware invariant: real devices mask BAR base
             // writes to the BAR size alignment (in addition to the config-space flag bits).
@@ -984,7 +1000,7 @@ pub trait PciDevice {
 
 #[cfg(test)]
 mod tests {
-    use super::{PciBarDefinition, PciConfigSpace, PciDevice};
+    use super::{PciBarDefinition, PciConfigSpace, PciDevice, PciSubsystemIds};
     use crate::pci::capabilities::{
         PCI_CAP_PTR_OFFSET, PCI_STATUS_CAPABILITIES_LIST, PCI_STATUS_OFFSET,
     };
@@ -1525,6 +1541,46 @@ mod tests {
         // Verify the returned offset is safe to use for subsequent reads.
         let msix_off = restored.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
         let _ = restored.read(msix_off + 0x02, 2);
+    }
+
+    #[test]
+    fn restore_state_preserves_read_only_header_bytes() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_class_code(0x01, 0x02, 0x03, 0x04);
+        cfg.set_header_type(0x80); // multifunction bit
+        cfg.set_subsystem_ids(PciSubsystemIds {
+            subsystem_vendor_id: 0xabcd,
+            subsystem_id: 0xef01,
+        });
+        cfg.set_interrupt_pin(1);
+
+        let mut state = cfg.snapshot_state();
+        // Corrupt various read-only header bytes in the snapshot image. Restore must keep the
+        // device-model-defined values from the target config space instead of trusting snapshot
+        // bytes.
+        state.bytes[0x00..0x04].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+        state.bytes[0x08..0x0c].copy_from_slice(&0xfeed_faceu32.to_le_bytes());
+        state.bytes[0x0e] = 0x00;
+        state.bytes[0x2c..0x30].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+        state.bytes[0x3d] = 0x04;
+
+        let mut restored = PciConfigSpace::new(0x1234, 0x5678);
+        restored.set_class_code(0x01, 0x02, 0x03, 0x04);
+        restored.set_header_type(0x80);
+        restored.set_subsystem_ids(PciSubsystemIds {
+            subsystem_vendor_id: 0xabcd,
+            subsystem_id: 0xef01,
+        });
+        restored.set_interrupt_pin(1);
+        restored.restore_state(&state);
+
+        assert_eq!(restored.vendor_device_id().vendor_id, 0x1234);
+        assert_eq!(restored.vendor_device_id().device_id, 0x5678);
+        assert_eq!(restored.class_code(), cfg.class_code());
+        assert_eq!(restored.header_type(), 0x80);
+        assert_eq!(restored.read(0x2c, 2) as u16, 0xabcd);
+        assert_eq!(restored.read(0x2e, 2) as u16, 0xef01);
+        assert_eq!(restored.interrupt_pin(), 1);
     }
 
     #[test]
