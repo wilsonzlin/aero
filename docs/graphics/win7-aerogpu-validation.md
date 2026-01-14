@@ -70,7 +70,8 @@ can locate the most relevant outputs without additional heuristics.
 
 `--dbgctl=...` is optional. In packaged installs, `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory:
  - Guest Tools ISO/zip: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (Win7 x64) and `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (Win7 x86)
- - CI-staged packages: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
+  - Optional top-level tools payload (when present): `tools\\aerogpu_dbgctl.exe` (or `tools\\<arch>\\aerogpu_dbgctl.exe`)
+  - CI-staged packages: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
 
 If you prefer `--dbgctl=aerogpu_dbgctl.exe`, copy the tool next to `bin\\aerogpu_test_runner.exe`.
 Use `--dbgctl-timeout-ms=NNNN` to bound how long the suite runner will wait for the dbgctl process itself (default: 5000ms).

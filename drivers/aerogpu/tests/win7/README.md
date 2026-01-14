@@ -253,6 +253,7 @@ Packaged locations:
 - Guest Tools ISO/zip:
   - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
   - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - Optional top-level tools payload (when present): `tools\\aerogpu_dbgctl.exe` (or `tools\\<arch>\\aerogpu_dbgctl.exe`)
 - CI-staged packages (host-side, copy into the guest):
   - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
   - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
