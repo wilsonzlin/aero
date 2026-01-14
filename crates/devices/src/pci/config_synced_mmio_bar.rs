@@ -352,7 +352,6 @@ mod tests {
                     },
                 );
                 config.add_capability(Box::new(MsiCapability::new()));
-                config.add_capability(Box::new(MsiCapability::new()));
                 Self { config }
             }
         }
@@ -384,6 +383,11 @@ mod tests {
                         prefetchable: false,
                     },
                 );
+                // Add an unrelated capability first so the MSI capability is not located at the
+                // canonical 0x40 offset. This ensures the wrapper uses capability lookup rather
+                // than assuming matching offsets between the canonical config and the device model
+                // config spaces.
+                config.add_capability(Box::new(MsixCapability::new(1, 0, 0, 0, 0x1000)));
                 config.add_capability(Box::new(MsiCapability::new()));
                 Self {
                     config,
