@@ -101,3 +101,8 @@ pub use tier2::{optimize_trace, Tier2WasmCodegen, Tier2WasmOptions, TraceBuilder
 
 #[cfg(feature = "legacy-baseline")]
 pub use legacy::{CpuState, Reg};
+
+// ---- Test utilities ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod test_util;

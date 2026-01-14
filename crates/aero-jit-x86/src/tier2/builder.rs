@@ -36,6 +36,7 @@ impl Default for CfgBuildConfig {
 /// - CFG-level bailouts (unsupported IR, indirect jumps, decode failures) are represented via
 ///   [`Terminator::SideExit`] rather than in-block [`Instr::SideExit`].
 #[must_use]
+#[track_caller]
 pub fn build_function_from_x86<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
@@ -57,6 +58,7 @@ struct Tier2CfgBuilder<'a, B: Tier1Bus> {
 }
 
 impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
+    #[track_caller]
     fn new(bus: &'a B, bitness: u32, cfg: CfgBuildConfig) -> Self {
         let ip_mask = match bitness {
             32 => 0xffff_ffff,
@@ -196,6 +198,36 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
             instrs,
             term,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[derive(Default)]
+    struct DummyBus;
+
+    impl Tier1Bus for DummyBus {
+        fn read_u8(&self, _addr: u64) -> u8 {
+            0
+        }
+
+        fn write_u8(&mut self, _addr: u64, _value: u8) {}
+    }
+
+    #[test]
+    fn build_function_from_x86_panics_at_call_site_on_invalid_bitness() {
+        let bus = DummyBus::default();
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = build_function_from_x86(&bus, 0, 0, CfgBuildConfig::default());
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
 

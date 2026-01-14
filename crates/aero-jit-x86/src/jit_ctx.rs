@@ -36,6 +36,7 @@ impl JitContext {
     /// Writes just the header fields (`ram_base`, `tlb_salt`) into `mem[base..]`.
     ///
     /// The TLB array is left untouched (typically zeroed on allocation).
+    #[track_caller]
     pub fn write_header_to_mem(&self, mem: &mut [u8], base: usize) {
         let end = base.checked_add(Self::BYTE_SIZE).unwrap_or_else(|| {
             panic!(
@@ -135,6 +136,7 @@ mod tests {
     use memoffset::offset_of;
 
     use super::JitContext;
+    use crate::test_util::capture_panic_location;
 
     #[test]
     fn jit_context_layout_matches_constants() {
@@ -179,5 +181,19 @@ mod tests {
 
         let salt_off = base + (JitContext::TLB_SALT_OFFSET as usize);
         assert_eq!(&mem[salt_off..salt_off + 8], &ctx.tlb_salt.to_le_bytes());
+    }
+
+    #[test]
+    fn jit_context_write_header_panics_at_call_site_on_oob() {
+        let ctx = JitContext::default();
+        let mut mem = [0u8; 0];
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            ctx.write_header_to_mem(&mut mem, 0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }

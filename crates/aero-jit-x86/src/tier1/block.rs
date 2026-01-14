@@ -50,6 +50,7 @@ pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits)
 /// This is a thin wrapper around the Tier1 minimal decoder (`aero_x86::tier1`) that allows
 /// front-ends/tests to run 16/32-bit guest payloads without mis-decoding `0x40..=0x4F` as REX.
 #[must_use]
+#[track_caller]
 pub fn discover_block_mode<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
@@ -115,5 +116,35 @@ pub fn discover_block_mode<B: Tier1Bus>(
                 end_kind: kind,
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[derive(Default)]
+    struct DummyBus;
+
+    impl Tier1Bus for DummyBus {
+        fn read_u8(&self, _addr: u64) -> u8 {
+            0
+        }
+
+        fn write_u8(&mut self, _addr: u64, _value: u8) {}
+    }
+
+    #[test]
+    fn discover_block_mode_panics_at_call_site_on_invalid_bitness() {
+        let bus = DummyBus::default();
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = discover_block_mode(&bus, 0, BlockLimits::default(), 0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
