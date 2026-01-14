@@ -1880,6 +1880,23 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
 #endif
 
+#ifdef SRB_FUNCTION_LOCK_QUEUE
+  /*
+   * StorPort queue-freeze management SRBs. We do not maintain an internal
+   * frozen state machine; StorPort will stop dispatching requests while the
+   * queue is locked. Treat as a no-op success.
+   */
+  case SRB_FUNCTION_LOCK_QUEUE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_UNLOCK_QUEUE
+  case SRB_FUNCTION_UNLOCK_QUEUE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
   case SRB_FUNCTION_RESET_DEVICE:
 #ifdef SRB_FUNCTION_RESET_LOGICAL_UNIT
   /*
