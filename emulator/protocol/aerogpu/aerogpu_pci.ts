@@ -151,7 +151,8 @@ export type AerogpuErrorCode = (typeof AerogpuErrorCode)[keyof typeof AerogpuErr
  *   ignore the stored "X" byte.
  * - sRGB variants have the same bit/byte layout as their UNORM counterparts;
  *   only the color space interpretation differs (sampling decodes sRGB to
- *   linear, render-target writes/views may encode linear to sRGB).
+ *   linear, render-target writes/views may encode linear to sRGB). Presenters
+ *   must avoid double-applying gamma when handling sRGB formats.
  */
 export const AerogpuFormat = {
   Invalid: 0,

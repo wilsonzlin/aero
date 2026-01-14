@@ -168,7 +168,8 @@ pub enum AerogpuErrorCode {
 ///   ignore the stored "X" byte.
 /// - sRGB variants have the same bit/byte layout as their UNORM counterparts;
 ///   only the color space interpretation differs (sampling decodes sRGB to
-///   linear, render-target writes/views may encode linear to sRGB).
+///   linear, render-target writes/views may encode linear to sRGB). Presenters
+///   must avoid double-applying gamma when handling sRGB formats.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuFormat {

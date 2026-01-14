@@ -211,7 +211,8 @@ enum aerogpu_error_code {
  * - `*_SRGB` variants have identical bit/byte layout to their corresponding
  *   `*_UNORM` formats; only the *interpretation* differs. Sampling should
  *   decode sRGB to linear, and render-target writes/views may encode linear to
- *   sRGB, following the usual sRGB rules.
+ *   sRGB, following the usual sRGB rules. Presenters must not double-apply
+ *   gamma when handling sRGB formats.
  */
 enum aerogpu_format {
   AEROGPU_FORMAT_INVALID = 0,
