@@ -167,7 +167,7 @@ fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
     // Playwright runs trigger `pretest:e2e`, which builds the web WASM bundles. The input/USB E2E
     // subset only needs the core `aero-wasm` package, so avoid building unrelated packages unless
     // the caller has already configured their own package selection.
-    if env::var_os("AERO_WASM_PACKAGES").is_none() {
+    if !env_var_nonempty("AERO_WASM_PACKAGES") {
         cmd.env("AERO_WASM_PACKAGES", "core");
     }
 
@@ -201,7 +201,7 @@ fn e2e_step_detail(pw_extra_args: &[String]) -> String {
         "project=chromium".to_string()
     };
 
-    let wasm_detail = if env::var_os("AERO_WASM_PACKAGES").is_some() {
+    let wasm_detail = if env_var_nonempty("AERO_WASM_PACKAGES") {
         "AERO_WASM_PACKAGES=custom".to_string()
     } else {
         "AERO_WASM_PACKAGES=core".to_string()
@@ -217,6 +217,13 @@ fn e2e_step_detail(pw_extra_args: &[String]) -> String {
     };
 
     format!("{project_detail}, {workers_detail}, {wasm_detail}")
+}
+
+fn env_var_nonempty(key: &str) -> bool {
+    match env::var(key) {
+        Ok(value) => !value.trim().is_empty(),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
