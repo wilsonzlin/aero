@@ -700,6 +700,30 @@ The expansion pipeline uses per-draw (or per-encoder) scratch allocations. These
 buffers; they may be implemented as separate `wgpu::Buffer`s or as sub-allocations of a larger
 transient arena, as long as alignment requirements are respected.
 
+**Recommended allocation strategy: per-frame segmented scratch arena**
+
+To avoid `createBuffer` churn and to ensure we never overwrite scratch that is still in-flight on
+the GPU, the recommended implementation is a single large scratch buffer partitioned into
+`frames_in_flight` segments (a ring):
+
+- Backing buffer:
+  - one `wgpu::Buffer` with a usage superset that covers all scratch slices:
+    `STORAGE | VERTEX | INDEX | INDIRECT | COPY_SRC | COPY_DST`.
+  - total size = `frames_in_flight * per_frame_capacity`.
+- Per-frame arena:
+  - each frame uses a disjoint `[base_offset, base_offset + per_frame_capacity)` region.
+  - allocations within a frame are bump-pointer suballocations aligned to:
+    - `COPY_BUFFER_ALIGNMENT` (4),
+    - `min_storage_buffer_offset_alignment` (usually 256) when binding as storage, and
+    - 16 bytes for convenience (matches `vec4`-heavy structs).
+- Lifetime:
+  - call `begin_frame()` at a natural boundary where prior work is known to have been submitted,
+    e.g. `PRESENT` or `FLUSH` in the command stream.
+  - `begin_frame()` advances the ring index and resets the arena for that segment.
+
+This is implemented in-tree as `ExpansionScratchAllocator` (`crates/aero-d3d11/src/runtime/expansion_scratch.rs`).
+If you change the required scratch layouts/bindings, update the allocator usage accordingly.
+
 **Alignment requirements:**
 
 - Buffer sizes and offsets must be 4-byte aligned (`wgpu::COPY_BUFFER_ALIGNMENT`) because the
