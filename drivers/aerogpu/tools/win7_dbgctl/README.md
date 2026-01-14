@@ -355,7 +355,7 @@ Notes:
 - `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
 - Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; dbgctl retries `--dump-vblank`, `--wait-vblank`, and `--query-scanline` with source 0 if needed (AeroGPU currently implements a single source).
 - If `vblank_interrupt_type` prints `(not enabled or not reported)`, either dxgkrnl has not enabled vblank interrupt delivery for the adapter yet *or* the installed KMD predates `vblank_interrupt_type` reporting.
-- `--timeout-ms` also bounds driver-private `D3DKMTEscape` calls used by commands like `--query-fence` / `--dump-ring`, and `D3DKMTQueryAdapterInfo` calls used by `--query-umd-private`. On timeout, dbgctl may skip `D3DKMTCloseAdapter` to avoid deadlocking inside a stuck kernel thunk.
+- `--timeout-ms` also bounds driver-private `D3DKMTEscape` calls used by commands like `--query-fence` / `--dump-ring`, `D3DKMTQueryAdapterInfo` calls used by `--query-umd-private`, and `D3DKMTGetScanLine` calls used by `--query-scanline`. On timeout, dbgctl may skip `D3DKMTCloseAdapter` to avoid deadlocking inside a stuck kernel thunk.
 
 ## Manual validation: dumping scanout framebuffer bytes
 
