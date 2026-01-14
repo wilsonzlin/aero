@@ -3115,6 +3115,109 @@ bool TestApplyStateBlockVertexDeclCapturesRedundantSet() {
   return true;
 }
 
+bool TestCaptureStateBlockStreamSourceFreqAffectsApplyStateBlock() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCaptureStateBlock != nullptr, "pfnCaptureStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kStream0 = 0u;
+  // D3DSTREAMSOURCE_INSTANCEDATA (bit 31) | 2/4. Values are stored as-is in the
+  // D3D9 state cache and consumed by the UMD's instancing expansion logic.
+  constexpr uint32_t kFreqRecorded = 0x80000002u;
+  constexpr uint32_t kFreqCaptured = 0x80000004u;
+  constexpr uint32_t kFreqOther = 1u;
+
+  // Record a state block that touches only stream-source frequency.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  HRESULT hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(stream source freq)")) {
+    return false;
+  }
+  hr = aerogpu::device_set_stream_source_freq(cleanup.hDevice, kStream0, kFreqRecorded);
+  if (!Check(hr == S_OK, "SetStreamSourceFreq recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(stream source freq)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Mutate stream-source frequency and then capture into the recorded state
+  // block so ApplyStateBlock must restore the captured value.
+  hr = aerogpu::device_set_stream_source_freq(cleanup.hDevice, kStream0, kFreqCaptured);
+  if (!Check(hr == S_OK, "SetStreamSourceFreq(captured)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnCaptureStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "CaptureStateBlock(stream source freq)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Change stream source freq again so ApplyStateBlock does something observable.
+  hr = aerogpu::device_set_stream_source_freq(cleanup.hDevice, kStream0, kFreqOther);
+  if (!Check(hr == S_OK, "SetStreamSourceFreq(other)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(stream source freq)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->stream_source_freq[kStream0] == kFreqCaptured, "ApplyStateBlock restores captured stream source freq")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock stream source freq)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(len == sizeof(aerogpu_cmd_stream_header), "ApplyStateBlock emits no commands for stream source freq")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -21963,6 +22066,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockVertexDeclCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestCaptureStateBlockStreamSourceFreqAffectsApplyStateBlock()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
