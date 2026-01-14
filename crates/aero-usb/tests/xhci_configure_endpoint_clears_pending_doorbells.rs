@@ -268,3 +268,76 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     assert_eq!(buf, [0x5a; 8]);
     assert_eq!(ctrl.pending_event_count(), 1);
 }
+
+#[test]
+fn xhci_configure_endpoint_preserves_slot_binding_when_output_slot_context_uninitialised() {
+    let mut mem = TestMemory::new(0x40_000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let dcbaa = alloc.alloc(0x200, 0x40) as u64;
+    let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
+    let cmd_ring = alloc.alloc(0x100, 0x40) as u64;
+    let input_ctx = alloc.alloc(0x200, 0x40) as u64;
+    let ring_base = alloc.alloc((TRB_LEN as u32) * 2, 0x10) as u64;
+    let buf_ptr = alloc.alloc(8, 0x10) as u64;
+
+    // Endpoint 1 IN => endpoint id 3.
+    const EP_ID: u8 = 3;
+
+    write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
+    make_normal_trb(buf_ptr, 8, true, true).write_to(&mut mem, ring_base);
+
+    let mut ctrl = XhciController::new();
+    ctrl.attach_device(0, Box::new(InterruptInDevice));
+    while ctrl.pop_pending_event().is_some() {}
+    // Transfer execution is gated on USBCMD.RUN.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    ctrl.set_dcbaap(dcbaa);
+    let enable = ctrl.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+    configure_dcbaa(&mut mem, dcbaa, slot_id, dev_ctx);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    // Intentionally leave the output Slot Context in guest memory all-zero. Some harnesses bind the
+    // slot via `address_device()` without initialising the output Device Context. Configure
+    // Endpoint should preserve the controller-local topology binding fields in that case so
+    // transfers still resolve to the attached device.
+
+    // Queue a doorbell for the endpoint but do not tick. We'll drop the endpoint and then ring the
+    // doorbell again, which should still DMA after Configure Endpoint updates controller-local slot
+    // state.
+    ctrl.ring_doorbell(slot_id, EP_ID);
+
+    let mut icc = InputControlContext::default();
+    icc.set_drop_flags(1u32 << EP_ID);
+    icc.set_add_flags(0);
+    icc.write_to(&mut mem, input_ctx);
+    run_configure_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |_| {});
+
+    assert_eq!(
+        ctrl.slot_state(slot_id)
+            .expect("slot should remain enabled")
+            .slot_context()
+            .root_hub_port_number(),
+        1,
+        "Configure Endpoint (drop) must preserve controller-local Slot Context topology even when the output Slot Context in guest memory is still zeroed"
+    );
+
+    configure_interrupt_in_endpoint(
+        &mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base,
+    );
+
+    ctrl.ring_doorbell(slot_id, EP_ID);
+    ctrl.tick(&mut mem);
+
+    let mut buf = [0u8; 8];
+    mem.read_physical(buf_ptr, &mut buf);
+    assert_eq!(buf, [0x5a; 8]);
+    assert_eq!(ctrl.pending_event_count(), 1);
+}

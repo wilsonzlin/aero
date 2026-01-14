@@ -1821,11 +1821,8 @@ impl XhciController {
         }
         slot_ctx.set_slot_state(SLOT_STATE_CONFIGURED);
         slot_ctx.write_to(mem, dev_ctx_ptr);
-        {
-            let slot_state = &mut self.slots[slot_idx];
-            slot_state.slot_context = slot_ctx;
-            slot_state.device_context_ptr = dev_ctx_ptr;
-        }
+        self.slots[slot_idx].slot_context = slot_ctx;
+        self.slots[slot_idx].device_context_ptr = dev_ctx_ptr;
 
         self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
     }
