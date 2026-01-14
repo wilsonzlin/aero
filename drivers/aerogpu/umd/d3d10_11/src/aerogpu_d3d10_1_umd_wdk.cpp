@@ -5277,6 +5277,9 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
   if (!hDevice.pDrvPrivate || !pDesc || !hLayout.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
+  if (pDesc->NumElements && !pDesc->pVertexElements) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
@@ -5287,14 +5290,26 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
 
   auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
   layout->handle = AllocateGlobalHandle(dev->adapter);
+  if (!layout->handle) {
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
+    // Destroy* after a failed Create* probe.
+    AEROGPU_D3D10_RET_HR(E_FAIL);
+  }
 
-  const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
-                           static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);
+  const size_t header_size = sizeof(aerogpu_input_layout_blob_header);
+  const size_t elem_size = sizeof(aerogpu_input_layout_element_dxgi);
+  if (pDesc->NumElements > (SIZE_MAX - header_size) / elem_size) {
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
+  const size_t blob_size = header_size + static_cast<size_t>(pDesc->NumElements) * elem_size;
   try {
     layout->blob.resize(blob_size);
   } catch (...) {
-    layout->~AeroGpuInputLayout();
-    return E_OUTOFMEMORY;
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
 
   auto* hdr = reinterpret_cast<aerogpu_input_layout_blob_header*>(layout->blob.data());
@@ -5317,6 +5332,11 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
+  if (!cmd) {
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   cmd->input_layout_handle = layout->handle;
   cmd->blob_size_bytes = static_cast<uint32_t>(layout->blob.size());
   cmd->reserved0 = 0;
@@ -5339,8 +5359,12 @@ void AEROGPU_APIENTRY DestroyElementLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HE
 
   if (layout->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_input_layout>(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
-    cmd->input_layout_handle = layout->handle;
-    cmd->reserved0 = 0;
+    if (cmd) {
+      cmd->input_layout_handle = layout->handle;
+      cmd->reserved0 = 0;
+    } else {
+      set_error(dev, E_OUTOFMEMORY);
+    }
   }
   layout->~AeroGpuInputLayout();
 }
@@ -6337,7 +6361,8 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
   auto* sampler = new (hSampler.pDrvPrivate) AeroGpuSampler();
   sampler->handle = AllocateGlobalHandle(dev->adapter);
   if (!sampler->handle) {
-    sampler->~AeroGpuSampler();
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
+    // Destroy* after a failed Create* probe.
     return E_FAIL;
   }
 
@@ -6351,7 +6376,9 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {
-    sampler->~AeroGpuSampler();
+    // Avoid leaving a stale non-zero handle in pDrvPrivate memory if the runtime
+    // probes Destroy after a failed Create.
+    sampler->handle = 0;
     return E_OUTOFMEMORY;
   }
   cmd->sampler_handle = sampler->handle;

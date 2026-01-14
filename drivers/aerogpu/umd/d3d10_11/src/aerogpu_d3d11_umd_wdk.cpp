@@ -4812,7 +4812,8 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
   auto* sampler = new (hSampler.pDrvPrivate) Sampler();
   sampler->handle = AllocateGlobalHandle(dev->adapter);
   if (!sampler->handle) {
-    sampler->~Sampler();
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still
+    // probe Destroy* after a failed Create*.
     return E_FAIL;
   }
 
@@ -4826,7 +4827,9 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {
-    sampler->~Sampler();
+    // Avoid leaving a stale non-zero handle in pDrvPrivate memory if the runtime
+    // probes Destroy after a failed Create.
+    sampler->handle = 0;
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
@@ -5173,24 +5176,42 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
   auto* layout = new (hLayout.pDrvPrivate) InputLayout();
   layout->handle = AllocateGlobalHandle(dev->adapter);
   if (!layout->handle) {
-    layout->~InputLayout();
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still
+    // probe Destroy* after a failed Create*.
     return E_FAIL;
   }
 
   const UINT elem_count = pDesc->NumElements;
   if (!pDesc->pVertexElements || elem_count == 0) {
-    layout->~InputLayout();
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
     return E_INVALIDARG;
   }
 
-  aerogpu_input_layout_blob_header header{};
-  header.magic = AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
-  header.version = AEROGPU_INPUT_LAYOUT_BLOB_VERSION;
-  header.element_count = elem_count;
-  header.reserved0 = 0;
+  const size_t header_size = sizeof(aerogpu_input_layout_blob_header);
+  const size_t elem_size = sizeof(aerogpu_input_layout_element_dxgi);
+  if (elem_count > (SIZE_MAX - header_size) / elem_size) {
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
+    return E_OUTOFMEMORY;
+  }
 
-  std::vector<aerogpu_input_layout_element_dxgi> elems;
-  elems.resize(elem_count);
+  const size_t blob_size = header_size + static_cast<size_t>(elem_count) * elem_size;
+  try {
+    layout->blob.resize(blob_size);
+  } catch (...) {
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
+    return E_OUTOFMEMORY;
+  }
+
+  auto* hdr = reinterpret_cast<aerogpu_input_layout_blob_header*>(layout->blob.data());
+  hdr->magic = AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
+  hdr->version = AEROGPU_INPUT_LAYOUT_BLOB_VERSION;
+  hdr->element_count = elem_count;
+  hdr->reserved0 = 0;
+
+  auto* elems = reinterpret_cast<aerogpu_input_layout_element_dxgi*>(layout->blob.data() + header_size);
   for (UINT i = 0; i < elem_count; i++) {
     const auto& e = pDesc->pVertexElements[i];
     elems[i].semantic_name_hash = HashSemanticName(e.SemanticName);
@@ -5202,21 +5223,11 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
     elems[i].instance_data_step_rate = e.InstanceDataStepRate;
   }
 
-  const size_t blob_size = sizeof(header) + elems.size() * sizeof(elems[0]);
-  try {
-    layout->blob.resize(blob_size);
-  } catch (...) {
-    layout->~InputLayout();
-    return E_OUTOFMEMORY;
-  }
-
-  std::memcpy(layout->blob.data(), &header, sizeof(header));
-  std::memcpy(layout->blob.data() + sizeof(header), elems.data(), elems.size() * sizeof(elems[0]));
-
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
   if (!cmd) {
-    layout->~InputLayout();
+    layout->handle = 0;
+    std::vector<uint8_t>().swap(layout->blob);
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
