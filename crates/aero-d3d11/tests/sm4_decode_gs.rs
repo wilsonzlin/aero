@@ -309,6 +309,7 @@ fn gs_opcode_constants_are_stable() {
     assert_eq!(OPCODE_DCL_GS_INPUT_PRIMITIVE, 0x10c);
     assert_eq!(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 0x10d);
     assert_eq!(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 0x10e);
+    assert_eq!(OPCODE_DCL_GS_INSTANCE_COUNT, 0x10f);
     assert_eq!(OPCODE_EMIT_STREAM, 0x41);
     assert_eq!(OPCODE_CUT_STREAM, 0x42);
     assert_eq!(OPCODE_EMIT, 0x3f);
