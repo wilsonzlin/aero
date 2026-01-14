@@ -109,6 +109,10 @@ const MAX_REPORT_SIZE_BITS: u32 = 255;
 const MAX_REPORT_COUNT: u32 = 65_535;
 const MAX_HID_USAGE_U16: u32 = u16::MAX as u32;
 const MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES: u32 = 64;
+/// Maximum on-wire HID report size for `GET_REPORT` / `SET_REPORT` control transfers.
+///
+/// The control transfer `wLength` field is a `u16`, so the payload (including the report ID prefix
+/// when `reportId != 0`) can never exceed 65535 bytes.
 const MAX_USB_CONTROL_TRANSFER_BYTES: u32 = u16::MAX as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2194,6 +2198,112 @@ mod tests {
             Err(HidDescriptorError::Validation { path, message }) => {
                 assert_eq!(path, "collections[0].featureReports[0].items[0]");
                 assert!(message.contains("control"));
+                assert!(message.contains("65536"));
+                assert!(message.contains("65535"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_output_report_larger_than_control_transfer_limit() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    // 65535 payload bytes + 1 report ID prefix byte = 65536 bytes on-wire.
+                    report_size: 8,
+                    report_count: MAX_REPORT_COUNT,
+                    usage_page: 0x01,
+                    usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
+                }],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].outputReports[0].items[0]");
+                assert!(message.contains("65536"));
+                assert!(message.contains("65535"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_feature_report_larger_than_control_transfer_limit() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![],
+            feature_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    // 65535 payload bytes + 1 report ID prefix byte = 65536 bytes on-wire.
+                    report_size: 8,
+                    report_count: MAX_REPORT_COUNT,
+                    usage_page: 0x01,
+                    usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
+                }],
+            }],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].featureReports[0].items[0]");
                 assert!(message.contains("65536"));
                 assert!(message.contains("65535"));
             }

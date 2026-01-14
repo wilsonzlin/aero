@@ -362,4 +362,28 @@ describe("normalizeCollections(WebHID)", () => {
     expect(normalized[0].children[0].usage).toBe(0xe0);
     expect(normalized[0].children[0].collectionType).toBe(2);
   });
+
+  it("rejects output reports larger than the max USB HID control-transfer size (65535 bytes)", () => {
+    // Use a non-zero reportId so the report ID prefix pushes the on-wire length over 65535 bytes.
+    const bigOutputItem = mockItem({ reportSize: 8, reportCount: 65_535 });
+    const root = mockCollection({
+      outputReports: [mockReport({ reportId: 1, items: [bigOutputItem] })] as unknown as HidReportInfo[],
+    });
+
+    expect(() => normalizeCollections([root], { validate: true })).toThrow(
+      /output report length 65536 bytes exceeds max USB (?:HID )?control transfer length 65535(?: bytes)?/i,
+    );
+  });
+
+  it("rejects feature reports larger than the max USB HID control-transfer size (65535 bytes)", () => {
+    // Use a non-zero reportId so the report ID prefix pushes the on-wire length over 65535 bytes.
+    const bigFeatureItem = mockItem({ reportSize: 8, reportCount: 65_535 });
+    const root = mockCollection({
+      featureReports: [mockReport({ reportId: 1, items: [bigFeatureItem] })] as unknown as HidReportInfo[],
+    });
+
+    expect(() => normalizeCollections([root], { validate: true })).toThrow(
+      /feature report length 65536 bytes exceeds max USB (?:HID )?control transfer length 65535(?: bytes)?/i,
+    );
+  });
 });
