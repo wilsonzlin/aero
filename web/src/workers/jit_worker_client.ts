@@ -136,34 +136,34 @@ export class JitWorkerClient {
             reject(new Error(value.message));
             return;
           }
-          if (value.type !== "jit:tier1:compiled") {
-            reject(new Error(`Unexpected JIT worker response type: ${value.type}`));
-            return;
-          }
-          const response = value as JitTier1CompiledResponse;
-          if ("module" in response && response.module instanceof WebAssembly.Module) {
-            resolve({
-              module: response.module,
-              entryRip: response.entryRip,
-              codeByteLen: response.codeByteLen,
-              exitToInterpreter: response.exitToInterpreter,
-            });
-            return;
-          }
-          if (!("wasmBytes" in response) || !(response.wasmBytes instanceof ArrayBuffer)) {
-            reject(new Error("Invalid JIT tier1 response: missing module/wasmBytes payload."));
-            return;
-          }
-          resolve({
-            wasmBytes: response.wasmBytes,
-            entryRip: response.entryRip,
-            codeByteLen: response.codeByteLen,
-            exitToInterpreter: response.exitToInterpreter,
-          });
-        },
-        reject,
-        timeoutId,
-      });
+           if (value.type !== "jit:tier1:compiled") {
+             reject(new Error(`Unexpected JIT worker response type: ${value.type}`));
+             return;
+           }
+           const response = value as JitTier1CompiledResponse;
+           if (response.module !== undefined) {
+             resolve({
+               module: response.module,
+               entryRip: response.entryRip,
+               codeByteLen: response.codeByteLen,
+               exitToInterpreter: response.exitToInterpreter,
+             });
+             return;
+           }
+           if (!("wasmBytes" in response) || !(response.wasmBytes instanceof ArrayBuffer)) {
+             reject(new Error("Invalid JIT tier1 response: missing module/wasmBytes payload."));
+             return;
+           }
+           resolve({
+             wasmBytes: response.wasmBytes,
+             entryRip: response.entryRip,
+             codeByteLen: response.codeByteLen,
+             exitToInterpreter: response.exitToInterpreter,
+           });
+         },
+         reject,
+         timeoutId,
+       });
 
       try {
         if (transfer.length) {

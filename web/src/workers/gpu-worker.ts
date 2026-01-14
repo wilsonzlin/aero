@@ -2119,10 +2119,22 @@ const presentOnce = async (): Promise<boolean> => {
         const baseInVram = vramSizeBytes > 0 && base >= vramBase && base < vramEnd;
         if (baseInVram && !vramU8) {
           vramMissingScanoutErrorSent = true;
-          postRuntimeError(
+          const message =
             "WDDM scanout points into the VRAM aperture, but this GPU worker was started without a shared VRAM buffer. " +
-              "Ensure WorkerInitMessage.vram is provided by the coordinator (COOP/COEP + SharedArrayBuffer required).",
-          );
+            "Ensure WorkerInitMessage.vram is provided by the coordinator (COOP/COEP + SharedArrayBuffer required).";
+          emitGpuEvent({
+            time_ms: performance.now(),
+            backend_kind: backendKindForEvent(),
+            severity: "error",
+            category: "Scanout",
+            message,
+            details: {
+              scanout: scanoutSnap,
+              vram_base_paddr: `0x${vramBase.toString(16)}`,
+              vram_size_bytes: vramSizeBytes,
+            },
+          });
+          postRuntimeError(message);
         }
       }
     }
