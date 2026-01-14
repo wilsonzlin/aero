@@ -120,7 +120,7 @@ These expectations should match **exactly** what is specified in:
 
 **virtio-input specifics**
 
-- Device is exposed as a **single multi-function PCI device** (keyboard fn0 + mouse fn1) (contract §3.3):
+- Device is exposed as a **single multi-function PCI device** (contract §3.3):
   - Vendor/Device: `1AF4:1052` (`VIRTIO_ID_INPUT`)
   - Revision ID: `0x01` (`REV_01`)
   - Keyboard:
@@ -130,6 +130,9 @@ These expectations should match **exactly** what is specified in:
   - Mouse:
     - function **1**
     - subsystem id `0x0011`
+  - Tablet (optional):
+    - function **2**
+    - subsystem id `0x0012`
 - Each function exposes exactly **2 split virtqueues** (contract §3.3.2):
   - `eventq` (queue 0): **64**
   - `statusq` (queue 1): **64**
@@ -137,11 +140,12 @@ These expectations should match **exactly** what is specified in:
 - `statusq` buffers are always consumed/completed (contents may be ignored) (contract §3.3.5, statusq behavior).
 - Device config selector behavior matches virtio-input spec + Aero requirements (contract §3.3.4):
   - `ID_NAME` returns:
-    - `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`
+    - `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"` / `"Aero Virtio Tablet"`
   - `ID_DEVIDS` returns BUS_VIRTUAL + virtio vendor + product id
-  - `EV_BITS` bitmaps include required types/codes (keyboard vs mouse differ).
+  - `EV_BITS` bitmaps include required types/codes (keyboard vs mouse vs tablet differ).
     - Keyboard `EV_BITS` includes: `EV_SYN`, `EV_KEY`, `EV_LED` and at least `LED_NUML`/`LED_CAPSL`/`LED_SCROLLL` (optionally `LED_COMPOSE`/`LED_KANA`).
     - Mouse `EV_BITS` includes: `EV_SYN`, `EV_KEY`, `EV_REL`.
+    - Tablet `EV_BITS` includes: `EV_SYN`, `EV_ABS` and `ABS_X`/`ABS_Y` (and `ABS_INFO` ranges for X/Y).
 
 ---
 
@@ -470,6 +474,11 @@ Guest image requirement:
 - Provision the guest selftest to run with `--test-input-tablet-events` (alias: `--test-tablet-events`) or set guest env
   var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`.
   - The host-harness README describes one way to do this via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` (alias: `-TestTabletEvents`).
+- Ensure the guest has a virtio-input **tablet** driver installed and bound (so the tablet exposes a HID interface). For
+  the in-tree Aero driver stack this is `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (it installs the
+  shared `aero_virtio_input.sys` binary but matches the tablet HWID). When provisioning via `New-AeroWin7TestImage.ps1`,
+  the tablet INF is installed by default when present; if you pass an explicit `-InfAllowList`, ensure it includes
+  `aero_virtio_tablet.inf`.
 
 PowerShell:
 
