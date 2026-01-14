@@ -3,7 +3,7 @@
 //! The Aero codebase has a few different disk traits:
 //! - [`aero_storage::VirtualDisk`] (disk image layer)
 //! - `aero_devices_nvme::DiskBackend` (NVMe controller)
-//! - `aero_devices::storage::DiskBackend` (virtio-blk and other device models)
+//! - `aero_devices::storage::DiskBackend` (the `aero-devices` device stack, incl. its virtio-blk model)
 //!
 //! This crate provides lightweight wrapper *types* around [`aero_storage::VirtualDisk`].
 //! The concrete `DiskBackend` implementations live in the crates that define those
