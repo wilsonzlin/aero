@@ -26,7 +26,7 @@ const META_FILE_NAME: &str = "streaming-cache-meta.json";
 const CHUNKS_DIR_NAME: &str = "chunks";
 const CACHE_FILE_NAME: &str = "cache.bin";
 
-pub const DEFAULT_SECTOR_SIZE: u64 = 512;
+pub const DEFAULT_SECTOR_SIZE: u64 = crate::SECTOR_SIZE as u64;
 pub const DEFAULT_CHUNK_SIZE: u64 = 1024 * 1024; // 1MiB
 
 const CACHE_META_VERSION: u32 = 2;

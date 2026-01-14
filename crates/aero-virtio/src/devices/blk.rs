@@ -3,11 +3,11 @@ use crate::memory::write_u8;
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
-use aero_storage::{DiskError, VirtualDisk};
+use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE};
 
 pub const VIRTIO_DEVICE_TYPE_BLK: u16 = 2;
 
-pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
+pub const VIRTIO_BLK_SECTOR_SIZE: u64 = SECTOR_SIZE as u64;
 
 pub const VIRTIO_BLK_F_SEG_MAX: u64 = 1 << 2;
 pub const VIRTIO_BLK_F_BLK_SIZE: u64 = 1 << 6;
@@ -688,14 +688,14 @@ impl VirtioDevice for VirtioBlk {
                                 // Buffer used for chunked zero writes. Use a block-size-aligned
                                 // chunk so backends that care about write alignment are not
                                 // penalized.
-                                let blk_usize = usize::try_from(blk_size).unwrap_or(512);
+                                let blk_usize = usize::try_from(blk_size).unwrap_or(SECTOR_SIZE);
                                 let max_chunk = 64 * 1024usize;
                                 let mut chunk_size = if blk_usize > max_chunk {
                                     blk_usize
                                 } else {
                                     (max_chunk / blk_usize).saturating_mul(blk_usize)
                                 };
-                                chunk_size = chunk_size.max(blk_usize).max(512);
+                                chunk_size = chunk_size.max(blk_usize).max(SECTOR_SIZE);
                                 let zero_buf = vec![0u8; chunk_size];
                                 let mut read_buf = vec![0u8; chunk_size];
 
@@ -856,14 +856,14 @@ impl VirtioDevice for VirtioBlk {
                             if status == VIRTIO_BLK_S_OK {
                                 // Buffer used for chunked zero writes. Use a block-size-aligned chunk
                                 // so backends that care about write alignment are not penalized.
-                                let blk_usize = usize::try_from(blk_size).unwrap_or(512);
+                                let blk_usize = usize::try_from(blk_size).unwrap_or(SECTOR_SIZE);
                                 let max_chunk = 64 * 1024usize;
                                 let mut chunk_size = if blk_usize > max_chunk {
                                     blk_usize
                                 } else {
                                     (max_chunk / blk_usize).saturating_mul(blk_usize)
                                 };
-                                chunk_size = chunk_size.max(blk_usize).max(512);
+                                chunk_size = chunk_size.max(blk_usize).max(SECTOR_SIZE);
                                 let zero_buf = vec![0u8; chunk_size];
                                 let needs_read_buf = validated.iter().any(|(_, _, flags)| {
                                     (flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0

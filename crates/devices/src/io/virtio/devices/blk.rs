@@ -9,8 +9,9 @@ use crate::io::virtio::core::{
     DescChain, GuestMemory, VirtQueue, VirtQueueError, VIRTQ_DESC_F_WRITE,
 };
 use crate::storage::VirtualDrive;
+use aero_storage::SECTOR_SIZE;
 
-pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
+pub const VIRTIO_BLK_SECTOR_SIZE: u64 = SECTOR_SIZE as u64;
 
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
@@ -405,7 +406,7 @@ mod tests {
         let backend = SharedMemBackend::new(4096);
         backend.set_bytes(0, b"abcdefgh");
 
-        let drive = VirtualDrive::new(512, Box::new(backend.clone()));
+        let drive = VirtualDrive::new(SECTOR_SIZE as u32, Box::new(backend.clone()));
         let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
         let mut dev = VirtioBlkDevice::new(drive, vq);
 
@@ -463,7 +464,7 @@ mod tests {
     #[test]
     fn write_request_persists() {
         let backend = SharedMemBackend::new(4096);
-        let drive = VirtualDrive::new(512, Box::new(backend.clone()));
+        let drive = VirtualDrive::new(SECTOR_SIZE as u32, Box::new(backend.clone()));
         let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
         let mut dev = VirtioBlkDevice::new(drive, vq);
 
@@ -498,7 +499,7 @@ mod tests {
     #[test]
     fn flush_request_calls_backend_flush() {
         let backend = SharedMemBackend::new(4096);
-        let drive = VirtualDrive::new(512, Box::new(backend.clone()));
+        let drive = VirtualDrive::new(SECTOR_SIZE as u32, Box::new(backend.clone()));
         let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
         let mut dev = VirtioBlkDevice::new(drive, vq);
 
@@ -643,7 +644,7 @@ mod tests {
     #[test]
     fn malformed_chains_return_ioerr_without_panic() {
         let backend = SharedMemBackend::new(4096);
-        let drive = VirtualDrive::new(512, Box::new(backend));
+        let drive = VirtualDrive::new(SECTOR_SIZE as u32, Box::new(backend));
         let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
         let mut dev = VirtioBlkDevice::new(drive, vq);
 

@@ -925,7 +925,8 @@ impl fmt::Display for MachineError {
             }
             MachineError::InvalidDiskSize(len) => write!(
                 f,
-                "disk image length {len} is not a multiple of 512 (BIOS sector size)"
+                "disk image length {len} is not a multiple of {} (BIOS sector size)",
+                aero_storage::SECTOR_SIZE
             ),
             MachineError::DiskBackend(msg) => write!(f, "disk backend error: {msg}"),
             MachineError::GuestMemoryTooLarge(size) => write!(
@@ -7005,7 +7006,10 @@ impl Machine {
             .is_multiple_of(aero_storage::SECTOR_SIZE as u64)
         {
             return Err(MachineError::DiskBackend(
-                "nvme disk capacity must be a multiple of 512 bytes".to_string(),
+                format!(
+                    "nvme disk capacity must be a multiple of {} bytes",
+                    aero_storage::SECTOR_SIZE
+                ),
             ));
         }
 
