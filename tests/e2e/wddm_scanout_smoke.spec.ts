@@ -27,6 +27,7 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
     };
   });
 
+  expect(result.backend).toBe("webgl2_wgpu");
   expect(result.hash).toBe(result.expectedHash);
   expect(result.samples).not.toBeNull();
   expect(result.samples.width).toBe(64);
@@ -42,4 +43,3 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
     expect(sample[3]).toBe(255);
   }
 });
-

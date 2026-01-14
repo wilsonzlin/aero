@@ -260,7 +260,10 @@ async function main(): Promise<void> {
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
         options: {
-          forceBackend: "webgl2_raw",
+          // Use the wasm-backed presenter so screenshot readback is the deterministic
+          // *source framebuffer bytes* (not canvas readPixels). This makes the test
+          // sensitive to the BGRX alpha=255 policy (X bytes are 0 in the pattern).
+          forceBackend: "webgl2_wgpu",
           disableWebGpu: true,
           outputWidth: width,
           outputHeight: height,
@@ -347,4 +350,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-
