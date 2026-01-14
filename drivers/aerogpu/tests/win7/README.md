@@ -2,7 +2,7 @@
 
 This directory contains small Windows 7 **guest-side** test programs intended to validate the AeroGPU WDDM driver stack end-to-end.
 
-Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump artifacts (usually `.bmp`, sometimes raw `.bin`) to disk for manual inspection (`--dump`). Image `*.bin` dumps are typically tightly-packed BGRA32 pixels (`width*height*4` bytes, no row padding), but some tests also dump raw buffer bytes.
+Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump artifacts (usually `.bmp`, sometimes raw `.bin`, and in a few cases compiled shader bytecode `.dxbc`) to disk for manual inspection (`--dump`). Image `*.bin` dumps are typically tightly-packed BGRA32 pixels (`width*height*4` bytes, no row padding), but some tests also dump raw buffer bytes.
 
 In particular, `d3d10_map_do_not_wait`, `d3d10_1_map_do_not_wait`, and `d3d11_map_do_not_wait` validate that `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll (never hanging the caller) and reports `DXGI_ERROR_WAS_STILL_DRAWING` when GPU work is still in flight.
 
@@ -25,7 +25,7 @@ Both `build_all_vs2010.cmd` and `run_all.cmd` are driven by `tests_manifest.txt`
 
 Common flags:
 
-* `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests also write raw `*.bin`).
+* `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests also write raw `*.bin` or compiled shader bytecode `*.dxbc`).
 * `--hidden` – hide windows for tests that create windows (useful for automation).
 * `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, `d3d9ex_shared_surface_wow64`, `d3d9ex_shared_surface_many_producers`, `d3d9ex_shared_surface_stress`; overrides `--hidden`).
 * `--json[=PATH]` – emit a machine-readable JSON report (includes a stable `schema_version`).
