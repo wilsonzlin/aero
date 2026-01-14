@@ -573,7 +573,7 @@ Separately, VBE graphics modes use a linear framebuffer (LFB) at a different phy
   `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
-and [AeroGPU PCI identity](./abi/aerogpu-pci-identity.md) (AeroGPU vs transitional VGA stub).
+and [AeroGPU PCI identity](./abi/aerogpu-pci-identity.md) (AeroGPU vs standalone VGA/VBE path).
 
 ```rust
 pub struct MemoryBus {

@@ -108,7 +108,7 @@ fn aerogpu_vbe_lfb_is_reachable_via_pci_mmio_router() {
     enable_a20(&mut m);
 
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
-    // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
+    // changes (e.g. config-driven legacy VGA LFB vs AeroGPU BAR1-backed legacy VBE).
     let base = m.vbe_lfb_base();
     let bar1_base = m
         .aerogpu()

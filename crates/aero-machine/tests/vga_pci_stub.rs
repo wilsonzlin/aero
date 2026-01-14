@@ -4,8 +4,9 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
-    // Use a non-default LFB base to ensure the VGA PCI stub mirrors the configured base (and does
-    // not depend on `aero_gpu_vga::SVGA_LFB_BASE`).
+    // Use a non-default LFB base to ensure the configured LFB base is honored (and does not depend
+    // on `aero_gpu_vga::SVGA_LFB_BASE`). If a historical VGA PCI stub is present, it should mirror
+    // this configured base.
     //
     // Pick a base outside the BIOS PCI BAR allocator default window to ensure it remains mapped
     // by the full PCI MMIO router rather than relying on the allocator's `0xE000_0000..0xF000_0000`

@@ -24,13 +24,14 @@ The canonical full-system machine (`aero_machine::Machine`) supports two **mutua
 boot display configurations:
 
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by the
-  standalone `aero_gpu_vga` VGA/VBE device model plus a minimal Bochs/QEMU “Standard VGA”-like PCI
-  stub (`00:0c.0`, `1234:1111`) used only for VBE LFB routing.
+  standalone `aero_gpu_vga` VGA/VBE device model. When the PC platform is enabled, the VBE linear
+  framebuffer (LFB) aperture is mapped directly at the configured LFB base inside the ACPI-reported
+  PCI MMIO window (no dedicated PCI VGA stub).
 - `MachineConfig::enable_aerogpu=true` (and `enable_vga=false`): boot display is provided via
   AeroGPU’s BAR1-backed legacy VGA/VBE compatibility path (see
   [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)).
 
-In both cases, the Bochs/QEMU “Standard VGA” PCI stub is *not* part of the AeroGPU PCI identity
+In both cases, the Bochs/QEMU “Standard VGA” PCI identity is *not* part of the AeroGPU PCI identity
 contract documented here.
 
 ## Decision
