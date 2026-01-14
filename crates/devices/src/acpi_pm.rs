@@ -56,11 +56,16 @@ pub const PM1_STS_SLPBTN: u16 = 1 << 9;
 /// This is bit 15 of the 16-bit `PM1_STS` register.
 pub const PM1_STS_WAK: u16 = 1 << 15;
 
+/// DSDT `_S1` typically encodes `{ 0x01, 0x01 }` for `SLP_TYP`.
+pub const SLP_TYP_S1: u8 = 0x01;
+/// DSDT `_S2` typically encodes `{ 0x02, 0x02 }` for `SLP_TYP`.
+pub const SLP_TYP_S2: u8 = 0x02;
+/// DSDT `_S3` typically encodes `{ 0x03, 0x03 }` for `SLP_TYP`.
+pub const SLP_TYP_S3: u8 = 0x03;
+/// DSDT `_S4` typically encodes `{ 0x04, 0x04 }` for `SLP_TYP`.
+pub const SLP_TYP_S4: u8 = 0x04;
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
-
-/// DSDT `_S4_` typically encodes `{ 0x04, 0x04 }` for `SLP_TYP`.
-pub const SLP_TYP_S4: u8 = 0x04;
 
 /// Guest-requested ACPI sleep states via `PM1a_CNT.SLP_TYP/SLP_EN`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,17 +364,26 @@ impl<C: Clock> AcpiPmIo<C> {
         self.update_sci();
     }
 
-    fn maybe_trigger_sleep(&mut self) {
-        if (self.pm1_cnt & PM1_CNT_SLP_EN) == 0 {
+    fn maybe_trigger_sleep(&mut self, old_pm1_cnt: u16) {
+        // ACPI sleep is requested by writing SLP_TYP then setting SLP_EN.
+        //
+        // Model this as an edge-triggered request on the SLP_EN bit to avoid
+        // retriggering if the guest re-writes the same value or updates other
+        // PM1_CNT bits while SLP_EN is already set (including snapshot-restore
+        // scenarios where PM1_CNT may contain a stale sleep request value).
+        let old_slp_en = (old_pm1_cnt & PM1_CNT_SLP_EN) != 0;
+        let new_slp_en = (self.pm1_cnt & PM1_CNT_SLP_EN) != 0;
+        if old_slp_en || !new_slp_en {
             return;
         }
+
         let slp_typ = ((self.pm1_cnt & PM1_CNT_SLP_TYP_MASK) >> PM1_CNT_SLP_TYP_SHIFT) as u8;
         let sleep_state = match slp_typ {
-            1 => AcpiSleepState::S1,
-            2 => AcpiSleepState::S2,
-            3 => AcpiSleepState::S3,
-            4 => AcpiSleepState::S4,
-            5 => AcpiSleepState::S5,
+            SLP_TYP_S1 => AcpiSleepState::S1,
+            SLP_TYP_S2 => AcpiSleepState::S2,
+            SLP_TYP_S3 => AcpiSleepState::S3,
+            SLP_TYP_S4 => AcpiSleepState::S4,
+            SLP_TYP_S5 => AcpiSleepState::S5,
             other => AcpiSleepState::Other(other),
         };
 
@@ -442,13 +456,14 @@ impl<C: Clock> AcpiPmIo<C> {
         // PM1a_CNT.
         if port >= self.cfg.pm1a_cnt_blk && port < self.cfg.pm1a_cnt_blk + PM1_CNT_LEN {
             let off = port - self.cfg.pm1a_cnt_blk;
+            let old = self.pm1_cnt;
             if off == 0 {
                 self.pm1_cnt = (self.pm1_cnt & 0xFF00) | value as u16;
             } else {
                 self.pm1_cnt = (self.pm1_cnt & 0x00FF) | ((value as u16) << 8);
             }
             self.update_sci();
-            self.maybe_trigger_sleep();
+            self.maybe_trigger_sleep(old);
             return;
         }
 

@@ -1,6 +1,6 @@
 use aero_devices::acpi_pm::{
-    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, PM1_STS_SLPBTN,
-    PM1_STS_WAK, SLP_TYP_S4, SLP_TYP_S5,
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, AcpiSleepState, PM1_STS_PWRBTN,
+    PM1_STS_SLPBTN, PM1_STS_WAK, SLP_TYP_S1, SLP_TYP_S3, SLP_TYP_S4, SLP_TYP_S5,
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
@@ -154,6 +154,37 @@ fn s4_sleep_requests_poweroff() {
     let pm1_cnt = ((SLP_TYP_S4 as u32) << 10) | (1u32 << 13);
     bus.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
     assert_eq!(power_off_count.get(), 1);
+}
+
+#[test]
+fn s1_s3_s4_sleep_requests_callback() {
+    fn test_state(slp_typ: u8, expected: AcpiSleepState) {
+        let cfg = AcpiPmConfig::default();
+        let clock = ManualClock::new();
+
+        let sleep_requests: Rc<RefCell<Vec<AcpiSleepState>>> = Rc::new(RefCell::new(Vec::new()));
+        let sleep_requests_for_cb = sleep_requests.clone();
+
+        let callbacks = AcpiPmCallbacks {
+            request_sleep: Some(Box::new(move |s| sleep_requests_for_cb.borrow_mut().push(s))),
+            ..Default::default()
+        };
+
+        let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+            cfg, callbacks, clock,
+        )));
+        let mut bus = IoPortBus::new();
+        register_acpi_pm(&mut bus, pm);
+
+        let pm1_cnt = ((slp_typ as u32) << 10) | (1u32 << 13);
+        bus.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
+
+        assert_eq!(sleep_requests.borrow().as_slice(), &[expected]);
+    }
+
+    test_state(SLP_TYP_S1, AcpiSleepState::S1);
+    test_state(SLP_TYP_S3, AcpiSleepState::S3);
+    test_state(SLP_TYP_S4, AcpiSleepState::S4);
 }
 
 #[test]

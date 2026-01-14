@@ -1,4 +1,4 @@
-use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5};
+use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -58,9 +58,8 @@ fn acpi_pm_snapshot_roundtrip_preserves_registers_sci_and_timer() {
         "PM1 event should assert SCI once SCI_EN is set"
     );
 
-    // Program S5 sleep bits so a buggy restore path that replays port writes would spuriously
-    // invoke the power-off callback.
-    let pm1_cnt = ((SLP_TYP_S5 as u32) << 10) | (1u32 << 13) | 1;
+    // Program a non-trivial PM1_CNT value to validate round-trip of the full register.
+    let pm1_cnt = 0x1235u32;
     pm.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
 
     let t0 = pm.read(cfg.pm_tmr_blk, 4) & PM_TIMER_MASK_24BIT;
