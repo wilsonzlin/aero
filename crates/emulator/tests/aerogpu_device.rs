@@ -528,6 +528,29 @@ fn error_mmio_payload_is_sticky_across_irq_ack_and_overwritten_by_next_error() {
 }
 
 #[test]
+fn ring_reset_clears_error_mmio_payload() {
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Seed a latched error payload and enable ERROR IRQ delivery.
+    dev.regs.record_error(AerogpuErrorCode::Backend, 42);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::ERROR);
+    assert!(dev.irq_level());
+
+    // Ring reset is a recovery point: it clears any previously latched error payload.
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::RESET);
+
+    assert_eq!(
+        dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4),
+        AerogpuErrorCode::None as u32
+    );
+    assert_eq!(dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4), 0);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4), 0);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::ERROR_COUNT, 4), 0);
+    assert!(!dev.irq_level());
+}
+
+#[test]
 fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());

@@ -5,10 +5,10 @@ use aero_shared::scanout_state::{ScanoutState, ScanoutStateUpdate, SCANOUT_SOURC
 use memory::MemoryBus;
 
 use crate::devices::aerogpu_regs::{
-    irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, AEROGPU_PCI_BAR0_SIZE_BYTES,
-    AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF,
-    AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
-    AEROGPU_PCI_VENDOR_ID, FEATURE_CURSOR, FEATURE_VBLANK,
+    irq_bits, mmio, ring_control, AeroGpuRegs, AerogpuErrorCode, AEROGPU_MMIO_MAGIC,
+    AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID,
+    AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID,
+    AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, AEROGPU_PCI_VENDOR_ID, FEATURE_CURSOR, FEATURE_VBLANK,
 };
 use crate::devices::aerogpu_ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::devices::aerogpu_scanout::{composite_cursor_rgba_over_scanout, AeroGpuFormat};
@@ -597,6 +597,12 @@ impl AeroGpuPciDevice {
         }
         self.executor.reset();
         self.regs.completed_fence = 0;
+        // Treat ring reset as a device-local recovery point: clear any previously latched error
+        // payload so the guest does not observe stale `ERROR_*` values after resetting the ring.
+        self.regs.error_code = AerogpuErrorCode::None as u32;
+        self.regs.error_fence = 0;
+        self.regs.error_count = 0;
+        self.regs.current_submission_fence = 0;
         if dma_enabled && self.regs.fence_gpa != 0 {
             write_fence_page(
                 mem,
