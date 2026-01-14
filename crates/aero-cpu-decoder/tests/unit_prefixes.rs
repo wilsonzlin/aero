@@ -2,7 +2,7 @@ use aero_cpu_decoder::{
     decode_one, decode_prefixes, scan_prefixes, DecodeError, DecodeMode, Segment,
     MAX_INSTRUCTION_LEN,
 };
-use iced_x86::Mnemonic;
+use iced_x86::{EncodingKind, MandatoryPrefix, Mnemonic};
 
 fn assert_prefix_api_matches_decode_one(mode: DecodeMode, bytes: &[u8]) {
     let decoded = decode_one(mode, 0, bytes).expect("decode_one");
@@ -302,4 +302,39 @@ fn never_returns_length_over_15() {
     let bytes = [0x66u8; MAX_INSTRUCTION_LEN + 4];
     let (_p, consumed) = scan_prefixes(DecodeMode::Bits64, &bytes).expect("scan_prefixes");
     assert!(consumed <= MAX_INSTRUCTION_LEN);
+}
+
+#[test]
+fn mandatory_f2_f3_prefixes_are_byte_based_for_prefix_metadata() {
+    // iced-x86 distinguishes between *explicit* REP/REPNE prefix bytes and mandatory
+    // PF2/PF3 prefixes (e.g. PAUSE / MOVSS / MOVSD). Our `Prefixes` metadata is
+    // byte-based, so it reports explicit F2/F3 bytes as REPNE/REP regardless of
+    // whether the opcode treats them as "mandatory".
+
+    // Legacy PAUSE: F3 is an actual prefix byte, but iced does not report it via
+    // `has_rep_prefix()` since it's mandatory for this opcode.
+    let bytes = [0xF3, 0x90];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
+    assert!(decoded.prefixes.rep);
+    assert!(!decoded.prefixes.repne);
+    assert!(!decoded.instruction.has_rep_prefix());
+    assert_eq!(
+        decoded.instruction.op_code().mandatory_prefix(),
+        MandatoryPrefix::PF3
+    );
+    assert_eq!(decoded.instruction.op_code().encoding(), EncodingKind::Legacy);
+
+    // VEX VMOVSS: mandatory PF3 is encoded in the VEX prefix `pp` field, so there
+    // is no F3 prefix byte in the instruction stream and `Prefixes::rep` stays
+    // false.
+    let bytes = [0xC5, 0xFA, 0x10, 0xC0];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
+    assert!(!decoded.prefixes.rep);
+    assert!(!decoded.prefixes.repne);
+    assert!(!decoded.instruction.has_rep_prefix());
+    assert_eq!(
+        decoded.instruction.op_code().mandatory_prefix(),
+        MandatoryPrefix::PF3
+    );
+    assert_eq!(decoded.instruction.op_code().encoding(), EncodingKind::VEX);
 }
