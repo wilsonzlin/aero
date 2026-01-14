@@ -415,6 +415,19 @@ For log scraping, the host harness mirrors the last observed guest marker into a
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>`
 
+Newer miniport builds may also report timeout/error recovery activity counters (`ResetDetected` → `HwResetBus`) via the
+same IOCTL contract. When present, the guest selftest emits:
+
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...`
+
+If the IOCTL payload is too short (older miniport contract / truncated), it emits:
+
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=ioctl_payload_truncated|returned_len=...`
+
+The host harness mirrors this into:
+
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|reset_detected=...|hw_reset_bus=...`
+
 To enforce a minimal “no unexpected aborts/resets” policy (checks `abort`/`reset_device`/`reset_bus` only), enable:
 
 - PowerShell: `-FailOnBlkRecovery`

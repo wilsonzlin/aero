@@ -105,7 +105,8 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_queue_vector=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|reset_detected=...|hw_reset_bus=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
@@ -4470,6 +4471,8 @@ def main() -> int:
             virtio_blk_marker_carry = b""
             virtio_blk_counters_marker_line: Optional[str] = None
             virtio_blk_counters_marker_carry = b""
+            virtio_blk_reset_recovery_marker_line: Optional[str] = None
+            virtio_blk_reset_recovery_marker_carry = b""
             virtio_blk_resize_marker_line: Optional[str] = None
             virtio_blk_resize_marker_carry = b""
             virtio_blk_reset_marker_line: Optional[str] = None
@@ -4603,6 +4606,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|",
                         carry=virtio_blk_counters_marker_carry,
+                    )
+                    virtio_blk_reset_recovery_marker_line, virtio_blk_reset_recovery_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_reset_recovery_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|",
+                        carry=virtio_blk_reset_recovery_marker_carry,
                     )
                     virtio_blk_resize_marker_line, virtio_blk_resize_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_blk_resize_marker_line,
@@ -8034,6 +8043,14 @@ def main() -> int:
                     virtio_blk_counters_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_blk_reset_recovery_marker_carry:
+            raw = virtio_blk_reset_recovery_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"):
+                try:
+                    virtio_blk_reset_recovery_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_blk_resize_marker_carry:
             raw = virtio_blk_resize_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8135,6 +8152,9 @@ def main() -> int:
             blk_counters_line=virtio_blk_counters_marker_line,
         )
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
+        _emit_virtio_blk_reset_recovery_host_marker(
+            tail, blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line
+        )
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
         _emit_virtio_blk_reset_host_marker(tail, blk_reset_line=virtio_blk_reset_marker_line)
         net_large_tail = virtio_net_marker_line.encode("utf-8") if virtio_net_marker_line is not None else tail
@@ -10737,6 +10757,54 @@ def _emit_virtio_blk_counters_host_marker(
     extra = sorted(k for k in fields if k not in ordered)
     for k in extra:
         parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_reset_recovery_host_marker(
+    tail: bytes, *, blk_reset_recovery_line: Optional[str] = None
+) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's virtio-blk reset-recovery counters.
+
+    Guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=...|returned_len=...
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = blk_reset_recovery_line
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
+        )
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    raw_status = toks[3] if len(toks) >= 4 else "INFO"
+    raw_status = raw_status.strip().upper()
+    status = "SKIP" if raw_status == "SKIP" else "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|{status}"]
+
+    ordered = (
+        "reset_detected",
+        "hw_reset_bus",
+        "reason",
+        "returned_len",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
     print("|".join(parts))
 
 

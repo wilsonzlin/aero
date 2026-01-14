@@ -11468,6 +11468,29 @@ int wmain(int argc, wchar_t** argv) {
             blk_miniport_info->returned_len);
       }
     }
+
+    /*
+     * Dedicated marker for reset-recovery counters (ResetDetected/HwResetBus).
+     *
+     * These counters are useful for diagnosing timeout/error recovery paths; they do not necessarily
+     * imply explicit StorPort SRB_FUNCTION_RESET_* requests.
+     */
+    {
+      constexpr size_t kResetRecoveryEnd = offsetof(AEROVBLK_QUERY_INFO, HwResetBusCount) + sizeof(ULONG);
+      if (blk_miniport_info->returned_len >= kResetRecoveryEnd) {
+        const auto& info = blk_miniport_info->info;
+        std::string recovery_marker = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO";
+        recovery_marker += "|reset_detected=";
+        recovery_marker += std::to_string(static_cast<unsigned long>(info.ResetDetectedCount));
+        recovery_marker += "|hw_reset_bus=";
+        recovery_marker += std::to_string(static_cast<unsigned long>(info.HwResetBusCount));
+        log.LogLine(recovery_marker);
+      } else {
+        log.Logf(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=ioctl_payload_truncated|returned_len=%zu",
+            blk_miniport_info->returned_len);
+      }
+    }
   } else {
     marker += "|irq_mode=";
     marker += irq_mode;
