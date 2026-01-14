@@ -62,11 +62,11 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, msix::PCI_CAP_ID_MSIX, register_pci_config_ports, MsiCapability, MsixCapability,
-    PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter, PciBdf, PciConfigPorts,
-    PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio,
-    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
-    PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post_with_extra_reservations, msix::PCI_CAP_ID_MSIX, register_pci_config_ports,
+    MsiCapability, MsixCapability, PciBarDefinition, PciBarKind, PciBarMmioHandler, PciBarMmioRouter,
+    PciBarRange, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
+    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -577,12 +577,6 @@ pub struct MachineConfig {
     /// [`MachineConfig::vga_lfb_base`], default: [`aero_gpu_vga::SVGA_LFB_BASE`]), and VGA/VBE port
     /// I/O are routed to an [`aero_gpu_vga::VgaDevice`].
     ///
-    /// When the PC platform is enabled ([`MachineConfig::enable_pc_platform`]), the canonical
-    /// machine also exposes a transitional Bochs/QEMU-compatible VGA PCI function (currently at
-    /// `00:0c.0`) so the VBE LFB can be routed through the PCI MMIO window (the stub BAR mirrors the
-    /// configured LFB base). This PCI stub is not present when [`MachineConfig::enable_aerogpu`] is
-    /// enabled.
-    ///
     /// Note: [`MachineConfig::enable_vga`] and [`MachineConfig::enable_aerogpu`] are mutually
     /// exclusive; [`Machine::new`] rejects configurations that enable both to avoid conflicting
     /// ownership of the VGA legacy ranges.
@@ -596,6 +590,11 @@ pub struct MachineConfig {
     pub enable_vga: bool,
     /// Optional override for the legacy VGA/VBE Bochs VBE linear framebuffer (LFB) base address.
     ///
+    /// This is the guest physical address used for:
+    /// - the LFB MMIO mapping when [`MachineConfig::enable_pc_platform`] is `true` (the LFB lives
+    ///   inside the ACPI-reported PCI MMIO window, but is not exposed as a separate PCI function),
+    /// - the direct MMIO mapping when [`MachineConfig::enable_pc_platform`] is `false`, and
+    /// - the BIOS VBE mode info `PhysBasePtr` (so guests learn the correct LFB address).
     /// When unset, defaults to [`aero_gpu_vga::SVGA_LFB_BASE`].
     ///
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
@@ -603,8 +602,8 @@ pub struct MachineConfig {
     pub vga_lfb_base: Option<u32>,
     /// Optional override for the total legacy VGA/VBE VRAM backing size in bytes.
     ///
-    /// This controls the size of the emulated VRAM allocation (and the size of the transitional
-    /// VGA PCI BAR when the PC platform is enabled). It must be large enough to accommodate the
+    /// This controls the size of the emulated VRAM allocation (and the size of the legacy LFB MMIO
+    /// aperture when the PC platform is enabled). It must be large enough to accommodate the
     /// legacy VGA plane region plus the VBE framebuffer region.
     ///
     /// When unset, defaults to [`aero_gpu_vga::DEFAULT_VRAM_SIZE`].
@@ -2434,58 +2433,9 @@ impl PciDevice for XhciPciConfigDevice {
 // The VGA/VBE device model used for boot display (`aero_gpu_vga`) is *not* AeroGPU and must not
 // occupy that BDF.
 //
-// When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), we also expose a
-// minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the SVGA/VBE linear
-// framebuffer (LFB) can be routed via the PCI MMIO window (stub BAR mirrors the configured LFB
-// base; legacy default `SVGA_LFB_BASE`). When AeroGPU is enabled, this transitional PCI stub is
-// intentionally not installed to avoid exposing two VGA-class PCI devices to the guest (which can
-// confuse Windows driver binding).
-const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
-const VGA_PCI_BAR_INDEX: u8 = 0;
-
-struct VgaPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl VgaPciConfigDevice {
-    fn new(lfb_base: u64, vram_size: usize) -> Self {
-        // Bochs/QEMU-compatible IDs for "Standard VGA".
-        let mut cfg = aero_devices::pci::PciConfigSpace::new(
-            aero_gpu_vga::VGA_PCI_VENDOR_ID,
-            aero_gpu_vga::VGA_PCI_DEVICE_ID,
-        );
-        cfg.set_class_code(
-            aero_gpu_vga::VGA_PCI_CLASS_CODE,
-            aero_gpu_vga::VGA_PCI_SUBCLASS,
-            aero_gpu_vga::VGA_PCI_PROG_IF,
-            0x00,
-        );
-
-        let size: u32 = vram_size.try_into().unwrap_or(u32::MAX);
-        cfg.set_bar_definition(
-            VGA_PCI_BAR_INDEX,
-            aero_devices::pci::PciBarDefinition::Mmio32 {
-                size,
-                prefetchable: false,
-            },
-        );
-        // Use a deterministic BAR base so it is preserved across `PciBus::reset` + `bios_post`
-        // runs. Mirror the configured LFB base (legacy default: `SVGA_LFB_BASE`).
-        cfg.set_bar_base(VGA_PCI_BAR_INDEX, lfb_base);
-
-        Self { cfg }
-    }
-}
-
-impl PciDevice for VgaPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
+// When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), the legacy VGA/VBE
+// linear framebuffer (LFB) is routed inside the ACPI-reported PCI MMIO window without occupying a
+// dedicated PCI function (see `MachineConfig::vga_lfb_base`).
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -4102,6 +4052,69 @@ impl InstallMedia {
             InstallMedia::Strong(disk) => Some(disk.clone()),
             InstallMedia::Weak(weak) => weak.upgrade(),
         }
+    }
+}
+
+struct LegacyVgaLfbWindow {
+    base: u64,
+    size: u64,
+    handler: VgaLfbMmioHandler,
+}
+
+/// MMIO dispatcher for the full ACPI-reported PCI MMIO window.
+///
+/// This primarily routes PCI BARs via [`PciBarMmioRouter`], but can also host fixed MMIO mappings
+/// that live inside the PCI MMIO address range (such as the standalone VGA/VBE LFB when
+/// `enable_vga=true`).
+struct PciMmioWindow {
+    window_base: u64,
+    router: PciBarMmioRouter,
+    legacy_vga_lfb: Option<LegacyVgaLfbWindow>,
+}
+
+impl MmioHandler for PciMmioWindow {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        if size > 8 {
+            return u64::MAX;
+        }
+
+        if let (Some(lfb), Some(paddr)) = (
+            self.legacy_vga_lfb.as_mut(),
+            self.window_base.checked_add(offset),
+        ) {
+            let size_u64 = u64::try_from(size).unwrap_or(0);
+            let access_end = paddr.saturating_add(size_u64);
+            let lfb_end = lfb.base.saturating_add(lfb.size);
+            if paddr >= lfb.base && access_end <= lfb_end {
+                return MmioHandler::read(&mut lfb.handler, paddr - lfb.base, size);
+            }
+        }
+
+        MmioHandler::read(&mut self.router, offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 || size > 8 {
+            return;
+        }
+
+        if let (Some(lfb), Some(paddr)) = (
+            self.legacy_vga_lfb.as_mut(),
+            self.window_base.checked_add(offset),
+        ) {
+            let size_u64 = u64::try_from(size).unwrap_or(0);
+            let access_end = paddr.saturating_add(size_u64);
+            let lfb_end = lfb.base.saturating_add(lfb.size);
+            if paddr >= lfb.base && access_end <= lfb_end {
+                MmioHandler::write(&mut lfb.handler, paddr - lfb.base, size, value);
+                return;
+            }
+        }
+
+        MmioHandler::write(&mut self.router, offset, size, value);
     }
 }
 
@@ -9140,19 +9153,6 @@ impl Machine {
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
-            if use_legacy_vga {
-                // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
-                // MMIO window.
-                let (lfb_base, vram_size) = {
-                    let vga = self.vga.as_ref().expect("VGA enabled");
-                    let vga = vga.borrow();
-                    (u64::from(vga.lfb_base()), vga.vram_size())
-                };
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    VGA_PCI_BDF,
-                    Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)),
-                );
-            }
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
                 //
@@ -9486,12 +9486,32 @@ impl Machine {
             };
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
+            //
+            // Note: When the standalone legacy VGA/VBE device model is enabled, the VBE linear
+            // framebuffer base lives inside the PCI MMIO window. We reserve that fixed window in
+            // the PCI BAR allocator so BIOS POST does not place other devices on top of it now that
+            // the transitional VGA PCI stub is gone.
+            let legacy_vga_lfb_reservation = if use_legacy_vga {
+                let vga = self.vga.as_ref().expect("VGA enabled");
+                let vga = vga.borrow();
+                Some(PciBarRange {
+                    kind: PciBarKind::Mmio32,
+                    base: u64::from(vga.lfb_base()),
+                    size: u64::try_from(vga.vram_size()).unwrap_or(0),
+                })
+            } else {
+                None
+            };
             let pci_allocator_cfg = PciResourceAllocatorConfig::default();
             {
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut allocator = PciResourceAllocator::new(pci_allocator_cfg.clone());
                 // `bios_post` is deterministic and keeps existing fixed BAR bases intact.
-                bios_post(pci_cfg.bus_mut(), &mut allocator)
+                bios_post_with_extra_reservations(
+                    pci_cfg.bus_mut(),
+                    &mut allocator,
+                    legacy_vga_lfb_reservation.into_iter(),
+                )
                     .expect("PCI BIOS POST resource assignment should succeed");
             }
 
@@ -9724,6 +9744,21 @@ impl Machine {
             // immediately even when the guest OS programs a BAR outside the allocator's default
             // sub-window.
             self.mem.map_mmio_once(PCI_MMIO_BASE, PCI_MMIO_SIZE, || {
+                let legacy_vga_lfb = vga.clone().map(|vga| {
+                    let (base, size) = {
+                        let vga = vga.borrow();
+                        (
+                            u64::from(vga.lfb_base()),
+                            u64::try_from(vga.vram_size()).unwrap_or(0),
+                        )
+                    };
+                    LegacyVgaLfbWindow {
+                        base,
+                        size,
+                        handler: VgaLfbMmioHandler { dev: vga },
+                    }
+                });
+
                 let mut router = PciBarMmioRouter::new(PCI_MMIO_BASE, pci_cfg.clone());
                 if let Some(ahci) = ahci.clone() {
                     let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
@@ -9771,15 +9806,6 @@ impl Machine {
                             XhciPciDevice::MMIO_BAR_INDEX,
                         ),
                     );
-                }
-                if use_legacy_vga {
-                    if let Some(vga) = vga.clone() {
-                        router.register_handler(
-                            VGA_PCI_BDF,
-                            VGA_PCI_BAR_INDEX,
-                            VgaLfbMmioHandler { dev: vga },
-                        );
-                    }
                 }
                 if let Some(aerogpu) = aerogpu.clone() {
                     let bdf = aero_devices::pci::profile::AEROGPU.bdf;
@@ -9835,7 +9861,11 @@ impl Machine {
                         aerogpu_mmio,
                     );
                 }
-                Box::new(router)
+                Box::new(PciMmioWindow {
+                    window_base: PCI_MMIO_BASE,
+                    router,
+                    legacy_vga_lfb,
+                })
             });
 
             // Register dispatchers for PCI I/O BARs allocated by BIOS POST.

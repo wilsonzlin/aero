@@ -25,7 +25,7 @@ The canonical machine provides a legacy boot display using a **VGA + Bochs VBE (
 
 Canonical machine GPU device modes (today):
 
-- Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice`. When the PC platform is enabled (`enable_pc_platform=true`), the machine also exposes a transitional Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`** (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
+- Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice`. When the PC platform is enabled (`enable_pc_platform=true`), the machine maps the VBE linear framebuffer (LFB) MMIO aperture directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
 - AeroGPU device (MVP; `enable_aerogpu=true`, `enable_vga=false`): requires `enable_pc_platform=true`.
   - Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`).
   - Wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping).
@@ -279,7 +279,7 @@ Important ABI notes:
 - `MachineConfig::enable_vga` and `MachineConfig::enable_aerogpu` are mutually exclusive.
 - The canonical **AeroGPU PCI identity** is reserved at `00:07.0` (`VID:DID = A3A0:0001`) and documented in:
   - `docs/abi/aerogpu-pci-identity.md`
-- When `enable_vga=true` (and PC platform is enabled), the machine exposes a transitional Bochs/QEMU-compatible “Standard VGA”-like PCI function for VBE LFB routing (see `VGA_PCI_BDF` in `crates/aero-machine/src/lib.rs`).
+- When `enable_vga=true` (and PC platform is enabled), the VBE LFB lives inside the PCI MMIO window and is routed directly by the platform MMIO mapping (not via a dedicated PCI VGA function).
 
 ## Presenter backends and color/alpha policy
 

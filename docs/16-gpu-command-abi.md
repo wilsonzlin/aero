@@ -34,8 +34,8 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   (e.g. `crates/aero-gpu`, `crates/aero-d3d11`) and is exercised by sandbox tests, but it is not yet
   wired into `aero_machine::Machine` (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
-  `aero_gpu_vga` (VGA + Bochs VBE), plus a minimal Bochs/QEMU “Standard VGA”-like PCI stub at
-  `00:0c.0` (`1234:1111`) used only for VBE LFB MMIO routing.
+  `aero_gpu_vga` (VGA + Bochs VBE). When the PC platform is enabled, the VBE LFB MMIO aperture is
+  mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
 
 See:
 

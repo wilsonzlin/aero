@@ -74,7 +74,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     m.io_write(0x01CF, 2, 0x0041);
 
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
-    // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
+    // changes (e.g. config-driven legacy VGA LFB vs AeroGPU BAR1-backed legacy VBE).
     let base = m.vbe_lfb_base();
     assert_eq!(base, u64::from(lfb_base));
     // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.

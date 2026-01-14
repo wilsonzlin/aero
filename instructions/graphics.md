@@ -32,9 +32,8 @@ Quick reality check (as of this repo revision):
 
 - ✅ Boot display (standalone VGA/VBE path): `MachineConfig::enable_vga=true` uses `crates/aero-gpu-vga/` and is wired into
   `crates/aero-machine/` (plus BIOS INT 10h handlers in `crates/firmware/`). When the PC platform is enabled,
-  `aero_machine` also exposes a **transitional** Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` used only
-  to route the VBE LFB through PCI MMIO (stub BAR mirrors the configured LFB base; legacy default
-  `0xE000_0000`).
+  `aero_machine` maps the VBE LFB MMIO aperture directly at the configured LFB base inside the PCI MMIO window
+  (no dedicated PCI VGA stub).
 - ✅ Boot display (canonical browser machine): `MachineConfig::browser_defaults` (used by `crates/aero-wasm::Machine::new`)
   enables **AeroGPU** by default (`enable_aerogpu=true`, `enable_vga=false`), using AeroGPU's BAR1-backed VRAM
   plus legacy VGA/VBE decode for BIOS/boot display, and then handing off to WDDM scanout once claimed.
@@ -142,7 +141,7 @@ The AeroGPU Windows driver communicates with the emulator via a shared protocol.
 Reference: `docs/abi/aerogpu-pci-identity.md` (canonical AeroGPU VID/DID contract; note that the canonical
 `aero_machine::Machine` can expose the AeroGPU PCI identity and BAR1-backed VRAM via
 `MachineConfig::enable_aerogpu` (requires `enable_pc_platform=true`; mutually exclusive with `enable_vga`), and uses the standalone
-`aero_gpu_vga` + `00:0c.0` PCI stub when `enable_vga=true`).
+`aero_gpu_vga` when `enable_vga=true`).
 
 ---
 

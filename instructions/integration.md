@@ -411,7 +411,6 @@ yet; for the authoritative “what can the canonical machine expose today”, se
 00:0a.0  - virtio-input keyboard (multi-function)
 00:0a.1  - virtio-input mouse
 00:0b.0  - virtio-snd
-00:0c.0  - Transitional VGA/VBE PCI stub (Bochs/QEMU "Standard VGA"-like identity; `aero_gpu_vga` LFB routing). Must not collide with AeroGPU at `00:07.0`.
 00:0d.0  - xHCI (USB 3.x) controller (optional/experimental; Win7 has no in-box xHCI driver; see `docs/usb-xhci.md`)
 00:12.0  - EHCI (USB 2.0) controller (optional; Win7 in-box `usbehci.sys`; see `docs/usb-ehci.md`)
 ```
@@ -424,14 +423,12 @@ With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), the canonica
 * Legacy VGA ports: `0x3B0..0x3DF` (includes both mono and color decode ranges; common subset `0x3C0..0x3DF`)
 * VBE ports: `0x01CE/0x01CF`
 * Legacy VRAM window: `0xA0000..0xBFFFF`
-* SVGA linear framebuffer (LFB): base is **configurable** and should match the VGA PCI stub’s
-  BAR (historically defaulting to `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`)
+* SVGA linear framebuffer (LFB): base is **configurable** (historically defaulting to `0xE000_0000`
+  via `aero_gpu_vga::SVGA_LFB_BASE`). When the PC platform is enabled, this LFB base must live
+  inside the ACPI-reported PCI MMIO window so the platform MMIO mapping can route it.
 
-To make the LFB reachable via PCI MMIO, the machine also exposes a **minimal PCI VGA function**
-(Bochs/QEMU "Standard VGA"-like IDs) at `00:0c.0`.
-
-This PCI stub is intentionally *not* at `00:07.0`: that BDF is reserved for the long-term AeroGPU
-WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
+This legacy VGA/VBE boot-display path intentionally does *not* occupy `00:07.0`: that BDF is
+reserved for the long-term AeroGPU WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
 [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) and
 [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md)).
 
@@ -455,7 +452,7 @@ When AeroGPU owns the boot display path, firmware derives the VBE mode-info line
 from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x40000`, aka `VBE_LFB_OFFSET` in `aero_machine` /
 `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES` in the protocol).
 
-In this mode the transitional VGA PCI stub (`00:0c.0`) is not installed.
+In this mode no transitional VGA PCI stub is installed.
 
 The transitional VGA/VBE path is a boot-display stepping stone and does **not** implement the full
 AeroGPU WDDM MMIO/ring protocol.

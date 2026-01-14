@@ -20,7 +20,7 @@ mod snapshot;
 
 pub use bar_io_router::{PciIoBarHandler, PciIoBarRouter};
 pub use bar_mmio_router::{PciBarMmioHandler, PciBarMmioRouter};
-pub use bios::bios_post;
+pub use bios::{bios_post, bios_post_with_extra_reservations};
 pub use bus::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciMappedBar};
 pub use config::{
     PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,

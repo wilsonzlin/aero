@@ -48,10 +48,10 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   The `aero_machine` BAR0 transport is currently a no-op command executor with fence completion so
   the Win7 KMD doesn't deadlock.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
-  `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
-  VGA”-like PCI stub at `00:0c.0` (`1234:1111`) so the VBE linear framebuffer (LFB) aperture is
-  routable via the PCI MMIO router. The stub BAR mirrors the configured LFB base (historically
-  defaulting to `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`).
+  `aero_gpu_vga` VGA/VBE device model for boot display. When the PC platform is enabled, the VBE
+  linear framebuffer (LFB) MMIO aperture is mapped directly at the configured LFB base inside the
+  PCI MMIO window (no dedicated PCI VGA stub). The configured LFB base historically defaults to
+  `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`.
 
 `enable_aerogpu` and `enable_vga` are **mutually exclusive** (the machine rejects configurations
 that enable both).
@@ -59,7 +59,7 @@ that enable both).
 See:
 
 - [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) (canonical AeroGPU VID/DID)
-- [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) (BDF allocation + transitional stub)
+- [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) (BDF allocation)
 
 ---
 

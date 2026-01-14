@@ -26,9 +26,10 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
     let mut m = Machine::new(cfg).unwrap();
     assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
-    // The canonical machine may expose a transitional VGA/VBE PCI stub at this fixed BDF:
-    // `00:0c.0` (see `docs/pci-device-compatibility.md`). Phase 2 removes it when AeroGPU owns
-    // legacy VGA/VBE, so treat absence as a no-op for this test.
+    // Historically the canonical machine exposed a transitional Bochs/QEMU-style VGA PCI stub at
+    // this fixed BDF (`00:0c.0`, `1234:1111`) so the VBE LFB was reachable via the PCI MMIO window.
+    // The stub is no longer part of the canonical contract; treat absence as a no-op for this
+    // regression test.
     let bdf = PciBdf::new(0, 0x0c, 0);
     {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");

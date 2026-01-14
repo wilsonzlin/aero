@@ -98,6 +98,27 @@ impl PciBus {
     }
 
     pub fn reset(&mut self, allocator: &mut PciResourceAllocator) -> Result<(), PciResourceError> {
+        self.reset_with_extra_reservations(allocator, core::iter::empty::<PciBarRange>())
+    }
+
+    /// Reset all PCI devices and (re)assign BAR resources deterministically.
+    ///
+    /// This is equivalent to [`PciBus::reset`], but allows callers to inject additional reserved
+    /// MMIO/I/O ranges into the [`PciResourceAllocator`] after it is reset and after any existing
+    /// fixed BAR assignments are reserved, but before new BARs are allocated.
+    ///
+    /// This is useful for platforms that map fixed-function MMIO regions inside the PCI BAR window
+    /// without exposing them as dedicated PCI functions. For example, a legacy VGA/VBE linear
+    /// framebuffer may live inside the ACPI-reported PCI MMIO range, and firmware must avoid
+    /// allocating other BARs on top of it.
+    pub fn reset_with_extra_reservations<I>(
+        &mut self,
+        allocator: &mut PciResourceAllocator,
+        extra_reserved: I,
+    ) -> Result<(), PciResourceError>
+    where
+        I: IntoIterator<Item = PciBarRange>,
+    {
         allocator.reset();
         self.mapped_bars.clear();
 
@@ -125,6 +146,10 @@ impl PciBus {
                 }
                 allocator.reserve_range(range);
             }
+        }
+
+        for range in extra_reserved {
+            allocator.reserve_range(range);
         }
 
         // Allocate BARs in deterministic order: ascending BDF then BAR index.

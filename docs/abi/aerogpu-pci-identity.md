@@ -45,19 +45,15 @@ The canonical machine supports **two mutually-exclusive** display configurations
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`
   (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
-  standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
-  PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
-  MMIO window. The stub BAR mirrors the configured LFB base (historically defaulting to
-  `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`).
-  This `00:0c.0` device is transitional and must not be exposed when `enable_aerogpu=true` (to avoid
-  presenting two VGA-class PCI functions to the guest).
+  standalone `aero_gpu_vga` VGA/VBE implementation. The VBE linear framebuffer is exposed at the
+  configured `MachineConfig::vga_lfb_base` (historically defaulting to `0xE000_0000` via
+  `aero_gpu_vga::SVGA_LFB_BASE`) without requiring a dedicated PCI VGA stub.
 
 See also:
 
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (desired VGA/VBE-compat
   boot display behavior of AeroGPU)
-- [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md) (canonical BDF/ID table,
-  including the transitional VGA stub)
+- [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md) (canonical BDF/ID table)
 
 This repo currently has **two AeroGPU ABI generations**:
 

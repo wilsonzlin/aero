@@ -84,7 +84,7 @@ bash ./scripts/ci/run-vga-vbe-tests.sh
 
 When `MachineConfig::enable_vga=true`, `aero_machine::Machine` wires the VGA/VBE device model for boot display.
 
-Note: when the PC platform is enabled (`enable_pc_platform=true`), the VBE LFB is routed through a transitional Bochs/QEMU “Standard VGA”-like PCI function (BDF `00:0c.0`, `VGA_PCI_BDF`) so the LFB sits inside the PCI MMIO window.
+Note: when the PC platform is enabled (`enable_pc_platform=true`), the VBE LFB is mapped directly at the configured LFB base inside the ACPI-reported PCI MMIO window (no dedicated PCI VGA stub).
 
 Code pointers:
 
@@ -97,7 +97,7 @@ Test pointers:
 
 - [`crates/aero-machine/tests/boot_int10_vbe_sets_mode.rs`](../../crates/aero-machine/tests/boot_int10_vbe_sets_mode.rs) (INT 10h VBE mode set)
 - [`crates/aero-machine/tests/boot_int10_active_page_renders_text.rs`](../../crates/aero-machine/tests/boot_int10_active_page_renders_text.rs) (text mode active-page behavior)
-- [`crates/aero-machine/tests/vga_vbe_lfb_pci.rs`](../../crates/aero-machine/tests/vga_vbe_lfb_pci.rs) (VBE LFB routed via PCI stub)
+- [`crates/aero-machine/tests/vga_vbe_lfb_pci.rs`](../../crates/aero-machine/tests/vga_vbe_lfb_pci.rs) (VBE LFB reachable via the PC platform MMIO mapping)
 
 ### Implemented today: AeroGPU boot-display foundation (`enable_aerogpu=true`)
 

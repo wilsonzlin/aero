@@ -792,9 +792,8 @@ pub const USB_EHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
 /// must provide a driver.)
 pub const USB_XHCI_QEMU: PciDeviceProfile = PciDeviceProfile {
     name: "qemu-xhci",
-    // Stable canonical BDF chosen to avoid conflicts with chipset functions (00:01.x) and the
-    // legacy VGA/VBE stub (00:0c.0). Keep this stable so PCI config snapshots restore
-    // deterministically.
+    // Stable canonical BDF chosen to avoid conflicts with chipset functions (00:01.x) and other
+    // canonical PCI functions. Keep this stable so PCI config snapshots restore deterministically.
     bdf: PciBdf::new(0, 0x0d, 0),
     vendor_id: PCI_VENDOR_ID_REDHAT_QEMU,
     device_id: PCI_DEVICE_ID_QEMU_XHCI,
@@ -897,11 +896,9 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 ///     `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`)
 ///
 /// Boot display in the canonical machine can still be provided by the standalone `aero_gpu_vga`
-/// VGA/VBE device model when `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`). In that
-/// mode the machine also exposes a separate Bochs/QEMU-compatible VGA PCI stub at `00:0c.0` so the
-/// VBE linear framebuffer (LFB) aperture can be routed through the PCI MMIO window (the stub BAR
-/// mirrors the configured LFB base; historically this defaults to `aero_gpu_vga::SVGA_LFB_BASE` /
-/// `0xE000_0000`).
+/// VGA/VBE device model when `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`).
+/// The VBE linear framebuffer (LFB) is exposed at the configured LFB base (historically defaulting
+/// to `aero_gpu_vga::SVGA_LFB_BASE` / `0xE000_0000`) without requiring a dedicated PCI VGA stub.
 pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
     name: "aerogpu",
     bdf: PciBdf::new(0, 7, 0),
