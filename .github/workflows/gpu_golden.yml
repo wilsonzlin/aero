@@ -30,7 +30,7 @@ jobs:
           lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       # Note: `tests/golden/` determinism is gated by `.github/workflows/ci.yml`
-      # (Node job) so we don't duplicate the `npm run generate:goldens` check here.
+      # (Node job; `npm run check:goldens`) so we don't duplicate it here.
 
       - name: Run GPU golden tests
         working-directory: ${{ steps.node-workspace.outputs.dir }}
