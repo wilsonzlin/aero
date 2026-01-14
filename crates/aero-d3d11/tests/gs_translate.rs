@@ -1326,10 +1326,10 @@ fn gs_translate_supports_structured_control_flow_if_else_loop_breakc_continuec()
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
             Sm4Decl::GsInputPrimitive {
-                primitive: GsInputPrimitive::Triangle,
+                primitive: GsInputPrimitive::Triangle(3),
             },
             Sm4Decl::GsOutputTopology {
-                topology: GsOutputTopology::TriangleStrip,
+                topology: GsOutputTopology::TriangleStrip(3),
             },
             Sm4Decl::GsMaxOutputVertexCount { max: 1 },
             Sm4Decl::InputSiv {
