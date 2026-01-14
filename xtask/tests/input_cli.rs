@@ -186,12 +186,17 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "src/usb/usb_guest_controller.test.ts",
         ))
+        .stdout(predicate::str::contains("src/usb/usb_broker.test.ts"))
+        .stdout(predicate::str::contains(
+            "src/usb/usb_broker_subport.test.ts",
+        ))
         .stdout(predicate::str::contains(
             "src/usb/webusb_passthrough_runtime.test.ts",
         ))
         .stdout(predicate::str::contains(
             "src/usb/webhid_passthrough_runtime.test.ts",
         ))
+        .stdout(predicate::str::contains("src/usb/hid_report_ring.test.ts"))
         .stdout(predicate::str::contains(
             "src/usb/usb_proxy_protocol.test.ts",
         ))
