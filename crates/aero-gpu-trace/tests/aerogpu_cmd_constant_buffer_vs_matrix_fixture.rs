@@ -7,15 +7,12 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_SUBMIT_FLAG_PRESENT;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 const DXBC_VS_MATRIX: &[u8] = include_bytes!("../../aero-d3d11/tests/fixtures/vs_matrix.dxbc");
-
-fn align4(n: usize) -> usize {
-    (n + 3) & !3
-}
 
 #[derive(Clone, Copy)]
 struct SigParam {
@@ -26,83 +23,21 @@ struct SigParam {
 }
 
 fn build_signature_chunk_v0(params: &[SigParam]) -> Vec<u8> {
-    const HEADER_LEN: usize = 8;
-    const ENTRY_LEN: usize = 24;
-
-    let mut out = Vec::new();
-    out.extend_from_slice(&(params.len() as u32).to_le_bytes()); // param_count
-    out.extend_from_slice(&(HEADER_LEN as u32).to_le_bytes()); // param_offset
-
-    let table_start = out.len();
-    out.resize(table_start + params.len() * ENTRY_LEN, 0);
-
-    for (i, p) in params.iter().enumerate() {
-        let semantic_name_offset = out.len() as u32;
-        out.extend_from_slice(p.semantic_name.as_bytes());
-        out.push(0);
-        out.resize(align4(out.len()), 0);
-
-        let base = table_start + i * ENTRY_LEN;
-        out[base..base + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
-        out[base + 4..base + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
-        out[base + 8..base + 12].copy_from_slice(&0u32.to_le_bytes()); // system_value_type
-        out[base + 12..base + 16].copy_from_slice(&0u32.to_le_bytes()); // component_type
-        out[base + 16..base + 20].copy_from_slice(&p.register.to_le_bytes());
-        out[base + 20] = p.mask;
-        out[base + 21] = p.mask; // read_write_mask
-        out[base + 22] = 0; // stream
-        out[base + 23] = 0; // min_precision
-    }
-
-    out
-}
-
-fn build_dxbc_container(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    // Minimal `DXBC` container (checksum is 0).
-    //
-    // Header layout:
-    // - magic:      4 bytes ("DXBC")
-    // - checksum:  16 bytes (MD5; unused here)
-    // - reserved:   4 bytes (usually 1)
-    // - total_size: 4 bytes
-    // - chunk_count:4 bytes
-    // - chunk_offsets: chunk_count * 4 bytes
-    // - chunks:
-    //     - fourcc: 4 bytes
-    //     - size:   4 bytes
-    //     - data:   size bytes
-    let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
-    let chunk_bytes: usize = chunks.iter().map(|(_, data)| align4(8 + data.len())).sum();
-    let mut out = Vec::with_capacity(header_size + chunk_bytes);
-
-    out.extend_from_slice(b"DXBC");
-    out.extend_from_slice(&[0u8; 16]); // checksum
-    out.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    out.extend_from_slice(&0u32.to_le_bytes()); // total_size placeholder
-    out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
-
-    let offsets_pos = out.len();
-    out.resize(out.len() + 4 * chunks.len(), 0);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    for (fourcc, data) in chunks {
-        offsets.push(out.len() as u32);
-        out.extend_from_slice(fourcc);
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(data);
-        out.resize(align4(out.len()), 0);
-    }
-
-    for (i, offset) in offsets.iter().enumerate() {
-        let pos = offsets_pos + i * 4;
-        out[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
-    }
-
-    let total_size = out.len() as u32;
-    let total_size_pos = 4 + 16 + 4;
-    out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
-
-    out
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.semantic_name,
+            semantic_index: p.semantic_index,
+            system_value_type: 0,
+            component_type: 0,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.mask,
+            stream: 0,
+            min_precision: 0,
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn build_ps_solid_rgba_dxbc(rgba: [f32; 4]) -> Vec<u8> {
@@ -148,7 +83,11 @@ fn build_ps_solid_rgba_dxbc(rgba: [f32; 4]) -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc_container(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    dxbc_test_utils::build_container_owned(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn fixture_path() -> PathBuf {

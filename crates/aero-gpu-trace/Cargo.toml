@@ -11,3 +11,4 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 aero-protocol = { path = "../../emulator/protocol" }
+aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }

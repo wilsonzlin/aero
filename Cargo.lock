@@ -340,6 +340,7 @@ dependencies = [
 name = "aero-gpu-trace"
 version = "0.1.0"
 dependencies = [
+ "aero-dxbc",
  "aero-protocol",
 ]
 

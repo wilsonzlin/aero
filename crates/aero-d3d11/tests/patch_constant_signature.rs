@@ -1,3 +1,4 @@
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::{parse_signatures, DxbcFile, FourCC};
 
 const FOURCC_PCSG: FourCC = FourCC(*b"PCSG");
@@ -15,34 +16,18 @@ fn build_signature_chunk_v0_one_entry(
     read_write_mask: u8,
     stream: u8,
 ) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&semantic_index.to_le_bytes());
-    bytes.extend_from_slice(&system_value_type.to_le_bytes());
-    bytes.extend_from_slice(&component_type.to_le_bytes());
-    bytes.extend_from_slice(&register.to_le_bytes());
-    bytes.push(mask);
-    bytes.push(read_write_mask);
-    bytes.push(stream);
-    bytes.push(0); // min_precision (ignored by aero-dxbc)
-
-    bytes.extend_from_slice(semantic_name.as_bytes());
-    bytes.push(0);
-
-    bytes
+    let entry = dxbc_test_utils::SignatureEntryDesc {
+        semantic_name,
+        semantic_index,
+        system_value_type,
+        component_type,
+        register,
+        mask,
+        read_write_mask,
+        stream: u32::from(stream),
+        min_precision: 0,
+    };
+    dxbc_test_utils::build_signature_chunk_v0(&[entry])
 }
 
 // Explicit argument lists mirror on-disk signature entry layout fields (keeps call sites readable).
@@ -57,68 +42,22 @@ fn build_signature_chunk_v1_one_entry(
     read_write_mask: u8,
     stream: u32,
 ) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 32usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&semantic_index.to_le_bytes());
-    bytes.extend_from_slice(&system_value_type.to_le_bytes());
-    bytes.extend_from_slice(&component_type.to_le_bytes());
-    bytes.extend_from_slice(&register.to_le_bytes());
-    bytes.push(mask);
-    bytes.push(read_write_mask);
-    bytes.extend_from_slice(&[0u8; 2]); // padding
-    bytes.extend_from_slice(&stream.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision (ignored by aero-dxbc)
-
-    bytes.extend_from_slice(semantic_name.as_bytes());
-    bytes.push(0);
-
-    bytes
+    let entry = dxbc_test_utils::SignatureEntryDesc {
+        semantic_name,
+        semantic_index,
+        system_value_type,
+        component_type,
+        register,
+        mask,
+        read_write_mask,
+        stream,
+        min_precision: 0,
+    };
+    dxbc_test_utils::build_signature_chunk_v1(&[entry])
 }
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
-    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
-    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_len;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor as u32);
-        cursor += 8 + data.len();
-    }
-
-    let total_size = cursor as u32;
-    let mut bytes = Vec::with_capacity(cursor);
-
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-    }
-
-    assert_eq!(bytes.len(), total_size as usize);
-    bytes
+    dxbc_test_utils::build_container(chunks)
 }
 
 #[test]
