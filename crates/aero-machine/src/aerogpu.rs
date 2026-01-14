@@ -3,6 +3,7 @@
 use core::mem::offset_of;
 
 use aero_devices::pci::PciBarMmioHandler;
+use aero_devices_gpu::ring::write_fence_page;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
@@ -13,11 +14,6 @@ use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SC
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
-
-const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, magic) as u64;
-const FENCE_PAGE_ABI_VERSION_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, abi_version) as u64;
-const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
-    offset_of!(ring::AerogpuFencePage, completed_fence) as u64;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AeroGpuScanout0State {
@@ -980,10 +976,4 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
             self.mmio_write_dword(aligned, cur);
         }
     }
-}
-
-fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, ring::AEROGPU_FENCE_PAGE_MAGIC);
-    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
-    mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
 }

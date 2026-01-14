@@ -631,7 +631,16 @@ impl AeroGpuAllocEntry {
     }
 }
 
-pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
+pub fn write_fence_page(
+    mem: &mut dyn memory::MemoryBus,
+    gpa: u64,
+    abi_version: u32,
+    completed_fence: u64,
+) {
+    debug_assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+    debug_assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+    debug_assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+
     mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
     mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
     mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
