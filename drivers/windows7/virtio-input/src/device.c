@@ -1690,6 +1690,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return STATUS_NOT_SUPPORTED;
             }
+
+            // Device kind was inferred (not a strict/known ID_NAME match).
+            strictIdName = FALSE;
         } else if (deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD &&
                    deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE &&
                    deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_TABLET) {
