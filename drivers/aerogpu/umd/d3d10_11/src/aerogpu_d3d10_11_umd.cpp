@@ -4013,6 +4013,7 @@ void AEROGPU_APIENTRY DestroyRTV(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW hR
   }
   auto* rtv = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv);
   rtv->~AeroGpuRenderTargetView();
+  new (rtv) AeroGpuRenderTargetView();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDSVSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW*) {
@@ -4053,6 +4054,7 @@ void AEROGPU_APIENTRY DestroyDSV(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW hD
   }
   auto* dsv = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv);
   dsv->~AeroGpuDepthStencilView();
+  new (dsv) AeroGpuDepthStencilView();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateShaderResourceViewSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW*) {
@@ -4101,6 +4103,7 @@ void AEROGPU_APIENTRY DestroyShaderResourceView(D3D10DDI_HDEVICE, D3D10DDI_HSHAD
   }
   auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(hView);
   view->~AeroGpuShaderResourceView();
+  new (view) AeroGpuShaderResourceView();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESAMPLER*) {
@@ -4263,6 +4266,7 @@ void AEROGPU_APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE h
   }
   auto* s = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
   s->~AeroGpuBlendState();
+  new (s) AeroGpuBlendState();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERASTERIZERSTATE*) {
@@ -4326,6 +4330,7 @@ void AEROGPU_APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERI
   }
   auto* s = FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState);
   s->~AeroGpuRasterizerState();
+  new (s) AeroGpuRasterizerState();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE,
@@ -4387,6 +4392,7 @@ void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTH
   }
   auto* s = FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState);
   s->~AeroGpuDepthStencilState();
+  new (s) AeroGpuDepthStencilState();
 }
 
 void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,

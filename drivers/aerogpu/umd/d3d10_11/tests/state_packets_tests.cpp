@@ -870,17 +870,178 @@ bool TestDestroyChildObjectsAfterDestroyDeviceIsSafe() {
     return false;
   }
 
+  // Create pipeline state objects (these are plain in-memory structs in the
+  // portable UMD, but destroy should still be safe after device teardown and
+  // idempotent).
+  D3D10DDI_HBLENDSTATE hBlendState{};
+  const SIZE_T bs_size = dev.device_funcs.pfnCalcPrivateBlendStateSize(dev.hDevice, /*desc=*/nullptr);
+  if (!Check(bs_size >= sizeof(void*), "CalcPrivateBlendStateSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> bs_mem(static_cast<size_t>(bs_size), 0);
+  hBlendState.pDrvPrivate = bs_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateBlendState(dev.hDevice, /*pDesc=*/nullptr, hBlendState) == S_OK,
+             "CreateBlendState(default)")) {
+    return false;
+  }
+
+  D3D10DDI_HRASTERIZERSTATE hRasterState{};
+  const SIZE_T rs_size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, /*desc=*/nullptr);
+  if (!Check(rs_size >= sizeof(void*), "CalcPrivateRasterizerStateSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> rs_mem(static_cast<size_t>(rs_size), 0);
+  hRasterState.pDrvPrivate = rs_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateRasterizerState(dev.hDevice, /*pDesc=*/nullptr, hRasterState) == S_OK,
+             "CreateRasterizerState(default)")) {
+    return false;
+  }
+
+  D3D10DDI_HDEPTHSTENCILSTATE hDepthStencilState{};
+  const SIZE_T dss_size = dev.device_funcs.pfnCalcPrivateDepthStencilStateSize(dev.hDevice, /*desc=*/nullptr);
+  if (!Check(dss_size >= sizeof(void*), "CalcPrivateDepthStencilStateSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> dss_mem(static_cast<size_t>(dss_size), 0);
+  hDepthStencilState.pDrvPrivate = dss_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateDepthStencilState(dev.hDevice, /*pDesc=*/nullptr, hDepthStencilState) == S_OK,
+             "CreateDepthStencilState(default)")) {
+    return false;
+  }
+
+  // Create simple view objects (RTV/DSV backed by the buffer resource).
+  AEROGPU_DDIARG_CREATERENDERTARGETVIEW rtv_desc{};
+  rtv_desc.hResource = hRes;
+  D3D10DDI_HRENDERTARGETVIEW hRtv{};
+  const SIZE_T rtv_size = dev.device_funcs.pfnCalcPrivateRTVSize(dev.hDevice, &rtv_desc);
+  if (!Check(rtv_size >= sizeof(void*), "CalcPrivateRTVSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> rtv_mem(static_cast<size_t>(rtv_size), 0);
+  hRtv.pDrvPrivate = rtv_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateRTV(dev.hDevice, &rtv_desc, hRtv) == S_OK, "CreateRTV(buffer)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW dsv_desc{};
+  dsv_desc.hResource = hRes;
+  D3D10DDI_HDEPTHSTENCILVIEW hDsv{};
+  const SIZE_T dsv_size = dev.device_funcs.pfnCalcPrivateDSVSize(dev.hDevice, &dsv_desc);
+  if (!Check(dsv_size >= sizeof(void*), "CalcPrivateDSVSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> dsv_mem(static_cast<size_t>(dsv_size), 0);
+  hDsv.pDrvPrivate = dsv_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateDSV(dev.hDevice, &dsv_desc, hDsv) == S_OK, "CreateDSV(buffer)")) {
+    return false;
+  }
+
+  // Shader-resource view requires a Texture2D resource to be created successfully.
+  AEROGPU_DDIARG_CREATERESOURCE tex_desc{};
+  tex_desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  tex_desc.BindFlags = 0;
+  tex_desc.MiscFlags = 0;
+  tex_desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  tex_desc.CPUAccessFlags = 0;
+  tex_desc.Width = 4;
+  tex_desc.Height = 4;
+  tex_desc.MipLevels = 1;
+  tex_desc.ArraySize = 1;
+  tex_desc.Format = 28; // DXGI_FORMAT_R8G8B8A8_UNORM
+  tex_desc.pInitialData = nullptr;
+  tex_desc.InitialDataCount = 0;
+  tex_desc.SampleDescCount = 1;
+  tex_desc.SampleDescQuality = 0;
+  tex_desc.ResourceFlags = 0;
+
+  D3D10DDI_HRESOURCE hTex{};
+  const SIZE_T tex_size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &tex_desc);
+  if (!Check(tex_size >= sizeof(void*), "CalcPrivateResourceSize (child-after-device tex)")) {
+    return false;
+  }
+  std::vector<uint8_t> tex_mem(static_cast<size_t>(tex_size), 0);
+  hTex.pDrvPrivate = tex_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateResource(dev.hDevice, &tex_desc, hTex) == S_OK, "CreateResource(tex2d)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW srv_desc{};
+  srv_desc.hResource = hTex;
+  srv_desc.Format = 0;
+  srv_desc.ViewDimension = AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D;
+  srv_desc.MostDetailedMip = 0;
+  srv_desc.MipLevels = 1;
+
+  D3D10DDI_HSHADERRESOURCEVIEW hSrv{};
+  const SIZE_T srv_size = dev.device_funcs.pfnCalcPrivateShaderResourceViewSize(dev.hDevice, &srv_desc);
+  if (!Check(srv_size >= sizeof(void*) + sizeof(aerogpu_handle_t), "CalcPrivateShaderResourceViewSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> srv_mem(static_cast<size_t>(srv_size), 0);
+  hSrv.pDrvPrivate = srv_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateShaderResourceView(dev.hDevice, &srv_desc, hSrv) == S_OK, "CreateShaderResourceView")) {
+    return false;
+  }
+
   // Destroy the device first, then destroy child objects. This must not crash.
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, hRtv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, hDsv);
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hBlendState);
+  dev.device_funcs.pfnDestroyRasterizerState(dev.hDevice, hRasterState);
+  dev.device_funcs.pfnDestroyDepthStencilState(dev.hDevice, hDepthStencilState);
   dev.device_funcs.pfnDestroyInputLayout(dev.hDevice, hLayout);
   dev.device_funcs.pfnDestroyShader(dev.hDevice, hShader);
   dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hTex);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
 
+  // The portable UMD destructs and reconstructs several private objects to make
+  // destroy calls idempotent. Validate that these objects end in a default state
+  // after the first destroy.
+  void* expected_null = nullptr;
+  aerogpu_handle_t expected_handle = 0;
+  if (!Check(std::memcmp(srv_mem.data(), &expected_null, sizeof(expected_null)) == 0,
+             "DestroyShaderResourceView clears resource ptr")) {
+    return false;
+  }
+  if (!Check(std::memcmp(srv_mem.data() + sizeof(void*), &expected_handle, sizeof(expected_handle)) == 0,
+             "DestroyShaderResourceView clears handle")) {
+    return false;
+  }
+  if (!Check(std::memcmp(rtv_mem.data(), &expected_null, sizeof(expected_null)) == 0, "DestroyRTV clears resource ptr")) {
+    return false;
+  }
+  if (!Check(std::memcmp(dsv_mem.data(), &expected_null, sizeof(expected_null)) == 0, "DestroyDSV clears resource ptr")) {
+    return false;
+  }
+
+  aerogpu_blend_state expected_bs{};
+  if (!Check(std::memcmp(bs_mem.data(), &expected_bs, sizeof(expected_bs)) == 0, "DestroyBlendState clears state")) {
+    return false;
+  }
+  aerogpu_rasterizer_state expected_rs{};
+  if (!Check(std::memcmp(rs_mem.data(), &expected_rs, sizeof(expected_rs)) == 0, "DestroyRasterizerState clears state")) {
+    return false;
+  }
+  aerogpu_depth_stencil_state expected_dss{};
+  if (!Check(std::memcmp(dss_mem.data(), &expected_dss, sizeof(expected_dss)) == 0,
+             "DestroyDepthStencilState clears state")) {
+    return false;
+  }
+
   // Double-destroy should also be safe after the device is gone.
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, hRtv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, hDsv);
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hBlendState);
+  dev.device_funcs.pfnDestroyRasterizerState(dev.hDevice, hRasterState);
+  dev.device_funcs.pfnDestroyDepthStencilState(dev.hDevice, hDepthStencilState);
   dev.device_funcs.pfnDestroyInputLayout(dev.hDevice, hLayout);
   dev.device_funcs.pfnDestroyShader(dev.hDevice, hShader);
   dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hTex);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
 
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
