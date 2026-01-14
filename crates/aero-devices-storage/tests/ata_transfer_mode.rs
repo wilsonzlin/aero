@@ -178,3 +178,27 @@ fn ata_identify_word88_reflects_negotiated_udma_mode() {
     let w88_2 = identify_word(id2, 88);
     assert_eq!(w88_2 & 0xFF00, 1 << (8 + 0));
 }
+
+#[test]
+fn ata_identify_word63_reflects_negotiated_mwdma_mode() {
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut drive = AtaDrive::new(Box::new(disk)).unwrap();
+
+    // Switch to Multiword DMA mode 2 (0x20 | 2).
+    drive.set_transfer_mode_select(0x22).unwrap();
+
+    // Snapshotted UDMA mode is a sentinel when UDMA is disabled.
+    assert_eq!(drive.snapshot_state().udma_mode, 0xFF);
+
+    let id = drive.identify_sector();
+    let w63 = identify_word(id, 63);
+
+    // Advertise mode 2 support and mark it active.
+    assert_ne!(w63 & (1 << 2), 0, "MWDMA2 support bit should be set");
+    assert_eq!(w63 & 0xFF00, 1 << (8 + 2));
+
+    // UDMA word should have no active bits when MWDMA is selected.
+    let w88 = identify_word(id, 88);
+    assert_eq!(w88 & 0xFF00, 0);
+}
