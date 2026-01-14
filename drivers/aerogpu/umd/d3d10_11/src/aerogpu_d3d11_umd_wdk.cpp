@@ -11401,112 +11401,125 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    D3DDDICB_LOCK lock_args = {};
-    uint8_t* wddm_base = nullptr;
-    uint32_t wddm_pitch = dst_sub_layout.row_pitch_bytes;
-    bool have_wddm_lock = false;
-
-    if (is_guest_backed) {
-      lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
-      __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
-        lock_args.SubresourceIndex = 0;
-      }
-      __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
-        lock_args.SubResourceIndex = 0;
-      }
-      InitLockForWrite(&lock_args);
-
-      HRESULT hr = lock_for_write(&lock_args);
-      if (FAILED(hr)) {
-        SetError(dev, hr);
-        return;
-      }
-      if (!lock_args.pData) {
-        D3DDDICB_UNLOCK unlock_args = {};
-        unlock_args.hAllocation = lock_args.hAllocation;
-        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-          unlock_args.SubresourceIndex = 0;
-        }
-        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-          unlock_args.SubResourceIndex = 0;
-        }
-        (void)unlock(&unlock_args);
-        SetError(dev, E_FAIL);
-        return;
-      }
-      have_wddm_lock = true;
-
-      // Do not treat pitch mismatches as fatal: Win7 runtimes may report a
-      // runtime-selected pitch via LockCb. We validate and honor it later when
-      // writing into the mapped allocation.
-
-      if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        D3DDDICB_UNLOCK unlock_args = {};
-        unlock_args.hAllocation = lock_args.hAllocation;
-        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-          unlock_args.SubresourceIndex = 0;
-        }
-        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-          unlock_args.SubResourceIndex = 0;
-        }
-        (void)unlock(&unlock_args);
-        SetError(dev, E_FAIL);
-        return;
-      }
-      wddm_base =
-          static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_sub_layout.offset_bytes);
-    }
-
-    for (uint32_t y = 0; y < copy_height_blocks; y++) {
-      const size_t dst_off =
-          static_cast<size_t>(dst_sub_layout.offset_bytes) +
-          static_cast<size_t>(block_top + y) * dst_sub_layout.row_pitch_bytes +
-          static_cast<size_t>(block_left) * layout.bytes_per_block;
-      const size_t src_off = static_cast<size_t>(y) * pitch;
-      if (dst_off + row_bytes > res->storage.size()) {
-        if (have_wddm_lock) {
-          D3DDDICB_UNLOCK unlock_args = {};
-          unlock_args.hAllocation = lock_args.hAllocation;
-          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-            unlock_args.SubresourceIndex = 0;
-          }
-          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-            unlock_args.SubResourceIndex = 0;
-          }
-          (void)unlock(&unlock_args);
-        }
-        SetError(dev, E_FAIL);
-        return;
-      }
-      std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
-      if (full_row_update && dst_sub_layout.row_pitch_bytes > row_bytes) {
-        std::memset(res->storage.data() + dst_off + row_bytes, 0, dst_sub_layout.row_pitch_bytes - row_bytes);
-      }
-    }
-
     if (!is_guest_backed) {
-      if (full_subresource_update) {
-        EmitUploadLocked(dev, res, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
-      } else {
+      // Host-owned textures: build the UPLOAD_RESOURCE packet before mutating
+      // the shadow copy, so OOM during command emission doesn't desynchronize
+      // the UMD from the host.
+      uint64_t upload_offset = dst_sub_layout.offset_bytes;
+      uint64_t upload_size = dst_sub_layout.size_bytes;
+      if (!full_subresource_update) {
         // Host-owned texture uploads must be row-aligned for the host executor.
         // Upload the affected row range (full rows) so we do not clobber unrelated
         // rows of the subresource.
         const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_sub_layout.row_pitch_bytes);
         const uint64_t row_start_bytes = static_cast<uint64_t>(block_top) * row_pitch_u64;
-        const uint64_t upload_offset = dst_sub_layout.offset_bytes + row_start_bytes;
-        const uint64_t upload_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+        upload_offset = dst_sub_layout.offset_bytes + row_start_bytes;
+        upload_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
         if ((block_top != 0 && row_start_bytes / row_pitch_u64 != block_top) ||
             upload_offset < dst_sub_layout.offset_bytes ||
             upload_size / row_pitch_u64 != copy_height_blocks) {
           SetError(dev, E_INVALIDARG);
           return;
         }
-        EmitUploadLocked(dev, res, upload_offset, upload_size);
+      }
+
+      if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(dev, E_OUTOFMEMORY);
+        return;
+      }
+      const size_t upload_off = static_cast<size_t>(upload_offset);
+      const size_t upload_sz = static_cast<size_t>(upload_size);
+      if (upload_off > res->storage.size() || upload_sz > res->storage.size() - upload_off) {
+        SetError(dev, E_FAIL);
+        return;
+      }
+
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_off, upload_sz);
+      if (!cmd) {
+        SetError(dev, E_OUTOFMEMORY);
+        return;
+      }
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = upload_offset;
+      cmd->size_bytes = upload_size;
+
+      uint8_t* upload_payload = reinterpret_cast<uint8_t*>(cmd) + sizeof(*cmd);
+      for (uint32_t y = 0; y < copy_height_blocks; y++) {
+        const size_t dst_off =
+            static_cast<size_t>(dst_sub_layout.offset_bytes) +
+            static_cast<size_t>(block_top + y) * dst_sub_layout.row_pitch_bytes +
+            static_cast<size_t>(block_left) * layout.bytes_per_block;
+        const size_t src_off = static_cast<size_t>(y) * pitch;
+        if (dst_off + row_bytes > res->storage.size() || dst_off < upload_off) {
+          SetError(dev, E_FAIL);
+          return;
+        }
+        const size_t payload_off = dst_off - upload_off;
+        std::memcpy(upload_payload + payload_off, src_bytes + src_off, row_bytes);
+        if (full_row_update && dst_sub_layout.row_pitch_bytes > row_bytes) {
+          std::memset(upload_payload + payload_off + row_bytes, 0, dst_sub_layout.row_pitch_bytes - row_bytes);
+        }
+      }
+
+      // Commit to the shadow copy only after we successfully emitted the upload
+      // packet.
+      for (uint32_t y = 0; y < copy_height_blocks; y++) {
+        const size_t dst_off =
+            static_cast<size_t>(dst_sub_layout.offset_bytes) +
+            static_cast<size_t>(block_top + y) * dst_sub_layout.row_pitch_bytes +
+            static_cast<size_t>(block_left) * layout.bytes_per_block;
+        const size_t src_off = static_cast<size_t>(y) * pitch;
+        std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
+        if (full_row_update && dst_sub_layout.row_pitch_bytes > row_bytes) {
+          std::memset(res->storage.data() + dst_off + row_bytes, 0, dst_sub_layout.row_pitch_bytes - row_bytes);
+        }
       }
       return;
     }
 
-    if (!have_wddm_lock || !wddm_base) {
+    // Guest-backed texture: lock the runtime allocation and emit a dirty-range
+    // command before writing into the allocation/shadow to avoid drift on OOM.
+    D3DDDICB_LOCK lock_args = {};
+    lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+    __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+      lock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+      lock_args.SubResourceIndex = 0;
+    }
+    InitLockForWrite(&lock_args);
+
+    HRESULT hr = lock_for_write(&lock_args);
+    if (FAILED(hr)) {
+      SetError(dev, hr);
+      return;
+    }
+    if (!lock_args.pData) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = 0;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_FAIL);
+      return;
+    }
+
+    if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = 0;
+      }
+      (void)unlock(&unlock_args);
       SetError(dev, E_FAIL);
       return;
     }
@@ -11515,7 +11528,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     __if_exists(D3DDDICB_LOCK::Pitch) {
       lock_pitch = lock_args.Pitch;
     }
-
     const bool use_lock_pitch = (dst_sub_layout.mip_level == 0);
     if (use_lock_pitch && lock_pitch != 0) {
       LogTexture2DPitchMismatchRateLimited("UpdateSubresourceUP11",
@@ -11524,13 +11536,57 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
                                            dst_sub_layout.row_pitch_bytes,
                                            lock_pitch);
     }
+
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!dirty) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = 0;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = dst_sub_layout.offset_bytes;
+    dirty->size_bytes = dst_sub_layout.size_bytes;
+
+    const uint32_t wddm_pitch = dst_sub_layout.row_pitch_bytes;
+    uint8_t* wddm_base =
+        static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_sub_layout.offset_bytes);
+
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
-      const size_t dst_off =
+      const size_t dst_off_storage =
+          static_cast<size_t>(dst_sub_layout.offset_bytes) +
+          static_cast<size_t>(block_top + y) * dst_sub_layout.row_pitch_bytes +
+          static_cast<size_t>(block_left) * layout.bytes_per_block;
+      const size_t dst_off_wddm =
           static_cast<size_t>(block_top + y) * wddm_pitch + static_cast<size_t>(block_left) * layout.bytes_per_block;
       const size_t src_off = static_cast<size_t>(y) * pitch;
-      std::memcpy(wddm_base + dst_off, src_bytes + src_off, row_bytes);
-      if (full_row_update && wddm_pitch > row_bytes) {
-        std::memset(wddm_base + dst_off + row_bytes, 0, wddm_pitch - row_bytes);
+      if (dst_off_storage + row_bytes > res->storage.size()) {
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = 0;
+        }
+        (void)unlock(&unlock_args);
+        SetError(dev, E_FAIL);
+        return;
+      }
+      std::memcpy(res->storage.data() + dst_off_storage, src_bytes + src_off, row_bytes);
+      std::memcpy(wddm_base + dst_off_wddm, src_bytes + src_off, row_bytes);
+      if (full_row_update && dst_sub_layout.row_pitch_bytes > row_bytes) {
+        std::memset(res->storage.data() + dst_off_storage + row_bytes, 0, dst_sub_layout.row_pitch_bytes - row_bytes);
+        std::memset(wddm_base + dst_off_wddm + row_bytes, 0, wddm_pitch - row_bytes);
       }
     }
 
@@ -11542,13 +11598,11 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
       unlock_args.SubResourceIndex = 0;
     }
-    HRESULT hr = unlock(&unlock_args);
+    hr = unlock(&unlock_args);
     if (FAILED(hr)) {
       SetError(dev, hr);
       return;
     }
-
-    EmitDirtyRangeLocked(dev, res, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
     return;
   }
 
