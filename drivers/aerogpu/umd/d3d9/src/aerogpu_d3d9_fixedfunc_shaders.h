@@ -18,7 +18,8 @@ namespace fixedfunc {
 // vs_2_0:
 //   mov oPos, v0
 //   mov oD0, v1       ; D3DCOLOR is BGRA in memory but is presented to shaders as RGBA
-//   mov oT0, v0       ; Provide a stable t0 for fixed-function texture sampling (minimal fixed-function fallback)
+//   mov oT0, v0       ; Provide a stable t0 for fixed-function texture sampling (minimal fixed-function fallback).
+//                    ; Note: this also means POSITIONT.z is available in TEXCOORD0.z for fog in the RHW_COLOR path.
 //   end
 static constexpr uint32_t kVsPassthroughPosColor[] = {
     0xFFFE0200u, // vs_2_0
