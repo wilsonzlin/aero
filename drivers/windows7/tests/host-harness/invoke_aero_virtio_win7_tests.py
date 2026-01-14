@@ -8893,9 +8893,18 @@ def _update_last_marker_line_from_chunk(
     if not chunk and not carry:
         return last, b""
 
+    # Bound the carry buffer to avoid unbounded growth if the guest prints extremely long lines without
+    # newlines (and to avoid constructing an excessively large `carry + chunk` temporary buffer).
+    # The harness rolling tail is capped to 128 KiB; use the same cap here since we can only reliably
+    # parse marker lines within that window anyway.
+    if len(carry) > _SERIAL_TAIL_CAP_BYTES:
+        carry = carry[-_SERIAL_TAIL_CAP_BYTES:]
+
     data = carry + chunk
     parts = data.split(b"\n")
     new_carry = parts.pop() if parts else b""
+    if len(new_carry) > _SERIAL_TAIL_CAP_BYTES:
+        new_carry = new_carry[-_SERIAL_TAIL_CAP_BYTES:]
 
     for raw in parts:
         if raw.endswith(b"\r"):
