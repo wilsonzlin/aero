@@ -43,14 +43,6 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     xhci.set_dcbaap(dcbaa);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
-    // Transfers only execute while the controller is running (USBCMD.RUN=1).
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
-    // Doorbells and command execution only make progress while the controller is running.
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
-    // Transfer execution is gated on USBCMD.RUN.
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
@@ -64,9 +56,6 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     slot_ctx.set_root_hub_port_number(1);
     let completion = xhci.address_device(slot_id, slot_ctx);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
-
-    // xHCI only services transfers while the controller is running (USBCMD.RUN=1).
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Endpoint 1 IN (DCI=3).
     let endpoint_id = 3u8;
