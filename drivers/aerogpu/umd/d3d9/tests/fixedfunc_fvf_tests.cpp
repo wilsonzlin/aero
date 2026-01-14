@@ -9447,6 +9447,252 @@ bool TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample() {
   return Check(ShaderTexldSamplerMask(ps) == 0x9u, "texld uses samplers s0 and s3");
 }
 
+bool TestApplyStateBlockUpdatesFixedfuncPsForTextureStageState() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
+  if (!CreateDummyTexture(&cleanup, &hTex0) || !CreateDummyTexture(&cleanup, &hTex1)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: modulate tex0 * diffuse.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  // Stage1: add current + tex1, and disable alpha stage.
+  const auto SetStage1Enabled = [&]() -> bool {
+    if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopAdd, "stage1 COLOROP=ADD")) {
+      return false;
+    }
+    if (!SetTextureStageState(1, kD3dTssColorArg1, kD3dTaCurrent, "stage1 COLORARG1=CURRENT")) {
+      return false;
+    }
+    if (!SetTextureStageState(1, kD3dTssColorArg2, kD3dTaTexture, "stage1 COLORARG2=TEXTURE")) {
+      return false;
+    }
+    if (!SetTextureStageState(1, kD3dTssAlphaOp, kD3dTopDisable, "stage1 ALPHAOP=DISABLE")) {
+      return false;
+    }
+    return true;
+  };
+
+  const auto SetStage1Disabled = [&]() -> bool {
+    return SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE");
+  };
+
+  if (!SetStage1Enabled()) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 enabled baseline)")) {
+    return false;
+  }
+
+  Shader* ps_enabled = nullptr;
+  Shader* ps_disabled = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_enabled = dev->ps;
+  }
+  if (!Check(ps_enabled != nullptr, "PS bound (stage1 enabled)")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_enabled, kPsOpTexld) == 2, "stage1 enabled => exactly 2 texld")) {
+    return false;
+  }
+  if (!Check(ShaderTexldSamplerMask(ps_enabled) == 0x3u, "stage1 enabled => texld uses samplers s0 and s1")) {
+    return false;
+  }
+
+  if (!SetStage1Disabled()) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 disabled baseline)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_disabled = dev->ps;
+  }
+  if (!Check(ps_disabled != nullptr, "PS bound (stage1 disabled)")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_disabled, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld")) {
+    return false;
+  }
+  if (!Check(ShaderTexldSamplerMask(ps_disabled) == 0x1u, "stage1 disabled => texld uses only sampler s0")) {
+    return false;
+  }
+
+  // Restore stage1 enabled so ApplyStateBlock can toggle it back off.
+  if (!SetStage1Enabled()) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 re-enabled baseline)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_enabled, "stage1 re-enable reuses cached PS variant")) {
+      return false;
+    }
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  if (!SetStage1Disabled()) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore stage1 enabled again before applying the state block.
+  if (!SetStage1Enabled()) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 enabled before ApplyStateBlock)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_enabled, "PS enabled before ApplyStateBlock")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_disabled, "ApplyStateBlock updates fixed-function PS")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock stage-state)")) {
+    DeleteSb();
+    return false;
+  }
+
+  // Since both PS variants were created by the earlier baseline draws, applying
+  // the state block should only re-bind, not create a new PS.
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    DeleteSb();
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "ApplyStateBlock emits BIND_SHADERS")) {
+    DeleteSb();
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->ps == ps_disabled->handle, "ApplyStateBlock binds stage1-disabled PS")) {
+    DeleteSb();
+    return false;
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestStage0UnsupportedArgFailsAtDraw() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -14130,6 +14376,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockUpdatesFixedfuncPsForTextureStageState()) {
     return 1;
   }
   if (!aerogpu::TestStage0UnsupportedArgFailsAtDraw()) {
