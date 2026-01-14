@@ -170,6 +170,7 @@ If you provide `--token` / `TOKEN` in chunked mode, the tool treats the image as
 
 - unauthenticated GETs to `manifest.json` and a sample chunk are denied (`401/403`)
 - authenticated responses are not publicly cacheable (`Cache-Control` must not include `public`; `no-store` is recommended)
+- (When `--origin` is set) CORS preflight (`OPTIONS`) allows the `Authorization` request header (required for cross-origin browser fetches)
 
 Note: Using `Authorization` on cross-origin chunk GETs will reintroduce CORS preflight. Prefer signed URLs/cookies if you are using chunked mode specifically to avoid preflight.
 

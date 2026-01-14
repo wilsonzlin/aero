@@ -848,6 +848,111 @@ def _test_options_preflight_if_modified_since(
     except TestFailure as e:
         return TestResult(name=name, status="WARN", details=str(e))
 
+
+def _test_options_preflight_authorization(
+    *,
+    name: str,
+    url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    max_body_bytes: int,
+) -> TestResult:
+    """
+    Chunked mode helper: when the caller provides `--token`, requests will include
+    `Authorization`, which triggers CORS preflight for cross-origin fetches.
+    """
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if authorization is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no --token provided)")
+
+    try:
+        resp = _request(
+            url=url,
+            method="OPTIONS",
+            headers={
+                "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+            timeout_s=timeout_s,
+            follow_redirects=False,
+            max_body_bytes=max_body_bytes,
+        )
+        _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
+
+        _require_allow_origin(resp, origin)
+        allow_origin = (_header(resp, "Access-Control-Allow-Origin") or "").strip()
+
+        allow_methods = _header(resp, "Access-Control-Allow-Methods")
+        _require(allow_methods is not None, "missing Access-Control-Allow-Methods")
+        allow_method_tokens = _csv_tokens(allow_methods)
+        required_methods = {"get", "head"}
+        _require(
+            "*" in allow_method_tokens or required_methods.issubset(allow_method_tokens),
+            f"expected Allow-Methods to include {sorted(required_methods)} (or '*'); got {allow_methods!r}",
+        )
+
+        allow_headers = _header(resp, "Access-Control-Allow-Headers")
+        _require(allow_headers is not None, "missing Access-Control-Allow-Headers")
+        allowed = _csv_tokens(allow_headers)
+        _require(
+            "*" in allowed or "authorization" in allowed,
+            f"expected Allow-Headers to include ['authorization'] (or '*'); got {allow_headers!r}",
+        )
+
+        warnings: list[str] = []
+
+        allow_credentials = _header(resp, "Access-Control-Allow-Credentials")
+        if allow_credentials is not None:
+            ac = allow_credentials.strip().lower()
+            if ac != "true":
+                warnings.append(
+                    f"unexpected Access-Control-Allow-Credentials={allow_credentials!r} (omit or use 'true')"
+                )
+            elif allow_origin == "*":
+                warnings.append(
+                    "Access-Control-Allow-Credentials=true with Allow-Origin='*' will not work for credentialed fetches"
+                )
+
+        max_age = _header(resp, "Access-Control-Max-Age")
+        if max_age is None:
+            warnings.append("missing Access-Control-Max-Age (preflight caching recommended)")
+        else:
+            try:
+                max_age_i = int(max_age.strip())
+                if max_age_i <= 0:
+                    warnings.append(f"Access-Control-Max-Age should be > 0, got {max_age!r}")
+                elif max_age_i < 600:
+                    warnings.append(
+                        f"Access-Control-Max-Age is low ({max_age_i}s); consider >=600 to reduce preflight overhead"
+                    )
+            except ValueError:
+                warnings.append(f"invalid Access-Control-Max-Age {max_age!r}")
+
+        vary = _header(resp, "Vary")
+        if vary is None:
+            warnings.append(
+                "missing Vary (recommended: Access-Control-Request-Method, Access-Control-Request-Headers, and Origin when varying by Origin)"
+            )
+        else:
+            vary_tokens = _csv_tokens(vary)
+            recommended = {"access-control-request-method", "access-control-request-headers"}
+            if allow_origin != "*":
+                recommended.add("origin")
+            missing_vary = recommended.difference(vary_tokens)
+            if missing_vary and "*" not in vary_tokens:
+                warnings.append(f"Vary missing {sorted(missing_vary)} (got {vary!r})")
+
+        if warnings:
+            return TestResult(name=name, status="WARN", details="; ".join(warnings))
+
+        return TestResult(name=name, status="PASS", details=f"status={resp.status}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     env_mode = os.environ.get("MODE")
     env_base_url = os.environ.get("BASE_URL")
@@ -2214,6 +2319,16 @@ def _main_chunked(args: argparse.Namespace) -> int:
                 max_body_bytes=min(max_body_bytes, 1024),
             )
         )
+        results.append(
+            _test_options_preflight_authorization(
+                name="OPTIONS: (chunked) CORS preflight allows Authorization header (manifest)",
+                url=manifest_url,
+                origin=origin,
+                authorization=authorization,
+                timeout_s=timeout_s,
+                max_body_bytes=min(max_body_bytes, 1024),
+            )
+        )
 
     manifest_get, manifest_resp, manifest_json = _test_chunked_manifest_fetch(
         manifest_url=manifest_url,
@@ -2227,6 +2342,23 @@ def _main_chunked(args: argparse.Namespace) -> int:
     manifest_schema, manifest = _test_chunked_manifest_schema(raw=manifest_json)
     results.append(manifest_schema)
     results.append(_test_manifest_mime_type(name="manifest: mimeType is application/octet-stream", manifest=manifest))
+
+    if authorization is not None and manifest is not None and manifest.chunk_count > 0:
+        first_chunk_url = _derive_chunk_url(
+            manifest_url=manifest_url,
+            chunk_index=0,
+            chunk_index_width=manifest.chunk_index_width,
+        )
+        results.append(
+            _test_options_preflight_authorization(
+                name="OPTIONS: (chunked) CORS preflight allows Authorization header (chunk)",
+                url=first_chunk_url,
+                origin=origin,
+                authorization=authorization,
+                timeout_s=timeout_s,
+                max_body_bytes=min(max_body_bytes, 1024),
+            )
+        )
 
     # Manifest headers.
     results.append(
