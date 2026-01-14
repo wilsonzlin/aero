@@ -541,6 +541,82 @@ mod tests {
     }
 
     #[test]
+    fn msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
+        let mut dev = AhciPciDevice::new(1);
+        // Enable bus mastering so `process()` runs (and services interrupts) even though we don't
+        // queue any DMA work in this unit test.
+        dev.config_mut().set_command(1 << 2);
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        dev.set_msi_target(Some(Box::new(RecordingMsi { log: log.clone() })));
+
+        let cap_offset = dev
+            .config_mut()
+            .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            .expect("missing MSI capability") as u16;
+
+        // Program MSI message address/data and enable it.
+        dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+        dev.config_mut().write(cap_offset + 0x08, 4, 0);
+        dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
+        // Mask the single vector.
+        dev.config_mut().write(cap_offset + 0x10, 4, 1);
+        let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+        dev.config_mut()
+            .write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        // Synthesize an asserted interrupt by setting PxIS + PxIE with GHC.IE enabled.
+        let mut state = dev.controller.snapshot_state();
+        state.hba.ghc |= 1 << 1; // GHC.IE
+        state.ports[0].is = 1; // PxIS.DHRS
+        state.ports[0].ie = 1; // PxIE.DHRE (enable)
+        dev.controller.restore_state(&state);
+
+        let mut mem = TestMemory::new(4096);
+        dev.process(&mut mem);
+
+        // MSI should have been suppressed due to masking, and the capability should record a
+        // pending bit.
+        assert!(log.borrow().is_empty());
+        assert_ne!(
+            dev.config()
+                .capability::<MsiCapability>()
+                .expect("missing MSI capability")
+                .pending_bits()
+                & 1,
+            0
+        );
+
+        // Clear the interrupt condition before unmasking so delivery relies solely on the MSI
+        // pending bit.
+        let mut state = dev.controller.snapshot_state();
+        state.ports[0].is = 0;
+        dev.controller.restore_state(&state);
+
+        // Unmask and process again. Even though the interrupt condition is no longer asserted, the
+        // pending bit should be delivered once.
+        dev.config_mut().write(cap_offset + 0x10, 4, 0);
+        dev.process(&mut mem);
+
+        let msgs = log.borrow();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].vector(), 0x45);
+        assert_eq!(
+            dev.config()
+                .capability::<MsiCapability>()
+                .expect("missing MSI capability")
+                .pending_bits()
+                & 1,
+            0
+        );
+
+        // Subsequent polls should not spam MSI deliveries.
+        drop(msgs);
+        dev.process(&mut mem);
+        assert_eq!(log.borrow().len(), 1);
+    }
+
+    #[test]
     fn mmio_read_size0_returns_zero() {
         let mut dev = AhciPciDevice::new(1);
 

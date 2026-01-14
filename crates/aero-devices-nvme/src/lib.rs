@@ -2565,6 +2565,7 @@ mod tests {
     use super::*;
     use aero_devices::pci::msi::PCI_CAP_ID_MSI;
     use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
+    use aero_platform::interrupts::msi::MsiMessage;
     use aero_storage::{
         AeroSparseConfig, AeroSparseDisk, MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk,
         SECTOR_SIZE,
@@ -2596,6 +2597,20 @@ mod tests {
             let end = start + buf.len();
             assert!(end <= self.buf.len(), "out-of-bounds DMA write");
             self.buf[start..end].copy_from_slice(buf);
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingMsi {
+        log: Arc<Mutex<Vec<MsiMessage>>>,
+    }
+
+    impl MsiTrigger for RecordingMsi {
+        fn trigger_msi(&mut self, message: MsiMessage) {
+            self.log
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(message);
         }
     }
 
@@ -2651,6 +2666,100 @@ mod tests {
             msix.snapshot_pba()[0],
             0,
             "reset should clear MSI-X PBA pending bits"
+        );
+    }
+
+    #[test]
+    fn msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
+        let mut dev = NvmePciDevice::default();
+        // Enable bus mastering so `process()` can service interrupts.
+        dev.config_mut().set_command(1 << 2);
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        dev.set_msi_target(Some(Box::new(RecordingMsi { log: log.clone() })));
+
+        // Program MSI config space and start with the vector masked.
+        let cap_offset = dev
+            .config_mut()
+            .find_capability(PCI_CAP_ID_MSI)
+            .expect("NVMe device should expose an MSI capability") as u16;
+        dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+        dev.config_mut().write(cap_offset + 0x08, 4, 0);
+        dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
+        dev.config_mut().write(cap_offset + 0x10, 4, 1); // mask
+
+        let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+        dev.config_mut()
+            .write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001)); // MSI enable
+
+        // Synthesize an interrupt pending in the controller by seeding an IRQ-enabled completion
+        // queue with one outstanding entry (head != tail). Ensure we observe a rising edge on
+        // `intx_level` so the PCI wrapper attempts to trigger MSI.
+        dev.controller.csts |= 1; // CSTS.RDY
+        dev.controller.intx_level = false;
+        dev.controller.admin_cq = Some(CompletionQueue {
+            id: 0,
+            size: 2,
+            base: 0,
+            head: 0,
+            tail: 1,
+            phase: true,
+            irq_enabled: true,
+        });
+
+        let mut mem = TestMem::new(4096);
+        dev.process(&mut mem);
+
+        // MSI should have been suppressed due to masking, and the capability should record a
+        // pending bit.
+        assert!(log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty());
+        assert_eq!(
+            dev.config()
+                .capability::<MsiCapability>()
+                .expect("missing MSI capability")
+                .pending_bits()
+                & 1,
+            1
+        );
+
+        // Clear the interrupt condition (completion queue is now empty) before unmasking so
+        // delivery relies solely on the MSI pending bit.
+        {
+            let cq = dev.controller.admin_cq.as_mut().unwrap();
+            cq.head = cq.tail;
+        }
+
+        // Unmask and process again. Even though the interrupt condition is no longer asserted, the
+        // pending bit should be delivered once.
+        dev.config_mut().write(cap_offset + 0x10, 4, 0); // unmask
+        dev.process(&mut mem);
+
+        let msgs = log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].vector(), 0x45);
+        drop(msgs);
+
+        assert_eq!(
+            dev.config()
+                .capability::<MsiCapability>()
+                .expect("missing MSI capability")
+                .pending_bits()
+                & 1,
+            0
+        );
+
+        // Subsequent polls should not spam MSI deliveries.
+        dev.process(&mut mem);
+        assert_eq!(
+            log.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            1
         );
     }
 
