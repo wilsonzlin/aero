@@ -14,6 +14,7 @@
   "include": [
     "src",
     "tests",
+    "emulator/protocol/aerogpu/**/*.ts",
     "web/src/global.d.ts",
     "web/src/hid",
     "web/src/**/*.d.ts",
