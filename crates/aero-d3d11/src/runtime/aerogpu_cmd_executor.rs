@@ -7618,7 +7618,10 @@ impl AerogpuD3d11Executor {
                                         }
                                     }
                                     crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                        if let Some(tex) = stage_bindings
+                                            .uav_texture(*slot)
+                                            .or_else(|| stage_bindings.texture(*slot))
+                                        {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
@@ -7938,7 +7941,10 @@ impl AerogpuD3d11Executor {
                                         }
                                     }
                                     crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                                        if let Some(tex) = stage_bindings
+                                            .uav_texture(*slot)
+                                            .or_else(|| stage_bindings.texture(*slot))
+                                        {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
                                     }
@@ -12705,7 +12711,10 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                        if let Some(tex) = stage_bindings
+                            .uav_texture(*slot)
+                            .or_else(|| stage_bindings.texture(*slot))
+                        {
                             self.encoder_used_textures.insert(tex.texture);
                         }
                     }
@@ -12984,7 +12993,11 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                        if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
+                        let stage_bindings = self.bindings.stage(stage);
+                        if let Some(tex) = stage_bindings
+                            .uav_texture(*slot)
+                            .or_else(|| stage_bindings.texture(*slot))
+                        {
                             self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                         }
                     }
@@ -13221,9 +13234,11 @@ impl AerogpuD3d11Executor {
                     }
                 }
                 crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                    // Aero's binding state does not track typed UAV textures separately yet. Treat
-                    // them as best-effort aliases of the stage's `t#` bindings.
-                    if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
+                    let stage_bindings = self.bindings.stage(stage);
+                    if let Some(tex) = stage_bindings
+                        .uav_texture(*slot)
+                        .or_else(|| stage_bindings.texture(*slot))
+                    {
                         self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                     }
                 }
@@ -13389,7 +13404,10 @@ impl AerogpuD3d11Executor {
                     }
                 }
                 crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                    if let Some(tex) = stage_bindings.texture(*slot) {
+                    if let Some(tex) = stage_bindings
+                        .uav_texture(*slot)
+                        .or_else(|| stage_bindings.texture(*slot))
+                    {
                         self.encoder_used_textures.insert(tex.texture);
                     }
                 }
