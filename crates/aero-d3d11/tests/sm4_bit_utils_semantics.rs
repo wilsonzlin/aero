@@ -222,6 +222,11 @@ fn compute_bit_utils_produce_expected_results() {
             label: Some("sm4_bit_utils_semantics empty bind group layout"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sm4_bit_utils_semantics empty bind group"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sm4_bit_utils_semantics bind group 2 layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -288,6 +293,9 @@ fn compute_bit_utils_produce_expected_results() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -464,6 +472,11 @@ fn compute_isubc_and_usubb_produce_expected_carry_and_borrow() {
             label: Some("sm4_isubc_usubb_semantics empty bind group layout"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sm4_isubc_usubb_semantics empty bind group"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sm4_isubc_usubb_semantics bind group 2 layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -530,6 +543,9 @@ fn compute_isubc_and_usubb_produce_expected_carry_and_borrow() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -737,6 +753,11 @@ fn compute_uaddc_and_iaddc_produce_expected_sum_and_carry() {
             label: Some("sm4_uaddc_iaddc_semantics empty bind group layout"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sm4_uaddc_iaddc_semantics empty bind group"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sm4_uaddc_iaddc_semantics bind group 2 layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -803,6 +824,9 @@ fn compute_uaddc_and_iaddc_produce_expected_sum_and_carry() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

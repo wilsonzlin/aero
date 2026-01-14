@@ -121,6 +121,11 @@ fn compute_store_raw_writes_u32_word() {
             label: Some("compute_store_raw empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_store_raw empty bg"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         let uav_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("compute_store_raw uav bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -168,6 +173,9 @@ fn compute_store_raw_writes_u32_word() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
             pass.set_bind_group(2, &uav_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

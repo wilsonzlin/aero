@@ -186,6 +186,16 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
             label: Some("empty bind group layout 1"),
             entries: &[],
         });
+        let empty_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("empty bind group 0"),
+            layout: &empty_group0,
+            entries: &[],
+        });
+        let empty_bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("empty bind group 1"),
+            layout: &empty_group1,
+            entries: &[],
+        });
         let group2 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ld_raw bind group layout"),
             entries: &[
@@ -249,6 +259,9 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg0, &[]);
+            pass.set_bind_group(1, &empty_bg1, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }

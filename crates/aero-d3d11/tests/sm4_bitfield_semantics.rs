@@ -206,6 +206,16 @@ fn compute_bitfield_ops_produce_expected_results() {
             label: Some("sm4 bitfield semantics empty bind group layout 1"),
             entries: &[],
         });
+        let empty_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sm4 bitfield semantics empty bind group 0"),
+            layout: &empty_group0,
+            entries: &[],
+        });
+        let empty_bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sm4 bitfield semantics empty bind group 1"),
+            layout: &empty_group1,
+            entries: &[],
+        });
         let group2 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sm4 bitfield semantics bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -268,6 +278,9 @@ fn compute_bitfield_ops_produce_expected_results() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg0, &[]);
+            pass.set_bind_group(1, &empty_bg1, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
