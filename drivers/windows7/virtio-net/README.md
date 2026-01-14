@@ -237,7 +237,7 @@ Instead, it supports a simple **best-effort** per-device registry configuration:
   - Preferred (multiple VLANs): `VlanIds` (`REG_MULTI_SZ`)
     - Each string entry is a decimal VLAN ID
     - Valid range per entry: `1..4094`
-    - Maximum entries applied: `64` (duplicates ignored)
+    - Maximum entries attempted: `64` (duplicates ignored; stops early on first failure)
     - If present, `VlanIds` overrides the legacy `VlanId` setting
   - Legacy (single VLAN): `VlanId` (`REG_DWORD`)
     - Valid range: `1..4094`
