@@ -113,9 +113,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     // Transfers only execute while the controller is running (USBCMD.RUN=1).
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
-    // Transfers only execute while the controller is running.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
     ctrl.set_dcbaap(dcbaa);
     // Transfer execution only runs while USBCMD.RUN is set.
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
@@ -181,9 +178,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfers only execute while the controller is running (USBCMD.RUN=1).
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
-
-    // Transfers only execute while the controller is running.
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
