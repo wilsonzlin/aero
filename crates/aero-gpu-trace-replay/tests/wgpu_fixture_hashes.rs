@@ -358,6 +358,24 @@ fn replays_aerogpu_cmd_texture_ld_b5g5r5a1_fixture_and_matches_hash() {
 }
 
 #[test]
+fn replays_aerogpu_cmd_texture_ld_b8g8r8a8_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path("aerogpu_cmd_texture_ld_b8g8r8a8.aerogputrace"))
+        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Expected frame is solid yellow (BGRA upload interpreted correctly).
+        assert_eq!(
+            hash,
+            "026e53cb3a4319b55b4a231c7ab876ecabf61ac033aae30e920e61feccb3de06"
+        );
+    });
+}
+
+#[test]
 fn replays_aerogpu_cmd_clear_b8g8r8x8_fixture_and_matches_hash() {
     let bytes = fs::read(fixture_path("aerogpu_cmd_clear_b8g8r8x8.aerogputrace"))
         .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
