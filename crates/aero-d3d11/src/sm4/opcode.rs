@@ -460,7 +460,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     #[test]
     fn opcode_name_includes_switch_ops() {
@@ -527,27 +526,32 @@ mod tests {
 
     #[test]
     fn opcode_constants_do_not_collide_between_integer_ops_and_compares() {
-        let ops = [
-            OPCODE_IADD,
-            OPCODE_ISUB,
-            OPCODE_IMUL,
-            OPCODE_AND,
-            OPCODE_OR,
-            OPCODE_XOR,
-            OPCODE_NOT,
-            OPCODE_ISHL,
-            OPCODE_ISHR,
-            OPCODE_USHR,
-            OPCODE_IEQ,
-            OPCODE_IGE,
-            OPCODE_ILT,
-            OPCODE_INE,
-            OPCODE_ULT,
-            OPCODE_UGE,
+        let opcodes: &[(&'static str, u32)] = &[
+            ("iadd", OPCODE_IADD),
+            ("isub", OPCODE_ISUB),
+            ("imul", OPCODE_IMUL),
+            ("and", OPCODE_AND),
+            ("or", OPCODE_OR),
+            ("xor", OPCODE_XOR),
+            ("not", OPCODE_NOT),
+            ("ishl", OPCODE_ISHL),
+            ("ishr", OPCODE_ISHR),
+            ("ushr", OPCODE_USHR),
+            ("ieq", OPCODE_IEQ),
+            ("ige", OPCODE_IGE),
+            ("ilt", OPCODE_ILT),
+            ("ine", OPCODE_INE),
+            ("ult", OPCODE_ULT),
+            ("uge", OPCODE_UGE),
         ];
-        let mut seen = HashSet::new();
-        for &op in &ops {
-            assert!(seen.insert(op), "opcode collision detected: {op:#x}");
+
+        let mut seen = std::collections::BTreeMap::<u32, &'static str>::new();
+        for &(name, opcode) in opcodes {
+            if let Some(prev) = seen.insert(opcode, name) {
+                panic!(
+                    "opcode constant collision: {prev} and {name} both map to 0x{opcode:04x}"
+                );
+            }
         }
     }
 }
