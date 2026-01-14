@@ -102,7 +102,9 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     }
 
     // Ensure the external hub has enough ports by attaching/detaching a dummy device behind it.
-    // Ports 1..=4 are reserved for synthetic HID devices; dynamic passthrough devices start at 5.
+    //
+    // Ports 1..=4 are reserved for the built-in synthetic devices (keyboard, mouse, gamepad,
+    // consumer-control). Dynamic passthrough devices start at 5.
     {
         let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
         m.usb_attach_at_path(&[0, 5], Box::new(dummy))

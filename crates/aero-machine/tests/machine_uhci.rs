@@ -92,11 +92,8 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
 
     // Attach a built-in USB HID keyboard directly to UHCI root port 0.
     let keyboard = UsbHidKeyboardHandle::new();
-    let uhci = m.uhci().expect("UHCI device should exist");
-    uhci.borrow_mut()
-        .controller_mut()
-        .hub_mut()
-        .attach(0, Box::new(keyboard));
+    m.usb_attach_root(0, Box::new(keyboard))
+        .expect("attach should succeed");
 
     let portsc_attached = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
     assert_ne!(
@@ -111,8 +108,7 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
     );
 
     // Detach and ensure connect status clears but change bit remains latched.
-    let uhci = m.uhci().expect("UHCI device should exist");
-    uhci.borrow_mut().controller_mut().hub_mut().detach(0);
+    m.usb_detach_root(0).expect("detach should succeed");
     let portsc_detached = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
     assert_eq!(portsc_detached & 0x0001, 0, "CCS should clear after detach");
     assert_ne!(portsc_detached & 0x0002, 0, "CSC should latch after detach");

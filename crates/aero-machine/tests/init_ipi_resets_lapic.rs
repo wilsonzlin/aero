@@ -67,7 +67,7 @@ fn init_ipi_assert_resets_target_lapic_state() {
     assert_eq!(
         svr & 0x1FF,
         0x1FF,
-        "expected SVR to be reset to platform baseline (software-enabled, spurious vector 0xFF)"
+        "expected INIT to reset SVR spurious vector to 0xFF while leaving LAPIC software-enabled in APIC mode"
     );
 
     for i in 0..8u64 {
