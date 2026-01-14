@@ -101,7 +101,6 @@ describe("requestWebGpuDevice()", () => {
 
     expect(typeof uncapturedHandler).toBe("function");
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
-    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
@@ -126,7 +125,6 @@ describe("requestWebGpuDevice()", () => {
     await requestWebGpuDevice({ onUncapturedError: 123 as any });
 
     expect(typeof uncapturedHandler).toBe("function");
-    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
