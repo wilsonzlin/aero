@@ -566,6 +566,15 @@ async function spawnRelayServer(extraEnv = {}) {
          AERO_TURN_URLS: "",
          AERO_TURN_USERNAME: "",
          AERO_TURN_CREDENTIAL: "",
+         // Avoid environment proxy leakage impacting backend WebSocket dialing.
+         HTTP_PROXY: "",
+         HTTPS_PROXY: "",
+         ALL_PROXY: "",
+         NO_PROXY: "",
+         http_proxy: "",
+         https_proxy: "",
+         all_proxy: "",
+         no_proxy: "",
          // Allow the UDP echo server on localhost.
         DESTINATION_POLICY_PRESET: "dev",
         ALLOW_PRIVATE_NETWORKS: "true",
