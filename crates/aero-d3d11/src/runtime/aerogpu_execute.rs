@@ -477,7 +477,8 @@ impl AerogpuCmdRuntime {
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse DXBC shader chunk")?;
 
-        // SM5 geometry shaders can emit to multiple output streams via `emit_stream` / `cut_stream`.
+        // SM5 geometry shaders can emit to multiple output streams via
+        // `emit_stream` / `cut_stream` / `emitthen_cut_stream`.
         // Aero's initial GS bring-up only targets stream 0, so reject any shaders that use a
         // non-zero stream index with a clear diagnostic.
         //
@@ -1902,8 +1903,8 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
 
 fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
     // DXBC encodes SM4/SM5 shaders as a stream of DWORD tokens. We only need to recognize the
-    // `emit_stream` / `cut_stream` instruction forms, which carry the stream index as an
-    // immediate32 operand.
+    // `emit_stream` / `cut_stream` / `emitthen_cut_stream` instruction forms, which carry the
+    // stream index as an immediate32 operand.
     //
     // Keep this scan token-level (rather than using the full decoder) so we can detect unsupported
     // multi-stream usage even when other parts of the shader are not yet decodable/translateable.
@@ -1929,12 +1930,15 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
             Some("emit_stream")
         } else if opcode == sm4_opcode::OPCODE_CUT_STREAM {
             Some("cut_stream")
+        } else if opcode == sm4_opcode::OPCODE_EMITTHENCUT_STREAM {
+            Some("emitthen_cut_stream")
         } else {
             None
         };
 
         if let Some(op_name) = stream_opcode_name {
-            // `emit_stream` / `cut_stream` take exactly one operand: an immediate32 scalar
+            // `emit_stream` / `cut_stream` / `emitthen_cut_stream` take exactly one operand: an
+            // immediate32 scalar
             // (replicated lanes) indicating the stream index.
             //
             // Skip any extended opcode tokens to find the operand token.

@@ -4666,11 +4666,13 @@ fn emit_instructions(
                 };
                 return Err(ShaderTranslateError::UnsupportedInstruction { inst_index, opcode });
             }
-            Sm4Inst::EmitThenCut { .. } => {
-                return Err(ShaderTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode: "emitthen_cut".to_owned(),
-                });
+            Sm4Inst::EmitThenCut { stream } => {
+                let opcode = if *stream == 0 {
+                    "emitthen_cut".to_owned()
+                } else {
+                    format!("emitthen_cut_stream({stream})")
+                };
+                return Err(ShaderTranslateError::UnsupportedInstruction { inst_index, opcode });
             }
             Sm4Inst::Ret => {
                 // DXBC `ret` returns from the current shader invocation. We only need to emit an
