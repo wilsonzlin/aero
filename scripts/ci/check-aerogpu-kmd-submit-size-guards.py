@@ -140,6 +140,29 @@ def main() -> int:
             f"{SRC.relative_to(ROOT)}: missing AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT definition"
         )
 
+    # --- AeroGpuSubmissionMetaTotalBytes (meta byte accounting) ---
+    try:
+        body = _extract_function(text, "AeroGpuSubmissionMetaTotalBytes")
+        errors.extend(
+            e
+            for e in [
+                _require(
+                    body,
+                    "AeroGpuSubmissionMetaTotalBytes allocBytes/metaBytes sizing",
+                    r"RtlSizeTMult\s*\(\s*\(\s*SIZE_T\s*\)\s*Meta->AllocationCount\s*,\s*sizeof\s*\(\s*aerogpu_legacy_submission_desc_allocation\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"RtlSizeTAdd\s*\(\s*FIELD_OFFSET\s*\(\s*AEROGPU_SUBMISSION_META\s*,\s*Allocations\s*\)\s*,\s*(?P=alloc_var)\s*,\s*&(?P<meta_var>[A-Za-z0-9_]+)\s*\)",
+                ),
+                _require(
+                    body,
+                    "AeroGpuSubmissionMetaTotalBytes overflow sentinel",
+                    r"0xFFFFFFFFFFFFFFFFull",
+                ),
+            ]
+            if e
+        )
+    except Exception as e:  # pragma: no cover
+        errors.append(f"{SRC.relative_to(ROOT)}: {e}")
+
     # --- AeroGpuBuildAndAttachMeta ---
     try:
         body = _extract_function(text, "AeroGpuBuildAndAttachMeta")
