@@ -693,7 +693,7 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 }
 
 #[test]
-fn drain_pending_submissions_filters_out_submissions_completed_before_drain() {
+fn drain_pending_submissions_includes_submissions_completed_before_drain() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
         executor: AeroGpuExecutorConfig {
@@ -748,14 +748,16 @@ fn drain_pending_submissions_filters_out_submissions_completed_before_drain() {
     dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 0);
 
-    // If fence 1 is completed before the external backend drains submissions, the already-complete
-    // submission must not be returned again.
+    // In Deferred + external-backend mode, submissions should be drained even if their fence has
+    // already completed. Some guest drivers reuse the most recent fence for internal (NO_IRQ)
+    // work, and those submissions can still carry important side effects.
     dev.complete_fence(&mut mem, 1);
     assert_eq!(dev.regs.completed_fence, 1);
 
     let subs = dev.drain_pending_submissions();
-    assert_eq!(subs.len(), 1);
-    assert_eq!(subs[0].signal_fence, 2);
+    assert_eq!(subs.len(), 2);
+    assert_eq!(subs[0].signal_fence, 1);
+    assert_eq!(subs[1].signal_fence, 2);
 
     dev.complete_fence(&mut mem, 2);
     assert_eq!(dev.regs.completed_fence, 2);
