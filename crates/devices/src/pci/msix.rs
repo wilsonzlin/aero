@@ -567,6 +567,19 @@ mod tests {
     }
 
     #[test]
+    fn restore_pba_bytes_masks_reserved_bits() {
+        // Same as `restore_pba_masks_reserved_bits`, but exercising the byte-based restore path
+        // used by several device snapshots.
+        let mut cap = MsixCapability::new(1, 0, 0x1000, 0, 0x2000);
+        cap.restore_pba_bytes(&[0xFFu8; 8]).unwrap();
+        assert_eq!(
+            cap.snapshot_pba()[0],
+            1,
+            "reserved MSI-X PBA bits should be masked to zero"
+        );
+    }
+
+    #[test]
     fn invalid_msix_address_latches_pending_and_delivers_after_programming() {
         let mut config = PciConfigSpace::new(0x1234, 0x5678);
         config.add_capability(Box::new(MsixCapability::new(1, 0, 0x1000, 0, 0x2000)));
