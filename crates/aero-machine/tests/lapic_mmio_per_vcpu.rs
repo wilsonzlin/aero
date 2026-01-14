@@ -1,5 +1,7 @@
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::interrupts::{
+    InterruptInput, MsiMessage, MsiTrigger, PlatformInterruptMode, PlatformInterrupts,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -58,6 +60,51 @@ fn assert_ioapic_delivers_to_apic(
     }
 }
 
+fn msi_message(dest_apic_id: u8, vector: u8) -> MsiMessage {
+    MsiMessage {
+        // xAPIC physical destination encoding.
+        address: 0xFEE0_0000u64 | (u64::from(dest_apic_id) << 12),
+        data: vector as u16,
+    }
+}
+
+fn assert_msi_delivers_to_apic(
+    interrupts: &Rc<RefCell<PlatformInterrupts>>,
+    cpu_count: u8,
+    dest_apic_id: u8,
+    vector: u8,
+) {
+    // MSI delivery is APIC-local; make sure we're in APIC mode so `get_pending_for_apic` observes
+    // LAPIC IRR state rather than the legacy PIC.
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+
+    let mut sink = interrupts.clone();
+    sink.trigger_msi(msi_message(dest_apic_id, vector));
+
+    assert_eq!(
+        interrupts.borrow().get_pending_for_apic(dest_apic_id),
+        Some(vector)
+    );
+    for apic_id in 0..cpu_count {
+        if apic_id == dest_apic_id {
+            continue;
+        }
+        assert_eq!(interrupts.borrow().get_pending_for_apic(apic_id), None);
+    }
+
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.acknowledge_for_apic(dest_apic_id, vector);
+        ints.eoi_for_apic(dest_apic_id, vector);
+    }
+
+    for apic_id in 0..cpu_count {
+        assert_eq!(interrupts.borrow().get_pending_for_apic(apic_id), None);
+    }
+}
+
 #[test]
 fn lapic_mmio_is_routed_per_vcpu() {
     let cfg = MachineConfig {
@@ -99,6 +146,7 @@ fn lapic_mmio_cpu_ids_persist_after_machine_reset() {
 
     let interrupts = m.platform_interrupts().unwrap();
     assert_ioapic_delivers_to_apic(&interrupts, 4, 3, 0x44);
+    assert_msi_delivers_to_apic(&interrupts, 4, 3, 0x45);
 
     // Ensure that `Machine::reset()` does not accidentally collapse a multi-LAPIC topology back to a
     // single BSP-only interrupt complex.
@@ -109,6 +157,6 @@ fn lapic_mmio_cpu_ids_persist_after_machine_reset() {
         assert_eq!(id, cpu as u32);
     }
 
-    let interrupts = m.platform_interrupts().unwrap();
     assert_ioapic_delivers_to_apic(&interrupts, 4, 3, 0x44);
+    assert_msi_delivers_to_apic(&interrupts, 4, 3, 0x45);
 }
