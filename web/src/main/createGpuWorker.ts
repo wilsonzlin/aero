@@ -45,6 +45,16 @@ export interface GpuWorkerHandle {
    * Publish an RGBA8 frame (top-left origin) into the shared framebuffer and trigger a tick.
    */
   presentRgba8(rgba8: Uint8Array): void;
+  /**
+   * Set the cursor image (RGBA8, top-left origin) used by the worker presenter.
+   *
+   * The buffer is transferred to the worker.
+   */
+  setCursorImageRgba8(width: number, height: number, rgba8: ArrayBuffer): void;
+  /**
+   * Update the cursor enabled state and position (in source framebuffer pixel coordinates).
+   */
+  setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number): void;
   submitAerogpu(
     cmdStream: ArrayBuffer,
     signalFence: bigint,
@@ -324,6 +334,27 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
   }
 
+  function setCursorImageRgba8(width: number, height: number, rgba8: ArrayBuffer): void {
+    const w = Math.max(0, width | 0);
+    const h = Math.max(0, height | 0);
+    if (w === 0 || h === 0) {
+      throw new Error("setCursorImageRgba8 width/height must be non-zero");
+    }
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: w, height: h, rgba8 }, [rgba8]);
+  }
+
+  function setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number): void {
+    worker.postMessage({
+      ...GPU_MESSAGE_BASE,
+      type: "cursor_set_state",
+      enabled: !!enabled,
+      x: x | 0,
+      y: y | 0,
+      hotX: hotX | 0,
+      hotY: hotY | 0,
+    });
+  }
+
   function submitAerogpu(
     cmdStream: ArrayBuffer,
     signalFence: bigint,
@@ -407,6 +438,8 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     resize,
     presentTestPattern,
     presentRgba8,
+    setCursorImageRgba8,
+    setCursorState,
     submitAerogpu,
     requestScreenshot,
     requestPresentedScreenshot,

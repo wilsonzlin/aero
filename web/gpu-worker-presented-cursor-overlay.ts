@@ -1,4 +1,3 @@
-import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { createGpuWorker } from "./src/main/createGpuWorker";
 import { srgbEncodeChannel } from "./src/gpu/test-card";
 
@@ -99,27 +98,8 @@ async function main() {
 
     // Cursor image: 1x1 red @ 50% alpha.
     const cursorBytes = new Uint8Array([255, 0, 0, 128]);
-    gpu.worker.postMessage(
-      {
-        protocol: GPU_PROTOCOL_NAME,
-        protocolVersion: GPU_PROTOCOL_VERSION,
-        type: "cursor_set_image",
-        width: 1,
-        height: 1,
-        rgba8: cursorBytes.buffer,
-      },
-      [cursorBytes.buffer],
-    );
-    gpu.worker.postMessage({
-      protocol: GPU_PROTOCOL_NAME,
-      protocolVersion: GPU_PROTOCOL_VERSION,
-      type: "cursor_set_state",
-      enabled: true,
-      x: 0,
-      y: 0,
-      hotX: 0,
-      hotY: 0,
-    });
+    gpu.setCursorImageRgba8(1, 1, cursorBytes.buffer);
+    gpu.setCursorState(true, 0, 0, 0, 0);
 
     const shotNoCursor = await gpu.requestPresentedScreenshot();
     const rgbaNoCursor = new Uint8Array(shotNoCursor.rgba8);
