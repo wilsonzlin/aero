@@ -125,6 +125,9 @@ param(
 
   # If set, require that the corresponding virtio PCI function has MSI-X enabled.
   # Verification is performed via QMP/QEMU introspection (query-pci or HMP `info pci` fallback).
+  #
+  # For virtio-blk, this also requires the guest to report running in MSI-X mode via:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioNetMsix,
 
