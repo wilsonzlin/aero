@@ -236,6 +236,27 @@ def _check_mode_dispatch_precedes_admin_requirement(text: str) -> bool:
     return min(dispatch_positions) < admin_pos
 
 
+def _has_cleanupstorage_force_gate(text: str) -> bool:
+    """
+    Guardrail for uninstall safety: /cleanupstorage is boot-critical and must be
+    ignored in non-interactive mode unless explicitly forced.
+    """
+
+    block = _label_block(text, "maybe_cleanup_storage_preseed")
+    if block is None:
+        return False
+
+    af_var = r"(?:%ARG_FORCE%|!ARG_FORCE!)"
+    csf_var = r"(?:%ARG_CLEANUP_STORAGE_FORCE%|!ARG_CLEANUP_STORAGE_FORCE!)"
+
+    # Require a "force-mode gate" that exits early unless cleanupstorageforce is set.
+    m = re.search(
+        rf'(?is)if\s+"{af_var}"\s*==\s*"1"\s+if\s+not\s+"{csf_var}"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0',
+        block,
+    )
+    return m is not None
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -602,6 +623,21 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Uninstaller references installed media provenance file written by setup.cmd",
             expected_hint="installed-media.txt",
             predicate=_regex(r"installed-media\.txt"),
+        ),
+        Invariant(
+            description="Uninstaller parses /cleanupstorage and /cleanupstorageforce flags",
+            expected_hint='ARG_CLEANUP_STORAGE=1 and ARG_CLEANUP_STORAGE_FORCE=1 assignments in arg parsing',
+            predicate=_all_regex(
+                [
+                    r'(?i)/cleanupstorage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
+                    r'(?i)/cleanupstorageforce"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
+                ]
+            ),
+        ),
+        Invariant(
+            description="/cleanupstorage is gated in /force mode (ignored unless /cleanupstorageforce is provided)",
+            expected_hint='In :maybe_cleanup_storage_preseed, if ARG_FORCE==1 and ARG_CLEANUP_STORAGE_FORCE!=1 then exit /b 0',
+            predicate=_has_cleanupstorage_force_gate,
         ),
     ]
 
