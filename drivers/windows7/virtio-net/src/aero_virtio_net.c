@@ -1973,7 +1973,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
       InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
-      Adapter->StatTxTcpCsumFallback++;
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxTcpCsumFallback);
     } else if (Intent.WantUdpChecksum) {
       InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
       if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
@@ -1982,7 +1982,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
       InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
-      Adapter->StatTxUdpCsumFallback++;
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxUdpCsumFallback);
     } else {
       return NDIS_STATUS_INVALID_PACKET;
     }
@@ -2022,7 +2022,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
         InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
-        Adapter->StatTxTcpCsumFallback++;
+        InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxTcpCsumFallback);
       } else if (Intent.WantUdpChecksum) {
         InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
         if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
@@ -2031,7 +2031,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
         InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
-        Adapter->StatTxUdpCsumFallback++;
+        InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxUdpCsumFallback);
       }
 
       RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
@@ -2052,7 +2052,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
-          Adapter->StatTxTcpCsumFallback++;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxTcpCsumFallback);
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -2065,7 +2065,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
-          Adapter->StatTxUdpCsumFallback++;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxUdpCsumFallback);
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -2082,7 +2082,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
-          Adapter->StatTxTcpCsumFallback++;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxTcpCsumFallback);
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -2095,7 +2095,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
-          Adapter->StatTxUdpCsumFallback++;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxUdpCsumFallback);
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -2108,9 +2108,9 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
 
   if (Intent.WantUdpChecksum) {
-    Adapter->StatTxUdpCsumOffload++;
+    InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxUdpCsumOffload);
   } else if (Intent.WantTcpChecksum || Intent.WantTso) {
-    Adapter->StatTxTcpCsumOffload++;
+    InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxTcpCsumOffload);
   }
 
   // For checksum offload, virtio-net expects the checksum field in the packet to
