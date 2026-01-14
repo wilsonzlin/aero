@@ -6,6 +6,8 @@ Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero
 
 In particular, `d3d10_map_do_not_wait`, `d3d10_1_map_do_not_wait`, and `d3d11_map_do_not_wait` validate that `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll (never hanging the caller) and reports `DXGI_ERROR_WAS_STILL_DRAWING` when GPU work is still in flight.
 
+`modeset_roundtrip_sanity` validates that the AeroGPU KMD can switch between at least two reported desktop modes and that `QUERY_SCANOUT` (cached + MMIO) tracks the desktop resolution after each switch. It requires a 32bpp desktop mode and will temporarily change the guest resolution (best-effort restore on exit/crash).
+
 For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-table entries must be non-null vs safely stubbable, see:
 
 * `docs/graphics/win7-d3d11ddi-function-tables.md`
