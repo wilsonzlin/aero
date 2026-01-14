@@ -77,14 +77,14 @@ mod sparse;
 mod util;
 mod vhd;
 
-pub use backend::{MemBackend, StorageBackend};
+pub use backend::{MemBackend, ReadOnlyBackend, StorageBackend};
 #[cfg(not(target_arch = "wasm32"))]
 pub use backend::StdFileBackend;
 #[cfg(not(target_arch = "wasm32"))]
 pub use backend::FileBackend;
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
-pub use disk::{RawDisk, VirtualDisk, SECTOR_SIZE};
+pub use disk::{RawDisk, ReadOnlyDisk, VirtualDisk, SECTOR_SIZE};
 pub use error::{DiskError, Result};
 pub use formats::{detect_format, DiskFormat, DiskImage};
 pub use qcow2::Qcow2Disk;

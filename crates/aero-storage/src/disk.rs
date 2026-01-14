@@ -78,6 +78,53 @@ pub trait VirtualDisk {
     }
 }
 
+/// Read-only wrapper for a [`VirtualDisk`].
+///
+/// This is the disk-oriented companion to [`crate::ReadOnlyBackend`]. It is typically the most
+/// convenient way to enforce read-only access for emulator-facing code, since it can turn `flush`
+/// into a no-op while still rejecting writes.
+pub struct ReadOnlyDisk<D> {
+    inner: D,
+}
+
+impl<D> ReadOnlyDisk<D> {
+    #[must_use]
+    pub fn new(inner: D) -> Self {
+        Self { inner }
+    }
+
+    #[must_use]
+    pub fn inner(&self) -> &D {
+        &self.inner
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> D {
+        self.inner
+    }
+}
+
+impl<D: VirtualDisk> VirtualDisk for ReadOnlyDisk<D> {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+        Err(DiskError::NotSupported("read-only".into()))
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        // Intentionally a no-op: this wrapper exists to prevent writes. Some emulator code calls
+        // `flush()` unconditionally, and returning an error would make a read-only disk harder to
+        // use in practice.
+        Ok(())
+    }
+}
+
 impl<T: VirtualDisk + ?Sized> VirtualDisk for Box<T> {
     fn capacity_bytes(&self) -> u64 {
         (**self).capacity_bytes()

@@ -103,6 +103,53 @@ impl<T: StorageBackend + ?Sized> StorageBackend for Box<T> {
     }
 }
 
+/// Read-only wrapper for a [`StorageBackend`].
+///
+/// This is useful for enforcing safety (e.g. opening ISO images or base layers) where the caller
+/// must not be able to resize or write to the underlying backing store.
+pub struct ReadOnlyBackend<B> {
+    inner: B,
+}
+
+impl<B> ReadOnlyBackend<B> {
+    #[must_use]
+    pub fn new(inner: B) -> Self {
+        Self { inner }
+    }
+
+    #[must_use]
+    pub fn inner(&self) -> &B {
+        &self.inner
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
+}
+
+impl<B: StorageBackend> StorageBackend for ReadOnlyBackend<B> {
+    fn len(&mut self) -> Result<u64> {
+        self.inner.len()
+    }
+
+    fn set_len(&mut self, _len: u64) -> Result<()> {
+        Err(DiskError::NotSupported("read-only".into()))
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+        Err(DiskError::NotSupported("read-only".into()))
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Err(DiskError::NotSupported("read-only".into()))
+    }
+}
+
 /// In-memory storage backend used for tests and benchmarks.
 #[derive(Clone, Debug, Default)]
 pub struct MemBackend {
