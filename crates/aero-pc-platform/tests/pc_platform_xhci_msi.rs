@@ -82,6 +82,69 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
 }
 
 #[test]
+fn pc_platform_xhci_msi_config_is_synced_before_mmio_side_effect_interrupt() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Switch into APIC mode so MSI delivery reaches the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    pci_enable_mmio(&mut pc, bdf);
+    pci_enable_bus_mastering(&mut pc, bdf);
+
+    // Program and enable MSI in canonical PCI config space, but do not call `tick` to sync it into
+    // the xHCI device model. The MMIO wrapper (`PciConfigSyncedMmioBar`) must synchronize MSI
+    // capability state before dispatching the MMIO write below.
+    let msi_cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSI)
+        .expect("xHCI should expose an MSI capability in PCI config space");
+    let base = u16::from(msi_cap);
+
+    let vector: u8 = 0x68;
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0xfee0_0000);
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x0c, u16::from(vector));
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 0); // unmask
+    let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    let bar0_base = pci_read_bar(&mut pc, bdf, XhciPciDevice::MMIO_BAR_INDEX).base;
+    assert_ne!(bar0_base, 0);
+
+    // Provide a non-zero command ring pointer so the xHCI controller's DMA-on-RUN probe can touch
+    // guest memory and assert an interrupt condition on the USBCMD.RUN edge.
+    let crcr_paddr: u64 = 0x1000;
+    pc.memory.write_u32(crcr_paddr, 0);
+    pc.memory
+        .write_u32(bar0_base + regs::REG_CRCR_LO, crcr_paddr as u32);
+    pc.memory.write_u32(bar0_base + regs::REG_CRCR_HI, 0);
+
+    // Start the controller. This triggers an interrupt attempt as an immediate MMIO side effect;
+    // MSI should be delivered (and INTx suppressed) even though we never explicitly synced PCI
+    // config into the device model via `tick`.
+    pc.memory
+        .write_u32(bar0_base + regs::REG_USBCMD, regs::USBCMD_RUN);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+    assert!(
+        !pc.xhci.as_ref().unwrap().borrow().irq_level(),
+        "xHCI INTx should be suppressed while MSI is active"
+    );
+}
+
+#[test]
 fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
