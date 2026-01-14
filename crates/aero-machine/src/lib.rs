@@ -5184,6 +5184,123 @@ impl Machine {
     pub fn usb_hid_gamepad_handle(&self) -> Option<aero_usb::hid::UsbHidGamepadHandle> {
         self.usb_hid_gamepad.clone()
     }
+
+    /// Attach a USB device model to an EHCI root hub port.
+    ///
+    /// `port` is 0-based (the canonical ICH9-style EHCI model exposes 6 root ports: `0..=5`).
+    ///
+    /// If EHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_ehci_attach_root(
+        &mut self,
+        port: u8,
+        model: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let path = [port];
+        self.usb_ehci_attach_at_path(&path, model)
+    }
+
+    /// Detach any USB device model from an EHCI root hub port.
+    ///
+    /// `port` is 0-based (the canonical ICH9-style EHCI model exposes 6 root ports: `0..=5`).
+    ///
+    /// If EHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_ehci_detach_root(&mut self, port: u8) -> Result<(), aero_usb::UsbHubAttachError> {
+        let path = [port];
+        self.usb_ehci_detach_at_path(&path)
+    }
+
+    /// Attach a USB device model at a topology path rooted at the EHCI root hub.
+    ///
+    /// `path` is a list of ports starting at the root hub:
+    /// - `path[0]`: EHCI root port index (0-based).
+    /// - `path[1..]`: downstream hub port numbers (1-based, per the USB hub spec).
+    ///
+    /// If EHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_ehci_attach_path(
+        &mut self,
+        path: &[u8],
+        model: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        self.usb_ehci_attach_at_path(path, model)
+    }
+
+    /// Detach any USB device model at a topology path rooted at the EHCI root hub.
+    ///
+    /// `path` is a list of ports starting at the root hub:
+    /// - `path[0]`: EHCI root port index (0-based).
+    /// - `path[1..]`: downstream hub port numbers (1-based, per the USB hub spec).
+    ///
+    /// If EHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_ehci_detach_path(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        self.usb_ehci_detach_at_path(path)
+    }
+
+    /// Attach a USB device model at a topology path on the EHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::ehci::RootHub::attach_at_path`]:
+    /// - `path[0]` is the **root port index** (0-based).
+    /// - `path[1..]` are **hub port numbers** (1-based) for any nested hubs.
+    ///
+    /// If EHCI is not enabled on this machine, this call is a no-op.
+    pub fn usb_ehci_attach_at_path(
+        &mut self,
+        path: &[u8],
+        dev: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let Some(ehci) = &self.ehci else {
+            return Ok(());
+        };
+
+        let Some((&root_port, _)) = path.split_first() else {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        };
+
+        let port_count = {
+            let ehci = ehci.borrow();
+            ehci.controller().hub().num_ports()
+        };
+        if root_port as usize >= port_count {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        }
+
+        ehci.borrow_mut()
+            .controller_mut()
+            .hub_mut()
+            .attach_at_path(path, dev)
+    }
+
+    /// Detach any USB device model at a topology path on the EHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::ehci::RootHub::detach_at_path`]. If EHCI is not enabled on
+    /// this machine, this call is a no-op.
+    pub fn usb_ehci_detach_at_path(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let Some(ehci) = &self.ehci else {
+            return Ok(());
+        };
+
+        let Some((&root_port, _)) = path.split_first() else {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        };
+
+        let port_count = {
+            let ehci = ehci.borrow();
+            ehci.controller().hub().num_ports()
+        };
+        if root_port as usize >= port_count {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        }
+
+        ehci.borrow_mut()
+            .controller_mut()
+            .hub_mut()
+            .detach_at_path(path)
+    }
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
