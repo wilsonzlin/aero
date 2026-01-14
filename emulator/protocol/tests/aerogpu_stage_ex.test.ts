@@ -40,3 +40,9 @@ test("extended stage_ex packets (shader_stage=COMPUTE, reserved0!=0) resolve GS/
   }
 });
 
+test("AerogpuShaderStageEx intentionally omits Vertex=1 (DXBC program type) and treats it as invalid", () => {
+  // stage_ex uses DXBC program type numbers, but Pixel (0) and Vertex (1) must be encoded via the
+  // legacy `shader_stage` field for clarity.
+  assert.ok(!("Vertex" in AerogpuShaderStageEx));
+  assert.equal((AerogpuShaderStageEx as unknown as Record<string, unknown>).Vertex, undefined);
+});
