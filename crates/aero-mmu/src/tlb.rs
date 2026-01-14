@@ -152,6 +152,9 @@ const SETS: usize = 64; // 256 entries per bank, 4-way set associative.
 struct TlbSet {
     entries: [[TlbEntry; WAYS]; SETS],
     next_way: [u8; SETS],
+    // Hints indicating whether any large-page entries have been inserted since
+    // the last time the corresponding entries were globally flushed. When all
+    // are `false`, `lookup` can take a fast 4KiB-only path.
     has_1g: bool,
     has_4m: bool,
     has_2m: bool,
