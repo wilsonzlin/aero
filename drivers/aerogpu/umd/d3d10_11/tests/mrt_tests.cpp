@@ -1096,6 +1096,122 @@ bool TestSetRenderTargetsUnbindsAliasedSrvsForDsv() {
   return true;
 }
 
+bool TestSetRenderTargetsUnbindsAllocAliasedSrvsForDsv() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {200, 200}; // depth + alias share allocation
+
+  TestResource depth{};
+  TestResource depth_alias{};
+  TestDsv dsv{};
+  TestSrv srv{};
+
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindDepthStencil | kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth)) {
+    return false;
+  }
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth_alias)) {
+    return false;
+  }
+  if (!CreateDSV(&dev, &depth, &dsv)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &depth_alias, &srv)) {
+    return false;
+  }
+
+  // Bind the aliased SRV first (both VS and PS). Binding the resource as a DSV
+  // later must evict SRVs across all stages even if the SRV comes from a
+  // different resource handle.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after bind alloc-aliased depth SRV)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> first_stream = dev.harness.last_stream;
+  if (!Check(!first_stream.empty(), "submission captured (after bind alloc-aliased depth SRV)")) {
+    return false;
+  }
+  if (!ValidateStream(first_stream.data(), first_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created = CollectCreateTexture2DHandles(first_stream.data(), first_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (depth + alias)")) {
+    return false;
+  }
+
+  // Binding the resource as the DSV must unbind the SRVs first.
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*pViews=*/nullptr, dsv.hDsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased DSV)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets alloc-aliased DSV)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc vs_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after alloc-aliased SetRenderTargets DSV")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_loc.hdr);
+  if (!Check(set_vs->texture == 0, "VS SRV slot 0 unbound before alloc-aliased DSV bind")) {
+    return false;
+  }
+
+  const CmdLoc ps_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after alloc-aliased SetRenderTargets DSV")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_loc.hdr);
+  if (!Check(set_ps->texture == 0, "PS SRV slot 0 unbound before alloc-aliased DSV bind")) {
+    return false;
+  }
+
+  const CmdLoc rt_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased DSV bind)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (after alloc-aliased DSV bind)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == created[0], "SET_RENDER_TARGETS depth_stencil (after alloc-aliased DSV bind)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hSrv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth_alias.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSetRenderTargetsUnbindsOnlyAliasedSrvs() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1727,6 +1843,118 @@ bool TestSrvBindingUnbindsAliasedDsv() {
   return true;
 }
 
+bool TestSrvBindingUnbindsAllocAliasedDsv() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {200, 200}; // depth + alias share allocation
+
+  TestResource depth{};
+  TestResource depth_alias{};
+  TestDsv dsv{};
+  TestSrv srv_alias{};
+
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindDepthStencil | kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth)) {
+    return false;
+  }
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth_alias)) {
+    return false;
+  }
+  if (!CreateDSV(&dev, &depth, &dsv)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &depth_alias, &srv_alias)) {
+    return false;
+  }
+
+  // Bind only DSV, no RTVs.
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*pViews=*/nullptr, dsv.hDsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased DSV-only)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after alloc-aliased DSV-only bind)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (depth + alias)")) {
+    return false;
+  }
+  {
+    const CmdLoc loc =
+        FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased DSV-only bind)")) {
+      return false;
+    }
+    const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+    if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (alloc-aliased DSV-only bind)")) {
+      return false;
+    }
+    if (!Check(set_rt->depth_stencil == created[0], "SET_RENDER_TARGETS depth_stencil matches created depth handle")) {
+      return false;
+    }
+  }
+
+  // Binding a PS SRV whose backing allocation aliases the DSV must unbind the DSV.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv_alias.hSrv};
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after PSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (alloc-aliased DSV unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil==0 (alloc-aliased DSV unbound)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased DSV unbound)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth_alias.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSrvBindingUnbindsAliasedDsvVs() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1804,6 +2032,118 @@ bool TestSrvBindingUnbindsAliasedDsvVs() {
 
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hSrv);
   dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSrvBindingUnbindsAllocAliasedDsvVs() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {200, 200}; // depth + alias share allocation
+
+  TestResource depth{};
+  TestResource depth_alias{};
+  TestDsv dsv{};
+  TestSrv srv_alias{};
+
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindDepthStencil | kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth)) {
+    return false;
+  }
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth_alias)) {
+    return false;
+  }
+  if (!CreateDSV(&dev, &depth, &dsv)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &depth_alias, &srv_alias)) {
+    return false;
+  }
+
+  // Bind only DSV, no RTVs.
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*pViews=*/nullptr, dsv.hDsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased DSV-only)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after alloc-aliased DSV-only bind)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (depth + alias)")) {
+    return false;
+  }
+  {
+    const CmdLoc loc =
+        FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased DSV-only bind)")) {
+      return false;
+    }
+    const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+    if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (alloc-aliased DSV-only bind)")) {
+      return false;
+    }
+    if (!Check(set_rt->depth_stencil == created[0], "SET_RENDER_TARGETS depth_stencil matches created depth handle")) {
+      return false;
+    }
+  }
+
+  // Binding a VS SRV whose backing allocation aliases the DSV must unbind the DSV.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv_alias.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after VSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after VSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (alloc-aliased DSV unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil==0 (alloc-aliased DSV unbound)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased DSV unbound)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth_alias.hResource);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
@@ -1933,6 +2273,7 @@ int main() {
   ok &= TestSetRenderTargetsUnbindsAliasedSrvsForMrt();
   ok &= TestSetRenderTargetsUnbindsAllocAliasedSrvsForMrt();
   ok &= TestSetRenderTargetsUnbindsAliasedSrvsForDsv();
+  ok &= TestSetRenderTargetsUnbindsAllocAliasedSrvsForDsv();
   ok &= TestSetRenderTargetsUnbindsOnlyAliasedSrvs();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
   ok &= TestSrvBindingUnbindsOnlyAllocAliasedRtv();
@@ -1941,7 +2282,9 @@ int main() {
   ok &= TestSrvBindingUnbindsAllAliasedRtvSlots();
   ok &= TestRotateResourceIdentitiesRemapsSrvsAndViews();
   ok &= TestSrvBindingUnbindsAliasedDsv();
+  ok &= TestSrvBindingUnbindsAllocAliasedDsv();
   ok &= TestSrvBindingUnbindsAliasedDsvVs();
+  ok &= TestSrvBindingUnbindsAllocAliasedDsvVs();
   if (!ok) {
     return 1;
   }
