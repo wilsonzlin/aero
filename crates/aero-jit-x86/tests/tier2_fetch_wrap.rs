@@ -63,4 +63,3 @@ fn tier2_cfg_builder_16bit_fetch_wraps_across_64k_boundary() {
         other => panic!("expected Jump terminator, got {other:?}"),
     }
 }
-

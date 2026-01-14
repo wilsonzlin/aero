@@ -241,13 +241,7 @@ fn virtio_input_mouse_init_then_host_injects_rel_button_and_wheel2_events() {
     // - inject_wheel2 -> REL_WHEEL + REL_HWHEEL + SYN
     // Total = 8 events.
     let bufs = [
-        0x13000u64,
-        0x13020u64,
-        0x13040u64,
-        0x13060u64,
-        0x13080u64,
-        0x130A0u64,
-        0x130C0u64,
+        0x13000u64, 0x13020u64, 0x13040u64, 0x13060u64, 0x13080u64, 0x130A0u64, 0x130C0u64,
         0x130E0u64,
     ];
     for (i, &buf) in bufs.iter().enumerate() {

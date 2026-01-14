@@ -181,7 +181,9 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
 
     // Re-add the endpoint (guest would re-run Configure Endpoint) and ring the doorbell again. If
     // the pending bit was not cleared, this doorbell would be ignored and no DMA would occur.
-    configure_interrupt_in_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base);
+    configure_interrupt_in_endpoint(
+        &mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base,
+    );
 
     ctrl.ring_doorbell(slot_id, EP_ID);
     ctrl.tick(&mut mem);
@@ -245,7 +247,9 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     });
 
     // Re-add the endpoint and ring the doorbell again.
-    configure_interrupt_in_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base);
+    configure_interrupt_in_endpoint(
+        &mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base,
+    );
 
     ctrl.ring_doorbell(slot_id, EP_ID);
     ctrl.tick(&mut mem);

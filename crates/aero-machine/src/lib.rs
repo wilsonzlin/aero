@@ -4488,10 +4488,7 @@ impl Machine {
                 .usb_hid_mouse
                 .get_or_insert_with(UsbHidMouseHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(
-                Self::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
-                Box::new(mouse),
-            );
+            let _ = hub.hub_attach_device(Self::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT, Box::new(mouse));
         }
         if port_count >= Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT
             && hub
@@ -4502,10 +4499,8 @@ impl Machine {
                 .usb_hid_gamepad
                 .get_or_insert_with(UsbHidGamepadHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(
-                Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
-                Box::new(gamepad),
-            );
+            let _ =
+                hub.hub_attach_device(Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT, Box::new(gamepad));
         }
         if port_count >= Self::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT
             && hub

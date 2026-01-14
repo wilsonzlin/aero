@@ -615,7 +615,11 @@ fn ehci_remote_wakeup_enters_resume_state_through_nested_hubs() {
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(portsc & PORTSC_SUSP, 0, "expected root port to be suspended");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "expected root port to be suspended"
+    );
 
     // Inject a keypress while suspended. This should request remote wakeup via the hub chain.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
@@ -829,7 +833,11 @@ fn ehci_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_r
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(portsc & PORTSC_SUSP, 0, "expected root port to be suspended");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "expected root port to be suspended"
+    );
 
     // Inject a keypress while suspended. Since the inner hub has not enabled DEVICE_REMOTE_WAKEUP,
     // it must not propagate the downstream remote wake request upstream.

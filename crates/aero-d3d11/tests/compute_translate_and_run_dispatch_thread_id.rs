@@ -772,8 +772,7 @@ fn compute_translate_and_run_compute_builtin_operand_types_write_packed_values()
         for global_linear in 0..INVOCATIONS {
             let base = (global_linear as usize) * 4;
             assert_eq!(
-                got[base],
-                global_linear,
+                got[base], global_linear,
                 "slot {global_linear} lane0 (global_linear)"
             );
 

@@ -217,7 +217,8 @@ impl CursorState {
     ///
     /// Panics if the busy bit is wedged and the write lock cannot be acquired.
     pub fn publish(&self, update: CursorStateUpdate) -> u32 {
-        self.try_publish(update).expect("CursorState::publish: timed out (writer busy bit stuck)")
+        self.try_publish(update)
+            .expect("CursorState::publish: timed out (writer busy bit stuck)")
     }
 
     /// Best-effort publish of a complete cursor update.
@@ -290,8 +291,9 @@ impl CursorState {
     ///
     /// Panics if the state cannot be snapshotted (e.g. busy bit wedged).
     pub fn snapshot(&self) -> CursorStateSnapshot {
-        self.try_snapshot()
-            .expect("CursorState::snapshot: timed out (writer busy bit stuck or update rate too high)")
+        self.try_snapshot().expect(
+            "CursorState::snapshot: timed out (writer busy bit stuck or update rate too high)",
+        )
     }
 }
 

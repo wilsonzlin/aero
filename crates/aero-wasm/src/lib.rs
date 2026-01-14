@@ -7601,9 +7601,6 @@ mod aerogpu_defaults_tests {
         // uses.
         let id = m.pci_config_read_u32(0, 0x07, 0, 0);
         assert_eq!(id & 0xFFFF, u32::from(PCI_VENDOR_ID_AERO));
-        assert_eq!(
-            (id >> 16) & 0xFFFF,
-            u32::from(PCI_DEVICE_ID_AERO_AEROGPU)
-        );
+        assert_eq!((id >> 16) & 0xFFFF, u32::from(PCI_DEVICE_ID_AERO_AEROGPU));
     }
 }

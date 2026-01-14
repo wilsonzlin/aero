@@ -905,7 +905,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
 }
 
 #[test]
-fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_remote_wakeup() {
+fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_remote_wakeup(
+) {
     let mut ctrl = UhciController::new();
 
     // Attach an external hub to root port 0.

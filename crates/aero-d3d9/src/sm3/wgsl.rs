@@ -2629,10 +2629,7 @@ pub fn generate_wgsl_with_options(
         let _ = writeln!(wgsl, "var<private> i{idx}: vec4<i32> = vec4<i32>(0);");
     }
     for idx in &usage.bool_consts {
-        let _ = writeln!(
-            wgsl,
-            "var<private> b{idx}: vec4<bool> = vec4<bool>(false);"
-        );
+        let _ = writeln!(wgsl, "var<private> b{idx}: vec4<bool> = vec4<bool>(false);");
     }
     if let Some(max_r) = usage.temps.iter().copied().max() {
         for r in 0..=max_r {
@@ -2837,24 +2834,15 @@ pub fn generate_wgsl_with_options(
                     let _ = writeln!(
                         wgsl,
                         "  i{idx} = vec4<i32>({}, {}, {}, {});",
-                        value[0],
-                        value[1],
-                        value[2],
-                        value[3]
+                        value[0], value[1], value[2], value[3]
                     );
                 } else {
-                    let _ = writeln!(
-                        wgsl,
-                        "  i{idx} = constants_i.i[CONST_BASE + {idx}u];"
-                    );
+                    let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
                 if let Some(v) = bool_defs.get(idx).copied() {
-                    let _ = writeln!(
-                        wgsl,
-                        "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});"
-                    );
+                    let _ = writeln!(wgsl, "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});");
                 } else {
                     let _ = writeln!(
                         wgsl,
@@ -3085,24 +3073,15 @@ pub fn generate_wgsl_with_options(
                     let _ = writeln!(
                         wgsl,
                         "  i{idx} = vec4<i32>({}, {}, {}, {});",
-                        value[0],
-                        value[1],
-                        value[2],
-                        value[3]
+                        value[0], value[1], value[2], value[3]
                     );
                 } else {
-                    let _ = writeln!(
-                        wgsl,
-                        "  i{idx} = constants_i.i[CONST_BASE + {idx}u];"
-                    );
+                    let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
                 if let Some(v) = bool_defs.get(idx).copied() {
-                    let _ = writeln!(
-                        wgsl,
-                        "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});"
-                    );
+                    let _ = writeln!(wgsl, "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});");
                 } else {
                     let _ = writeln!(
                         wgsl,

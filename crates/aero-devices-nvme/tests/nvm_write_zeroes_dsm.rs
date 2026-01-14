@@ -123,7 +123,9 @@ impl VirtualDisk for MemDisk {
             return Ok(());
         }
 
-        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
         let cap = self.capacity_bytes();
         if end > cap {
             return Err(StorageDiskError::OutOfBounds {

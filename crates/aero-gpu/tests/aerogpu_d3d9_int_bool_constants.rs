@@ -132,20 +132,11 @@ fn assemble_ps_if_b0_and_loop_i0() -> Vec<u8> {
     let f1 = 1.0f32.to_bits();
 
     // def c0, 0,1,0,1
-    words.extend(enc_inst(
-        0x0051,
-        &[enc_dst(2, 0, 0xF), f0, f1, f0, f1],
-    ));
+    words.extend(enc_inst(0x0051, &[enc_dst(2, 0, 0xF), f0, f1, f0, f1]));
     // def c1, 1,0,0,1
-    words.extend(enc_inst(
-        0x0051,
-        &[enc_dst(2, 1, 0xF), f1, f0, f0, f1],
-    ));
+    words.extend(enc_inst(0x0051, &[enc_dst(2, 1, 0xF), f1, f0, f0, f1]));
     // def c2, 0,0,1,0
-    words.extend(enc_inst(
-        0x0051,
-        &[enc_dst(2, 2, 0xF), f0, f0, f1, f0],
-    ));
+    words.extend(enc_inst(0x0051, &[enc_dst(2, 2, 0xF), f0, f0, f1, f0]));
 
     // if b0
     words.extend(enc_inst(0x0028, &[enc_src(14, 0, 0xE4)]));
@@ -166,11 +157,7 @@ fn assemble_ps_if_b0_and_loop_i0() -> Vec<u8> {
     // add r0, r0, c2
     words.extend(enc_inst(
         0x0002,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(2, 2, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 2, 0xE4)],
     ));
     // endloop
     words.extend(enc_inst(0x001D, &[]));
@@ -386,7 +373,7 @@ fn d3d9_cmd_stream_int_and_bool_constants_affect_output_color() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-            // i0 = { start, end, step, _ }
+                              // i0 = { start, end, step, _ }
             push_i32(out, 0);
             push_i32(out, 0);
             push_i32(out, 1);

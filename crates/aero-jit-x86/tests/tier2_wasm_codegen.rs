@@ -8,9 +8,9 @@ use tier1_common::{pick_invalid_opcode, SimpleBus};
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier2::interp::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
-use aero_jit_x86::tier2::ir::FlagValues;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_jit_x86::tier2::ir::flag_to_set;
+use aero_jit_x86::tier2::ir::FlagValues;
 use aero_jit_x86::tier2::ir::{
     BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
 };
@@ -1284,7 +1284,10 @@ fn tier2_trace_wasm_matches_interpreter_on_carry_flag_guard() {
                 dst: v(0),
                 value: 0xffff_ffff_ffff_ffff,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -1372,8 +1375,14 @@ fn tier2_trace_wasm_matches_interpreter_on_sub_borrow_flag_guard() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 0 },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(0),
+                value: 0,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Sub,
@@ -1468,7 +1477,10 @@ fn tier2_trace_wasm_matches_interpreter_on_sub_overflow_flag_guard() {
                 dst: v(0),
                 value: 0x8000_0000_0000_0000,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Sub,
@@ -1564,7 +1576,10 @@ fn tier2_trace_wasm_matches_interpreter_on_partial_binop_flag_updates() {
                 dst: v(0),
                 value: 0xffff_ffff_ffff_ffff,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -1661,7 +1676,10 @@ fn tier2_trace_wasm_matches_interpreter_on_guard_expected_false_side_exit() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 0 },
+            Instr::Const {
+                dst: v(0),
+                value: 0,
+            },
             Instr::Guard {
                 cond: Operand::Value(v(0)),
                 expected: false,
@@ -1675,7 +1693,10 @@ fn tier2_trace_wasm_matches_interpreter_on_guard_expected_false_side_exit() {
                 reg: Gpr::Rax,
                 src: Operand::Value(v(1)),
             },
-            Instr::Const { dst: v(2), value: 1 },
+            Instr::Const {
+                dst: v(2),
+                value: 1,
+            },
             Instr::Guard {
                 cond: Operand::Value(v(2)),
                 expected: false,
@@ -1750,7 +1771,10 @@ fn tier2_trace_wasm_matches_interpreter_on_guard_expected_true_side_exit() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 1 },
+            Instr::Const {
+                dst: v(0),
+                value: 1,
+            },
             Instr::Guard {
                 cond: Operand::Value(v(0)),
                 expected: true,
@@ -1764,7 +1788,10 @@ fn tier2_trace_wasm_matches_interpreter_on_guard_expected_true_side_exit() {
                 reg: Gpr::Rax,
                 src: Operand::Value(v(1)),
             },
-            Instr::Const { dst: v(2), value: 0 },
+            Instr::Const {
+                dst: v(2),
+                value: 0,
+            },
             Instr::Guard {
                 cond: Operand::Value(v(2)),
                 expected: true,

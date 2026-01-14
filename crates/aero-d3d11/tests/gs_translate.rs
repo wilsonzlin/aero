@@ -1,16 +1,16 @@
+use aero_d3d11::binding_model::{
+    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BIND_GROUP_INTERNAL_EMULATION,
+};
 use aero_d3d11::runtime::gs_translate::{
     translate_gs_module_to_wgsl_compute_prepass,
     translate_gs_module_to_wgsl_compute_prepass_packed, GsTranslateError,
 };
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
-use aero_d3d11::binding_model::{
-    BIND_GROUP_INTERNAL_EMULATION, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
-};
 use aero_d3d11::{
-    BufferKind, BufferRef, DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile,
-    RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module,
-    Sm4Program, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    BufferKind, BufferRef, DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier,
+    RegFile, RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4Program, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {

@@ -1716,7 +1716,7 @@ fn assemble_ps3_mova_sat_div2_relative_const() -> Vec<u32> {
         0x002E,
         (9u32) << 20, // result shift = div2 (4) + saturate bit => mod_bits = 1 | (4<<1) = 9
         &[
-            enc_dst(3, 0, 0x1), // a0.x (regtype 3)
+            enc_dst(3, 0, 0x1),  // a0.x (regtype 3)
             enc_src(2, 0, 0x00), // c0.x
         ],
     ));

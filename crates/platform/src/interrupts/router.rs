@@ -1192,8 +1192,8 @@ impl IoSnapshot for PlatformInterrupts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_interrupts::apic::{DeliveryMode, DestinationShorthand, Icr, Level};
     use crate::test_util::capture_panic_location;
+    use aero_interrupts::apic::{DeliveryMode, DestinationShorthand, Icr, Level};
 
     fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
         let redtbl_low = 0x10u32 + gsi * 2;

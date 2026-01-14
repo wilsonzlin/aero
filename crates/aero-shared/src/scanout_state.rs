@@ -256,8 +256,9 @@ impl ScanoutState {
     ///
     /// Panics if the state cannot be snapshotted (e.g. busy bit wedged).
     pub fn snapshot(&self) -> ScanoutStateSnapshot {
-        self.try_snapshot()
-            .expect("ScanoutState::snapshot: timed out (writer busy bit stuck or update rate too high)")
+        self.try_snapshot().expect(
+            "ScanoutState::snapshot: timed out (writer busy bit stuck or update rate too high)",
+        )
     }
 }
 

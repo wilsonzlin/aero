@@ -1,11 +1,11 @@
 use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
+use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_devices::pci::profile::{self, PciCapabilityProfile};
 use aero_devices::pci::{
     MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds,
 };
-use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_platform::interrupts::msi::MsiMessage;
 use core::any::Any;
 
@@ -479,8 +479,9 @@ impl VirtioPciDevice {
         let len = data.len();
 
         let is_canonical_bar_dword = len == 4 && is_pci_bar_offset(offset) && (offset & 0x3) == 0;
-        let in_bounds =
-            usize::from(offset).checked_add(len).is_some_and(|end| end <= PCI_CONFIG_SPACE_SIZE);
+        let in_bounds = usize::from(offset)
+            .checked_add(len)
+            .is_some_and(|end| end <= PCI_CONFIG_SPACE_SIZE);
 
         if is_canonical_bar_dword && in_bounds {
             // BAR size probing uses aligned 32-bit writes; preserve the canonical probe semantics.
@@ -490,11 +491,10 @@ impl VirtioPciDevice {
             // Fast path: delegate to the canonical config-space implementation for non-BAR writes.
             match len {
                 1 => self.config.write(offset, 1, u32::from(data[0])),
-                2 => self.config.write(
-                    offset,
-                    2,
-                    u32::from(u16::from_le_bytes([data[0], data[1]])),
-                ),
+                2 => {
+                    self.config
+                        .write(offset, 2, u32::from(u16::from_le_bytes([data[0], data[1]])))
+                }
                 4 => self
                     .config
                     .write(offset, 4, u32::from_le_bytes(data.try_into().unwrap())),
@@ -521,8 +521,7 @@ impl VirtioPciDevice {
                     let aligned = align_pci_dword(off);
                     let old = read_bar_dword_programmed(&mut self.config, aligned);
                     let shift = u32::from(off - aligned) * 8;
-                    let merged =
-                        (old & !(0xFF << shift)) | (u32::from(*byte) << shift);
+                    let merged = (old & !(0xFF << shift)) | (u32::from(*byte) << shift);
                     let merged = sanitize_bar_register_write_value(&self.config, aligned, merged);
 
                     // Subword writes should not synthesize an all-ones dword probe (real hardware

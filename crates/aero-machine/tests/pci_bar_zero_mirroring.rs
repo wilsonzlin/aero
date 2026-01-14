@@ -405,7 +405,10 @@ fn snapshot_device_states_mirrors_e1000_bar0_when_guest_clears_it_to_zero() {
     // Ensure the device model observes the assigned BAR0 base before we clear it.
     {
         let dev = e1000.borrow();
-        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
+        assert_eq!(
+            dev.pci_config_read(0x10, 4),
+            u32::try_from(bar0_base).unwrap()
+        );
         assert_eq!(
             dev.pci_config_read(0x14, 4),
             u32::try_from(bar1_base).unwrap() | 0x1
@@ -423,7 +426,10 @@ fn snapshot_device_states_mirrors_e1000_bar0_when_guest_clears_it_to_zero() {
     // take a snapshot (which should perform mirroring).
     {
         let dev = e1000.borrow();
-        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
+        assert_eq!(
+            dev.pci_config_read(0x10, 4),
+            u32::try_from(bar0_base).unwrap()
+        );
         assert_eq!(
             dev.pci_config_read(0x14, 4),
             u32::try_from(bar1_base).unwrap() | 0x1

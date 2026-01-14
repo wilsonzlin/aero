@@ -646,7 +646,8 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_speaker_jack_events_one_buffer_at_a_time_after_events_are_queued() {
+fn virtio_snd_pci_bridge_delivers_speaker_jack_events_one_buffer_at_a_time_after_events_are_queued()
+{
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -762,8 +763,7 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_events_one_buffer_at_a_time_after
     guest.read_into(buf1, &mut got1);
     assert_eq!(&got0, &expected_connected);
     assert_eq!(
-        &got1,
-        &[0xBBu8; 8],
+        &got1, &[0xBBu8; 8],
         "second buffer should remain untouched until the second event buffer is posted"
     );
 
@@ -1458,8 +1458,8 @@ fn virtio_snd_pci_bridge_delivers_microphone_jack_event_queued_before_eventq_buf
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_microphone_jack_events_attach_then_detach_before_eventq_buffers_are_posted(
-) {
+fn virtio_snd_pci_bridge_delivers_microphone_jack_events_attach_then_detach_before_eventq_buffers_are_posted()
+ {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {

@@ -401,7 +401,11 @@ fn snapshot_restore_preserves_nvme_msix_pending_bit_and_delivers_after_unmask() 
         None
     );
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after delivery");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after delivery"
+    );
 
     m.restore_snapshot_bytes(&snapshot).unwrap();
 
@@ -417,7 +421,11 @@ fn snapshot_restore_preserves_nvme_msix_pending_bit_and_delivers_after_unmask() 
 
     // Ensure MSI-X enable + function mask bits were restored in the canonical PCI config space.
     let ctrl_restored = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    assert_ne!(ctrl_restored & (1 << 15), 0, "expected MSI-X enable bit restored");
+    assert_ne!(
+        ctrl_restored & (1 << 15),
+        0,
+        "expected MSI-X enable bit restored"
+    );
     assert_ne!(
         ctrl_restored & (1 << 14),
         0,
@@ -451,5 +459,9 @@ fn snapshot_restore_preserves_nvme_msix_pending_bit_and_delivers_after_unmask() 
         Some(vector)
     );
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after unmask");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after unmask"
+    );
 }

@@ -68,6 +68,7 @@ fn cs_main() {
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     );
-    validator.validate(&module).expect("WGSL failed to validate");
+    validator
+        .validate(&module)
+        .expect("WGSL failed to validate");
 }
-

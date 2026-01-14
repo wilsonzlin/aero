@@ -394,7 +394,9 @@ impl AerogpuSoftwareExecutor {
         let view_handle = read_u32(payload, 0);
         let texture_handle = read_u32(payload, 4);
         if !self.textures.contains_key(&texture_handle) {
-            return Err(format!("unknown texture {texture_handle} for CREATE_TEXTURE_VIEW"));
+            return Err(format!(
+                "unknown texture {texture_handle} for CREATE_TEXTURE_VIEW"
+            ));
         }
         // The software executor does not model mip/array subresources; treat a view as an alias to
         // the base texture.
@@ -1853,7 +1855,11 @@ mod tests {
         push_u32_le(&mut payload, 0); // backing_offset_bytes
         push_u64_le(&mut payload, 0); // reserved0
         assert_eq!(payload.len(), 48);
-        push_packet(&mut bytes, AerogpuCmdOpcode::CreateTexture2d as u32, &payload);
+        push_packet(
+            &mut bytes,
+            AerogpuCmdOpcode::CreateTexture2d as u32,
+            &payload,
+        );
 
         // CREATE_TEXTURE_VIEW(view_handle=2, texture_handle=1, format=R8G8B8A8_UNORM, mip 0..1, layer 0..1).
         payload.clear();
@@ -1866,7 +1872,11 @@ mod tests {
         push_u32_le(&mut payload, 1); // array_layer_count
         push_u64_le(&mut payload, 0); // reserved0
         assert_eq!(payload.len(), 36);
-        push_packet(&mut bytes, AerogpuCmdOpcode::CreateTextureView as u32, &payload);
+        push_packet(
+            &mut bytes,
+            AerogpuCmdOpcode::CreateTextureView as u32,
+            &payload,
+        );
 
         // SET_RENDER_TARGETS(color_count=1, colors[0]=view_handle=2).
         payload.clear();
@@ -1877,7 +1887,11 @@ mod tests {
             push_u32_le(&mut payload, 0);
         }
         assert_eq!(payload.len(), 40);
-        push_packet(&mut bytes, AerogpuCmdOpcode::SetRenderTargets as u32, &payload);
+        push_packet(
+            &mut bytes,
+            AerogpuCmdOpcode::SetRenderTargets as u32,
+            &payload,
+        );
 
         // CLEAR(COLOR=green).
         payload.clear();

@@ -948,7 +948,8 @@ fn compute_vertex_pulling_reads_unorm10_10_10_2_unaligned() {
         let mut vb_bytes = vec![0u8; padded_len];
         vb_bytes[base_offset as usize..base_offset as usize + 4]
             .copy_from_slice(&packed0.to_le_bytes());
-        vb_bytes[base_offset as usize + stride as usize..base_offset as usize + stride as usize + 4]
+        vb_bytes
+            [base_offset as usize + stride as usize..base_offset as usize + stride as usize + 4]
             .copy_from_slice(&packed1.to_le_bytes());
 
         let vb = device.create_buffer(&wgpu::BufferDescriptor {

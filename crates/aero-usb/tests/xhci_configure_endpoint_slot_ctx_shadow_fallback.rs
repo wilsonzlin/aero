@@ -129,7 +129,10 @@ fn xhci_configure_endpoint_drop_preserves_slot_binding_when_output_slot_ctx_zero
     // Explicitly zero it so this test continues to exercise the controller fallback even if the
     // helper starts writing output contexts in the future.
     SlotContext::default().write_to(&mut mem, dev_ctx);
-    assert_eq!(SlotContext::read_from(&mut mem, dev_ctx).root_hub_port_number(), 0);
+    assert_eq!(
+        SlotContext::read_from(&mut mem, dev_ctx).root_hub_port_number(),
+        0
+    );
 
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
@@ -204,7 +207,10 @@ fn xhci_configure_endpoint_deconfigure_preserves_slot_binding_when_output_slot_c
 
     // Explicitly zero the output Slot Context so deconfigure exercises the shadow-fallback logic.
     SlotContext::default().write_to(&mut mem, dev_ctx);
-    assert_eq!(SlotContext::read_from(&mut mem, dev_ctx).root_hub_port_number(), 0);
+    assert_eq!(
+        SlotContext::read_from(&mut mem, dev_ctx).root_hub_port_number(),
+        0
+    );
 
     // Queue an endpoint doorbell but do not tick.
     ctrl.ring_doorbell(slot_id, EP_ID);
@@ -239,4 +245,3 @@ fn xhci_configure_endpoint_deconfigure_preserves_slot_binding_when_output_slot_c
     assert_eq!(buf, [0x5a; 8]);
     assert_eq!(ctrl.pending_event_count(), 1);
 }
-

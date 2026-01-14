@@ -118,4 +118,3 @@ fn xhci_does_not_execute_transfers_for_unsupported_endpoint_types() {
         "unsupported endpoints must not emit transfer events"
     );
 }
-

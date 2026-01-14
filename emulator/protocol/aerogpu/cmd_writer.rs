@@ -1460,7 +1460,12 @@ impl AerogpuCmdWriter {
         data: &[f32],
     ) {
         // Delegate to the stageEx-optional variant so packet encoding logic stays in one place.
-        self.set_shader_constants_f_stage_ex(AerogpuShaderStage::Compute, Some(stage_ex), start_register, data);
+        self.set_shader_constants_f_stage_ex(
+            AerogpuShaderStage::Compute,
+            Some(stage_ex),
+            start_register,
+            data,
+        );
     }
 
     pub fn set_blend_state(

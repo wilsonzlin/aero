@@ -43,8 +43,8 @@ use crate::binding_model::{
 };
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4CmpOp,
-    Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
+    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
+    Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.

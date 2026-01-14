@@ -399,9 +399,7 @@ mod wasm {
         .map_err(disk_error_from_js)?;
 
         let create_no_args = || async {
-            let promise = file
-                .create_writable_no_args()
-                .map_err(disk_error_from_js)?;
+            let promise = file.create_writable_no_args().map_err(disk_error_from_js)?;
             await_promise(promise).await
         };
 

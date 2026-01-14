@@ -526,7 +526,10 @@ fn ring_descriptor_gpa_overflow_sets_error_irq_and_advances_head() {
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, regs.abi_version);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
     mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, 8);
-    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
