@@ -22,7 +22,7 @@ The canonical machine supports **two mutually-exclusive** display configurations
     `docs/16-aerogpu-vga-vesa-compat.md`).
   - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
     for the in-tree Win7 KMD to initialize and advance fences), but **no** command execution or
-    scanout yet in `aero_machine`.
+    WDDM scanout/vblank model yet in `aero_machine`.
 
   The reference/full versioned-AeroGPU device model (command execution + scanout + vblank pacing)
   still lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.

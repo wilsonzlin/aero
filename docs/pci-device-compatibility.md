@@ -15,7 +15,7 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
   - BAR1 is backed by a dedicated VRAM buffer and implements permissive legacy VGA decode (VGA port
     I/O + VRAM-backed `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
   - BAR0 implements a minimal MMIO + ring/fence transport stub (enough for the Win7 KMD to
-    initialize and advance fences), but does **not** yet execute commands or drive scanout.
+    initialize and advance fences), but does **not** yet execute commands or drive WDDM scanout/vblank.
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
   (`aero_gpu_vga`) plus a **transitional** PCI VGA stub at `00:0c.0` (`1234:1111`) used only for
   boot display / VBE LFB routing. This stub is not part of the long-term Windows paravirtual device
