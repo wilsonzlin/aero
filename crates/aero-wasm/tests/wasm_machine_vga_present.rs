@@ -13,7 +13,8 @@ const SCANOUT_STATE_GENERATION_BUSY_BIT: u32 = 1 << 31;
 
 const SCANOUT_SOURCE_LEGACY_TEXT: u32 = 0;
 const SCANOUT_SOURCE_LEGACY_VBE_LFB: u32 = 1;
-const SCANOUT_FORMAT_B8G8R8X8: u32 = 0;
+// `ScanoutState.format` uses AeroGPU `AerogpuFormat` discriminants (`0` is `Invalid`).
+const SCANOUT_FORMAT_B8G8R8X8: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScanoutSnapshot {
