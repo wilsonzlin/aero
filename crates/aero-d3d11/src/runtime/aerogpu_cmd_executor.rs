@@ -28826,7 +28826,6 @@ fn cs_main() {
                     as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
-                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 dummy_storage_texture_views: &exec.dummy_storage_texture_views,
