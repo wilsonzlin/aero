@@ -341,7 +341,7 @@ fn virtio_net_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
     m.poll_pci_intx_lines();
 
     let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
-    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+    assert!(interrupts.borrow().gsi_level(gsi));
 
     // Enable MSI-X in the canonical PCI config space. Polling INTx lines should mirror MSI-X enable
     // state into the runtime virtio transport so legacy INTx becomes suppressed even without an
@@ -358,9 +358,8 @@ fn virtio_net_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
     );
 
     m.poll_pci_intx_lines();
-    assert_eq!(
-        interrupts.borrow().gsi_level(gsi),
-        false,
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
         "expected legacy INTx to be suppressed once MSI-X is enabled"
     );
     assert!(

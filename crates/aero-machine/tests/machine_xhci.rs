@@ -721,9 +721,8 @@ fn xhci_msix_function_mask_defers_delivery_until_unmasked() {
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         None
     );
-    assert_eq!(
-        xhci.borrow().irq_level(),
-        false,
+    assert!(
+        !xhci.borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active (even if masked)"
     );
 
@@ -977,14 +976,14 @@ fn xhci_intx_level_is_routed_and_gated_by_command_intx_disable() {
 
     // Polling should drive the xHCI INTx level into the platform interrupt controller.
     m.poll_pci_intx_lines();
-    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+    assert!(interrupts.borrow().gsi_level(gsi));
 
     // Disable INTx in the guest-visible PCI command register.
     let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
     cfg_write(&mut m, bdf, 0x04, 2, u32::from(command | (1 << 10)));
 
     m.poll_pci_intx_lines();
-    assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+    assert!(!interrupts.borrow().gsi_level(gsi));
 }
 
 struct LegacyXhciUsbSnapshotSource {

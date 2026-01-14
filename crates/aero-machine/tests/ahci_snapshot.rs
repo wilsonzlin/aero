@@ -196,7 +196,7 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
     // Ensure we have *not* synchronized PCI INTx levels into the platform interrupts yet. This is
     // the behavior we care about: a machine snapshot can capture the device state while the
     // interrupt sink is still desynchronized.
-    assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+    assert!(!interrupts.borrow().gsi_level(gsi));
     assert_eq!(interrupts.borrow().get_pending(), None);
 
     let expected_ahci_state = { ahci.borrow().save_state() };

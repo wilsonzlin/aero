@@ -86,7 +86,7 @@ fn snapshot_restore_roundtrips_uhci_state_and_redrives_intx_level() {
     // Intentionally do *not* sync UHCI's INTx into the platform interrupt controller before
     // snapshot. This leaves the interrupt sink desynchronized, which restore must fix up by
     // polling device-level IRQ lines again.
-    assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+    assert!(!interrupts.borrow().gsi_level(gsi));
     assert_eq!(interrupts.borrow().get_pending(), None);
 
     let expected_uhci_state = { uhci.borrow().save_state() };
