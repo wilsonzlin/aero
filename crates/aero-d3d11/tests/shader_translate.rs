@@ -2606,6 +2606,72 @@ fn translates_udiv_uses_raw_integer_bits_not_float_heuristics() {
 }
 
 #[test]
+fn translates_switch_selector_uses_raw_integer_bits_not_float_heuristics() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Selector is `0x3f800000` (1.0f bits). If switch lowering incorrectly uses float→int heuristics
+    // the selector would become `1` and match `case 1`. Correct lowering uses raw integer bits.
+    let selector = src_imm_bits([1.0f32.to_bits(); 4]);
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // Default value (will be overwritten in the matched clause).
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm_bits([0.0f32.to_bits(); 4]),
+            },
+            Sm4Inst::Switch { selector },
+            Sm4Inst::Case { value: 1 },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm_bits([10.0f32.to_bits(); 4]),
+            },
+            Sm4Inst::Break,
+            Sm4Inst::Default,
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm_bits([20.0f32.to_bits(); 4]),
+            },
+            Sm4Inst::EndSwitch,
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let switch_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("switch("))
+        .expect("expected switch line");
+    assert!(
+        !switch_line.contains("select(") && !switch_line.contains("floor("),
+        "switch selector lowering should not use float-vs-bitcast heuristics:\n{switch_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        switch_line.contains("0x3f800000u"),
+        "expected switch selector to preserve raw bits (0x3f800000):\n{switch_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_udiv_respects_independent_dest_write_masks() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
