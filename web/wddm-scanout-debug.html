@@ -82,6 +82,12 @@
           still be fully opaque. If the XRGB/BGRX alpha-forcing policy regresses, the checkered background will bleed
           through (pixels become transparent).
         </p>
+        <p>
+          <small>
+            Use <em>Backing</em> to validate both guest-RAM-backed scanout surfaces and BAR1/VRAM-backed scanout surfaces
+            (base_paddr inside the shared VRAM aperture).
+          </small>
+        </p>
         <div id="controls">
           <label>
             <span>Source</span>
