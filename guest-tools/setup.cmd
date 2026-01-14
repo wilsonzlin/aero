@@ -841,7 +841,7 @@ if defined IM_MANIFEST_SHA256 if defined GT_MANIFEST if exist "!GT_MANIFEST!" (
     set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
     if not exist "!PWSH!" set "PWSH=powershell.exe"
     set "AEROGT_HASH_FILE=!GT_MANIFEST!"
-    for /f "usebackq delims=" %%H in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_HASH_FILE; try{ $stream=[System.IO.File]::OpenRead($p); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; $sb.ToString() } catch { }"`) do (
+    for /f "usebackq delims=" %%H in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_HASH_FILE; try{ $stream=[System.IO.File]::OpenRead($p); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; $sb.ToString() } catch { }" 2^>nul`) do (
       if not defined CUR_MANIFEST_SHA256 set "CUR_MANIFEST_SHA256=%%H"
     )
     if defined CUR_MANIFEST_SHA256 (
