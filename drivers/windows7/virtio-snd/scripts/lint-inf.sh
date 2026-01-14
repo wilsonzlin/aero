@@ -358,6 +358,42 @@ section_contains_norm \
   'drivers\topology,driver,,aero_virtio_snd.sys' \
   "inf/aero_virtio_snd.inf must wire Drivers\\\\topology -> aero_virtio_snd.sys"
 
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers\wave,description,,%aerovirtiosnd.endpointdesc%' \
+  "inf/aero_virtio_snd.inf must set Drivers\\\\wave Description to %AeroVirtioSnd.EndpointDesc%"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers\topology,description,,%aerovirtiosnd.topologydesc%' \
+  "inf/aero_virtio_snd.inf must set Drivers\\\\topology Description to %AeroVirtioSnd.TopologyDesc%"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,%ksname_wave%,driver,,aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must set HKR\\\\Wave Driver = aero_virtio_snd.sys"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,%ksname_topology%,driver,,aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must set HKR\\\\Topology Driver = aero_virtio_snd.sys"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,%ksname_wave%,friendlyname,,%aerovirtiosnd.endpointdesc%' \
+  "inf/aero_virtio_snd.inf must set HKR\\\\Wave FriendlyName = %AeroVirtioSnd.EndpointDesc%"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,%ksname_topology%,friendlyname,,%aerovirtiosnd.topologydesc%' \
+  "inf/aero_virtio_snd.inf must set HKR\\\\Topology FriendlyName = %AeroVirtioSnd.TopologyDesc%"
+
 note "checking bring-up toggle defaults..."
 section_contains_norm \
   "$INF_CONTRACT" \
