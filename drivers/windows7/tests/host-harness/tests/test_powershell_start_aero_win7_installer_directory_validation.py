@@ -14,11 +14,15 @@ class PowerShellStartAeroWin7InstallerDirectoryValidationTests(unittest.TestCase
 
     def test_rejects_qemu_system_directory_paths(self) -> None:
         self.assertIn("-QemuSystem must be a QEMU system binary path (got a directory):", self.text)
+        self.assertIn("-QemuSystem must be a QEMU system binary path (file not found):", self.text)
+        self.assertIn("-QemuSystem must be on PATH (qemu-system binary not found):", self.text)
         self.assertIn('Test-Path -LiteralPath $QemuSystem -PathType Container', self.text)
         self.assertIn('$QemuSystem -match \"[\\\\/\\\\\\\\]\"', self.text)
 
     def test_rejects_qemu_img_directory_paths_when_create_disk_enabled(self) -> None:
         self.assertIn("-QemuImg must be a qemu-img binary path (got a directory):", self.text)
+        self.assertIn("-QemuImg must be a qemu-img binary path (file not found):", self.text)
+        self.assertIn("-QemuImg must be on PATH (qemu-img binary not found):", self.text)
         self.assertIn("Test-Path -LiteralPath $QemuImg -PathType Container", self.text)
         self.assertIn('$QemuImg -match \"[\\\\/\\\\\\\\]\"', self.text)
 

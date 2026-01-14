@@ -58,10 +58,32 @@ $ErrorActionPreference = "Stop"
 if ($QemuSystem -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuSystem -PathType Container)) {
   throw "-QemuSystem must be a QEMU system binary path (got a directory): $QemuSystem"
 }
+if ($QemuSystem -match "[\\/\\\\]") {
+  if (-not (Test-Path -LiteralPath $QemuSystem -PathType Leaf)) {
+    throw "-QemuSystem must be a QEMU system binary path (file not found): $QemuSystem"
+  }
+} else {
+  try {
+    $null = Get-Command -Name $QemuSystem -CommandType Application -ErrorAction Stop
+  } catch {
+    throw "-QemuSystem must be on PATH (qemu-system binary not found): $QemuSystem"
+  }
+}
 
 if ($CreateDisk) {
   if ($QemuImg -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuImg -PathType Container)) {
     throw "-QemuImg must be a qemu-img binary path (got a directory): $QemuImg"
+  }
+  if ($QemuImg -match "[\\/\\\\]") {
+    if (-not (Test-Path -LiteralPath $QemuImg -PathType Leaf)) {
+      throw "-QemuImg must be a qemu-img binary path (file not found): $QemuImg"
+    }
+  } else {
+    try {
+      $null = Get-Command -Name $QemuImg -CommandType Application -ErrorAction Stop
+    } catch {
+      throw "-QemuImg must be on PATH (qemu-img binary not found): $QemuImg"
+    }
   }
 }
 
