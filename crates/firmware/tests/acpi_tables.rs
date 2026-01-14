@@ -46,7 +46,70 @@ fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
     // AML's PkgLength encodes the length of the package *including* the PkgLength bytes. Most
     // callers want the payload length (bytes following the PkgLength), so we return that.
     let pkg_len_bytes = 1 + follow_bytes;
-    Some((len.saturating_sub(pkg_len_bytes), pkg_len_bytes))
+    len = len.checked_sub(pkg_len_bytes)?;
+    Some((len, pkg_len_bytes))
+}
+
+fn aml_contains_imcr_field(aml: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 2 < aml.len() {
+        // FieldOp: ExtOpPrefix(0x5B) + FieldOp(0x81)
+        if aml[i] == 0x5B && aml[i + 1] == 0x81 {
+            let pkg_off = i + 2;
+            let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, pkg_off) else {
+                i += 1;
+                continue;
+            };
+
+            let payload_start = pkg_off + pkg_len_bytes;
+            let Some(payload_end) = payload_start.checked_add(pkg_len) else {
+                i += 1;
+                continue;
+            };
+            if payload_end > aml.len() || payload_start + 5 > payload_end {
+                i += 1;
+                continue;
+            }
+
+            // Field's NameString is a NameSeg, and we expect the IMCR definition:
+            // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
+            if &aml[payload_start..payload_start + 4] != b"IMCR" {
+                i += 1;
+                continue;
+            }
+            if aml[payload_start + 4] != 0x01 {
+                i += 1;
+                continue;
+            }
+
+            let field_list = &aml[payload_start + 5..payload_end];
+            let Some(imcs_off) = find_subslice(field_list, b"IMCS") else {
+                i += 1;
+                continue;
+            };
+            if field_list.get(imcs_off + 4) != Some(&0x08) {
+                i += 1;
+                continue;
+            }
+
+            // Search for IMCD after IMCS.
+            let rest = &field_list[imcs_off + 5..];
+            let Some(imcd_off) = find_subslice(rest, b"IMCD") else {
+                i += 1;
+                continue;
+            };
+            if rest.get(imcd_off + 4) != Some(&0x08) {
+                i += 1;
+                continue;
+            }
+
+            return true;
+        }
+
+        i += 1;
+    }
+
+    false
 }
 
 fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
@@ -517,20 +580,7 @@ fn dsdt_contains_pci_routing_and_resources() {
         "DSDT AML missing IMCR SystemIO OperationRegion for ports 0x22..0x23"
     );
  
-    let imcr_field = [
-        &[0x5B, 0x81, 0x10][..], // FieldOp + pkglen (payload is 15 bytes, plus PkgLength byte)
-        &b"IMCR"[..],
-        &[0x01][..], // ByteAcc + NoLock + Preserve
-        &b"IMCS"[..],
-        &[0x08][..],
-        &b"IMCD"[..],
-        &[0x08][..],
-    ]
-    .concat();
-    assert!(
-        find_subslice(aml, &imcr_field).is_some(),
-        "DSDT AML missing IMCR Field (IMCS/IMCD)"
-    );
+    assert!(aml_contains_imcr_field(aml), "DSDT AML missing IMCR Field (IMCS/IMCD)");
 
     let pic_body = [
         &b"_PIC"[..],
