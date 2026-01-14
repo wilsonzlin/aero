@@ -732,6 +732,16 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
         "expected MSI-X pending bit 0 to be set while function-masked"
     );
 
+    // Clear the interrupt condition before snapshotting. Pending MSI-X delivery should still occur
+    // after unmask due to the PBA pending bit, even without a new interrupt edge.
+    xhci.borrow_mut().clear_event_interrupt();
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to remain set after clearing the interrupt condition"
+    );
+
     let snapshot = vm.take_snapshot_full().unwrap();
 
     // Mutate state after snapshot: clear function mask and allow xHCI to deliver the pending MSI-X
