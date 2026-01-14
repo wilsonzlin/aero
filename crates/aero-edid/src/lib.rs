@@ -18,6 +18,12 @@ pub struct Timing {
     pub refresh_hz: u16,
 }
 
+impl Default for Timing {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 impl Timing {
     /// The legacy/default preferred timing: 1024×768 @ 60Hz.
     pub const DEFAULT: Self = Self::new(1024, 768, 60);
