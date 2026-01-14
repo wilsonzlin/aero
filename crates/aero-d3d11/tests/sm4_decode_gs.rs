@@ -16,6 +16,18 @@ fn make_sm4_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
     tokens
 }
 
+fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
+    // Version token layout:
+    // type in bits 16.., major in bits 4..7, minor in bits 0..3.
+    let version = ((stage_type as u32) << 16) | (5u32 << 4);
+    let total_dwords = 2 + body_tokens.len();
+    let mut tokens = Vec::with_capacity(total_dwords);
+    tokens.push(version);
+    tokens.push(total_dwords as u32);
+    tokens.extend_from_slice(body_tokens);
+    tokens
+}
+
 fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(tokens.len() * 4);
     for &t in tokens {
@@ -302,4 +314,52 @@ fn gs_opcode_constants_match_d3d10_tokenized_format() {
     assert_eq!(OPCODE_CUT_STREAM, 0x42);
     assert_eq!(OPCODE_EMIT, 0x43);
     assert_eq!(OPCODE_CUT, 0x44);
+}
+
+#[test]
+fn decodes_geometry_shader_instance_count_decl_sm5() {
+    const INSTANCE_COUNT: u32 = 4;
+    // `SV_GSInstanceID` D3D name token (see `shader_translate.rs`).
+    const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
+
+    // Use dummy opcode for `dcl_input_siv`; the decoder keys off operand type and the trailing
+    // sys-value token rather than the declaration opcode.
+    const DCL_DUMMY: u32 = 0x320;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_gsinstancecount INSTANCE_COUNT
+    body.extend_from_slice(&[
+        opcode_token(OPCODE_DCL_GS_INSTANCE_COUNT, 2),
+        INSTANCE_COUNT,
+    ]);
+
+    // dcl_input_siv v0.x, gsinstanceid
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 4)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    body.push(D3D_NAME_GS_INSTANCE_ID);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
+
+    assert_eq!(module.stage, ShaderStage::Geometry);
+    assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::GsInstanceCount {
+                count: INSTANCE_COUNT
+            },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_GS_INSTANCE_ID
+            }
+        ]
+    );
+    assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
 }
