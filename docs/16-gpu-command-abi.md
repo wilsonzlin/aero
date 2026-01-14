@@ -218,8 +218,8 @@ Vblank timing registers (only when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.
 |---:|---|:--:|---|
 | `0x0420` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO` | RO | Vblank sequence (low 32 bits) |
 | `0x0424` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI` | RO | Vblank sequence (high 32 bits) |
-| `0x0428` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO` | RO | Last vblank time in ns (low 32 bits) |
-| `0x042C` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI` | RO | Last vblank time in ns (high 32 bits) |
+| `0x0428` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO` | RO | Last vblank time in ns since boot (low 32 bits) |
+| `0x042C` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI` | RO | Last vblank time in ns since boot (high 32 bits) |
 | `0x0430` | `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS` | RO | Nominal vblank period in ns |
 
 ### 2.6 Cursor registers
