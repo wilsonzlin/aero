@@ -535,7 +535,7 @@ describe("InputCapture wheel handling", () => {
       });
 
       expect(posted).toHaveLength(1);
-      const words = decodeFirstEventWords((posted[0] as { buffer: ArrayBuffer }).buffer);
+      const words = new Int32Array((posted[0] as { buffer: ArrayBuffer }).buffer);
       expect(words[0]).toBe(1);
       expect(words[2]).toBe(InputEventType.MouseMove);
       expect(words[4]).toBe(1);
