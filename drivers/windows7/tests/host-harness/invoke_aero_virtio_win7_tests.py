@@ -2978,7 +2978,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|... "
             "This requires a guest image with an updated aero-virtio-selftest.exe; "
             "to make the guest fail-fast, provision it with --require-net-msix "
-            "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1)."
+            "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1). "
+            "If provisioning via New-AeroWin7TestImage.ps1, use -RequireNetMsix."
         ),
     )
     parser.add_argument(
