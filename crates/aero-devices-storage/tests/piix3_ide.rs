@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{
@@ -123,11 +123,11 @@ impl RecordingDisk {
 }
 
 #[derive(Clone, Debug)]
-struct SharedRecordingDisk(Rc<RefCell<RecordingDisk>>);
+struct SharedRecordingDisk(Arc<Mutex<RecordingDisk>>);
 
 impl VirtualDisk for SharedRecordingDisk {
     fn capacity_bytes(&self) -> u64 {
-        self.0.borrow().capacity_bytes
+        self.0.lock().unwrap().capacity_bytes
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
@@ -169,7 +169,7 @@ impl VirtualDisk for SharedRecordingDisk {
         );
 
         let lba = offset / SECTOR_SIZE as u64;
-        let mut inner = self.0.borrow_mut();
+        let mut inner = self.0.lock().unwrap();
         inner.last_write_lba = Some(lba);
         inner.last_write_len = buf.len();
         Ok(())
@@ -871,7 +871,7 @@ fn ata_pio_write_sectors_ext_uses_lba48_hob_bytes() {
     // Use a "high" LBA value that requires HOB bytes (LBA3..LBA5) to be carried through for
     // LBA48 commands. This ensures we don't accidentally truncate to 28-bit addressing.
     let lba: u64 = 0x01_00_00_00;
-    let shared = Rc::new(RefCell::new(RecordingDisk::new(lba + 16)));
+    let shared = Arc::new(Mutex::new(RecordingDisk::new(lba + 16)));
     let disk = SharedRecordingDisk(shared.clone());
 
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
@@ -907,7 +907,7 @@ fn ata_pio_write_sectors_ext_uses_lba48_hob_bytes() {
         ioports.write(PRIMARY_PORTS.cmd_base, 2, i as u32);
     }
 
-    let inner = shared.borrow();
+    let inner = shared.lock().unwrap();
     assert_eq!(inner.last_write_lba, Some(lba));
     assert_eq!(inner.last_write_len, SECTOR_SIZE);
 }
