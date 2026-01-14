@@ -76,6 +76,21 @@ export class WgpuWebGl2Presenter implements Presenter {
     } catch {
       this.gl = null;
     }
+    if (this.gl) {
+      // Best-effort deterministic state hardening: wgpu uses WebGL2 state under the hood, and
+      // some drivers enable dithering by default. Disable sources of output variance so
+      // presented-output readbacks are more stable across environments.
+      try {
+        this.gl.disable(this.gl.DITHER);
+        this.gl.disable(this.gl.SCISSOR_TEST);
+        this.gl.disable(this.gl.STENCIL_TEST);
+        this.gl.disable(this.gl.SAMPLE_ALPHA_TO_COVERAGE);
+        this.gl.disable(this.gl.SAMPLE_COVERAGE);
+        this.gl.colorMask(true, true, true, true);
+      } catch {
+        // Ignore; best-effort only.
+      }
+    }
 
     this.initialized = true;
   }
