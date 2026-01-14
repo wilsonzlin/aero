@@ -517,7 +517,7 @@ impl PlatformInterrupts {
     ///
     /// This avoids exposing the internal `lapics: Vec<Arc<LocalApic>>` field directly and is
     /// primarily used by MSI delivery helpers (e.g. broadcast and logical destination modes).
-    pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
