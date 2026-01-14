@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SetBootDisksMessage } from "../../../web/src/runtime/boot_disks_protocol";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(dirname(thisDir)));
@@ -61,6 +62,8 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable in this Playwright environment.");
   test.skip(!support.audioWorklet, "AudioWorklet is unavailable in this Playwright environment.");
 
+  const bootDisksMessage: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
+
   await page.setContent(`
     <button id="start">Start audio</button>
     <pre id="log"></pre>
@@ -71,6 +74,7 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
       const log = document.getElementById("log");
       const coordinator = new WorkerCoordinator();
       window.__coordinator = coordinator;
+      const bootDisksMessage = ${JSON.stringify(bootDisksMessage)};
 
        // Minimal config that keeps worker boot cheap.
        const config = {
@@ -88,7 +92,7 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
 
        try {
          coordinator.start(config);
-         coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+         coordinator.getIoWorker()?.postMessage(bootDisksMessage);
        } catch (err) {
          log.textContent = err instanceof Error ? err.message : String(err);
        }
