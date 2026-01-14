@@ -133,6 +133,9 @@ fn input_help_mentions_flags_and_steps() {
             "src/hid/wasm_uhci_hid_guest_bridge.test.ts",
         ))
         .stdout(predicate::str::contains(
+            "src/io/devices/virtio_input_mouse_buttons.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/platform/hid_passthrough_protocol.test.ts",
         ))
         .stdout(predicate::str::contains(
@@ -262,6 +265,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("--usb-all"))
         .stdout(predicate::str::contains("--node-dir"))
         .stdout(predicate::str::contains("--web-dir"))
+        .stdout(predicate::str::contains("WEB_DIR"))
         .stdout(predicate::str::contains("AERO_WEB_DIR"))
         .stdout(predicate::str::contains("WEB_DIR"))
         .stdout(predicate::str::contains("AERO_NODE_DIR"));

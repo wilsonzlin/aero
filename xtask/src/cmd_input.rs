@@ -594,7 +594,7 @@ fn resolve_node_dir_for_input(repo_root: &Path, cli_override: Option<&str>) -> R
             return Ok(resolved);
         }
         return Err(XtaskError::Message(format!(
-            "package.json not found in node dir override `{dir}` (set --node-dir/AERO_NODE_DIR to a directory that contains package.json)"
+            "package.json not found in node dir override `{dir}` (set --node-dir/--web-dir or AERO_NODE_DIR/AERO_WEB_DIR/WEB_DIR to a directory that contains package.json)"
         )));
     }
 
@@ -609,7 +609,7 @@ fn resolve_node_dir_for_input(repo_root: &Path, cli_override: Option<&str>) -> R
     }
 
     Err(XtaskError::Message(
-        "unable to locate package.json; set AERO_NODE_DIR to the Node workspace directory"
+        "unable to locate package.json; pass --node-dir/--web-dir or set AERO_NODE_DIR/AERO_WEB_DIR/WEB_DIR to the Node workspace directory"
             .to_string(),
     ))
 }
