@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use aero_gpu_vga::{PortIO as _, VgaDevice};
-use aero_shared::scanout_state::{ScanoutState, ScanoutStateUpdate, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::scanout_state::ScanoutStateUpdate;
 use memory::MemoryBus;
 
 use crate::devices::aerogpu_regs::{
@@ -220,6 +222,7 @@ impl AeroGpuPciDevice {
         u64::from(self.bar1).wrapping_add(u64::from(AEROGPU_PCI_BAR1_LFB_OFFSET))
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     fn maybe_publish_scanout_state(&self, update: ScanoutStateUpdate) {
         let Some(state) = &self.scanout_state else {
             return;
@@ -239,6 +242,14 @@ impl AeroGpuPciDevice {
         state.publish(update);
     }
 
+    #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+    fn update_scanout_state_from_vga(&self) {
+        // `aero-gpu-vga::VgaDevice::active_scanout_update()` is not available for `wasm32`
+        // builds without atomics. In that configuration the emulator does not have a
+        // shared-memory scanout channel, so skip legacy VGA scanout publishing entirely.
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     fn update_scanout_state_from_vga(&self) {
         // While WDDM scanout0 is enabled, legacy VGA/VBE must not steal scanout ownership.
         if self.regs.scanout0.enable {
