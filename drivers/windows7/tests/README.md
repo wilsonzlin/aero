@@ -61,6 +61,9 @@ drivers/windows7/tests/
       only accepts it when `--allow-virtio-snd-transitional` is set. In that mode, install the opt-in legacy package
       (`drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
+- Also emits an informational `virtio-snd-format` marker exposing the negotiated endpoint mix formats (as visible via
+  the Windows shared-mode mix format returned by `IAudioClient::GetMixFormat()`):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
 - When run with `--test-snd-buffer-limits`, also runs a WASAPI buffer sizing stress test and emits the marker
   `virtio-snd-buffer-limits` (PASS/FAIL).
 - Logs to:
@@ -92,13 +95,15 @@ drivers/windows7/tests/
   # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
    AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
- # or:
+  # or:
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+  # Negotiated endpoint mix formats (diagnostic only):
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=...|capture=...
   # Optional: virtio-snd eventq counters (diagnostic only):
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
- AERO_VIRTIO_SELFTEST|RESULT|PASS
+  AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 The guest may also emit optional interrupt-mode diagnostics markers (informational):
@@ -138,6 +143,9 @@ Note:
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed). Use `--disable-snd-capture` to skip capture-only checks while still exercising playback.
+  - When capture is enabled, the selftest also emits a `virtio-snd-format` INFO marker reporting the render + capture
+    shared-mode mix formats (useful when running against non-contract virtio-snd devices that negotiate optional
+    formats/rates).
 
 ## Optional/Compatibility Features
 
