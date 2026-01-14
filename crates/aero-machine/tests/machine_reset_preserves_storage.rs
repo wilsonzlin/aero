@@ -104,7 +104,7 @@ fn write_cfis_read_dma_ext(m: &mut Machine, ctba: u64, lba: u64, count: u16) {
 
 fn ahci_read_sector0(m: &mut Machine) -> [u8; SECTOR_SIZE] {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the platform's PCI MMIO window (deterministic address).
     write_cfg_u32(m, bdf, AHCI_ABAR_CFG_OFFSET, bar5_base as u32);

@@ -67,10 +67,10 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
     bios_post_with_extra_reservations, msix::PCI_CAP_ID_MSIX, register_pci_config_ports,
-    MsiCapability, MsixCapability, PciBarDefinition, PciBarKind, PciBarMmioHandler,
-    PciBarMmioRouter, PciBarRange, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot,
-    PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
-    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    MsiCapability, MsixCapability, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter, PciBdf,
+    PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -577,9 +577,18 @@ pub struct MachineConfig {
     /// integration tests.
     ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
-    /// Bochs VBE linear framebuffer (LFB) at the configured base (see
-    /// [`MachineConfig::vga_lfb_base`], default: [`aero_gpu_vga::SVGA_LFB_BASE`]), and VGA/VBE port
-    /// I/O are routed to an [`aero_gpu_vga::VgaDevice`].
+    /// Bochs VBE linear framebuffer (LFB) at the VGA device's configured base
+    /// ([`aero_gpu_vga::VgaDevice::lfb_base`], defaulting to [`MachineConfig::vga_lfb_base`]), and
+    /// VGA/VBE port I/O are routed to an [`aero_gpu_vga::VgaDevice`].
+    ///
+    /// When the PC platform is enabled ([`MachineConfig::enable_pc_platform`]), the canonical
+    /// machine also exposes a transitional Bochs/QEMU-compatible "Standard VGA" PCI function
+    /// (currently at `00:0c.0`). The VBE LFB is exposed through BAR0, whose base address is
+    /// assigned by BIOS POST (and may be relocated when other PCI devices are present). The
+    /// machine mirrors this BAR base into both the VGA model and the BIOS VBE `PhysBasePtr` so
+    /// guests observe hardware-like behavior.
+    ///
+    /// This PCI stub is not present when [`MachineConfig::enable_aerogpu`] is enabled.
     ///
     /// Note: [`MachineConfig::enable_vga`] and [`MachineConfig::enable_aerogpu`] are mutually
     /// exclusive; [`Machine::new`] rejects configurations that enable both to avoid conflicting
@@ -2533,9 +2542,59 @@ impl PciDevice for XhciPciConfigDevice {
 // The VGA/VBE device model used for boot display (`aero_gpu_vga`) is *not* AeroGPU and must not
 // occupy that BDF.
 //
-// When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), the legacy VGA/VBE
-// linear framebuffer (LFB) is routed inside the ACPI-reported PCI MMIO window without occupying a
-// dedicated PCI function (see `MachineConfig::vga_lfb_base`).
+// When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), we also expose a
+// minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the SVGA/VBE linear
+// framebuffer (LFB) can be routed via the PCI MMIO window. The BAR base address is assigned by
+// BIOS POST / the PCI resource allocator (and may be relocated when other PCI devices are
+// present), and is mirrored into the BIOS VBE state (`PhysBasePtr`) and the VGA model. When AeroGPU
+// is enabled, this transitional PCI stub is intentionally not installed to avoid exposing two
+// VGA-class PCI devices to the guest (which can confuse Windows driver binding).
+const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
+const VGA_PCI_BAR_INDEX: u8 = 0;
+
+struct VgaPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VgaPciConfigDevice {
+    fn new(vram_size: usize, bar0_base: Option<u32>) -> Self {
+        // Bochs/QEMU-compatible IDs for "Standard VGA".
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(
+            aero_gpu_vga::VGA_PCI_VENDOR_ID,
+            aero_gpu_vga::VGA_PCI_DEVICE_ID,
+        );
+        cfg.set_class_code(
+            aero_gpu_vga::VGA_PCI_CLASS_CODE,
+            aero_gpu_vga::VGA_PCI_SUBCLASS,
+            aero_gpu_vga::VGA_PCI_PROG_IF,
+            0x00,
+        );
+
+        let size: u32 = vram_size.try_into().unwrap_or(u32::MAX);
+        cfg.set_bar_definition(
+            VGA_PCI_BAR_INDEX,
+            aero_devices::pci::PciBarDefinition::Mmio32 {
+                size,
+                prefetchable: false,
+            },
+        );
+        if let Some(base) = bar0_base {
+            cfg.set_bar_base(VGA_PCI_BAR_INDEX, u64::from(base));
+        }
+
+        Self { cfg }
+    }
+}
+
+impl PciDevice for VgaPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -10675,6 +10734,27 @@ impl Machine {
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
+            if use_legacy_vga {
+                // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
+                // MMIO window.
+                let vram_size = self
+                    .vga
+                    .as_ref()
+                    .expect("VGA enabled")
+                    .borrow()
+                    .vram_size();
+                let bar0_base = if self.cfg.vga_lfb_base.is_some() || self.cfg.vga_vram_bar_base.is_some()
+                {
+                    let bar_size = self.legacy_vga_pci_bar_size_bytes();
+                    Some(Self::legacy_vga_lfb_base_for_cfg(&self.cfg, bar_size).1)
+                } else {
+                    None
+                };
+                pci_cfg
+                    .borrow_mut()
+                    .bus_mut()
+                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new(vram_size, bar0_base)));
+            }
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
                 //
@@ -11009,21 +11089,9 @@ impl Machine {
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
             //
-            // Note: When the standalone legacy VGA/VBE device model is enabled, the VBE linear
-            // framebuffer base lives inside the PCI MMIO window. We reserve that fixed window in
-            // the PCI BAR allocator so BIOS POST does not place other devices on top of it now that
-            // the transitional VGA PCI stub is gone.
-            let legacy_vga_lfb_reservation = if use_legacy_vga {
-                let vga = self.vga.as_ref().expect("VGA enabled");
-                let vga = vga.borrow();
-                Some(PciBarRange {
-                    kind: PciBarKind::Mmio32,
-                    base: u64::from(vga.lfb_base()),
-                    size: u64::try_from(vga.vram_size()).unwrap_or(0),
-                })
-            } else {
-                None
-            };
+            // Note: When the standalone legacy VGA/VBE path is enabled, we expose a transitional
+            // VGA PCI function whose BAR0 covers the VBE linear framebuffer (LFB). BIOS POST treats
+            // it like any other BAR and will allocate a non-overlapping base address for it.
             let pci_allocator_cfg = PciResourceAllocatorConfig::default();
             {
                 let mut pci_cfg = pci_cfg.borrow_mut();
@@ -11032,7 +11100,7 @@ impl Machine {
                 bios_post_with_extra_reservations(
                     pci_cfg.bus_mut(),
                     &mut allocator,
-                    legacy_vga_lfb_reservation,
+                    None,
                 )
                 .expect("PCI BIOS POST resource assignment should succeed");
             }
@@ -11266,22 +11334,14 @@ impl Machine {
             // immediately even when the guest OS programs a BAR outside the allocator's default
             // sub-window.
             self.mem.map_mmio_once(PCI_MMIO_BASE, PCI_MMIO_SIZE, || {
-                let legacy_vga_lfb = vga.clone().map(|vga| {
-                    let (base, size) = {
-                        let vga = vga.borrow();
-                        (
-                            u64::from(vga.lfb_base()),
-                            u64::try_from(vga.vram_size()).unwrap_or(0),
-                        )
-                    };
-                    LegacyVgaLfbWindow {
-                        base,
-                        size,
-                        handler: VgaLfbMmioHandler { dev: vga },
-                    }
-                });
-
                 let mut router = PciBarMmioRouter::new(PCI_MMIO_BASE, pci_cfg.clone());
+                if let Some(vga) = vga.clone() {
+                    router.register_handler(
+                        VGA_PCI_BDF,
+                        VGA_PCI_BAR_INDEX,
+                        VgaLfbMmioHandler { dev: vga },
+                    );
+                }
                 if let Some(ahci) = ahci.clone() {
                     let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
                     router.register_handler(
@@ -11386,7 +11446,7 @@ impl Machine {
                 Box::new(PciMmioWindow {
                     window_base: PCI_MMIO_BASE,
                     router,
-                    legacy_vga_lfb,
+                    legacy_vga_lfb: None,
                 })
             });
 
@@ -11633,21 +11693,14 @@ impl Machine {
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
-        // When legacy VGA is enabled, configure the BIOS to report the (MMIO-safe) LFB base that
-        // our VGA device is mapped at (legacy default: `SVGA_LFB_BASE`) so OSes and bootloaders
-        // see a stable framebuffer address.
+        // When legacy VGA is enabled, configure the BIOS to report the VGA linear framebuffer
+        // base address. With the PC platform enabled this is the VGA PCI BAR assignment;
+        // otherwise it is `cfg.vga_lfb_base`.
         //
         // When VGA is disabled, keep the default LFB base in conventional RAM: pointing the BIOS
-        // at the VGA MMIO LFB base would overlap the canonical PCI MMIO window (and could cause BIOS VBE
-        // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
-        let legacy_vga_lfb_base = if use_legacy_vga {
-            self.vga
-                .as_ref()
-                .map(|vga| vga.borrow().lfb_base())
-                .unwrap_or_else(|| self.legacy_vga_lfb_base())
-        } else {
-            0
-        };
+        // at the PCI MMIO window (where device BARs live) could cause BIOS VBE helpers like
+        // `int 0x10, ax=0x4F02` to scribble over PCI device BARs.
+        let vbe_lfb_base = use_legacy_vga.then(|| self.legacy_vga_lfb_base());
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             boot_drive,
@@ -11656,7 +11709,7 @@ impl Machine {
             cpu_count: self.cfg.cpu_count,
             smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
-            vbe_lfb_base: use_legacy_vga.then_some(legacy_vga_lfb_base),
+            vbe_lfb_base,
             ..Default::default()
         });
         // Patch the BIOS's VBE controller `TotalMemory` reporting when the active framebuffer is
@@ -11696,7 +11749,6 @@ impl Machine {
             self.bios
                 .post(&mut self.cpu.state, bus, &mut self.disk, cdrom_ref);
         }
-
         // The firmware's BDA initialization derives the "fixed disk count" (0x40:0x75) from the
         // configured boot drive number. When booting via El Torito (`DL=0xE0..=0xEF`), the firmware
         // sets this count to 0 to avoid inflating it based on the CD drive number.
@@ -11705,8 +11757,9 @@ impl Machine {
         // any CD boot device. Patch the BDA so BIOS INT 13h `drive_present()` checks can still
         // succeed for HDD accesses while booting from CD.
         self.mem.write_u8(firmware::bios::BDA_BASE + 0x75, 1);
-        // Once PCI BARs are assigned, update the BIOS VBE LFB base for any display configurations
-        // that derive it from PCI resources (AeroGPU BAR1).
+
+        // Keep the BIOS VBE LFB base coherent with the machine's active display wiring (legacy
+        // VGA PCI BAR assignment or AeroGPU BAR1-derived base).
         self.sync_bios_vbe_lfb_base_to_display_wiring();
         // The HLE BIOS maintains its own copy of the VBE palette for INT 10h AX=4F09 services, but
         // does not perform VGA port I/O. Keep the AeroGPU-emulated VGA DAC palette coherent with
@@ -12743,6 +12796,20 @@ impl Machine {
     }
 
     fn legacy_vga_lfb_base(&self) -> u32 {
+        // With the PC platform enabled, the legacy VGA/VBE model exposes its linear framebuffer
+        // via a PCI BAR whose base is assigned by BIOS POST / the PCI resource allocator. Mirror
+        // that assignment into the BIOS VBE `PhysBasePtr` and the VGA model so the guest observes
+        // hardware-like behavior.
+        if self.cfg.enable_pc_platform {
+            if let Some(base) = self
+                .pci_bar_base(VGA_PCI_BDF, VGA_PCI_BAR_INDEX)
+                .and_then(|base| u32::try_from(base).ok())
+                .filter(|&base| base != 0)
+            {
+                return base;
+            }
+        }
+
         let bar_size = self.legacy_vga_pci_bar_size_bytes();
         Self::legacy_vga_lfb_base_for_cfg(&self.cfg, bar_size).1
     }
@@ -12788,15 +12855,17 @@ impl Machine {
         // Keep the BIOS-reported VBE linear framebuffer base coherent with the active display
         // device model.
         //
-        // - Legacy VGA/VBE device model: the VGA device's configured LFB base.
+        // - Legacy VGA/VBE device model: PCI BAR assignment when the PC platform is enabled, else
+        //   `cfg.vga_lfb_base`.
         // - AeroGPU: BAR1_BASE + VBE_LFB_OFFSET (within the VRAM aperture).
         // - Headless: default RAM-backed base (safe, avoids overlap with PCI MMIO window).
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
         let lfb_base = if use_legacy_vga {
-            self.vga
-                .as_ref()
-                .map(|vga| vga.borrow().lfb_base())
-                .unwrap_or_else(|| self.legacy_vga_lfb_base())
+            let base = self.legacy_vga_lfb_base();
+            if let Some(vga) = &self.vga {
+                vga.borrow_mut().set_svga_lfb_base(base);
+            }
+            base
         } else if self.cfg.enable_aerogpu {
             self.aerogpu_bar1_base()
                 .and_then(|base| u32::try_from(base.saturating_add(VBE_LFB_OFFSET as u64)).ok())
@@ -18840,9 +18909,9 @@ mod tests {
     }
 
     #[test]
-    fn bios_vbe_lfb_base_uses_configured_vga_lfb_base_only_when_vga_is_enabled() {
+    fn bios_vbe_lfb_base_uses_vga_pci_bar_base_only_when_vga_is_enabled() {
         // When VGA is disabled, the BIOS should keep its default RAM-backed LFB base instead of
-        // pointing at the VGA MMIO LFB base (which overlaps the canonical PCI MMIO window).
+        // pointing at the PCI MMIO window (where device BARs live).
         let headless = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,
@@ -18861,15 +18930,11 @@ mod tests {
         // When VGA is disabled, `aero-machine` should not request a BIOS LFB base override.
         assert_eq!(headless.bios.config().vbe_lfb_base, None);
 
-        // When VGA is enabled, the BIOS should report the configured MMIO-mapped base.
-        // Choose a base outside the BIOS PCI BAR allocator default window
-        // (`0xE000_0000..0xF000_0000`) to ensure we don't rely on that sub-window.
-        let lfb_base = 0xD000_0000;
+        // When VGA is enabled, the BIOS should report the VGA PCI BAR assignment.
         let vga = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,
             enable_vga: true,
-            vga_lfb_base: Some(lfb_base),
             enable_serial: false,
             enable_i8042: false,
             enable_a20_gate: false,
@@ -18877,8 +18942,12 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), u64::from(lfb_base));
-        assert_eq!(vga.bios.config().vbe_lfb_base, Some(lfb_base));
+        let vga_bar_base = vga.pci_bar_base(VGA_PCI_BDF, VGA_PCI_BAR_INDEX).unwrap_or(0);
+        assert_ne!(vga_bar_base, 0);
+        assert_eq!(vga.vbe_lfb_base(), vga_bar_base);
+        let vga_bar_base_u32 =
+            u32::try_from(vga_bar_base).expect("VGA BAR base should fit in u32");
+        assert_eq!(vga.bios.config().vbe_lfb_base, Some(vga_bar_base_u32));
     }
 
     #[test]

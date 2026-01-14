@@ -140,7 +140,7 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
 
     // Program PCI config state for the AHCI controller (BAR5 + command).
     let bdf = profile::SATA_AHCI_ICH9.bdf;
-    let abar: u64 = 0xE100_0000;
+    let abar: u64 = 0xE200_0000;
     // BAR5: ABAR.
     write_cfg_u32(
         &mut vm,

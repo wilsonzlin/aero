@@ -132,7 +132,7 @@ fn machine_shared_bios_disk_is_visible_to_ahci_dma() {
 
     // Program the AHCI controller and issue a READ DMA EXT command.
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
     write_cfg_u32(

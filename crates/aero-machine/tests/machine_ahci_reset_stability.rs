@@ -59,7 +59,7 @@ fn machine_ahci_mmio_and_device_rc_identity_remain_stable_across_reset() {
     m.io_write(A20_GATE_PORT, 1, 0x02);
 
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Program BAR5 and enable memory decoding + bus mastering.
     write_cfg_u32(

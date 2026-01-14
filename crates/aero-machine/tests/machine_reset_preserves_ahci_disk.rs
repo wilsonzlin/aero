@@ -123,7 +123,7 @@ fn machine_reset_preserves_ahci_disk_port0_backend() {
 
     // Program the AHCI controller and read back LBA0 via DMA.
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
     write_cfg_u32(

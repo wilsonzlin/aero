@@ -223,7 +223,7 @@ fn pc_machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
     }
 
     // Program the AHCI controller.
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the platform's PCI MMIO window (deterministic address).
     write_cfg_u32(

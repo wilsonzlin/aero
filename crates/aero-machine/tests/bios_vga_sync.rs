@@ -1,7 +1,14 @@
-use aero_gpu_vga::DisplayOutput;
+use aero_devices::pci::PciBdf;
+use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
+
+fn vga_pci_lfb_base(m: &Machine) -> u32 {
+    m.pci_bar_base(PciBdf::new(0, 0x0c, 0), 0)
+        .and_then(|base| u32::try_from(base).ok())
+        .unwrap_or(0)
+}
 
 fn run_until_halt(m: &mut Machine) {
     for _ in 0..200 {
@@ -347,7 +354,9 @@ fn bios_vbe_sync_mode_and_lfb_base() {
             enable_i8042: false,
             enable_a20_gate: false,
             enable_reset_ctrl: false,
-            enable_e1000: false,
+            // Force the VGA PCI BAR to be relocated away from the default MMIO base so we detect
+            // if the BIOS/VBE wiring is incorrectly hard-coded.
+            enable_e1000: !enable_aerogpu,
             ..Default::default()
         };
 
@@ -360,6 +369,27 @@ fn bios_vbe_sync_mode_and_lfb_base() {
             m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
                 .unwrap();
             m.reset();
+            let expected_phys_base_ptr = if enable_aerogpu {
+                // Phase 2: AeroGPU-owned boot display. LFB base should be derived from BAR1.
+                let aerogpu_bdf = m.aerogpu().expect("aerogpu enabled implies device present");
+                let bar1_base = m
+                    .pci_bar_base(aerogpu_bdf, 1)
+                    .expect("aerogpu BAR1 base should be assigned");
+                let expected = bar1_base + aero_machine::VBE_LFB_OFFSET as u64;
+                assert_eq!(m.vbe_lfb_base(), expected);
+                u32::try_from(expected).expect("AeroGPU VBE LFB base should fit in u32")
+            } else {
+                let lfb_base = vga_pci_lfb_base(&m);
+                assert_ne!(lfb_base, 0, "VGA BAR0 base should be assigned by BIOS POST");
+                assert_ne!(
+                    lfb_base, SVGA_LFB_BASE,
+                    "expected VGA BAR assignment to differ from the historical hard-coded base"
+                );
+                let vga = m.vga().expect("pc platform should include VGA");
+                assert_eq!(vga.borrow().svga_lfb_base(), lfb_base);
+                lfb_base
+            };
+
             run_until_halt(&mut m);
 
             // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
@@ -393,16 +423,9 @@ fn bios_vbe_sync_mode_and_lfb_base() {
 
             let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
             assert_eq!(phys_base_ptr, m.vbe_lfb_base_u32());
+            assert_eq!(phys_base_ptr, expected_phys_base_ptr);
 
-            if enable_aerogpu {
-                // Phase 2: AeroGPU-owned boot display. LFB base should be derived from BAR1.
-                let aerogpu_bdf = m.aerogpu().expect("aerogpu enabled implies device present");
-                let bar1_base = m
-                    .pci_bar_base(aerogpu_bdf, 1)
-                    .expect("aerogpu BAR1 base should be assigned");
-                let expected = bar1_base + aero_machine::VBE_LFB_OFFSET as u64;
-                assert_eq!(m.vbe_lfb_base(), expected);
-            } else {
+            if !enable_aerogpu {
                 let vga = m.vga().expect("pc platform should include VGA");
                 let mut vga = vga.borrow_mut();
                 vga.present();

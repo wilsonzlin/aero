@@ -112,7 +112,7 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
     src.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Program PCI config: BAR5 (ABAR), COMMAND.MEM + COMMAND.BME.
     write_cfg_u32(&mut src, bdf, AHCI_ABAR_CFG_OFFSET, bar5_base as u32);

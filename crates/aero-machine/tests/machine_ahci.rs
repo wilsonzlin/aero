@@ -219,7 +219,7 @@ fn machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
     }
 
     // Program the AHCI controller.
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
     write_cfg_u32(
@@ -311,7 +311,7 @@ fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
 
     // Program the AHCI controller.
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
     write_cfg_u32(
@@ -464,7 +464,7 @@ fn machine_gates_ahci_dma_on_pci_bus_master_enable() {
 
     // Program the AHCI controller.
     let bdf = SATA_AHCI_ICH9.bdf;
-    let bar5_base: u64 = 0xE100_0000;
+    let bar5_base: u64 = 0xE200_0000;
 
     // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
     write_cfg_u32(

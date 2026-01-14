@@ -1,6 +1,8 @@
+use aero_devices::pci::PciBdf;
 use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
+use aero_gpu_vga::SVGA_LFB_BASE;
 
 fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -64,20 +66,14 @@ fn run_until_halt(m: &mut Machine) {
 
 #[test]
 fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
-    // Use a non-default LFB base to ensure there are no hidden dependencies on
-    // `aero_gpu_vga::SVGA_LFB_BASE` (e.g. AeroGPU BAR1 integration needs a different base).
-    //
-    // Pick a base outside the BIOS PCI BAR allocator default window
-    // (`PciResourceAllocatorConfig::default().mmio_base..+mmio_size`, currently
-    // `0xE000_0000..0xF000_0000`) to ensure the legacy VGA/VBE path doesn't rely on that window.
-    let lfb_base: u32 = 0xD000_0000;
     let boot = build_int10_vbe_set_mode_boot_sector();
 
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
-        vga_lfb_base: Some(lfb_base),
+        // Force the VGA PCI BAR allocation away from the historical hard-coded base.
+        enable_e1000: true,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -90,22 +86,31 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
 
     run_until_halt(&mut m);
 
-    assert_eq!(
-        m.vbe_lfb_base(),
-        u64::from(lfb_base),
-        "BIOS VBE PhysBasePtr should reflect MachineConfig::vga_lfb_base"
+    // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
+    let lfb_base = m
+        .pci_bar_base(PciBdf::new(0, 0x0c, 0), 0)
+        .and_then(|base| u32::try_from(base).ok())
+        .expect("VGA PCI BAR should be assigned by BIOS POST");
+    assert_ne!(lfb_base, 0);
+    assert_ne!(
+        lfb_base, SVGA_LFB_BASE,
+        "expected VGA BAR base to differ from SVGA_LFB_BASE when another PCI MMIO device is enabled"
     );
+    assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
     let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
     assert_eq!(
         phys_base_ptr, lfb_base,
-        "INT 10h AX=4F01 mode info PhysBasePtr must match the configured LFB base"
+        "INT 10h AX=4F01 mode info PhysBasePtr must match the VGA PCI BAR assignment"
     );
 
     let vga = m.vga().expect("machine should have a VGA device");
-    assert_eq!(vga.borrow().get_resolution(), (1024, 768));
+    {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        assert_eq!(vga.get_resolution(), (1024, 768));
+    }
 
-    // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     let base = u64::from(lfb_base);
     m.write_physical_u8(base, 0x00); // B
     m.write_physical_u8(base + 1, 0x00); // G
