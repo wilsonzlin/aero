@@ -113,7 +113,7 @@ Use a **versioned path** (e.g. `windows7-v1.img`, `windows7/2026-01-10/disk.img`
 ```bash
 aws s3 cp ./windows7.img "s3://YOUR_BUCKET/images/windows7-v1.img" \
   --content-type "application/octet-stream" \
-  --cache-control "public, max-age=31536000, immutable"
+  --cache-control "public, max-age=31536000, immutable, no-transform"
 ```
 
 ### Mutable
@@ -123,7 +123,7 @@ If you overwrite the same key (not recommended for very large artifacts), set a 
 ```bash
 aws s3 cp ./windows7.img "s3://YOUR_BUCKET/images/windows7-latest.img" \
   --content-type "application/octet-stream" \
-  --cache-control "public, max-age=60"
+  --cache-control "public, max-age=60, no-transform"
 ```
 
 If clients might have cached old bytes, consider changing the object key instead of overwriting.
