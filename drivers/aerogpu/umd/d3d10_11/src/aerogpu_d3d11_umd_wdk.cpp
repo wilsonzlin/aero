@@ -1318,27 +1318,6 @@ static void SetShaderResourceSlotLocked(Device* dev, uint32_t shader_stage, uint
   table[slot] = texture;
 }
 
-static bool ResourcesAlias(const Resource* a, const Resource* b) {
-  if (!a || !b) {
-    return false;
-  }
-  if (a == b) {
-    return true;
-  }
-  // Shared resources can be opened multiple times (distinct Resource objects) yet
-  // refer to the same underlying allocation. Treat those as aliasing for D3D11
-  // SRV/RTV hazard mitigation.
-  if (a->share_token != 0 && a->share_token == b->share_token) {
-    return true;
-  }
-  if (a->backing_alloc_id != 0 &&
-      a->backing_alloc_id == b->backing_alloc_id &&
-      a->backing_offset_bytes == b->backing_offset_bytes) {
-    return true;
-  }
-  return false;
-}
-
 static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {
   if (!dev || (resource == 0 && !res)) {
     return;

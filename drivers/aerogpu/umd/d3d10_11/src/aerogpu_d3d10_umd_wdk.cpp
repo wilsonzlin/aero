@@ -84,6 +84,7 @@ using aerogpu::d3d10_11::InitLockArgsForMap;
 using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
+using aerogpu::d3d10_11::ResourcesAlias;
 using aerogpu::d3d10_11::EmitSetRenderTargetsCmdLocked;
 using aerogpu::d3d10_11::resource_total_bytes;
 
@@ -1905,27 +1906,6 @@ static bool SetShaderResourceSlotLocked(AeroGpuDevice* dev, uint32_t shader_stag
   }
   table[slot] = texture;
   return true;
-}
-
-static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
-  if (!a || !b) {
-    return false;
-  }
-  if (a == b) {
-    return true;
-  }
-  // Shared resources can be opened multiple times (distinct AeroGpuResource
-  // objects) yet refer to the same underlying allocation. Treat those as
-  // aliasing for D3D SRV/RTV hazard mitigation.
-  if (a->share_token != 0 && a->share_token == b->share_token) {
-    return true;
-  }
-  if (a->backing_alloc_id != 0 &&
-      a->backing_alloc_id == b->backing_alloc_id &&
-      a->backing_offset_bytes == b->backing_offset_bytes) {
-    return true;
-  }
-  return false;
 }
 
 static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, const AeroGpuResource* res) {

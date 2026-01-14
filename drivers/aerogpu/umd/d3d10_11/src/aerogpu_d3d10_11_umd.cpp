@@ -137,6 +137,7 @@ using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
+using aerogpu::d3d10_11::ResourcesAlias;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
 using aerogpu::d3d10_11::kHrWaitTimeout;
@@ -948,27 +949,6 @@ bool set_texture_locked(AeroGpuDevice* dev,
   cmd->texture = texture;
   cmd->reserved0 = 0;
   return true;
-}
-
-static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
-  if (!a || !b) {
-    return false;
-  }
-  if (a == b) {
-    return true;
-  }
-  // Shared resources can be opened multiple times (distinct Resource objects) yet
-  // refer to the same underlying allocation. Treat those as aliasing for D3D11
-  // SRV/RTV hazard mitigation.
-  if (a->share_token != 0 && a->share_token == b->share_token) {
-    return true;
-  }
-  if (a->backing_alloc_id != 0 &&
-      a->backing_alloc_id == b->backing_alloc_id &&
-      a->alloc_offset_bytes == b->alloc_offset_bytes) {
-    return true;
-  }
-  return false;
 }
 
 bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev,

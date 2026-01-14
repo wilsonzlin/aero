@@ -210,6 +210,52 @@ struct has_member_pDrvPrivate : std::false_type {};
 template <typename T>
 struct has_member_pDrvPrivate<T, std::void_t<decltype(((T*)nullptr)->pDrvPrivate)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_backing_offset_bytes : std::false_type {};
+template <typename T>
+struct has_member_backing_offset_bytes<T, std::void_t<decltype(((T*)nullptr)->backing_offset_bytes)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_alloc_offset_bytes : std::false_type {};
+template <typename T>
+struct has_member_alloc_offset_bytes<T, std::void_t<decltype(((T*)nullptr)->alloc_offset_bytes)>> : std::true_type {};
+
+// Shared resources can be opened multiple times (distinct Resource objects) yet
+// refer to the same underlying allocation. Treat those as aliasing for SRV/RTV
+// hazard mitigation.
+template <typename ResourceT>
+inline bool ResourcesAlias(const ResourceT* a, const ResourceT* b) {
+  if (!a || !b) {
+    return false;
+  }
+  if (a == b) {
+    return true;
+  }
+  if (a->share_token != 0 && a->share_token == b->share_token) {
+    return true;
+  }
+
+  uint32_t a_offset = 0;
+  uint32_t b_offset = 0;
+  if constexpr (has_member_backing_offset_bytes<ResourceT>::value) {
+    a_offset = a->backing_offset_bytes;
+    b_offset = b->backing_offset_bytes;
+  } else if constexpr (has_member_alloc_offset_bytes<ResourceT>::value) {
+    a_offset = a->alloc_offset_bytes;
+    b_offset = b->alloc_offset_bytes;
+  } else {
+    static_assert(has_member_backing_offset_bytes<ResourceT>::value || has_member_alloc_offset_bytes<ResourceT>::value,
+                  "ResourceT must expose backing_offset_bytes or alloc_offset_bytes");
+  }
+
+  if (a->backing_alloc_id != 0 &&
+      a->backing_alloc_id == b->backing_alloc_id &&
+      a_offset == b_offset) {
+    return true;
+  }
+  return false;
+}
+
 // Generic "does this struct have member X?" helpers used by WDK-compat shims.
 template <typename T, typename = void>
 struct has_member_Desc : std::false_type {};
