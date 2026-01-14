@@ -1638,7 +1638,7 @@ stage), while still being bit-preserving via `bitcast`.
 Implementation note: the current in-tree expansion path (including the placeholder prepass and the
 initial GS translator) uses a simpler vertex format (`vec4<f32>` position + one `vec4<f32>` varying)
 and binds it via `VertexFormat::Float32x4` at fixed locations 0/1 (see
-`GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
+`GEOMETRY_PREPASS_CS_WGSL` and the `expanded_draw_passthrough_vs_wgsl` generator in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
 The in-tree repo also contains an emulation-only passthrough VS generator that does **storage-buffer
@@ -1868,9 +1868,8 @@ The final render stage uses a small **passthrough vertex shader** plus the origi
 The passthrough VS uses normal WebGPU vertex inputs (no storage-buffer reads in the vertex stage)
 and forwards attributes from the expansion output vertex buffer.
 
-The current in-tree executor uses a built-in passthrough VS template
-`EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` (and generates trimmed/depth-clamped variants on demand; see
-`get_or_create_render_pipeline_for_expanded_draw` in
+The current in-tree executor generates the passthrough VS WGSL on demand (see
+`expanded_draw_passthrough_vs_wgsl` and `get_or_create_render_pipeline_for_expanded_draw` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`). Conceptually:
 
 ```wgsl
