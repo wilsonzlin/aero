@@ -2602,19 +2602,6 @@ HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
 // the alpha component as 1.0 when sampling X1 formats. Since the AeroGPU
 // protocol currently exposes only B5G5R5A1, we fix up CPU writes by forcing the
 // high bit of each 16-bit texel to 1.
-static void force_x1r5g5b5_alpha1_bytes(uint8_t* bytes, uint32_t offset_bytes, uint32_t size_bytes) {
-  if (!bytes || size_bytes == 0) {
-    return;
-  }
-
-  // The alpha bit is bit 15 (MSB) of the 16-bit word, which is the high bit of
-  // the high byte in little-endian memory.
-  const uint32_t start = (offset_bytes & 1u) ? 0u : 1u;
-  for (uint32_t i = start; i < size_bytes; i += 2u) {
-    bytes[i] |= 0x80u;
-  }
-}
-
 static void force_x1r5g5b5_alpha1_locked_range(
     void* locked_ptr,
     uint32_t locked_offset_bytes,
@@ -2636,15 +2623,24 @@ static void force_x1r5g5b5_alpha1_locked_range(
     return;
   }
 
-  const uint64_t rel = start - lock_start;
-  if (rel > 0xFFFFFFFFull) {
-    return;
-  }
+  // Expand to 16-bit word boundaries so we also cover misaligned writes that
+  // touch only the low byte of a texel. Alpha must be forced to 1 regardless of
+  // how the app updated the backing bytes.
+  const uint64_t word_start = start & ~1ull;
+  const uint64_t word_end = (end + 1ull) & ~1ull; // align up to even
 
-  auto* bytes = static_cast<uint8_t*>(locked_ptr) + static_cast<uint32_t>(rel);
-  force_x1r5g5b5_alpha1_bytes(bytes,
-                              /*offset_bytes=*/static_cast<uint32_t>(start),
-                              /*size_bytes=*/static_cast<uint32_t>(end - start));
+  auto* bytes = static_cast<uint8_t*>(locked_ptr);
+  for (uint64_t w = word_start; w < word_end; w += 2ull) {
+    const uint64_t alpha_byte_offset = w + 1ull;
+    if (alpha_byte_offset < lock_start || alpha_byte_offset >= lock_end) {
+      continue;
+    }
+    const uint64_t rel = alpha_byte_offset - lock_start;
+    if (rel > 0xFFFFFFFFull) {
+      continue;
+    }
+    bytes[static_cast<uint32_t>(rel)] |= 0x80u;
+  }
 }
 
 static bool SupportsBcFormats(const Device* dev) {

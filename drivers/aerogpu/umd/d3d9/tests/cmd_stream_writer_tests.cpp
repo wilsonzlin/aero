@@ -3515,6 +3515,157 @@ bool TestCreateResourceComputes16BitTexturePitchAndFormat() {
   return true;
 }
 
+bool TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr,
+             "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "DestroyResource must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0; // surface/texture heuristics are based on size vs width/height.
+  create_res.format = kD3dFmtX1R5G5B5;
+  create_res.width = 2;
+  create_res.height = 1;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool (GPU resource)
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(X1R5G5B5)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= 4, "resource has CPU shadow storage")) {
+    return false;
+  }
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0; // lock full resource
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(X1R5G5B5)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+
+  // Write two texels with alpha bit cleared.
+  uint16_t texel0 = 0x1234u;
+  uint16_t texel1 = 0x5678u;
+  texel0 &= 0x7FFFu;
+  texel1 &= 0x7FFFu;
+  std::memcpy(static_cast<uint8_t*>(box.pData) + 0, &texel0, sizeof(texel0));
+  std::memcpy(static_cast<uint8_t*>(box.pData) + 2, &texel1, sizeof(texel1));
+
+  // Misaligned write range: cover full texel0 plus only the low byte of texel1.
+  // The driver should still force texel1's alpha bit to 1 because X1 formats
+  // have implicit opaque alpha regardless of how the CPU updated the bytes.
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 3;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(X1R5G5B5 misaligned range)")) {
+    return false;
+  }
+
+  uint16_t got0 = 0;
+  uint16_t got1 = 0;
+  std::memcpy(&got0, &res->storage[0], sizeof(got0));
+  std::memcpy(&got1, &res->storage[2], sizeof(got1));
+
+  if (!Check(got0 == static_cast<uint16_t>(texel0 | 0x8000u), "texel0 alpha bit forced to 1")) {
+    return false;
+  }
+  return Check(got1 == static_cast<uint16_t>(texel1 | 0x8000u), "texel1 alpha bit forced to 1 for misaligned write");
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2d() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -18284,6 +18435,7 @@ int main() {
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();
   failures += !aerogpu::TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes();
+  failures += !aerogpu::TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2d();
   failures += !aerogpu::TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
