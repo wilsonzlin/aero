@@ -57,9 +57,6 @@ fn new_guest_memory_bus(
         u64::from(guest_size)
     }
     .min(crate::guest_layout::PCI_MMIO_BASE);
-    if guest_size_u64 == 0 {
-        return Err(js_error("UhciRuntime.new: guest_size must be non-zero"));
-    }
 
     let end = (guest_base as u64).checked_add(guest_size_u64).ok_or_else(|| {
         js_error(&format!(
@@ -71,6 +68,9 @@ fn new_guest_memory_bus(
         return Err(js_error(&format!(
             "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem_bytes=0x{mem_bytes:x}"
         )));
+    }
+    if guest_size_u64 == 0 {
+        return Err(js_error("UhciRuntime.new: guest_size must be non-zero"));
     }
 
     Ok(crate::guest_memory_bus::GuestMemoryBus::new(
