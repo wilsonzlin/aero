@@ -141,6 +141,12 @@ static bool ChangeDisplaySettingsExWithTimeout(const DEVMODEW& target,
                                         (unsigned long)target.dmPelsWidth,
                                         (unsigned long)target.dmPelsHeight);
     } else {
+      // WaitForSingleObject on a thread handle should not fail in normal circumstances, but if it
+      // does, assume the mode-set worker thread might still be executing. Treat this similarly to
+      // a timeout so callers avoid running concurrent mode-set attempts.
+      if (out_timed_out) {
+        *out_timed_out = true;
+      }
       *err = "WaitForSingleObject(ChangeDisplaySettingsExW) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
   }
