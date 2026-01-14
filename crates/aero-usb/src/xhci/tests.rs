@@ -1439,7 +1439,8 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
 
     let mut ctrl = XhciController::with_port_count(2);
     ctrl.usbcmd = regs::USBCMD_RUN;
-    // `usbsts` stores only the non-derived subset of USBSTS bits.
+    // `usbsts` stores only the non-derived subset of USBSTS bits. Snapshots persist only the
+    // architectural bits we model, so mask out derived bits (EINT/HCH/HCE) for stable roundtrips.
     ctrl.usbsts = 0x1122_3344
         & regs::USBSTS_SNAPSHOT_MASK
         & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
