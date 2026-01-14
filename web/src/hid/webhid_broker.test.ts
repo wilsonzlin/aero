@@ -1132,6 +1132,54 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("hard-caps unknown hid.sendReport payload sizes based on the reportId prefix byte", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    try {
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      // No output report metadata -> size will be treated as unknown for `hid.sendReport`.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(0xffff + 64);
+      huge.set([1, 2, 3], 0);
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 9, data: huge });
+
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(9);
+      const outputData = device.sendReport.mock.calls[0]![1] as BufferSource;
+      const outputBytes =
+        outputData instanceof ArrayBuffer
+          ? new Uint8Array(outputData)
+          : new Uint8Array(outputData.buffer, outputData.byteOffset, outputData.byteLength);
+      // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+      expect(outputBytes.byteLength).toBe(0xfffe);
+      expect(Array.from(outputBytes.slice(0, 3))).toEqual([1, 2, 3]);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      broker.destroy();
+      warn.mockRestore();
+    }
+  });
+
   it("drains the SAB output ring when handling hid.sendReport messages to preserve report ordering", async () => {
     vi.useFakeTimers();
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });

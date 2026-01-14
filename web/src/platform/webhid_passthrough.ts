@@ -115,7 +115,13 @@ function getBrowserSiteSettingsUrl(): string {
 const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
-const UNKNOWN_SEND_REPORT_HARD_CAP_BYTES = 0xffff;
+// USB control transfers have a 16-bit `wLength`. When report IDs are in use (reportId != 0), the
+// on-wire report includes an extra 1-byte reportId prefix, so the payload must be <= 0xfffe.
+const MAX_HID_CONTROL_TRANSFER_BYTES = 0xffff;
+
+function maxHidControlPayloadBytes(reportId: number): number {
+  return (reportId >>> 0) === 0 ? MAX_HID_CONTROL_TRANSFER_BYTES : MAX_HID_CONTROL_TRANSFER_BYTES - 1;
+}
 // WebHID requires per-device serialization. If a device call stalls and the guest keeps sending,
 // the per-device queue can otherwise grow without bound. Keep this large enough to absorb bursts,
 // but bounded to prevent unbounded memory growth.
@@ -417,16 +423,19 @@ export class WebHidPassthroughManager {
             out.set(bytes.subarray(0, copyLen));
             dataToSend = out as Uint8Array<ArrayBuffer>;
           }
-        } else if (srcLen > UNKNOWN_SEND_REPORT_HARD_CAP_BYTES) {
-          warnOnce(
-            `${reportType}:${reportId}:hardCap`,
-            `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_SEND_REPORT_HARD_CAP_BYTES}`,
-          );
-          const out = new Uint8Array(UNKNOWN_SEND_REPORT_HARD_CAP_BYTES);
-          out.set(bytes.subarray(0, UNKNOWN_SEND_REPORT_HARD_CAP_BYTES));
-          dataToSend = out as Uint8Array<ArrayBuffer>;
         } else {
-          dataToSend = bytes as Uint8Array<ArrayBuffer>;
+          const hardCap = maxHidControlPayloadBytes(reportId);
+          if (srcLen > hardCap) {
+            warnOnce(
+              `${reportType}:${reportId}:hardCap`,
+              `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
+            );
+            const out = new Uint8Array(hardCap);
+            out.set(bytes.subarray(0, hardCap));
+            dataToSend = out as Uint8Array<ArrayBuffer>;
+          } else {
+            dataToSend = bytes as Uint8Array<ArrayBuffer>;
+          }
         }
 
         return async () => {

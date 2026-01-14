@@ -147,8 +147,13 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
 // WebHID output/feature reports can be transferred over the control endpoint (SET_REPORT / GET_REPORT),
-// whose `wLength` field is a 16-bit unsigned integer.
-const UNKNOWN_SEND_REPORT_HARD_CAP_BYTES = 0xffff;
+// whose `wLength` field is a 16-bit unsigned integer. When report IDs are in use (reportId != 0),
+// the on-wire report also includes a 1-byte reportId prefix, so the payload must be <= 0xfffe.
+const MAX_HID_CONTROL_TRANSFER_BYTES = 0xffff;
+
+function maxHidControlPayloadBytes(reportId: number): number {
+  return (reportId >>> 0) === 0 ? MAX_HID_CONTROL_TRANSFER_BYTES : MAX_HID_CONTROL_TRANSFER_BYTES - 1;
+}
 
 function toU32OrZero(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -1235,20 +1240,23 @@ export class WebHidBroker {
           out.set(src);
           data = out as Uint8Array<ArrayBuffer>;
         }
-      } else if (srcLen > UNKNOWN_SEND_REPORT_HARD_CAP_BYTES) {
-        this.#warnSendReportSizeOnce(
-          deviceId,
-          reportType,
-          reportId,
-          "hardCap",
-          `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_SEND_REPORT_HARD_CAP_BYTES}`,
-        );
-        const src = payload.subarray(0, UNKNOWN_SEND_REPORT_HARD_CAP_BYTES);
-        const out = new Uint8Array(UNKNOWN_SEND_REPORT_HARD_CAP_BYTES);
-        out.set(src);
-        data = out as Uint8Array<ArrayBuffer>;
       } else {
-        data = ensureArrayBufferBacked(payload);
+        const hardCap = maxHidControlPayloadBytes(reportId);
+        if (srcLen > hardCap) {
+          this.#warnSendReportSizeOnce(
+            deviceId,
+            reportType,
+            reportId,
+            "hardCap",
+            `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
+          );
+          const src = payload.subarray(0, hardCap);
+          const out = new Uint8Array(hardCap);
+          out.set(src);
+          data = out as Uint8Array<ArrayBuffer>;
+        } else {
+          data = ensureArrayBufferBacked(payload);
+        }
       }
       return async () => {
         if (attachPromise) {

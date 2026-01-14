@@ -402,6 +402,56 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     }
   });
 
+  it("hard-caps unknown hid:sendReport payload sizes based on the reportId prefix byte", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      // No output/feature report metadata -> sizes are treated as unknown.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const huge = new Uint8Array(0xffff + 64);
+      huge.set([1, 2, 3], 0);
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 9,
+        data: huge.buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(9);
+      const sent = bufferSourceToBytes(device.sendReport.mock.calls[0]![1]);
+      // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+      expect(sent.byteLength).toBe(0xfffe);
+      expect(Array.from(sent.slice(0, 3))).toEqual([1, 2, 3]);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("clamps oversized feature report payloads to the expected report size before calling sendFeatureReport", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
