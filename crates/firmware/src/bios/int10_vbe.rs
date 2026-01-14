@@ -191,6 +191,38 @@ impl Bios {
                     0x00 => {
                         let bits = cpu.bh();
                         if bits == 6 || bits == 8 {
+                            // Keep palette entries coherent when changing DAC width.
+                            //
+                            // The VBE palette services (4F09) interpret palette components in units
+                            // of the current DAC width. When switching between 6-bit and 8-bit
+                            // modes, scale the stored palette values so colors remain the same.
+                            //
+                            // This matters for guests that:
+                            // 1) read the default BIOS palette in 6-bit mode,
+                            // 2) switch to 8-bit DAC, and
+                            // 3) expect `4F09 Get Palette Data` to return 8-bit values representing
+                            //    the same colors.
+                            let old_bits = self.video.vbe.dac_width_bits;
+                            if old_bits != bits {
+                                match (old_bits, bits) {
+                                    (6, 8) => {
+                                        for entry in self.video.vbe.palette.chunks_exact_mut(4) {
+                                            for c in &mut entry[..3] {
+                                                let v6 = *c & 0x3F;
+                                                *c = (v6 << 2) | (v6 >> 4);
+                                            }
+                                        }
+                                    }
+                                    (8, 6) => {
+                                        for entry in self.video.vbe.palette.chunks_exact_mut(4) {
+                                            for c in &mut entry[..3] {
+                                                *c >>= 2;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
                             self.video.vbe.dac_width_bits = bits;
                             vbe_success(cpu);
                         } else {

@@ -281,6 +281,62 @@ fn int10_vbe_default_palette_matches_vga_defaults() {
 }
 
 #[test]
+fn int10_vbe_dac_width_switch_scales_palette_entries() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Enter an 8bpp VBE mode (so palette services are meaningful).
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x105 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    let pal_seg = 0x3000;
+    let pal_off = 0x0100;
+    let pal_addr = real_addr(pal_seg, pal_off);
+
+    let read_entry4 = |cpu: &mut CpuState, bios: &mut Bios, mem: &mut VecMemory| -> [u8; 4] {
+        cpu.set_ax(0x4F09);
+        cpu.set_bx(0x0001); // BL=1 get
+        cpu.set_cx(1); // one entry
+        cpu.set_dx(4); // palette index 4 (EGA red)
+        cpu.set_es(pal_seg);
+        cpu.set_di(pal_off);
+        bios.handle_int10(cpu, mem);
+        assert_eq!(cpu.ax(), 0x004F);
+        assert!(!cpu.cf());
+
+        let mut buf = [0u8; 4];
+        mem.read_bytes(pal_addr, &mut buf);
+        buf
+    };
+
+    // Default BIOS palette is stored as 6-bit components. EGA red = (0xAA,0,0) in 8-bit which is
+    // 0x2A in 6-bit.
+    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0x2A, 0x00]);
+
+    // Switch to an 8-bit DAC and verify the BIOS scales the stored palette entry.
+    cpu.set_ax(0x4F08);
+    cpu.set_bx(0x0800); // BL=0 set, BH=8 bits
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0xAA, 0x00]);
+
+    // Switching back to 6-bit should restore the original representation.
+    cpu.set_ax(0x4F08);
+    cpu.set_bx(0x0600); // BL=0 set, BH=6 bits
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0x2A, 0x00]);
+}
+
+#[test]
 fn int10_vbe_set_mode_oem_1280x720_updates_scanline_and_clears_framebuffer() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
