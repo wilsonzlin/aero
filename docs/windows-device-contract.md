@@ -246,11 +246,10 @@ Examples (illustrative) INF model entries:
 
 ; aero_virtio_snd.inf
 %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-  
+
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-; Canonical INF includes SUBSYS-qualified keyboard/mouse IDs for distinct Device Manager naming,
-; plus a strict revision-gated generic fallback (no SUBSYS) for environments where subsystem IDs
-; are absent/ignored:
+; Canonical INF includes SUBSYS-qualified keyboard/mouse IDs for distinct Device Manager naming, plus a strict
+; revision-gated generic fallback (no SUBSYS) for environments where subsystem IDs are absent/ignored:
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01

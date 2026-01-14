@@ -132,7 +132,8 @@ Contract note:
   - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) matches:
     - subsystem-qualified keyboard/mouse HWIDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager names, and
     - a strict revision-gated generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
-      (for environments where subsystem IDs are not exposed/recognized; shown as **Aero VirtIO Input Device**).
+      (for environments where subsystem IDs are not exposed/recognized; Device Manager name:
+      **Aero VirtIO Input Device**).
       - When subsystem IDs are present, the more specific `SUBSYS_...&REV_01` matches win and the devices show up as
         **Aero VirtIO Keyboard** / **Aero VirtIO Mouse**.
   - The legacy alias INF (`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
@@ -173,14 +174,13 @@ The canonical Windows 7 virtio-input driver source lives at:
 
 - `drivers/windows7/virtio-input/` (INF: `inf/aero_virtio_input.inf`, service: `aero_virtio_input`)
 
-The repo also carries an optional legacy filename alias INF (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
-for compatibility with older workflows/tools that still reference `virtio-input.inf`. It is a filename-only alias and does **not**
-change HWID matching behavior.
+The repo also carries an optional legacy alias INF (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
+for compatibility with older workflows/tools that still reference `virtio-input.inf`.
 
-From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to the canonical
-`inf/aero_virtio_input.inf` (only the leading banner/comments may differ; see
-`drivers/windows7/virtio-input/scripts/check-inf-alias.py`). Do not ship/install both filenames at the same time: ship/install
-**only one** of the two INF basenames.
+Policy: it is a filename-only alias and is expected to remain byte-for-byte identical to `inf/aero_virtio_input.inf` from
+`[Version]` onward (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+Because it is identical, it does **not** change HWID matching behavior.
+Do not ship/install both filenames at the same time: ship/install **only one** of the two INF basenames.
 
 ### Notes
 

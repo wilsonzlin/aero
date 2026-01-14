@@ -78,16 +78,21 @@ drivers/windows7/tests/
       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
     - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches.
     - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
-      - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only), but the canonical `aero_virtio_input.inf` still
-        includes a strict, revision-gated generic fallback match (no SUBSYS):
-        - `PCI\VEN_1AF4&DEV_1052&REV_01`
-      - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-      - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
-      - If you want to validate the contract tablet INF binding specifically, emulate the subsystem IDs to the contract values
-        (so the tablet enumerates as `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
+      - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
+      - In that case, `aero_virtio_input.inf` can still bind the tablet via its strict revision-gated generic fallback
+        match (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01` (expected for stock QEMU
+        `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+        - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+        - When binding via the generic fallback entry, Device Manager will show the generic
+          **Aero VirtIO Input Device** name.
+      - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values so it binds to
+        `aero_virtio_tablet.inf`.
+      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename compatibility alias
+        only; enabling it is **not** required for fallback binding.
       - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
         CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
         the `*.inf.disabled` file.
+      - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
