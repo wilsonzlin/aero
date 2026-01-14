@@ -235,6 +235,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use naga::valid::{Capabilities, ValidationFlags, Validator};
 
     #[test]
     fn counts_levels_1_through_5() {
@@ -316,5 +317,29 @@ mod tests {
                 "level={level} triangle coverage mismatch"
             );
         }
+    }
+
+    #[test]
+    fn wgsl_lib_parses_and_validates() {
+        let lib = wgsl_tri_tessellator_lib_default();
+        let wgsl = format!(
+            r#"
+{lib}
+
+@compute @workgroup_size(1)
+fn main() {{
+  let _vc = tri_vertex_count(4u);
+  let _ic = tri_index_count(4u);
+  let _loc = tri_vertex_domain_location(4u, 0u);
+  let _tri = tri_index_to_vertex_indices(4u, 0u);
+}}
+"#
+        );
+
+        let module = naga::front::wgsl::parse_str(&wgsl).expect("generated WGSL failed to parse");
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .expect("generated WGSL failed to validate");
     }
 }
