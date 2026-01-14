@@ -230,6 +230,13 @@ Aero uses BIOS drive numbers that match common PC conventions:
 When booting from a CD, the El Torito boot image expects to find the CD drive number in **`DL`**
 when it starts executing.
 
+Note: Aero’s BIOS currently models **exactly one** INT 13h “boot device” at a time as selected by
+`BiosConfig::boot_drive` / `DL`. In particular:
+
+* Only the selected CD drive number (typically `0xE0`) is reported present in the CD drive range.
+* When booting from CD (`DL=0xE0..=0xEF`), the BIOS reports **no fixed disks** via the BDA and HDD
+  `INT 13h` drive numbers (`0x80..`) are not present.
+
 ---
 
 ## 6) INT 13h calls required for Windows-style boot
