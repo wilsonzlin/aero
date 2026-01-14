@@ -27,6 +27,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
 | Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`) |
+| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat); GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat); GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -69,7 +70,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 ### Still stubbed / known gaps
 
 - Geometry shaders (GS):
-  - D3D10/D3D10.1: `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`), but GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are stubbed.
+  - D3D10/D3D10.1: `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)), but GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are stubbed.
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets, but geometry-stage bindings are currently accepted-but-ignored by the host executor (until GS DXBC execution lands).
