@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
-use crate::{MemoryBus, SetupPacket, UsbDeviceModel};
+use crate::{MemoryBus, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 use super::context::{
     EndpointContext, EndpointType, InputContext32, SlotContext, XHCI_ROUTE_STRING_MAX_DEPTH,
@@ -940,10 +940,11 @@ impl CommandRingProcessor {
         };
 
         // USB-level side effect: issue SET_ADDRESS to the attached device.
-        {
+        let speed = {
             let Some(dev) = self.find_device_by_topology(root_port, &route) else {
                 return CompletionCode::ContextStateError;
             };
+            let speed = dev.speed();
             let setup = SetupPacket {
                 bm_request_type: 0x00, // HostToDevice | Standard | Device
                 b_request: USB_REQUEST_SET_ADDRESS,
@@ -958,7 +959,8 @@ impl CommandRingProcessor {
                 UsbInResult::Data(data) if data.is_empty() => {}
                 _ => return CompletionCode::TrbError,
             }
-        }
+            speed
+        };
 
         // Update internal slot state.
         let ep0_state = EndpointState {
@@ -993,6 +995,18 @@ impl CommandRingProcessor {
         if self.write_u32(mem, out_slot_dw3_addr, out_dw3).is_err() {
             return CompletionCode::ParameterError;
         }
+
+        // Slot Context DW0 bits 20..=23 are the device speed, which is determined by the
+        // controller/root-hub port. Reflect the attached model's speed in the output Slot Context
+        // regardless of what the guest provided in the Input Context.
+        let psiv = match speed {
+            UsbSpeed::Full => 1,
+            UsbSpeed::Low => 2,
+            UsbSpeed::High => 3,
+        };
+        let mut out_slot_ctx = SlotContext::read_from(mem, out_slot_addr);
+        out_slot_ctx.set_speed(psiv);
+        out_slot_ctx.write_to(mem, out_slot_addr);
 
         // Apply EP0 Context (preserve Endpoint State field).
         let in_ep0_addr = input_ctx_ptr + INPUT_EP0_CTX_OFFSET;
@@ -1829,6 +1843,91 @@ mod tests {
         assert_eq!(
             merged_dw3 & !SLOT_STATE_MASK_DWORD3,
             in_dw3 & !SLOT_STATE_MASK_DWORD3
+        );
+    }
+
+    #[test]
+    fn address_device_sets_slot_context_speed_from_attached_device() {
+        use crate::xhci::context::InputControlContext;
+
+        #[derive(Clone, Debug)]
+        struct AckSpeedDevice {
+            speed: crate::UsbSpeed,
+        }
+
+        impl UsbDeviceModel for AckSpeedDevice {
+            fn speed(&self) -> crate::UsbSpeed {
+                self.speed
+            }
+
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> crate::ControlResponse {
+                crate::ControlResponse::Ack
+            }
+        }
+
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            8,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+
+        processor.attach_root_port(
+            1,
+            Box::new(AckSpeedDevice {
+                speed: crate::UsbSpeed::High,
+            }),
+        );
+
+        // Enable the slot and install its DCBAA entry to point at our device context.
+        let (code, slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(slot_id, 1);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Build an Input Context with Slot + EP0.
+        let mut icc = InputControlContext::default();
+        icc.set_add_flags(ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0);
+        icc.write_to(&mut mem, input_ctx);
+
+        let mut slot_ctx = SlotContext::default();
+        slot_ctx.set_root_hub_port_number(1);
+        // Deliberately set an incorrect speed in the input context; the controller should override
+        // it based on the attached device model.
+        slot_ctx.set_speed(1);
+        slot_ctx.write_to(&mut mem, input_ctx + INPUT_SLOT_CTX_OFFSET);
+
+        let mut ep0_ctx = EndpointContext::default();
+        // Endpoint Type field is DW1 bits 3..=5: 4 => Control.
+        ep0_ctx.set_dword(1, 4u32 << 3);
+        ep0_ctx.write_to(&mut mem, input_ctx + INPUT_EP0_CTX_OFFSET);
+
+        let mut trb = Trb::new(input_ctx, 0, 0);
+        trb.set_trb_type(TrbType::AddressDeviceCommand);
+        trb.set_slot_id(slot_id);
+
+        assert_eq!(
+            processor.handle_address_device(&mut mem, trb),
+            CompletionCode::Success
+        );
+
+        let out_slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+        assert_eq!(
+            out_slot_ctx.speed(),
+            3,
+            "expected speed to match the attached UsbSpeed::High device"
         );
     }
 }
