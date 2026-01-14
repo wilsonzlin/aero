@@ -19,6 +19,7 @@ import {
   EXTERNAL_HUB_ROOT_PORT,
   UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
 } from "../usb/uhci_external_hub";
+import { XHCI_MAX_HUB_PORT_COUNT } from "../hid/xhci_hid_topology";
 
 export interface HidPassthroughTarget {
   postMessage(message: HidPassthroughMessage, transfer?: Transferable[]): void;
@@ -31,7 +32,7 @@ const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 export function getNoFreeGuestUsbPortsMessage(
   options: { externalHubPortCount?: number; reservedExternalHubPorts?: number } = {},
 ): string {
-  const hubPortCount = options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
+  const hubPortCount = Math.min(options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT, XHCI_MAX_HUB_PORT_COUNT);
   const reserved = (() => {
     const requested = options.reservedExternalHubPorts;
     if (typeof requested !== "number" || !Number.isFinite(requested) || !Number.isInteger(requested) || requested <= 0) {
@@ -155,13 +156,16 @@ export class WebHidPassthroughManager {
     this.#externalHubPortCount = (() => {
       const requested = options.externalHubPortCount;
       if (typeof requested !== "number" || !Number.isInteger(requested) || requested <= 0) {
-        return DEFAULT_EXTERNAL_HUB_PORT_COUNT;
+        return Math.min(DEFAULT_EXTERNAL_HUB_PORT_COUNT, XHCI_MAX_HUB_PORT_COUNT);
       }
       // Root port 0 hosts an external hub that also carries fixed synthetic HID devices on
       // ports 1..=(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1).
       // Never allow the hub to be configured with fewer downstream ports than that reserved range,
       // otherwise synthetic HID attachments can fail once the runtime hub config is applied.
-      return Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, Math.min(255, requested | 0));
+      return Math.max(
+        UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1,
+        Math.min(XHCI_MAX_HUB_PORT_COUNT, Math.min(255, requested | 0)),
+      );
     })();
     this.#reservedExternalHubPorts = (() => {
       const requested = options.reservedExternalHubPorts;

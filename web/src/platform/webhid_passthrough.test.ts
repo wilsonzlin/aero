@@ -394,6 +394,11 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     expect(manager.getReservedExternalHubPorts()).toBe(UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
   });
 
+  it("clamps external hub port count to 15 for xHCI route-string compatibility", () => {
+    const manager = new WebHidPassthroughManager({ hid: null, target: new TestTarget(), externalHubPortCount: 64 });
+    expect(manager.getExternalHubPortCount()).toBe(15);
+  });
+
   it("assigns hub-backed paths when attaching three devices", async () => {
     const target = new TestTarget();
     const externalHubPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 3;
