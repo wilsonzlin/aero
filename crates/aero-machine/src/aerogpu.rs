@@ -489,6 +489,11 @@ pub struct AeroGpuMmioDevice {
     // ---------------------------------------------------------------------
     // Submission drain queue (WASM external GPU worker integration)
     // ---------------------------------------------------------------------
+    //
+    // When enabled, fence completion is driven by an external executor via
+    // `complete_fence_from_backend`. When disabled, submissions are still drained for inspection,
+    // but fences are treated as immediately completed to preserve legacy bring-up semantics.
+    submission_bridge_enabled: bool,
     pending_submissions: VecDeque<AerogpuSubmission>,
 
     doorbell_pending: bool,
@@ -610,6 +615,7 @@ impl Default for AeroGpuMmioDevice {
             backend_completed_fences: HashSet::new(),
             fence_page_dirty: false,
 
+            submission_bridge_enabled: false,
             pending_submissions: VecDeque::new(),
 
             doorbell_pending: false,
@@ -621,6 +627,24 @@ impl Default for AeroGpuMmioDevice {
 impl AeroGpuMmioDevice {
     pub fn set_clock(&mut self, clock: ManualClock) {
         self.clock = Some(clock);
+    }
+
+    pub(crate) fn enable_submission_bridge(&mut self) {
+        if self.submission_bridge_enabled {
+            return;
+        }
+        self.submission_bridge_enabled = true;
+
+        // If the bridge is enabled mid-flight, any fences that were already queued under the
+        // legacy "no-op backend" policy must not become permanently stuck behind the new
+        // "external executor must confirm completion" behaviour. Mark already-queued fences as
+        // completed so they can drain under the new rules.
+        for fence in &self.pending_fence_completions {
+            if fence.fence_value != 0 {
+                self.backend_completed_fences.insert(fence.fence_value);
+            }
+        }
+        self.process_pending_fences_on_doorbell();
     }
 
     pub(crate) fn drain_pending_submissions(&mut self) -> Vec<AerogpuSubmission> {
@@ -636,6 +660,14 @@ impl AeroGpuMmioDevice {
 
     pub(crate) fn complete_fence_from_backend(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
         if fence == 0 {
+            return;
+        }
+        if fence <= self.completed_fence {
+            return;
+        }
+        // External completions are meaningful only while the submission bridge is enabled. Ignore
+        // otherwise so callers do not accidentally perturb the default "no-op backend" behaviour.
+        if !self.submission_bridge_enabled {
             return;
         }
         if !self.bus_master_enabled() {
@@ -658,10 +690,12 @@ impl AeroGpuMmioDevice {
         let supported_features = self.supported_features;
         let abi_version = self.abi_version;
         let clock = self.clock.clone();
+        let submission_bridge_enabled = self.submission_bridge_enabled;
         *self = Self {
             supported_features,
             abi_version,
             clock,
+            submission_bridge_enabled,
             ..Default::default()
         };
     }
@@ -1293,7 +1327,8 @@ impl AeroGpuMmioDevice {
     fn consume_submission(&mut self, mem: &mut dyn MemoryBus, desc: &ring::AerogpuSubmitDesc) {
         // Preserve upstream behaviour: invalid descriptors still count as consumed, but latch an
         // error payload if supported.
-        if desc.validate_prefix().is_err() {
+        let valid_desc = desc.validate_prefix().is_ok();
+        if !valid_desc {
             self.record_error(pci::AerogpuErrorCode::CmdDecode, desc.signal_fence);
         }
 
@@ -1303,6 +1338,7 @@ impl AeroGpuMmioDevice {
         // drivers may reuse fence values for internal submissions (e.g. NO_IRQ "best effort"
         // work). Those submissions can still contain ACMD that should be executed for correct
         // rendering, even though they do not advance the guest's completed fence.
+        let mut queued_for_external = false;
         if desc.signal_fence != 0 && desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
             let cmd_stream = capture_cmd_stream(mem, desc);
             if !cmd_stream.is_empty() {
@@ -1320,6 +1356,7 @@ impl AeroGpuMmioDevice {
                     self.pending_submissions.pop_front();
                 }
                 self.pending_submissions.push_back(sub);
+                queued_for_external = true;
             }
         }
 
@@ -1359,10 +1396,16 @@ impl AeroGpuMmioDevice {
                 kind,
             });
 
-        // Legacy bring-up behavior: treat all fences as immediately completed by the (missing)
-        // backend, preserving the existing in-process forward-progress model while still allowing
-        // the browser runtime to drain submissions for external execution.
-        self.backend_completed_fences.insert(desc.signal_fence);
+        // When the submission bridge is disabled, preserve legacy bring-up behavior: treat all
+        // fences as immediately completed by the (missing) backend to keep in-process forward
+        // progress working.
+        //
+        // When the bridge is enabled, rely on `complete_fence_from_backend` for forward progress.
+        // If we failed to capture a submission payload (or the descriptor is malformed), complete
+        // the fence immediately so a buggy guest cannot deadlock itself.
+        if !self.submission_bridge_enabled || !valid_desc || !queued_for_external {
+            self.backend_completed_fences.insert(desc.signal_fence);
+        }
     }
 
     fn vblank_pacing_active(&self) -> bool {

@@ -9644,6 +9644,17 @@ impl Machine {
         aerogpu.borrow_mut().drain_pending_submissions()
     }
 
+    /// Enable the AeroGPU submission bridge (external executor mode).
+    ///
+    /// When enabled, the in-process AeroGPU device model no longer treats submissions as completed
+    /// immediately; callers must invoke [`Machine::aerogpu_complete_fence`] for forward progress.
+    pub fn aerogpu_enable_submission_bridge(&mut self) {
+        let Some(aerogpu) = &self.aerogpu_mmio else {
+            return;
+        };
+        aerogpu.borrow_mut().enable_submission_bridge();
+    }
+
     /// Mark an AeroGPU submission fence as completed by an out-of-process executor.
     pub fn aerogpu_complete_fence(&mut self, fence: u64) {
         let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {

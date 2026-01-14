@@ -22,6 +22,15 @@ export type SharedRingBufferHandle = {
     free(): void;
 };
 
+export type AerogpuSubmission = {
+    cmdStream: Uint8Array;
+    signalFence: bigint;
+    contextId: number;
+    engineId: number;
+    flags: number;
+    allocTable: Uint8Array | null;
+};
+
 /**
  * Canonical full-system VM handle (`aero_machine::Machine`).
  *
@@ -383,6 +392,22 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     aerogpu_bar_base?(bar: number): number;
+    /**
+     * Drain newly-decoded AeroGPU submissions from the in-process device model.
+     *
+     * Calling this enables the "submission bridge" in the AeroGPU device model: subsequent
+     * submissions will no longer complete fences automatically, and callers must invoke
+     * {@link aerogpu_complete_fence} for forward progress.
+     *
+     * Optional for older WASM builds.
+     */
+    aerogpu_drain_submissions?(): AerogpuSubmission[];
+    /**
+     * Mark a previously-drained submission's fence as complete.
+     *
+     * Optional for older WASM builds.
+     */
+    aerogpu_complete_fence?(fence: bigint): void;
 
     /**
      * Unified display scanout (boot display + WDDM / modern scanout).

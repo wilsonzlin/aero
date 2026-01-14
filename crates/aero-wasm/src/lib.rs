@@ -5699,16 +5699,20 @@ impl Machine {
     //    `aerogpu_complete_fence(signalFence)` for each signaled fence.
     // 4. The device model updates the fence page and IRQ state in response to completions.
     //
-    // NOTE: As of this writing the canonical `aero_machine::Machine` does not yet expose an
-    // in-process AeroGPU device; these exports are wired up by the browser runtime once the device
-    // model is integrated.
+    // NOTE: This hook is opt-in: calling `aerogpu_drain_submissions()` enables the submission bridge
+    // inside the in-process device model so subsequent submissions no longer complete fences
+    // automatically. Callers must then invoke `aerogpu_complete_fence()` for forward progress.
 
     /// Drain newly-decoded AeroGPU submissions.
     ///
     /// Returns an array of objects:
-    /// `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, flags: number, allocTable: Uint8Array | null }`.
+    /// `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, engineId: number, flags: number, allocTable: Uint8Array | null }`.
     #[cfg(target_arch = "wasm32")]
     pub fn aerogpu_drain_submissions(&mut self) -> JsValue {
+        // Enable external-executor fence completion semantics for the browser runtime. This keeps
+        // native `aero_machine::Machine` tests free to drain submissions for inspection while
+        // retaining legacy "no-op backend" forward progress.
+        self.inner.aerogpu_enable_submission_bridge();
         let subs = self.inner.aerogpu_drain_submissions();
         let out = js_sys::Array::new();
 
@@ -5723,6 +5727,7 @@ impl Machine {
                 &BigInt::from(sub.signal_fence).into(),
             );
             let _ = Reflect::set(&obj, &"contextId".into(), &JsValue::from(sub.context_id));
+            let _ = Reflect::set(&obj, &"engineId".into(), &JsValue::from(sub.engine_id));
             let _ = Reflect::set(&obj, &"flags".into(), &JsValue::from(sub.flags));
 
             let alloc_table: JsValue = match sub.alloc_table {
@@ -5754,6 +5759,9 @@ impl Machine {
         let Ok(value) = s.parse::<u64>() else {
             return;
         };
+        // Ensure the in-process device model is in external-executor mode before delivering the
+        // completion so the fence is not treated as a legacy no-op completion.
+        self.inner.aerogpu_enable_submission_bridge();
         self.inner.aerogpu_complete_fence(value);
     }
 
