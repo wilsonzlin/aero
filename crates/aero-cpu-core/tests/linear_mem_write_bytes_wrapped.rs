@@ -523,6 +523,26 @@ fn read_bytes_wrapped_large_32bit_wrap_uses_segment_reads() {
 }
 
 #[test]
+fn read_bytes_wrapped_a20_wrap_uses_segment_reads() {
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.a20_enabled = false;
+
+    let mut inner = SplitTestBus::new(0x100000, u64::MAX, 0);
+    inner.low[0x0FF000..0x100000].fill(0x11);
+    inner.low[0x000000..0x001000].fill(0x22);
+    let mut bus = CountingReadBus::new(inner);
+
+    let mut dst = [0u8; 0x2000];
+    read_bytes_wrapped(&state, &mut bus, 0x0FF000, &mut dst).unwrap();
+
+    assert!(dst[..0x1000].iter().all(|&b| b == 0x11));
+    assert!(dst[0x1000..].iter().all(|&b| b == 0x22));
+
+    assert_eq!(bus.read_bytes_calls, 2);
+    assert_eq!(bus.read_u8_calls, 0);
+}
+
+#[test]
 fn fetch_wrapped_large_32bit_wrap_uses_segment_fetches() {
     let state = CpuState::new(CpuMode::Bit32);
 
@@ -541,6 +561,31 @@ fn fetch_wrapped_large_32bit_wrap_uses_segment_fetches() {
     let mut expected = [0u8; 15];
     for i in 0..14 {
         expected[i] = 0xD0 | ((i + 2) as u8);
+    }
+    expected[14] = 0xAA;
+
+    assert_eq!(&buf[..15], &expected);
+    assert_eq!(bus.fetch_calls, 2);
+}
+
+#[test]
+fn fetch_wrapped_a20_wrap_uses_segment_fetches() {
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.a20_enabled = false;
+
+    let mut inner = SplitTestBus::new(0x100000, u64::MAX, 0);
+    for i in 0..14 {
+        inner.low[0x0FFFF2 + i] = 0xC0 | (i as u8);
+    }
+    inner.low[0] = 0xAA;
+
+    let mut bus = CountingFetchBus::new(inner);
+
+    let buf = fetch_wrapped(&state, &mut bus, 0x0FFFF2, 15).unwrap();
+
+    let mut expected = [0u8; 15];
+    for i in 0..14 {
+        expected[i] = 0xC0 | (i as u8);
     }
     expected[14] = 0xAA;
 
