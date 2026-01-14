@@ -138,7 +138,7 @@ Rule of thumb:
   opening/mutating legacy images. New work should create/consume `AEROSPAR` via `crates/aero-storage`.
 - Migration: see the offline converter tool
   [`crates/emulator/src/bin/aerosparse_convert.rs`](../crates/emulator/src/bin/aerosparse_convert.rs).
-- Tests: [`crates/emulator/tests/storage_formats.rs`](../crates/emulator/tests/storage_formats.rs)
+- Tests (Task 84): [`crates/emulator/tests/storage_formats.rs`](../crates/emulator/tests/storage_formats.rs)
   (`detect_aerosprs_*`) and [`crates/aero-storage/tests/storage_formats.rs`](../crates/aero-storage/tests/storage_formats.rs).
 
 ### Layer 4 (synchronous device/controller models): canonical = `aero_storage::VirtualDisk`
