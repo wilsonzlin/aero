@@ -24,8 +24,9 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, S
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::xhci::XhciController;
 use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT};
-use aero_usb::MemoryBus;
 use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
+
+use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
 
 const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
@@ -47,11 +48,6 @@ const WEBUSB_ROOT_PORT: u8 = 1;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
-}
-
-fn wasm_memory_byte_len() -> u64 {
-    let pages = core::arch::wasm32::memory_size(0) as u64;
-    pages.saturating_mul(64 * 1024)
 }
 
 fn validate_mmio_size(size: u8) -> usize {
@@ -129,140 +125,6 @@ fn detach_device_at_path(ctrl: &mut XhciController, path: &[u8]) -> Result<(), J
         Err(e) => Err(map_attach_error(e)),
     }
 }
-
-#[derive(Clone, Copy)]
-struct WasmGuestMemory {
-    guest_base: u32,
-    ram_bytes: u64,
-}
-
-impl WasmGuestMemory {
-    #[inline]
-    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
-        let end = ram_offset.checked_add(len as u64)?;
-        if end > self.ram_bytes {
-            return None;
-        }
-        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
-    }
-}
-
-impl MemoryBus for WasmGuestMemory {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
-                        buf[off..].fill(0);
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    buf[off..off + len].fill(0xFF);
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    buf[off..off + len].fill(0);
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => {
-                    buf[off..].fill(0);
-                    return;
-                }
-            };
-        }
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    // Open bus: writes are ignored.
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    // Preserve existing semantics: out-of-range writes are ignored.
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => return,
-            };
-        }
-    }
-}
-
-struct NoDmaMemory;
-
-impl MemoryBus for NoDmaMemory {
-    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
-        buf.fill(0xFF);
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
-}
-
 /// WASM export: reusable xHCI controller model for the browser I/O worker.
 ///
 /// The controller reads/writes guest RAM directly from the module's linear memory (shared across
@@ -342,10 +204,7 @@ impl XhciControllerBridge {
         // controller must not touch guest memory.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem = WasmGuestMemory {
-                guest_base: self.guest_base,
-                ram_bytes: self.guest_size,
-            };
+            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             self.ctrl.mmio_read(&mut mem, u64::from(offset), size)
         } else {
             let mut mem = NoDmaMemory;
@@ -363,10 +222,7 @@ impl XhciControllerBridge {
         // controller must not touch guest memory.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem = WasmGuestMemory {
-                guest_base: self.guest_base,
-                ram_bytes: self.guest_size,
-            };
+            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             self.ctrl
                 .mmio_write(&mut mem, u64::from(offset), size, value);
         } else {
@@ -399,10 +255,7 @@ impl XhciControllerBridge {
 
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem = WasmGuestMemory {
-                guest_base: self.guest_base,
-                ram_bytes: self.guest_size,
-            };
+            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
                 self.ctrl.tick_1ms_and_service_event_ring(&mut mem);
             }
@@ -443,10 +296,7 @@ impl XhciControllerBridge {
             return;
         }
 
-        let mut mem = WasmGuestMemory {
-            guest_base: self.guest_base,
-            ram_bytes: self.guest_size,
-        };
+        let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
         self.ctrl.service_event_ring(&mut mem);
     }
 

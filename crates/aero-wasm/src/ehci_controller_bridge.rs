@@ -24,7 +24,9 @@ use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::EhciController;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
-use aero_usb::{MemoryBus, UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
+use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
+
+use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
 
 const EHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"EHCB";
 const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -36,21 +38,6 @@ const WEBUSB_ROOT_PORT: u8 = 0;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
-}
-
-fn wasm_memory_byte_len() -> u64 {
-    let pages = core::arch::wasm32::memory_size(0) as u64;
-    pages.saturating_mul(64 * 1024)
-}
-
-struct NoDmaMemory;
-
-impl MemoryBus for NoDmaMemory {
-    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
-        buf.fill(0xFF);
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
 }
 
 fn validate_mmio_size(size: u8) -> usize {
@@ -295,8 +282,7 @@ impl EhciControllerBridge {
         // state, but it must not be able to read or write guest memory for schedule traversal.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem =
-                crate::guest_memory_bus::GuestMemoryBus::new(self.guest_base, self.guest_size);
+            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
                 self.ctrl.tick_1ms(&mut mem);
             }

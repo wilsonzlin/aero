@@ -1431,6 +1431,28 @@ impl PciDevice for E1000PciConfigDevice {
     }
 }
 
+struct AeroGpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AeroGpuPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AeroGpuPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 struct VirtioNetPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -6179,13 +6201,6 @@ Track progress: docs/21-smp.md\n\
                     .borrow_mut()
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
-            }
-
-            if self.cfg.enable_aerogpu {
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::AEROGPU.bdf,
-                    Box::new(AeroGpuPciConfigDevice::new()),
-                );
             }
 
             // PCI INTx router.
