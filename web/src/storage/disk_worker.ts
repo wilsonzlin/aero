@@ -1030,6 +1030,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const probe = await probeRemoteDisk(url);
+      if (!probe.partialOk) {
+        throw new Error(
+          `Remote server does not support HTTP byte-range requests (status=${probe.rangeProbeStatus}). ` +
+            "Range requests are required for streaming mounts.",
+        );
+      }
       if (!Number.isSafeInteger(probe.size) || probe.size <= 0) {
         throw new Error(`Remote disk size is not a positive safe integer (size=${probe.size}).`);
       }

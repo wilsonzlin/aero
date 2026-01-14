@@ -5,7 +5,15 @@ import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_o
 let probeSize = 1024 * 512;
 
 vi.mock("../platform/remote_disk", () => ({
-  probeRemoteDisk: async () => ({ size: probeSize }),
+  probeRemoteDisk: async () => ({
+    size: probeSize,
+    etag: null,
+    lastModified: null,
+    acceptRanges: "bytes",
+    rangeProbeStatus: 206,
+    partialOk: true,
+    contentRange: `bytes 0-0/${probeSize}`,
+  }),
   stableCacheKey: async () => "cache-key",
 }));
 
