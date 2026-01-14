@@ -5208,8 +5208,8 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
 
       NdisAcquireSpinLock(&Adapter->Lock);
 
-      if (Adapter->State != AerovNetAdapterRunning) {
-        NDIS_STATUS TxStatus = (Adapter->State == AerovNetAdapterPaused) ? NDIS_STATUS_PAUSED : NDIS_STATUS_RESET_IN_PROGRESS;
+      if (Adapter->State != AerovNetAdapterRunning || Adapter->SurpriseRemoved) {
+        NDIS_STATUS TxStatus = (Adapter->State == AerovNetAdapterPaused && !Adapter->SurpriseRemoved) ? NDIS_STATUS_PAUSED : NDIS_STATUS_RESET_IN_PROGRESS;
         AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, TxStatus, &CompleteHead, &CompleteTail);
         NdisReleaseSpinLock(&Adapter->Lock);
         continue;
