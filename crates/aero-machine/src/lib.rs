@@ -4145,7 +4145,17 @@ fn apply_aerogpu_snapshot_v2(
     //
     // Keep these after the variable-length VRAM payload for forward compatibility: older decoders
     // stop after the page list, while newer versions can parse known tags and ignore the rest.
+    //
+    // `DACP` is the first tag emitted by the v2 encoder. Treat it as a sentinel that tag parsing
+    // should begin; this prevents older snapshots (which might have no tags) from accidentally
+    // interpreting arbitrary trailing bytes (e.g. timebase fields) as a tag like `ATST`.
+    let mut parsed_any_tag = false;
     while let Some(tag) = bytes.get(off..off.saturating_add(4)) {
+        if !parsed_any_tag && tag != b"DACP" {
+            break;
+        }
+        parsed_any_tag = true;
+
         if tag == b"DACP" {
             const PALETTE_LEN: usize = 256 * 3;
             const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
@@ -19125,6 +19135,38 @@ mod tests {
         assert!(regs.scanout0_fb_gpa_lo_pending);
         assert_eq!(regs.cursor_fb_gpa_pending_lo, cursor_pending_lo);
         assert!(!regs.cursor_fb_gpa_lo_pending);
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_does_not_parse_timebase_as_vga_tag_when_dacp_is_absent() {
+        // `apply_aerogpu_snapshot_v2` supports older snapshots that may not have the optional
+        // tag sections (`DACP`, etc.). Ensure we don't treat arbitrary trailing bytes (here: the
+        // deterministic vblank timebase fields) as a tag like `ATST`.
+        let now_ns = u64::from_le_bytes([b'A', b'T', b'S', b'T', 0x12, 0x34, 0x00, 0x00]);
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_u32_le(&mut bytes, 4096); // page_size
+        push_u32_le(&mut bytes, 0); // page_count
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+        push_u64_le(&mut bytes, now_ns);
+        push_u64_le(&mut bytes, 0); // next_raw = None
+
+        let mut vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut bar0 = AeroGpuMmioDevice::default();
+        let restored_dac = apply_aerogpu_snapshot_v2(&bytes, &mut vram, &mut bar0)
+            .expect("snapshot v2 should apply");
+        assert!(!restored_dac, "snapshot contains no DACP tag");
+
+        let regs = bar0.snapshot_v1();
+        assert_eq!(regs.now_ns, now_ns);
+        assert_eq!(regs.next_vblank_ns, None);
+
+        // Regression: without a tag sentinel, the timebase bytes can look like `ATST` and would be
+        // consumed by the VGA tag parser.
+        assert_eq!(vram.attr_index, 0);
+        assert!(!vram.attr_flip_flop);
     }
 
     #[test]
