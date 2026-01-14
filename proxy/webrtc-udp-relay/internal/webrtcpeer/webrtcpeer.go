@@ -51,7 +51,7 @@ func applyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
 
 	// SettingEngine doesn't currently expose a "bind to 0.0.0.0" toggle; instead
 	// we restrict candidate gathering and socket binding via IPFilter.
-	if !config.IsUnspecifiedIP(cfg.WebRTCUDPListenIP) {
+	if !isUnspecifiedIP(cfg.WebRTCUDPListenIP) {
 		listenIP := cfg.WebRTCUDPListenIP
 		se.SetIPFilter(func(ip net.IP) bool {
 			return ip.Equal(listenIP)
@@ -91,6 +91,10 @@ func applyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
 	}
 
 	return nil
+}
+
+func isUnspecifiedIP(ip net.IP) bool {
+	return ip == nil || ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero)
 }
 
 func asUint32(v int) (uint32, error) {

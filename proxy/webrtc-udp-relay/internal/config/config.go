@@ -1340,10 +1340,6 @@ func parseL2BackendAuthForwardMode(raw string) (L2BackendAuthForwardMode, error)
 	}
 }
 
-func IsUnspecifiedIP(ip net.IP) bool {
-	return ip == nil || ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero)
-}
-
 func normalizeOriginValue(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
