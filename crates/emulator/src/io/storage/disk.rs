@@ -8,6 +8,11 @@ pub enum DiskFormat {
     Raw,
     Qcow2,
     Vhd,
+    /// Aero sparse disk image format.
+    ///
+    /// New images use the canonical `AEROSPAR` format (implemented in `crates/aero-storage`).
+    /// The emulator can still open legacy `AEROSPRS` images via `formats::SparseDisk::open` for
+    /// backward compatibility/migration.
     Sparse,
 }
 
