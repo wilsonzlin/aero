@@ -9,6 +9,10 @@
 //! - Writes a `DrawIndexedIndirectArgs` struct so the render pass can consume the expanded
 //!   geometry via `draw_indexed_indirect`.
 //!
+//! The generated compute shader keeps its internal prepass resources in `@group(0)` and declares
+//! any referenced D3D constant buffers (`b#` / `cb#[]`) in the shared executor bind group
+//! `@group(3)`.
+//!
 //! Note: this module is only **partially wired** into the AeroGPU command executor today:
 //! - `CREATE_SHADER_DXBC` attempts to translate SM4/SM5 GS DXBC into a WGSL compute prepass.
 //! - Point-list `DRAW` can execute the translated compute prepass when translation succeeds.
@@ -23,11 +27,13 @@
 //!
 //! The initial implementation is intentionally minimal and focuses on the instructions/operands
 //! required by the in-tree GS tests (float ALU ops such as `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`
-//!/`min`/`max`, plus immediate constants + `v#[]` inputs + `emit`/`cut` on stream 0).
+//!/`min`/`max`, plus immediate constants + `v#[]` inputs + `cb#[]` constant buffers + `emit`/`cut` on
+//! stream 0).
 
 use core::fmt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use crate::binding_model::{BINDING_BASE_CBUFFER, BIND_GROUP_INTERNAL_EMULATION};
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
     GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl,
@@ -294,6 +300,8 @@ pub struct GsPrepassTranslation {
 /// - `@group(0) @binding(3)` atomic counters (`GsPrepassCounters`, read_write)
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
 /// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
+///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
@@ -315,12 +323,21 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     let mut max_output_vertices: Option<u32> = None;
     let mut gs_instance_count: Option<u32> = None;
     let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
+    let mut cbuffer_decls: BTreeMap<u32, u32> = BTreeMap::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
             Sm4Decl::GsOutputTopology { topology } => output_topology = Some(*topology),
             Sm4Decl::GsMaxOutputVertexCount { max } => max_output_vertices = Some(*max),
             Sm4Decl::GsInstanceCount { count } => gs_instance_count = Some(*count),
+            Sm4Decl::ConstantBuffer { slot, reg_count } => {
+                // Keep the largest declared size so the generated WGSL array is always big enough
+                // for any statically indexed reads (cb#[]).
+                cbuffer_decls
+                    .entry(*slot)
+                    .and_modify(|existing| *existing = (*existing).max(*reg_count))
+                    .or_insert(*reg_count);
+            }
             Sm4Decl::InputSiv {
                 reg,
                 mask,
@@ -373,6 +390,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     let mut max_temp_reg: i32 = -1;
     let mut max_output_reg: i32 = -1;
     let mut max_gs_input_reg: i32 = -1;
+    let mut used_cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
@@ -386,6 +404,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "if",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::IfC { a, b, .. } => {
@@ -398,6 +418,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "ifc",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
                 scan_src_operand(
                     b,
@@ -408,6 +430,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "ifc",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
@@ -421,6 +445,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "breakc",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
                 scan_src_operand(
                     b,
@@ -431,6 +457,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "breakc",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::ContinueC { a, b, .. } => {
@@ -443,6 +471,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "continuec",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
                 scan_src_operand(
                     b,
@@ -453,6 +483,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "continuec",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Break | Sm4Inst::Continue => {}
@@ -466,6 +498,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "switch",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
@@ -480,6 +514,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     "mov",
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Movc { dst, cond, a, b } => {
@@ -494,6 +530,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "movc",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -513,6 +551,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     opcode_name(inst),
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Rcp { dst, src } | Sm4Inst::Rsq { dst, src } => {
@@ -526,6 +566,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     inst_index,
                     opcode_name(inst),
                     &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
                 )?;
             }
             Sm4Inst::Add { dst, a, b } => {
@@ -540,6 +582,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "add",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -555,6 +599,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "and",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -570,6 +616,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "mul",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -585,6 +633,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "mad",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -600,6 +650,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "min",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -615,6 +667,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "max",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -630,6 +684,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "dp3",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -645,6 +701,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         inst_index,
                         "dp4",
                         &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
                     )?;
                 }
             }
@@ -758,6 +816,20 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
         "const GS_INSTANCE_COUNT: u32 = {gs_instance_count}u;"
     ));
     w.line("");
+
+    // Declared constant buffers (`cb#[]`) live in the shared internal/emulation bind group so the
+    // compute-emulated geometry stage can reuse the executor's GS resource bindings.
+    for (&slot, &reg_count) in &used_cbuffers {
+        w.line(&format!(
+            "struct Cb{slot} {{ regs: array<vec4<u32>, {reg_count}> }};"
+        ));
+        w.line(&format!(
+            "@group({}) @binding({}) var<uniform> cb{slot}: Cb{slot};",
+            BIND_GROUP_INTERNAL_EMULATION,
+            BINDING_BASE_CBUFFER + slot
+        ));
+        w.line("");
+    }
 
     w.line("@group(0) @binding(0) var<storage, read_write> out_vertices: ExpandedVertexBuffer;");
     w.line("@group(0) @binding(1) var<storage, read_write> out_indices: U32Buffer;");
@@ -1640,6 +1712,8 @@ fn scan_src_operand(
     inst_index: usize,
     opcode: &'static str,
     input_sivs: &HashMap<u32, InputSivInfo>,
+    cbuffer_decls: &BTreeMap<u32, u32>,
+    used_cbuffers: &mut BTreeMap<u32, u32>,
 ) -> Result<(), GsTranslateError> {
     match &src.kind {
         SrcKind::Register(reg) => {
@@ -1703,6 +1777,27 @@ fn scan_src_operand(
                     verts_per_primitive,
                 });
             }
+        }
+        SrcKind::ConstantBuffer { slot, reg } => {
+            let Some(&reg_count) = cbuffer_decls.get(slot) else {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: format!(
+                        "constant buffer cb{slot}[{reg}] used but slot cb{slot} is not declared via dcl_constantbuffer"
+                    ),
+                });
+            };
+            if *reg >= reg_count {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: format!(
+                        "constant buffer cb{slot}[{reg}] is out of bounds (declared reg_count={reg_count})"
+                    ),
+                });
+            }
+            used_cbuffers.entry(*slot).or_insert(reg_count);
         }
         SrcKind::ImmediateF32(_) => {}
         other => {
@@ -1807,6 +1902,9 @@ fn emit_src_vec4(
             }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
+        SrcKind::ConstantBuffer { slot, reg } => {
+            format!("bitcast<vec4<f32>>(cb{slot}.regs[{reg}])")
+        }
         SrcKind::ImmediateF32(vals) => {
             let lanes: Vec<String> = vals
                 .iter()
@@ -1884,6 +1982,7 @@ fn emit_src_vec4_u32(
         SrcKind::GsInput { reg, vertex } => {
             format!("bitcast<vec4<u32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
         }
+        SrcKind::ConstantBuffer { slot, reg } => format!("cb{slot}.regs[{reg}]"),
         SrcKind::ImmediateF32(vals) => {
             let lanes: Vec<String> = vals.iter().map(|v| format!("0x{v:08x}u")).collect();
             format!(
@@ -1957,6 +2056,9 @@ fn emit_src_vec4_i32(
         },
         SrcKind::GsInput { reg, vertex } => {
             format!("bitcast<vec4<i32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
+        }
+        SrcKind::ConstantBuffer { slot, reg } => {
+            format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")
         }
         SrcKind::ImmediateF32(vals) => {
             let lanes: Vec<String> = vals

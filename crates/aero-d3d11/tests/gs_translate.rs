@@ -1668,3 +1668,54 @@ fn gs_translate_supports_switch_case_default() {
 
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn gs_translate_supports_constant_buffer_operands() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(5),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ConstantBuffer {
+                slot: 0,
+                reg_count: 1,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ConstantBuffer { slot: 0, reg: 0 },
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("@group(3) @binding(0)"),
+        "expected cbuffer binding to be emitted in group(3):\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("struct Cb0"),
+        "expected cbuffer struct declaration to be emitted:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
