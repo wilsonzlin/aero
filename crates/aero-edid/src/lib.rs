@@ -41,6 +41,9 @@ impl Timing {
         self.width != 0
             && self.height != 0
             && self.refresh_hz != 0
+            // Range limits descriptor stores rates in u8 (Hz/kHz), so avoid
+            // generating internally inconsistent EDIDs for extreme refresh rates.
+            && self.refresh_hz <= u8::MAX as u16
             && (self.width as u32) <= 0x0FFF
             && (self.height as u32) <= 0x0FFF
             && {
@@ -886,6 +889,20 @@ mod tests {
         // an EDID 1.4 DTD pixel clock field (16-bit in 10kHz units). We should reject it rather
         // than generating a clamped/incorrect DTD.
         let edid = generate_edid(Timing::new(4095, 4095, 60));
+        assert_eq!(
+            &edid[54..72],
+            &[
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
+                0x0E, 0x11, 0x00, 0x00, 0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn excessive_refresh_rate_falls_back_to_default() {
+        // EDID range limits encode vertical rate as u8, so values above 255Hz cannot be
+        // represented without internal inconsistency.
+        let edid = generate_edid(Timing::new(640, 480, 300));
         assert_eq!(
             &edid[54..72],
             &[
