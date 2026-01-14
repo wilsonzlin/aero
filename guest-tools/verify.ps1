@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.21"
+         version = "2.5.22"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -5138,7 +5138,7 @@ try {
         $mediaDir = Join-Path $env:WINDIR "Media"
         $wav = $null
         if (Test-Path $mediaDir) {
-            $wav = Get-ChildItem -Path $mediaDir -Filter *.wav -ErrorAction SilentlyContinue | Select-Object -First 1
+            $wav = Get-ChildItem -Path $mediaDir -Filter *.wav -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
         }
 
         if ($wav) {
