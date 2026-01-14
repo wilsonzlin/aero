@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { openRingByKind } from "../ipc/ipc";
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_SOURCE_WDDM,
+  SCANOUT_STATE_GENERATION_BUSY_BIT,
+  SCANOUT_STATE_U32_LEN,
+  ScanoutStateIndex,
+  publishScanoutState,
+  snapshotScanoutState,
+  wrapScanoutState,
+} from "../ipc/scanout_state";
 import { WorkerCoordinator } from "./coordinator";
 import { createIoIpcSab, IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "./shared_layout";
 
@@ -248,6 +259,23 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     installReadyWorkers(coordinator, { cpu, io, net });
 
     const shared = (coordinator as any).shared;
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
+    shared.scanoutState = scanoutSab;
+    shared.scanoutStateOffsetBytes = 0;
+    const scanoutWords = wrapScanoutState(scanoutSab, 0);
+    publishScanoutState(scanoutWords, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0x1234,
+      basePaddrHi: 0,
+      width: 640,
+      height: 480,
+      pitchBytes: 640 * 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+    const scanoutBefore = snapshotScanoutState(scanoutWords);
+    expect(scanoutBefore.source).toBe(SCANOUT_SOURCE_WDDM);
+    expect(scanoutBefore.basePaddrLo).toBe(0x1234);
+
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -305,6 +333,19 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
+
+    const genAfter = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
+    expect(genAfter & SCANOUT_STATE_GENERATION_BUSY_BIT).toBe(0);
+
+    const scanoutAfter = snapshotScanoutState(scanoutWords);
+    expect(scanoutAfter.generation).toBe(0);
+    expect(scanoutAfter.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);
+    expect(scanoutAfter.basePaddrLo).toBe(0);
+    expect(scanoutAfter.basePaddrHi).toBe(0);
+    expect(scanoutAfter.width).toBe(0);
+    expect(scanoutAfter.height).toBe(0);
+    expect(scanoutAfter.pitchBytes).toBe(0);
+    expect(scanoutAfter.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
   });
 
   it("pauses/resumes the net worker even when it is not marked ready yet (avoids NET ring reset races)", async () => {

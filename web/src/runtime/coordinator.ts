@@ -1547,6 +1547,12 @@ export class WorkerCoordinator {
         { timeoutMs: 10_000, transfer: transfers },
       );
       this.assertSnapshotOk("setCpuState", cpuSet);
+
+      // Snapshot restore is in-place (SharedArrayBuffers persist), so any scanout descriptor
+      // written after the snapshot was taken (e.g. WDDM/BAR1 scanout) can otherwise remain
+      // visible after restoring an older snapshot. Reset to a safe default before resuming.
+      const shared = this.shared;
+      if (shared) this.resetScanoutState(shared);
     } finally {
       try {
         await this.resumeWorkersAfterSnapshot();
