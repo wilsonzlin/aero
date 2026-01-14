@@ -6,6 +6,7 @@ import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -119,6 +120,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         version: 1,
         config: makeConfig(),
       });
+      worker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
       worker.postMessage(makeInit(segments));
 
       await workerReady;
