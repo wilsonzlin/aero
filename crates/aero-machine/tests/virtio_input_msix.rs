@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{profile, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
@@ -262,5 +262,72 @@ fn virtio_input_msix_delivers_to_lapic_in_apic_mode() {
         interrupts.borrow().get_pending(),
         None,
         "expected no MSI-X delivery once MSI-X is disabled"
+    );
+}
+
+#[test]
+fn virtio_input_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep the test focused on PCI INTx polling semantics.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        enable_virtio_blk: false,
+        enable_uhci: false,
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let virtio_kb = m
+        .virtio_input_keyboard()
+        .expect("virtio-input keyboard enabled");
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+
+    // Ensure legacy INTx is enabled in the guest-visible PCI command register (bit 10 clear).
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !(1 << 10)));
+
+    // Synthesize a pending legacy INTx interrupt inside the runtime virtio transport.
+    virtio_kb.borrow_mut().signal_config_interrupt();
+    m.poll_pci_intx_lines();
+
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+
+    // Enable MSI-X in the canonical PCI config space. Polling INTx lines should mirror MSI-X state
+    // into the runtime virtio transport so legacy INTx becomes suppressed even without any virtio
+    // queue processing.
+    let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+        .expect("virtio-input should expose MSI-X capability");
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from((ctrl & !(1 << 14)) | (1 << 15)),
+    );
+
+    m.poll_pci_intx_lines();
+    assert_eq!(
+        interrupts.borrow().gsi_level(gsi),
+        false,
+        "expected legacy INTx to be suppressed once MSI-X is enabled"
+    );
+    assert!(
+        !virtio_kb.borrow().irq_level(),
+        "expected virtio transport legacy INTx line to be deasserted once MSI-X is enabled"
     );
 }
