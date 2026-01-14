@@ -55,7 +55,7 @@
         // Use the harness allocator to keep memory usage low (avoid the full runtime's large wasm32
         // reserved region + default VRAM allocation).
         const segments = allocateHarnessSharedMemorySegments({
-          guestRamBytes: 1 * 1024 * 1024,
+          guestRamBytes: 64 * 1024,
           sharedFramebuffer: new SharedArrayBuffer(8),
           sharedFramebufferOffsetBytes: 0,
           // No network/HID rings needed; keep the AIPC SAB tiny.

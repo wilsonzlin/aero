@@ -8,7 +8,9 @@ if (!parentPort) {
 }
 
 const DEFAULT_CONFIG = Object.freeze({
-  guestRamBytes: 64 * 1024 * 1024,
+  // This is a fake CPU worker used by `src/vmCoordinator.js` for watchdog/resource-limit tests.
+  // It does not rely on large guest memory buffers, so keep the default small.
+  guestRamBytes: 16 * 1024 * 1024,
   limits: {
     maxGuestRamBytes: 512 * 1024 * 1024,
     maxDiskCacheBytes: 128 * 1024 * 1024,

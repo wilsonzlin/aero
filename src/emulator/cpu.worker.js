@@ -15,7 +15,9 @@ import {
 const ctx = /** @type {DedicatedWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
 const DEFAULT_CONFIG = Object.freeze({
-  guestRamBytes: 64 * 1024 * 1024,
+  // This is a fake CPU worker used by the VmCoordinator watchdog/snapshot harness. It does not
+  // meaningfully use guest RAM, so keep the default small to reduce baseline allocations.
+  guestRamBytes: 16 * 1024 * 1024,
   limits: {
     maxGuestRamBytes: 512 * 1024 * 1024,
     maxDiskCacheBytes: 128 * 1024 * 1024,

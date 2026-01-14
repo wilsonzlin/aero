@@ -2930,7 +2930,9 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const errorOut = el('pre', { id: 'vm-error', text: '' });
   const snapshotOut = el('pre', { id: 'vm-snapshot', text: '' });
 
-  const guestRamMiB = el('input', { id: 'vm-guest-mib', type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
+  // Keep the default guest RAM small: the VmCoordinator safety panel uses a fake CPU worker and
+  // most tests don't need large guest buffers. This reduces baseline allocations in Playwright.
+  const guestRamMiB = el('input', { id: 'vm-guest-mib', type: 'number', value: '16', min: '1', step: '1' }) as HTMLInputElement;
   const maxGuestRamMiB = el('input', { id: 'vm-max-guest-mib', type: 'number', value: '512', min: '1', step: '1' }) as HTMLInputElement;
   const maxDiskCacheMiB = el('input', { id: 'vm-max-disk-cache-mib', type: 'number', value: '128', min: '1', step: '1' }) as HTMLInputElement;
   const maxShaderCacheMiB = el('input', { id: 'vm-max-shader-cache-mib', type: 'number', value: '64', min: '1', step: '1' }) as HTMLInputElement;
