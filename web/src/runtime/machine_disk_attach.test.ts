@@ -379,4 +379,180 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, expectedOverlay);
     expect(calls).toEqual(["cow", "set-ref"]);
   });
+
+  it("uses the aerosparse overlay header block size when available", async () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "hdd2",
+      name: "Disk 2",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const overlayHeader = new Uint8Array(64);
+    // "AEROSPAR"
+    overlayHeader.set([0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52], 0);
+    const dv = new DataView(overlayHeader.buffer);
+    dv.setUint32(8, 1, true); // version
+    dv.setUint32(12, 64, true); // header size
+    dv.setUint32(16, 4 * 1024 * 1024, true); // block size
+    dv.setBigUint64(24, 8n * 1024n * 1024n, true); // disk size bytes
+    dv.setBigUint64(32, 64n, true); // table offset
+    dv.setBigUint64(40, 2n, true); // table entries
+    dv.setBigUint64(48, 4n * 1024n * 1024n, true); // data offset
+    dv.setBigUint64(56, 0n, true); // allocated blocks
+    const file = new Blob([overlayHeader]);
+
+    const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      const fileHandle = {
+        getFile: async () => file,
+      };
+      const disksDir = {
+        getDirectoryHandle: async (_name: string) => {
+          throw new Error("unexpected nested directory");
+        },
+        getFileHandle: async (name: string) => {
+          if (name !== `${meta.id}.overlay.aerospar`) throw new Error(`unexpected file request: ${name}`);
+          return fileHandle;
+        },
+      };
+      const aeroDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "disks") throw new Error(`unexpected directory request: ${name}`);
+          return disksDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at aero/");
+        },
+      };
+      const rootDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "aero") throw new Error(`unexpected directory request: ${name}`);
+          return aeroDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at root");
+        },
+      };
+
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          storage: {
+            getDirectory: async () => rootDir,
+          },
+        },
+        configurable: true,
+      });
+
+      const attach = vi.fn(async (_basePath: string, _overlayPath: string, _blockSizeBytes: number) => {});
+      const machine = {
+        set_primary_hdd_opfs_cow: attach,
+      } as unknown as MachineHandle;
+
+      await attachMachineBootDisk(machine, "hdd", meta);
+
+      expect(attach).toHaveBeenCalledWith(plan.opfsPath, `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`, 4 * 1024 * 1024);
+    } finally {
+      if (originalNavigatorDesc) {
+        Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);
+      } else {
+        delete (globalThis as unknown as { navigator?: unknown }).navigator;
+      }
+    }
+  });
+
+  it("ignores invalid aerosparse overlay headers and falls back to the default block size", async () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "hdd3",
+      name: "Disk 3",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const overlayHeader = new Uint8Array(64);
+    // "AEROSPAR"
+    overlayHeader.set([0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52], 0);
+    const dv = new DataView(overlayHeader.buffer);
+    dv.setUint32(8, 1, true); // version
+    dv.setUint32(12, 64, true); // header size
+    dv.setUint32(16, 1024 * 1024, true); // block size
+    dv.setBigUint64(24, 1024n * 1024n, true); // disk size bytes
+    // Corrupt table offset (must be 64).
+    dv.setBigUint64(32, 0n, true);
+    const file = new Blob([overlayHeader]);
+
+    const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      const fileHandle = {
+        getFile: async () => file,
+      };
+      const disksDir = {
+        getDirectoryHandle: async (_name: string) => {
+          throw new Error("unexpected nested directory");
+        },
+        getFileHandle: async (name: string) => {
+          if (name !== `${meta.id}.overlay.aerospar`) throw new Error(`unexpected file request: ${name}`);
+          return fileHandle;
+        },
+      };
+      const aeroDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "disks") throw new Error(`unexpected directory request: ${name}`);
+          return disksDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at aero/");
+        },
+      };
+      const rootDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "aero") throw new Error(`unexpected directory request: ${name}`);
+          return aeroDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at root");
+        },
+      };
+
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          storage: {
+            getDirectory: async () => rootDir,
+          },
+        },
+        configurable: true,
+      });
+
+      const attach = vi.fn(async (_basePath: string, _overlayPath: string, _blockSizeBytes: number) => {});
+      const machine = {
+        set_primary_hdd_opfs_cow: attach,
+      } as unknown as MachineHandle;
+
+      await attachMachineBootDisk(machine, "hdd", meta);
+
+      expect(attach).toHaveBeenCalledWith(
+        plan.opfsPath,
+        `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`,
+        DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+      );
+    } finally {
+      if (originalNavigatorDesc) {
+        Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);
+      } else {
+        delete (globalThis as unknown as { navigator?: unknown }).navigator;
+      }
+    }
+  });
 });
