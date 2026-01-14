@@ -264,9 +264,16 @@ function parseAbiDump(text: string): AbiDump {
 
     const parts = trimmed.split(/\s+/);
     if (parts[0] === "SIZE") {
-      sizes.set(parts[1], Number(parts[2]));
+      if (sizes.has(parts[1]!)) {
+        throw new Error(`Duplicate SIZE: ${parts[1]}`);
+      }
+      sizes.set(parts[1]!, Number(parts[2]!));
     } else if (parts[0] === "OFF") {
-      offsets.set(`${parts[1]}.${parts[2]}`, Number(parts[3]));
+      const key = `${parts[1]}.${parts[2]}`;
+      if (offsets.has(key)) {
+        throw new Error(`Duplicate OFF: ${key}`);
+      }
+      offsets.set(key, Number(parts[3]!));
     } else if (parts[0] === "CONST") {
       if (consts.has(parts[1]!)) {
         throw new Error(`Duplicate CONST: ${parts[1]}`);

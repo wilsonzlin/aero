@@ -121,16 +121,6 @@ int main(void) {
   PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, input_slot_class);
   PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, instance_data_step_rate);
 
-  /* Variable-length packet headers. */
-  PRINT_OFF("aerogpu_cmd_create_shader_dxbc", struct aerogpu_cmd_create_shader_dxbc, dxbc_size_bytes);
-  PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, vec4_count);
-  PRINT_OFF("aerogpu_cmd_create_input_layout", struct aerogpu_cmd_create_input_layout, blob_size_bytes);
-  PRINT_OFF("aerogpu_cmd_set_vertex_buffers", struct aerogpu_cmd_set_vertex_buffers, buffer_count);
-  PRINT_OFF("aerogpu_cmd_set_shader_resource_buffers", struct aerogpu_cmd_set_shader_resource_buffers, buffer_count);
-  PRINT_OFF("aerogpu_cmd_set_unordered_access_buffers", struct aerogpu_cmd_set_unordered_access_buffers, uav_count);
-  PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, offset_bytes);
-  PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, size_bytes);
-
   /* Fixed-layout packet field offsets (helps catch accidental field reordering). */
   PRINT_OFF("aerogpu_cmd_create_buffer", struct aerogpu_cmd_create_buffer, hdr);
   PRINT_OFF("aerogpu_cmd_create_buffer", struct aerogpu_cmd_create_buffer, buffer_handle);
@@ -368,25 +358,6 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, hdr);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, state);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, value);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, dst_buffer);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, src_buffer);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, dst_offset_bytes);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, src_offset_bytes);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, size_bytes);
-  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, flags);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_texture);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_texture);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_mip_level);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_array_layer);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_mip_level);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_array_layer);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_x);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_y);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_x);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_y);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, width);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, height);
-  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, flags);
 
   PRINT_OFF("aerogpu_cmd_clear", struct aerogpu_cmd_clear, hdr);
   PRINT_OFF("aerogpu_cmd_clear", struct aerogpu_cmd_clear, flags);

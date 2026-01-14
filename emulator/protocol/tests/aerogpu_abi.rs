@@ -153,14 +153,24 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
         match tag {
             "SIZE" => {
                 assert_eq!(parts.len(), 3, "bad SIZE line @{}: {line}", line_no + 1);
-                dump.sizes
-                    .insert(parts[1].to_string(), parts[2].parse().unwrap());
+                let name = parts[1].to_string();
+                let value = parts[2].parse().unwrap();
+                let prev = dump.sizes.insert(name.clone(), value);
+                assert!(
+                    prev.is_none(),
+                    "duplicate SIZE for {name} in line @{}: {line}",
+                    line_no + 1
+                );
             }
             "OFF" => {
                 assert_eq!(parts.len(), 4, "bad OFF line @{}: {line}", line_no + 1);
-                dump.offsets.insert(
-                    format!("{}.{}", parts[1], parts[2]),
-                    parts[3].parse().unwrap(),
+                let key = format!("{}.{}", parts[1], parts[2]);
+                let value = parts[3].parse().unwrap();
+                let prev = dump.offsets.insert(key.clone(), value);
+                assert!(
+                    prev.is_none(),
+                    "duplicate OFF for {key} in line @{}: {line}",
+                    line_no + 1
                 );
             }
             "CONST" => {
