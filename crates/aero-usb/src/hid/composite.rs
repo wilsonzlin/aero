@@ -2125,6 +2125,49 @@ mod tests {
     }
 
     #[test]
+    fn boot_protocol_mouse_side_button_still_triggers_remote_wakeup() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00, // HostToDevice | Standard | Device
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        dev.set_suspended(true);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_PROTOCOL,
+                    w_value: 0, // boot protocol
+                    w_index: MOUSE_INTERFACE as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        dev.mouse_button_event(0x08, true);
+        assert!(dev.poll_remote_wakeup());
+        assert!(!dev.poll_remote_wakeup(), "remote wakeup should be edge-triggered");
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
     fn configuration_does_not_enqueue_held_mouse_side_button_in_boot_protocol() {
         let mut dev = UsbCompositeHidInputHandle::new();
 

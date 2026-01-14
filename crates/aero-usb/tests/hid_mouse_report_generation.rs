@@ -316,6 +316,44 @@ fn boot_protocol_wheel_still_triggers_remote_wakeup() {
 }
 
 #[test]
+fn boot_protocol_side_buttons_still_trigger_remote_wakeup() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    // Enable remote wakeup via SET_FEATURE(DEVICE_REMOTE_WAKEUP).
+    assert_eq!(
+        mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 1,            // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    mouse.set_suspended(true);
+    set_protocol(&mut mouse, 0);
+    mouse.button_event(0x08, true);
+
+    assert!(
+        mouse.poll_remote_wakeup(),
+        "expected side button press to set remote wakeup pending even in boot protocol"
+    );
+    assert!(
+        !mouse.poll_remote_wakeup(),
+        "remote wakeup should be edge-triggered"
+    );
+    assert!(
+        poll_interrupt_in(&mut mouse).is_none(),
+        "expected boot-protocol side button to produce no interrupt report"
+    );
+}
+
+#[test]
 fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_protocol() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);
