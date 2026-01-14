@@ -105,7 +105,7 @@
  * IOCTL_VIOINPUT_QUERY_COUNTERS). It must be append-only to preserve ABI.
  */
 #define VIOINPUT_COUNTERS_VERSION 3
-#define VIOINPUT_STATE_VERSION 1
+#define VIOINPUT_STATE_VERSION 2
 
 /*
  * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS.
@@ -208,6 +208,9 @@ typedef struct _VIOINPUT_STATE {
     ULONG VirtioStarted;
 
     UINT64 NegotiatedFeatures;
+
+    // Whether StatusQDropOnFull is enabled for this device instance.
+    ULONG StatusQDropOnFull;
 } VIOINPUT_STATE, *PVIOINPUT_STATE;
 
 #if VIOINPUT_DIAGNOSTICS

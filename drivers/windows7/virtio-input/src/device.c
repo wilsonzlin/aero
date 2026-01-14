@@ -1022,6 +1022,7 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
         deviceContext->ConfigInterruptCount = 0;
         RtlZeroMemory(deviceContext->QueueInterruptCount, sizeof(deviceContext->QueueInterruptCount));
         deviceContext->DmaEnabler = NULL;
+        deviceContext->StatusQDropOnFull = FALSE;
         deviceContext->EventVq = NULL;
         deviceContext->EventRingCommonBuffer = NULL;
         deviceContext->EventRxCommonBuffer = NULL;
@@ -1326,6 +1327,7 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
             // Default is "disabled" when the value is absent or cannot be queried.
             dropOnFull = (NT_SUCCESS(regStatus) && dropOnFullValue != 0) ? TRUE : FALSE;
             VirtioStatusQSetDropOnFull(deviceContext->StatusQ, dropOnFull);
+            deviceContext->StatusQDropOnFull = dropOnFull;
 
             VIOINPUT_LOG(
                 VIOINPUT_LOG_VIRTQ,

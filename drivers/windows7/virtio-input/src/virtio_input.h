@@ -339,6 +339,8 @@ typedef struct _DEVICE_CONTEXT {
     ULONG LastGetInputReportSeqNoFile[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
+    // Cached for IOCTL_VIOINPUT_QUERY_STATE diagnostics.
+    BOOLEAN StatusQDropOnFull;
     VIRTQ_SPLIT* EventVq;
     WDFCOMMONBUFFER EventRingCommonBuffer;
     WDFCOMMONBUFFER EventRxCommonBuffer;

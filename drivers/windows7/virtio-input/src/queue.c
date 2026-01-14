@@ -279,6 +279,7 @@ VOID VirtioInputEvtIoDeviceControl(
 
         negotiatedFeatures = InterlockedCompareExchange64(&devCtx->NegotiatedFeatures, 0, 0);
         snapshot.NegotiatedFeatures = (UINT64)negotiatedFeatures;
+        snapshot.StatusQDropOnFull = devCtx->StatusQDropOnFull ? 1u : 0u;
 
         availBytes = outBytes;
         if (OutputBufferLength < availBytes) {

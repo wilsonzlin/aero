@@ -156,7 +156,7 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #endif
 #define VIOINPUT_COUNTERS_VERSION 3
-#define VIOINPUT_STATE_VERSION 1
+#define VIOINPUT_STATE_VERSION 2
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
     ULONG Size;
@@ -235,6 +235,7 @@ typedef struct VIOINPUT_STATE {
     ULONG HidActivated;
     ULONG VirtioStarted;
     ULONGLONG NegotiatedFeatures;
+    ULONG StatusQDropOnFull;
 } VIOINPUT_STATE;
 
 enum {
@@ -733,6 +734,11 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
     wprintf(L"  HidActivated:      %lu\n", st->HidActivated);
     wprintf(L"  VirtioStarted:     %lu\n", st->VirtioStarted);
     wprintf(L"  NegotiatedFeatures: 0x%016llX\n", (unsigned long long)st->NegotiatedFeatures);
+    if (bytes >= offsetof(VIOINPUT_STATE, StatusQDropOnFull) + sizeof(ULONG)) {
+        wprintf(L"  StatusQDropOnFull: %lu\n", st->StatusQDropOnFull);
+    } else {
+        wprintf(L"  StatusQDropOnFull: <missing>\n");
+    }
 }
 static void dump_keyboard_report(const BYTE *buf, DWORD len)
 {
