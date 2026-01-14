@@ -6094,6 +6094,12 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const runDeviceButton = el("button", {
     text: "Run GET_DESCRIPTOR(Device)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "WebUSB passthrough demo is unavailable in vmRuntime=machine.";
+        pending = false;
+        refreshUi();
+        return;
+      }
       lastRequest = "deviceDescriptor";
       lastResult = null;
       pending = true;
@@ -6105,6 +6111,12 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const runConfigButton = el("button", {
     text: "Run GET_DESCRIPTOR(Configuration)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "WebUSB passthrough demo is unavailable in vmRuntime=machine.";
+        pending = false;
+        refreshUi();
+        return;
+      }
       lastRequest = "configDescriptor";
       lastResult = null;
       pending = true;
@@ -6116,6 +6128,12 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const runConfigFullButton = el("button", {
     text: "Run GET_DESCRIPTOR(Configuration full)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "WebUSB passthrough demo is unavailable in vmRuntime=machine.";
+        pending = false;
+        refreshUi();
+        return;
+      }
       const len = configTotalLenHint;
       if (len === null) return;
       lastRequest = "configDescriptor";
@@ -6132,13 +6150,31 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   runConfigFullButton.hidden = true;
 
   const refreshUi = (): void => {
-    const workerReady = !!attachedIoWorker;
+    const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+    const supported = vmRuntime !== "machine";
+    if (!supported && pending) pending = false;
+
+    const workerReady = !!attachedIoWorker && supported;
     const selected = !!selectedInfo;
     const controlsDisabled = !workerReady || !selected || pending;
     runDeviceButton.disabled = controlsDisabled;
     runConfigButton.disabled = controlsDisabled;
     configTotalLenHint = null;
     runConfigFullButton.hidden = true;
+
+    if (!supported) {
+      status.textContent =
+        `vmRuntime=${vmRuntime}\n` +
+        `ioWorker=unsupported\n` +
+        `selected=${selectedInfo ? `${hex16(selectedInfo.vendorId)}:${hex16(selectedInfo.productId)}` : "(none)"}\n` +
+        `lastRequest=${lastRequest ?? "(none)"}\n` +
+        `lastResult=unavailable`;
+      resultLine.textContent = "Result: unavailable (vmRuntime=machine)";
+      bytesLine.textContent = "(no bytes)";
+      if (!errorLine.textContent) errorLine.textContent = "WebUSB passthrough demo is currently only supported in the legacy runtime.";
+      clearButton.disabled = false;
+      return;
+    }
 
     const selectedLine = selectedInfo
       ? `selected=${selectedInfo.productName ?? "(unnamed)"} vid=${hex16(selectedInfo.vendorId)} pid=${hex16(selectedInfo.productId)}`
@@ -6148,6 +6184,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     const requestLine = `lastRequest=${lastRequest ?? "(none)"}`;
     const resultStatus = lastResult?.status ?? (pending ? "pending" : "(none)");
     status.textContent =
+      `vmRuntime=${vmRuntime}\n` +
       `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
       `${selectedLine}\n` +
       `${requestLine}\n` +
