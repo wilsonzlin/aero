@@ -651,7 +651,11 @@ export function createIdbMetadataStore(): DiskMetadataStore {
       const rec = (await idbReq(tx.objectStore("mounts").get("mounts"))) as MountsRecord | undefined;
       await idbTxDone(tx);
       db.close();
-      return normalizeMountConfig(rec?.value);
+      // Treat stored mounts as untrusted: only accept `value` from an own property so
+      // prototype pollution (e.g. `Object.prototype.value = {...}`) cannot supply mounts.
+      const valueRaw =
+        rec && typeof rec === "object" && hasOwnProp(rec as object, "value") ? (rec as { value?: unknown }).value : undefined;
+      return normalizeMountConfig(valueRaw);
     },
     async setMounts(mounts: MountConfig) {
       const db = await openDiskManagerDb();
