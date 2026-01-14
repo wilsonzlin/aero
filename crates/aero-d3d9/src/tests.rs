@@ -47,6 +47,7 @@ fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
 
 // Some tests build SM3 shaders explicitly (vs_3_0/ps_3_0). These helpers are currently identical
 // to the generic encoders above; they exist to make intent explicit at call sites.
+#[allow(dead_code)]
 fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
     enc_inst(opcode, params)
 }
