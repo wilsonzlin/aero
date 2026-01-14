@@ -93,6 +93,46 @@ pub trait VirtualDisk: VirtualDiskSend {
     }
 }
 
+// Compile-time guard: in the browser build we intentionally allow non-`Send` disk backends
+// (e.g. JS/OPFS handles stored in `Rc`). This module should fail to compile if `VirtualDisk`
+// accidentally regains a `Send` requirement on wasm32.
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+mod wasm_send_bounds_check {
+    use std::rc::Rc;
+
+    use crate::{DiskError, Result};
+
+    use super::{VirtualDisk, SECTOR_SIZE};
+
+    #[derive(Debug)]
+    struct NotSendDisk(Rc<()>);
+
+    impl VirtualDisk for NotSendDisk {
+        fn capacity_bytes(&self) -> u64 {
+            SECTOR_SIZE as u64
+        }
+
+        fn read_at(&mut self, _offset: u64, buf: &mut [u8]) -> Result<()> {
+            buf.fill(0);
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+            Err(DiskError::Unsupported("write"))
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn _assert_virtual_disk_accepts_non_send_impl() {
+        let disk = NotSendDisk(Rc::new(()));
+        let _boxed: Box<dyn VirtualDisk> = Box::new(disk);
+    }
+}
+
 /// Read-only wrapper for a [`VirtualDisk`].
 ///
 /// This is the disk-oriented companion to [`crate::ReadOnlyBackend`]. It is typically the most
