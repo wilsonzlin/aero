@@ -5425,6 +5425,11 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     dev->fixedfunc_stage0_ps_variant_cache.clear();
     dev->fixedfunc_stage0_ps_variant_cache.reserve(128);
   }
+  if (dev->fixedfunc_stage0_ps_variant_cache.empty()) {
+    // First use: keep the signature cache small and avoid rehashing in the common
+    // steady-state case where stage0 settings don't churn.
+    dev->fixedfunc_stage0_ps_variant_cache.reserve(128);
+  }
   dev->fixedfunc_stage0_ps_variant_cache[sig] = desired_ps;
 
   if (*ps_slot == desired_ps) {

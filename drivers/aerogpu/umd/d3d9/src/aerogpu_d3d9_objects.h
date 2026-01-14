@@ -732,9 +732,6 @@ struct PatchCacheEntry {
 #if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     cmd.reset();
 #endif
-    // Fixed-function stage0 PS variants are cached per-device. Pre-size the map
-    // to keep steady-state lookup insertion-free.
-    fixedfunc_stage0_ps_variant_cache.reserve(128);
 
     // Initialize D3D9 state caches to API defaults so helper paths can save and
     // restore state even if the runtime never explicitly sets it.
