@@ -360,6 +360,10 @@ export class WorkerCoordinator {
   // Cached boot disk selection. This is driven by the UI (DiskManager) via `setBootDisks(...)` and
   // is used to differentiate legacy demo mode vs legacy VM mode.
   private bootDisks: SetBootDisksMessage | null = null;
+  // When running the canonical machine runtime, the CPU worker can optionally report which device
+  // firmware actually booted from for the current session (CD-ROM vs HDD). This differs from the
+  // selected policy when the firmware "CD-first when present" fallback is enabled.
+  private machineCpuActiveBootDevice: "hdd" | "cdrom" | null = null;
 
   private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
   private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
@@ -886,6 +890,10 @@ export class WorkerCoordinator {
 
   getBootDisks(): SetBootDisksMessage | null {
     return this.bootDisks;
+  }
+
+  getMachineCpuActiveBootDevice(): "hdd" | "cdrom" | null {
+    return this.machineCpuActiveBootDevice;
   }
 
   /**
@@ -2395,6 +2403,13 @@ export class WorkerCoordinator {
         if (bootDevice === "hdd" || bootDevice === "cdrom") {
           const prev = this.bootDisks ?? emptySetBootDisksMessage();
           this.bootDisks = { ...prev, bootDevice };
+        }
+        return;
+      }
+      if (bootDeviceMsg?.type === "machineCpu.bootDeviceActive") {
+        const bootDevice = bootDeviceMsg.bootDevice;
+        if (bootDevice === "hdd" || bootDevice === "cdrom") {
+          this.machineCpuActiveBootDevice = bootDevice;
         }
         return;
       }

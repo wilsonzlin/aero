@@ -150,6 +150,7 @@ let pendingBootDisks: SetBootDisksMessage | null = null;
 // - normal: boot HDD
 type MachineCpuBootDevice = "hdd" | "cdrom";
 type MachineCpuBootDeviceSelectedMessage = { type: "machineCpu.bootDeviceSelected"; bootDevice: MachineCpuBootDevice };
+type MachineCpuBootDeviceActiveMessage = { type: "machineCpu.bootDeviceActive"; bootDevice: MachineCpuBootDevice };
 let pendingBootDevice: MachineCpuBootDevice = "hdd";
 // Last boot disk selection successfully applied to the Machine. Used to decide whether an HDD is
 // present when handling guest resets (avoid looping on install media).
@@ -313,6 +314,7 @@ const HALTED_RUN_SLICE_DELAY_MS = 1;
 
 const BIOS_DRIVE_HDD0 = 0x80;
 const BIOS_DRIVE_CD0 = 0xe0;
+const BIOS_DRIVE_CD_LAST = 0xef;
 
 const MAX_INPUT_BATCHES_PER_TICK = 8;
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
@@ -740,6 +742,49 @@ function postBootDeviceSelected(bootDevice: MachineCpuBootDevice): void {
     ctx.postMessage(msg);
   } catch {
     // ignore
+  }
+}
+
+function postBootDeviceActive(bootDevice: MachineCpuBootDevice): void {
+  // Best-effort side-channel used by tests and debugging tools.
+  const msg: MachineCpuBootDeviceActiveMessage = { type: "machineCpu.bootDeviceActive", bootDevice };
+  try {
+    ctx.postMessage(msg);
+  } catch {
+    // ignore
+  }
+}
+
+function tryReadMachineActiveBootDevice(m: unknown): MachineCpuBootDevice | null {
+  try {
+    const fn = (m as unknown as { active_boot_device?: unknown }).active_boot_device ?? (m as unknown as { activeBootDevice?: unknown }).activeBootDevice;
+    if (typeof fn !== "function") return null;
+    const raw = (fn as () => unknown).call(m);
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+    const value = raw | 0;
+
+    // Prefer the wasm-bindgen enum object when available (avoids hard-coding discriminants).
+    const enumObj = wasmApi?.MachineBootDevice as unknown;
+    const anyEnum = enumObj as { Hdd?: unknown; Cdrom?: unknown } | undefined;
+    const hddVal = typeof anyEnum?.Hdd === "number" ? (anyEnum.Hdd as number) : 0;
+    const cdVal = typeof anyEnum?.Cdrom === "number" ? (anyEnum.Cdrom as number) : 1;
+
+    if (value === cdVal) return "cdrom";
+    if (value === hddVal) return "hdd";
+
+    // Defensive fallback for older builds (or if enum bindings change).
+    if (value === 1) return "cdrom";
+    if (value === 0) return "hdd";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function maybePostActiveBootDevice(m: unknown): void {
+  const active = tryReadMachineActiveBootDevice(m);
+  if (active) {
+    postBootDeviceActive(active);
   }
 }
 
@@ -1841,6 +1886,10 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`setBootDisks: Machine.reset failed after disk attachment: ${message}`);
     }
+
+    // Report what firmware actually booted from (CD vs HDD). This differs from the selected policy
+    // when the firmware "CD-first when present" fallback is enabled.
+    maybePostActiveBootDevice(m);
   }
 
   currentBootDisks = msg;
@@ -2458,6 +2507,7 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
     } catch {
       // ignore
     }
+    maybePostActiveBootDevice(machine);
     publishInputBackendStatusFromMachine();
 
     // WASM init completes asynchronously relative to the main run loop. If the run loop is
@@ -2524,6 +2574,20 @@ ctx.onmessage = (ev) => {
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
     const enableBootDriveSpy = payload.enableBootDriveSpy === true;
+
+    // Keep some minimal internal state so we can exercise boot-device reporting without loading WASM.
+    let dummyBootDrive = BIOS_DRIVE_HDD0;
+    let dummyBootFromCdIfPresent = false;
+    let dummyCdBootDrive = BIOS_DRIVE_CD0;
+    let dummyCdAttached = false;
+    let dummyActiveBootDevice = 0; // MachineBootDevice::Hdd
+
+    const recomputeDummyActiveBootDevice = (): void => {
+      const cdBoot =
+        (dummyBootFromCdIfPresent && dummyCdAttached) || (dummyBootDrive >= BIOS_DRIVE_CD0 && dummyBootDrive <= BIOS_DRIVE_CD_LAST);
+      dummyActiveBootDevice = cdBoot ? 1 : 0;
+    };
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dummy: any = {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
@@ -2536,7 +2600,19 @@ ctx.onmessage = (ev) => {
         }
         return { kind: runExitKindMap.Halted };
       },
-      reset: () => void 0,
+      active_boot_device: () => dummyActiveBootDevice,
+      setBootFromCdIfPresent: (enabled: boolean) => {
+        dummyBootFromCdIfPresent = !!enabled;
+      },
+      setCdBootDrive: (drive: number) => {
+        dummyCdBootDrive = drive >>> 0;
+      },
+      setBootDrive: (drive: number) => {
+        dummyBootDrive = drive >>> 0;
+      },
+      attach_install_media_opfs_iso: async (_path: string) => {
+        dummyCdAttached = true;
+      },
       aerogpu_complete_fence: (fence: bigint) => {
         try {
           ctx.postMessage({ type: "__test.machine_cpu.aerogpu_complete_fence", fence });
@@ -2544,16 +2620,24 @@ ctx.onmessage = (ev) => {
           void 0;
         }
       },
+      reset: () => {
+        void dummyCdBootDrive; // keep lint quiet; drive number influences boot device only in real firmware.
+        recomputeDummyActiveBootDevice();
+      },
     };
     if (enableBootDriveSpy) {
+      const baseSetBootDrive = dummy.setBootDrive as (drive: number) => void;
       dummy.setBootDrive = (drive: number) => {
+        baseSetBootDrive(drive);
         try {
           ctx.postMessage({ kind: "__test.machine_cpu.setBootDrive", drive: drive >>> 0 });
         } catch {
           void 0;
         }
       };
+      const baseAttachIso = dummy.attach_install_media_opfs_iso as (path: string) => Promise<void>;
       dummy.attach_install_media_opfs_iso = async (path: string) => {
+        await baseAttachIso(path);
         try {
           ctx.postMessage({ kind: "__test.machine_cpu.attachInstallMediaOpfsIso", path });
         } catch {
@@ -2561,6 +2645,7 @@ ctx.onmessage = (ev) => {
         }
       };
       dummy.reset = () => {
+        recomputeDummyActiveBootDevice();
         try {
           ctx.postMessage({ kind: "__test.machine_cpu.reset" });
         } catch {
