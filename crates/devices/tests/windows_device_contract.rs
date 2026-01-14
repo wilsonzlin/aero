@@ -426,6 +426,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
     let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
     let hwid_fallback_revisionless = "PCI\\VEN_1AF4&DEV_1052";
+    let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
         let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
@@ -465,6 +466,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         assert!(
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback_revisionless).is_none(),
             "{section}: canonical INF must not contain revision-less generic fallback model entry {hwid_fallback_revisionless}"
+        );
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_tablet).is_none(),
+            "{section}: virtio-input INF must not contain tablet subsystem model entry {hwid_tablet} (binds via aero_virtio_tablet.inf)"
         );
 
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
