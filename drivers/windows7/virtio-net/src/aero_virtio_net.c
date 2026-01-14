@@ -3927,6 +3927,8 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
 
 static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapterContext, _In_ PNET_DEVICE_PNP_EVENT NetDevicePnPEvent) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportAdapterContext;
+  NDIS_HANDLE InterruptHandle;
+  const BOOLEAN CanDeregisterInterrupt = (KeGetCurrentIrql() == PASSIVE_LEVEL) ? TRUE : FALSE;
 
   if (!Adapter || !NetDevicePnPEvent) {
     return;
@@ -3940,6 +3942,11 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
 
     NdisAcquireSpinLock(&Adapter->Lock);
     Adapter->State = AerovNetAdapterStopped;
+    InterruptHandle = NULL;
+    if (CanDeregisterInterrupt) {
+      InterruptHandle = Adapter->InterruptHandle;
+      Adapter->InterruptHandle = NULL;
+    }
 
     // Once SurpriseRemoved is set, the device may have already disappeared.
     // Clear BAR-backed pointers/caches so any accidental virtio access becomes a
@@ -3952,6 +3959,12 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     Adapter->Vdev.QueueNotifyAddrCacheCount = 0;
     RtlZeroMemory(Adapter->QueueNotifyAddrCache, sizeof(Adapter->QueueNotifyAddrCache));
     NdisReleaseSpinLock(&Adapter->Lock);
+
+    // Drain and stop interrupt processing as early as possible during surprise removal.
+    // This ensures no ISR/DPC path will attempt BAR MMIO after the device disappears.
+    if (InterruptHandle) {
+      NdisMDeregisterInterruptEx(InterruptHandle);
+    }
 
     // On surprise removal, the device may no longer be accessible. Avoid any
     // further virtio BAR MMIO access here; full software cleanup happens in
