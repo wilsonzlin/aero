@@ -5,7 +5,14 @@ use super::{
 };
 
 use std::borrow::Cow;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` is not supported on `wasm32-unknown-unknown` and will panic when called.
+// Use `web_time::Instant` for wasm builds so the wgpu-WebGL2 backend can safely collect metrics.
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EncodeMetrics {
