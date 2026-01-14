@@ -556,6 +556,7 @@ typedef struct aerogpu_escape_query_cursor_out {
    *   cursor MMIO registers are supported because older KMDs would only return
    *   success on devices that implemented the cursor register block.
    * - Bit 0: cursor MMIO registers are supported/valid.
+   * - Bit 1: post-display ownership is currently released (scanout/cursor are gated off).
    */
   aerogpu_escape_u32 flags;
   aerogpu_escape_u32 reserved0;
@@ -576,6 +577,7 @@ typedef struct aerogpu_escape_query_cursor_out {
 
 #define AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID (1u << 31)
 #define AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED (1u << 0)
+#define AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED (1u << 1)
 
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_cursor_out) == 72);

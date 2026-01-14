@@ -3580,12 +3580,19 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     JsonWriteNtStatusError(w, f, stCursor);
   } else {
     bool cursorSupported = true;
-    if ((qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+    const bool flagsValid = (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+    const bool postDisplayReleased =
+        (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+    if (flagsValid) {
       cursorSupported = (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
     }
     w.Key("supported");
     w.Bool(cursorSupported);
     JsonWriteU32Hex(w, "flags_u32_hex", qc.flags);
+    w.Key("flags_valid");
+    w.Bool(flagsValid);
+    w.Key("post_display_ownership_released");
+    w.Bool(flagsValid && postDisplayReleased);
     if (cursorSupported) {
       w.Key("enable");
       w.Uint32(qc.enable);
@@ -4245,7 +4252,8 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   }
 
   bool supported = true;
-  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+  if (flagsValid) {
     supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
   }
 
@@ -4256,7 +4264,10 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
   const int32_t x = (int32_t)q.x;
   const int32_t y = (int32_t)q.y;
-  wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
+  const bool postDisplayReleased =
+      flagsValid && ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+  wprintf(L"Cursor:\n");
+  wprintf(L"  enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
           (unsigned long)q.enable,
           (long)x,
           (long)y,
@@ -4267,6 +4278,10 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           AerogpuFormatName(q.format),
           (unsigned long)q.pitch_bytes,
           (unsigned long long)q.fb_gpa);
+  wprintf(L"  flags=0x%08lx\n", (unsigned long)q.flags);
+  if (flagsValid) {
+    wprintf(L"    post_display_ownership_released=%lu\n", postDisplayReleased ? 1ul : 0ul);
+  }
   return 0;
 }
 
@@ -8520,7 +8535,14 @@ static int DoQueryCursorJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std:
   w.Bool(true);
   w.Key("cursor");
   w.BeginObject();
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+  const bool postDisplayReleased =
+      (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
   JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
   w.Key("enable");
   w.Uint32(q.enable);
   w.Key("x");
@@ -8958,7 +8980,14 @@ static int DoDumpCursorBmpJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, co
   w.Bool(true);
   w.Key("cursor");
   w.BeginObject();
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+  const bool postDisplayReleased =
+      (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
   JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
   w.Key("enable");
   w.Uint32(q.enable);
   w.Key("x");
@@ -9057,7 +9086,14 @@ static int DoDumpCursorPngJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, co
   w.Bool(true);
   w.Key("cursor");
   w.BeginObject();
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+  const bool postDisplayReleased =
+      (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
   JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
   w.Key("enable");
   w.Uint32(q.enable);
   w.Key("x");

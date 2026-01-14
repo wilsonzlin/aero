@@ -4609,6 +4609,10 @@ fn rust_layout_matches_c_headers() {
         1
     );
     assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED"),
+        1u64 << 1
+    );
+    assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
         1u64 << 31
     );

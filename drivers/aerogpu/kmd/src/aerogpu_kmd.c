@@ -13374,6 +13374,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
 
         out->flags = AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID;
+        if (adapter->PostDisplayOwnershipReleased) {
+            out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED;
+        }
         out->reserved0 = 0;
 
         out->enable = 0;
@@ -13459,7 +13462,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 out->pitch_bytes = (uint32_t)adapter->CursorPitchBytes;
             }
 
-            out->enable = (visible && shapeReady) ? 1u : 0u;
+            /*
+             * If post-display ownership is currently released, the miniport must keep cursor DMA
+             * disabled (even if the cached cursor state still indicates it should be visible).
+             */
+            out->enable = (visible && shapeReady && !adapter->PostDisplayOwnershipReleased) ? 1u : 0u;
 
             KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
         }
