@@ -9,6 +9,12 @@ Legend:
 - `[~]` = partial / stubbed / exists in an alternate stack (see notes)
 - `[ ]` = missing / not wired / not validated end-to-end
 
+Coordination note:
+
+- For mapping from “legacy agent scratchpad task IDs” (SM3/DXBC/shared-surface) to the current
+  in-tree implementations/tests, see
+  [`docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`](./task-489-sm3-dxbc-sharedsurface-audit.md).
+
 ## Read first (architecture + contracts)
 
 - [`docs/04-graphics-subsystem.md`](../04-graphics-subsystem.md) — architecture overview

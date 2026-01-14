@@ -191,7 +191,11 @@ Ops/features referenced by the scratchpad tasks:
 **Implemented:**
 - WGSL lowering for `texld`/`texldp`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
 - `texkill` lowers to D3D9 semantics: `discard` when **any component** of the operand is `< 0`, and preserves predication nesting.
-- Sampler texture types (`dcl_1d`/`dcl_2d`/`dcl_volume`/`dcl_cube`) are carried through to WGSL declarations (`texture_1d`/`texture_2d`/`texture_3d`/`texture_cube`) and coordinate dimensionality (`x`/`xy`/`xyz`) for `texld`/`texldp`/`texldd`.
+- Sampler declarations map texture types to WGSL texture bindings and coordinate dimensionality:
+  - `dcl_1d` → `texture_1d<f32>` (`x`)
+  - `dcl_2d` → `texture_2d<f32>` (`xy`)
+  - `dcl_volume` → `texture_3d<f32>` (`xyz`)
+  - `dcl_cube` → `texture_cube<f32>` (`xyz`)
 
 **Implementation (key files):**
 - `crates/aero-d3d9/src/sm3/wgsl.rs` (sampler bindings + `IrOp::TexSample` lowering + `Stmt::Discard`)
@@ -216,7 +220,14 @@ Ops/features referenced by the scratchpad tasks:
   - `wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz`
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
+- `crates/aero-d3d9/tests/sm3_wgsl_tex.rs`
+  - `wgsl_ps3_texld_cube_sampler_emits_texture_cube`
+  - `wgsl_ps3_texld_3d_sampler_emits_texture_3d`
+  - `wgsl_ps3_texld_1d_sampler_emits_texture_1d`
 
-**Notes:**
+**Notes / follow-ups:**
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
 - The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.
+- The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
+  those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.
+  (This is tracked in `docs/graphics/d3d9-sm2-sm3-shader-translation.md`.)
