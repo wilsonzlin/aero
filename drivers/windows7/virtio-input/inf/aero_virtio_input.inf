@@ -17,9 +17,14 @@
 ; Note: this INF is intentionally strict: it matches only Aero contract v1
 ; hardware IDs (revision-gated `REV_01`) so Windows will not bind the driver to
 ; non-contract virtio-input devices. It includes the SUBSYS-qualified
-; keyboard/mouse HWIDs for distinct Device Manager naming, plus a strict generic
-; fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`, no SUBSYS) for environments that
-; do not expose the Aero subsystem IDs.
+; keyboard/mouse HWIDs (SUBSYS_0010 / SUBSYS_0011) for distinct Device Manager
+; naming, plus a strict, REV-qualified generic fallback HWID (no SUBSYS):
+;   `PCI\VEN_1AF4&DEV_1052&REV_01`.
+;
+; A legacy filename alias INF is provided for compatibility with workflows/tools
+; that still reference `virtio-input.inf`, but it is a filename-only alias and
+; does not change HWID matching behavior (it is expected to match this INF from
+; the first section header (`[Version]`) onward).
 ;
 ; Interrupts (MSI/MSI-X):
 ; virtio-input benefits from multiple interrupt vectors (config change + per-queue
@@ -67,10 +72,12 @@ aero_virtio_input.sys = 1
 ;
 ; This INF includes explicit model lines for the Aero contract v1 keyboard/mouse
 ; virtio-input functions (SUBSYS_0010 and SUBSYS_0011) so they appear distinctly
-; in Device Manager, plus a strict REV-qualified generic fallback HWID (no SUBSYS)
-; (`PCI\VEN_1AF4&DEV_1052&REV_01`) to keep driver binding revision-gated even if
-; subsystem IDs are not exposed/recognized or a contract-v1 virtio-input device ships
-; with an unexpected subsystem ID.
+; in Device Manager. This INF matches the SUBSYS-qualified contract v1 HWIDs, plus
+; a strict `REV_01` generic fallback match (no SUBSYS):
+;   `PCI\VEN_1AF4&DEV_1052&REV_01`.
+; This keeps driver binding revision-gated even when subsystem IDs are absent/ignored
+; (or a contract-v1 virtio-input device ships with an unexpected subsystem ID).
+; This INF intentionally does not match revision-less generic HWIDs.
 ;
 ; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) bind via
 ; `aero_virtio_tablet.inf` (SUBSYS_0012). That INF's HWID is more specific, so it

@@ -2199,7 +2199,6 @@ def validate_virtio_input_model_lines(
         by_section.setdefault(e.section.lower(), []).append(e)
 
     contract_rev_tag = f"&REV_{contract_rev:02X}"
-
     for section in ("Aero.NTx86", "Aero.NTamd64"):
         sect_entries = by_section.get(section.lower(), [])
         if not sect_entries:
