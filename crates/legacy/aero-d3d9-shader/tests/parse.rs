@@ -392,6 +392,22 @@ fn malformed_unknown_opcode_specific_field_errors() {
 }
 
 #[test]
+fn malformed_truncated_unknown_opcode_errors() {
+    // Unknown opcode with a non-zero operand length, but a truncated operand stream.
+    let words = [0xFFFE_0200, 0x0200_7777, 0x800F_0000];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x7777,
+            at_token: 1,
+            needed_tokens: 2,
+            remaining_tokens: 1,
+        }
+    );
+}
+
+#[test]
 fn malformed_invalid_register_encoding_errors() {
     // mov <dst>, <src> with an invalid/unknown register type encoding in the dst token.
     //
