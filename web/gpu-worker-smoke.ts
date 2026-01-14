@@ -1,7 +1,7 @@
 import { createGpuWorker } from "./src/main/createGpuWorker";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
-import { AerogpuFormat } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { aerogpuFormatToString } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 declare global {
   interface Window {
@@ -96,22 +96,6 @@ function fmtScanoutSource(source: unknown): string {
     default:
       return typeof source === "number" ? String(source) : "n/a";
   }
-}
-
-const AEROGPU_FORMAT_NAME_BY_VALUE: Record<number, string> = (() => {
-  const out: Record<number, string> = {};
-  for (const [name, value] of Object.entries(AerogpuFormat)) {
-    if (typeof value !== "number") continue;
-    out[value >>> 0] = name;
-  }
-  return out;
-})();
-
-function fmtAerogpuFormat(value: unknown): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
-  const u32 = value >>> 0;
-  const name = AEROGPU_FORMAT_NAME_BY_VALUE[u32];
-  return name ? `${name} (${u32})` : String(u32);
 }
 
 function createExpectedTestPattern(width: number, height: number): Uint8Array {
@@ -241,7 +225,7 @@ async function main() {
             const w = typeof scanout.width === "number" ? scanout.width : "?";
             const h = typeof scanout.height === "number" ? scanout.height : "?";
             const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : "?";
-            const fmt = fmtAerogpuFormat((scanout as { format?: unknown }).format);
+            const fmt = aerogpuFormatToString(typeof (scanout as any).format === "number" ? (scanout as any).format : Number.NaN);
             const gen = typeof scanout.generation === "number" ? scanout.generation : "?";
             lines.push(`scanout=${src} gen=${gen} base=${base} ${w}x${h} pitch=${pitch} fmt=${fmt}`);
           }

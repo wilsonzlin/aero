@@ -27,6 +27,7 @@ import {
   scanoutBasePaddr,
   snapshotScanoutState,
 } from "./src/ipc/scanout_state";
+import { aerogpuFormatToString } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import {
   checkSharedMemorySupport,
   createSharedMemoryViews,
@@ -617,14 +618,15 @@ async function main() {
             generation: snap.generation >>> 0,
             source: snap.source >>> 0,
             base_paddr: `0x${base.toString(16)}`,
-            width: snap.width >>> 0,
-            height: snap.height >>> 0,
-            pitchBytes: snap.pitchBytes >>> 0,
-            format: snap.format >>> 0,
-          },
-          null,
-          2,
-        ),
+             width: snap.width >>> 0,
+             height: snap.height >>> 0,
+             pitchBytes: snap.pitchBytes >>> 0,
+             format: aerogpuFormatToString(snap.format >>> 0),
+             format_u32: snap.format >>> 0,
+           },
+           null,
+           2,
+         ),
       );
     } catch (err) {
       setText("scanout", `failed to snapshot scanoutState: ${err instanceof Error ? err.message : String(err)}`);

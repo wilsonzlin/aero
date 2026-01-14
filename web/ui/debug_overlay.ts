@@ -5,7 +5,7 @@
  * hidden, and renders from a structured telemetry snapshot.
  */
 
-import { AerogpuFormat } from "../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { aerogpuFormatToString } from "../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 function fmtFixed(n: number | null, digits: number): string {
   if (n == null || !Number.isFinite(n)) return "n/a";
@@ -45,22 +45,6 @@ function fmtScanoutSource(source: number | null): string {
     default:
       return String(source);
   }
-}
-
-const AEROGPU_FORMAT_NAME_BY_VALUE: Record<number, string> = (() => {
-  const out: Record<number, string> = {};
-  for (const [name, value] of Object.entries(AerogpuFormat)) {
-    if (typeof value !== "number") continue;
-    out[value >>> 0] = name;
-  }
-  return out;
-})();
-
-function fmtAerogpuFormat(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return "n/a";
-  const u32 = value >>> 0;
-  const name = AEROGPU_FORMAT_NAME_BY_VALUE[u32];
-  return name ? `${name} (${u32})` : String(u32);
 }
 
 type GpuTelemetrySnapshot = any;
@@ -238,7 +222,7 @@ export class DebugOverlay {
       const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : null;
       const fmt = typeof scanout.format === "number" ? scanout.format : null;
       lines.push(
-        `Scanout: ${fmtScanoutSource(src)} gen=${gen ?? "n/a"} base=${base} ${w ?? "?"}x${h ?? "?"} pitch=${pitch ?? "?"} fmt=${fmtAerogpuFormat(fmt)}`,
+        `Scanout: ${fmtScanoutSource(src)} gen=${gen ?? "n/a"} base=${base} ${w ?? "?"}x${h ?? "?"} pitch=${pitch ?? "?"} fmt=${aerogpuFormatToString(fmt ?? Number.NaN)}`,
       );
     }
 

@@ -179,3 +179,36 @@ export const AerogpuFormat = {
 } as const;
 
 export type AerogpuFormat = (typeof AerogpuFormat)[keyof typeof AerogpuFormat];
+
+const AEROGPU_FORMAT_NAME_BY_VALUE: Record<number, string> = (() => {
+  const out: Record<number, string> = {};
+  for (const [name, value] of Object.entries(AerogpuFormat)) {
+    if (typeof value !== "number") continue;
+    out[value >>> 0] = name;
+  }
+  return out;
+})();
+
+/**
+ * Best-effort mapping from `AerogpuFormat` discriminant -> enum variant name.
+ *
+ * Returns `null` for unknown/invalid values.
+ */
+export function aerogpuFormatName(format: number): string | null {
+  if (!Number.isFinite(format)) return null;
+  return AEROGPU_FORMAT_NAME_BY_VALUE[format >>> 0] ?? null;
+}
+
+/**
+ * Debug-friendly string for an `AerogpuFormat` value.
+ *
+ * Examples:
+ * - `aerogpuFormatToString(AerogpuFormat.B8G8R8X8Unorm)` => `"B8G8R8X8Unorm (2)"`
+ * - `aerogpuFormatToString(1234)` => `"1234"`
+ */
+export function aerogpuFormatToString(format: number): string {
+  if (!Number.isFinite(format)) return "n/a";
+  const u32 = format >>> 0;
+  const name = AEROGPU_FORMAT_NAME_BY_VALUE[u32];
+  return name ? `${name} (${u32})` : String(u32);
+}

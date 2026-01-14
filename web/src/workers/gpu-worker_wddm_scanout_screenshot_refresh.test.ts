@@ -244,7 +244,6 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
-      vramBytes: 0,
     });
     const views = createSharedMemoryViews(segments);
 
