@@ -7447,14 +7447,20 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   dev->current_dsv_res = dsv_res;
 
   // Auto-unbind SRVs that alias any newly bound RTV/DSV.
+  bool oom = false;
   auto unbind_srvs_for_resource = [&](AeroGpuResource* res) {
-    if (!res) {
+    if (!res || oom) {
       return;
     }
     for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
       if (ResourcesAlias(dev->current_vs_srvs[slot], res)) {
-        dev->current_vs_srvs[slot] = nullptr;
         auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+          return;
+        }
+        dev->current_vs_srvs[slot] = nullptr;
         cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
         cmd->slot = slot;
         cmd->texture = 0;
@@ -7463,8 +7469,13 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     }
     for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
       if (ResourcesAlias(dev->current_ps_srvs[slot], res)) {
-        dev->current_ps_srvs[slot] = nullptr;
         auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+          return;
+        }
+        dev->current_ps_srvs[slot] = nullptr;
         cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
         cmd->slot = slot;
         cmd->texture = 0;
@@ -7476,6 +7487,9 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     unbind_srvs_for_resource(dev->current_rtv_resources[i]);
   }
   unbind_srvs_for_resource(dev->current_dsv_res);
+  if (oom) {
+    return;
+  }
   EmitSetRenderTargetsLocked(dev);
 }
 
