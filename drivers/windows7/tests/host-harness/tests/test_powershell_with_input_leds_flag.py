@@ -22,7 +22,7 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\s*\((?=[^)]*"WithVirtioInputLeds")(?=[^)]*"EnableVirtioInputLeds")[^)]*\)\]',
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputLeds")(?=[^)]*"EnableVirtioInputLeds")(?=[^)]*"RequireVirtioInputLeds")[^)]*\)\]',
                 re.IGNORECASE,
             ),
         )
@@ -53,6 +53,7 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         self.assertIn("-WithInputLeds", self.text)
         # Include common aliases to keep the error actionable even when users invoke via alias flags.
         self.assertIn("-WithVirtioInputLeds", self.text)
+        self.assertIn("-RequireVirtioInputLeds", self.text)
         self.assertIn("-EnableVirtioInputLeds", self.text)
 
 
