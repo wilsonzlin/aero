@@ -1871,7 +1871,8 @@ static void print_usage(void)
     wprintf(L"  --led-ioctl-set-output 0xMASK\n");
     wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
-    wprintf(L"  --led-spam N    Rapidly send N keyboard LED output reports (alternating 0/on) to stress the write path\n");
+    wprintf(L"  --led-spam N    Rapidly send N keyboard LED output reports (alternating 0 and 0x1F by default) to stress the write path\n");
+    wprintf(L"                 The \"on\" value can be overridden by combining with --led/--led-hidd/--led-ioctl-set-output.\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"  --dump-collection-desc\n");
     wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
@@ -3887,7 +3888,7 @@ static int spam_keyboard_leds(const SELECTED_DEVICE *dev, BYTE on_mask, DWORD co
 
     if (on_mask == 0) {
         // A nonzero mask makes it easier to see traffic in logs/counters even if the guest keyboard LEDs are not visible.
-        on_mask = 0x07;
+        on_mask = 0x1F;
     }
 
     if (via_ioctl_set_output) {
@@ -6071,7 +6072,8 @@ int wmain(int argc, wchar_t **argv)
         int via_ioctl_set_output;
         int via_hidd;
 
-        on_mask = 0x07;
+        /* Default to all 5 HID boot keyboard LED bits (Num/Caps/Scroll/Compose/Kana). */
+        on_mask = 0x1F;
         via_ioctl_set_output = opt.have_led_ioctl_set_output ? 1 : 0;
         via_hidd = opt.led_via_hidd ? 1 : 0;
 
