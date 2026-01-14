@@ -11739,6 +11739,274 @@ bool TestFvfXyzNormalDiffuseTreatsSpotLightsAsPointLights() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseIgnoresExtraDirectionalLightsBeyondFixedfuncLimit() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  // Enable 5 directional lights. The fixed-function lighting constant layout
+  // exposes only 4 directional slots (c211..c222), so the 5th light must be
+  // ignored.
+  struct LightColor {
+    float r;
+    float g;
+    float b;
+  };
+  const LightColor colors[5] = {
+      {1.0f, 0.0f, 0.0f}, // light0: red
+      {0.0f, 1.0f, 0.0f}, // light1: green
+      {0.0f, 0.0f, 1.0f}, // light2: blue
+      {1.0f, 1.0f, 0.0f}, // light3: yellow
+      {1.0f, 0.0f, 1.0f}, // light4: magenta (should be ignored)
+  };
+  for (uint32_t i = 0; i < 5; ++i) {
+    D3DLIGHT9 light{};
+    light.Type = D3DLIGHT_DIRECTIONAL;
+    light.Direction = {0.0f, 0.0f, -1.0f};
+    light.Diffuse = {colors[i].r, colors[i].g, colors[i].b, 1.0f};
+    light.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+    hr = device_set_light(cleanup.hDevice, /*index=*/i, &light);
+    if (!Check(hr == S_OK, "SetLight(directional)")) {
+      return false;
+    }
+    hr = device_light_enable(cleanup.hDevice, /*index=*/i, TRUE);
+    if (!Check(hr == S_OK, "LightEnable(directional, TRUE)")) {
+      return false;
+    }
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(5 directional lights)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(5 directional lights)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "directional overflow: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "directional overflow: lighting payload present")) {
+    return false;
+  }
+
+  // Directional slot diffuse registers: c212, c215, c218, c221.
+  constexpr uint32_t kSlot0DiffuseRel = (212u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kSlot1DiffuseRel = (215u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kSlot2DiffuseRel = (218u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kSlot3DiffuseRel = (221u - kFixedfuncLightingStartRegister);
+
+  const auto check_diffuse = [&](uint32_t rel, const char* name, const LightColor& c) -> bool {
+    return Check(payload[rel * 4 + 0] == c.r && payload[rel * 4 + 1] == c.g && payload[rel * 4 + 2] == c.b &&
+                     payload[rel * 4 + 3] == 1.0f,
+                 name);
+  };
+  if (!check_diffuse(kSlot0DiffuseRel, "directional overflow: slot0 diffuse == light0 (red)", colors[0])) {
+    return false;
+  }
+  if (!check_diffuse(kSlot1DiffuseRel, "directional overflow: slot1 diffuse == light1 (green)", colors[1])) {
+    return false;
+  }
+  if (!check_diffuse(kSlot2DiffuseRel, "directional overflow: slot2 diffuse == light2 (blue)", colors[2])) {
+    return false;
+  }
+  if (!check_diffuse(kSlot3DiffuseRel, "directional overflow: slot3 diffuse == light3 (yellow)", colors[3])) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseIgnoresExtraPointLightsBeyondFixedfuncLimit() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  // Enable 3 point lights. The fixed-function lighting constant layout exposes
+  // only 2 point slots (c223..c232), so the 3rd light must be ignored.
+  struct PointDesc {
+    float px;
+    float py;
+    float pz;
+    float r;
+    float g;
+    float b;
+  };
+  const PointDesc points[3] = {
+      {1.0f, 2.0f, 3.0f, 1.0f, 0.0f, 0.0f}, // point0: red
+      {4.0f, 5.0f, 6.0f, 0.0f, 1.0f, 0.0f}, // point1: green
+      {7.0f, 8.0f, 9.0f, 0.0f, 0.0f, 1.0f}, // point2: blue (should be ignored)
+  };
+  for (uint32_t i = 0; i < 3; ++i) {
+    D3DLIGHT9 light{};
+    light.Type = D3DLIGHT_POINT;
+    light.Position = {points[i].px, points[i].py, points[i].pz};
+    light.Diffuse = {points[i].r, points[i].g, points[i].b, 1.0f};
+    light.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+    light.Attenuation0 = 1.0f;
+    light.Range = 1.0f;
+    hr = device_set_light(cleanup.hDevice, /*index=*/i, &light);
+    if (!Check(hr == S_OK, "SetLight(point)")) {
+      return false;
+    }
+    hr = device_light_enable(cleanup.hDevice, /*index=*/i, TRUE);
+    if (!Check(hr == S_OK, "LightEnable(point, TRUE)")) {
+      return false;
+    }
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(3 point lights)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(3 point lights)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "point overflow: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "point overflow: lighting payload present")) {
+    return false;
+  }
+
+  constexpr uint32_t kPoint0PosRel = (223u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kPoint0DiffuseRel = (224u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kPoint1PosRel = (228u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kPoint1DiffuseRel = (229u - kFixedfuncLightingStartRegister);
+
+  if (!Check(payload[kPoint0PosRel * 4 + 0] == points[0].px &&
+             payload[kPoint0PosRel * 4 + 1] == points[0].py &&
+             payload[kPoint0PosRel * 4 + 2] == points[0].pz &&
+             payload[kPoint0PosRel * 4 + 3] == 1.0f,
+             "point overflow: slot0 position == point0")) {
+    return false;
+  }
+  if (!Check(payload[kPoint0DiffuseRel * 4 + 0] == points[0].r &&
+             payload[kPoint0DiffuseRel * 4 + 1] == points[0].g &&
+             payload[kPoint0DiffuseRel * 4 + 2] == points[0].b &&
+             payload[kPoint0DiffuseRel * 4 + 3] == 1.0f,
+             "point overflow: slot0 diffuse == point0 (red)")) {
+    return false;
+  }
+  if (!Check(payload[kPoint1PosRel * 4 + 0] == points[1].px &&
+             payload[kPoint1PosRel * 4 + 1] == points[1].py &&
+             payload[kPoint1PosRel * 4 + 2] == points[1].pz &&
+             payload[kPoint1PosRel * 4 + 3] == 1.0f,
+             "point overflow: slot1 position == point1")) {
+    return false;
+  }
+  if (!Check(payload[kPoint1DiffuseRel * 4 + 0] == points[1].r &&
+             payload[kPoint1DiffuseRel * 4 + 1] == points[1].g &&
+             payload[kPoint1DiffuseRel * 4 + 2] == points[1].b &&
+             payload[kPoint1DiffuseRel * 4 + 3] == 1.0f,
+             "point overflow: slot1 diffuse == point1 (green)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseTransformsLightDirectionByView() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -12701,6 +12969,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTreatsSpotLightsAsPointLights()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseIgnoresExtraDirectionalLightsBeyondFixedfuncLimit()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseIgnoresExtraPointLightsBeyondFixedfuncLimit()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTransformsLightDirectionByView()) {
