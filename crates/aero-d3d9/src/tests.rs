@@ -359,6 +359,46 @@ fn assemble_ps3_dcl_position_quadrants_sm3_decoder() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_vface_sm3_decoder() -> Vec<u32> {
+    // ps_3_0: outputs red for front-facing pixels and blue for back-facing pixels via `vFace`
+    // (misc1).
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c1, 0.0, 0.0, 1.0, 1.0 (blue)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // cmp oC0, misc1, c0, c1  (misc1.x >= 0 ? red : blue)
+    out.extend(enc_inst(
+        0x0058,
+        &[
+            enc_dst(8, 0, 0xF),
+            enc_src(17, 1, 0xE4), // misc1 (vFace)
+            enc_src(2, 0, 0xE4),  // red
+            enc_src(2, 1, 0xE4),  // blue
+        ],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps_texture_modulate() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -2822,6 +2862,62 @@ fn micro_ps3_dcl_position_quadrants_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "6fa50059441133e99a2414be50f613190809d5373953a6e414c373be772438f7"
+    );
+}
+
+#[test]
+fn micro_ps3_vface_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3());
+    let ps = build_sm3_ir(&assemble_ps3_vface_sm3_decoder());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+
+    let verts = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)), // bottom-left
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),  // bottom-right
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),   // top-right
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),  // top-left
+    ];
+    for (pos, (u, v)) in verts {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    // One triangle is clockwise and one is counter-clockwise so `vFace` differs across the quad.
+    let indices: [u16; 6] = [0, 2, 1, 0, 2, 3];
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    let textures = HashMap::new();
+    let sampler_states = HashMap::new();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &textures,
+            sampler_states: &sampler_states,
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Top-left is covered by the CCW triangle (back-facing => blue); bottom-right by the CW
+    // triangle (front-facing => red).
+    assert_eq!(rt.get(1, 1).to_rgba8(), [0, 0, 255, 255]); // top-left
+    assert_eq!(rt.get(6, 6).to_rgba8(), [255, 0, 0, 255]); // bottom-right
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "dec9601eefd47e1a63253c5b993e3c1c9919b8fdeae95f131c358f66c33dc90e"
     );
 }
 

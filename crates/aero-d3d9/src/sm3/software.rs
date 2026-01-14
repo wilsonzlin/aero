@@ -1858,7 +1858,12 @@ fn rasterize_triangle(
     if area.abs() < f32::EPSILON {
         return;
     }
-    let front_facing = area > 0.0;
+    // D3D9 `vFace` maps to a +1/-1 sign for front/back faces. Match the default D3D9 convention
+    // where clockwise-wound triangles are front-facing.
+    //
+    // Note: our `area` is computed with `edge(a, b, c) = cross(c-a, b-a)`, so its sign is the
+    // opposite of the more common `cross(b-a, c-a)` formulation.
+    let front_facing = area < 0.0;
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {
