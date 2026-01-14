@@ -223,7 +223,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     KSPIN_LOCK IrqEnableLock;
     ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (when present). */
-    volatile LONG DeviceErrorLatched; /* Set when the device signals AEROGPU_IRQ_ERROR. Cleared on StartDevice. */
+    volatile LONG DeviceErrorLatched; /* Set when the device signals AEROGPU_IRQ_ERROR. Cleared on StartDevice/RestartFromTimeout. */
 
     /*
      * Interrupt observability counters (debug/selftest).

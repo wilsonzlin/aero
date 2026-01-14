@@ -2829,6 +2829,11 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
 
     /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
     InterlockedExchange(&adapter->DeviceErrorLatched, 0);
+    /*
+     * Ensure the next IRQ_ERROR can be surfaced to dxgkrnl even if the OS reuses
+     * fence IDs across adapter restarts (TDR / PnP stop-start).
+     */
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence, -1);
 
     adapter->StartInfo = *DxgkStartInfo;
     adapter->DxgkInterface = *DxgkInterface;
@@ -8600,6 +8605,8 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
 
     /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
     InterlockedExchange(&adapter->DeviceErrorLatched, 0);
+    /* Allow future IRQ_ERROR notifications even if fence IDs repeat after TDR. */
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence, -1);
 
     if (!adapter->Bar0) {
         return STATUS_SUCCESS;
