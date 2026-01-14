@@ -105,7 +105,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Known unsupported / not yet implemented:
     - Stream-output (SO):
       - D3D11 accepts `CreateGeometryShaderWithStreamOutput`, but ignores the stream-output declaration; binding real SO targets (`SOSetTargets`) reports `E_NOTIMPL`.
-      - D3D10 / D3D10.1 accept `CreateGeometryShaderWithStreamOutput` (the stream-output declaration is ignored; it behaves like `CreateGeometryShader`). Stream-out is not implemented: D3D10's `SoSetTargets` is currently a no-op, while D3D10.1 reports `E_NOTIMPL` when binding non-null targets (unbind is a no-op).
+      - D3D10 / D3D10.1 accept `CreateGeometryShaderWithStreamOutput` (the stream-output declaration is ignored; it behaves like `CreateGeometryShader`). Binding real SO targets (`SoSetTargets`) reports `E_NOTIMPL` (unbind is a no-op), so stream-out is not implemented.
     - Multi-stream GS output (`emit_stream` / `cut_stream`); non-zero stream indices are not supported.
     - Adjacency input primitives (`lineadj` / `triangleadj`) are not supported.
     - Most real-world SM4 GS shaders are not supported yet (control flow, resource access, additional opcodes/operands beyond the translated subset).
