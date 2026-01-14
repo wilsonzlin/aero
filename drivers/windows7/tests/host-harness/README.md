@@ -280,6 +280,8 @@ Notes:
 - This checks whether MSI-X is enabled on the **QEMU device**, not whether Windows actually granted multiple message
   interrupts. For guest-observed mode/message counts, use the guest `virtio-<dev>-irq|INFO|...` lines and the mirrored
   host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
+  - Exception: for virtio-net, `-RequireVirtioNetMsix` / `--require-virtio-net-msix` also requires the guest marker
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-blk, `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-net, `-RequireVirtioNetMsix` / `--require-virtio-net-msix` also requires the guest marker

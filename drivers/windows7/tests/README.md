@@ -219,6 +219,7 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
   - Python: `--require-virtio-blk-msix` / `--require-virtio-net-msix` / `--require-virtio-snd-msix`
 - When `RequireVirtio*Msix` is enabled, the harness may also require a **guest-side** marker confirming the *effective*
   interrupt mode (end-to-end):
+  - `virtio-net`: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...`
   - `virtio-blk`: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...`
   - `virtio-snd`: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...`
   - `virtio-input`: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...`
