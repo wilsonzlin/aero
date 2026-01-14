@@ -1,6 +1,6 @@
 use crate::corpus::{InstructionTemplate, TestCase};
 use crate::{CpuState, ExecOutcome, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
-use iced_x86::Formatter;
+use iced_x86::{Formatter, OpKind, Register};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -153,6 +153,7 @@ pub fn format_failure(
     let decoded = decode_instruction_iced(bytes, effective_rip);
     let aero_decoded = decode_instruction_aero(bytes, effective_rip);
     let failure_kind = failure_kind(template, expected, actual);
+    let decoded_instruction = decode_instruction_raw(bytes, effective_rip);
 
     let _ = writeln!(
         &mut out,
@@ -207,6 +208,9 @@ pub fn format_failure(
     }
     if let Some(aero) = aero_decoded {
         let _ = writeln!(&mut out, "aero-decoder: {aero}");
+    }
+    if let Some(instr) = decoded_instruction.as_ref() {
+        format_memory_operand_info(&mut out, instr, &case.init, mem_base, case.memory.len());
     }
 
     if expected.fault != actual.fault {
@@ -295,6 +299,16 @@ fn failure_kind(
     "unknown"
 }
 
+fn decode_instruction_raw(bytes: &[u8], ip: u64) -> Option<iced_x86::Instruction> {
+    let mut decoder = iced_x86::Decoder::with_ip(64, bytes, ip, iced_x86::DecoderOptions::NONE);
+    let instruction = decoder.decode();
+    if instruction.is_invalid() {
+        None
+    } else {
+        Some(instruction)
+    }
+}
+
 fn decode_instruction_iced(bytes: &[u8], ip: u64) -> Option<String> {
     let mut decoder = iced_x86::Decoder::with_ip(64, bytes, ip, iced_x86::DecoderOptions::NONE);
     let instruction = decoder.decode();
@@ -311,6 +325,116 @@ fn decode_instruction_iced(bytes: &[u8], ip: u64) -> Option<String> {
         instruction.code(),
         instruction.mnemonic()
     ))
+}
+
+fn format_memory_operand_info(
+    out: &mut String,
+    instruction: &iced_x86::Instruction,
+    init: &CpuState,
+    mem_base: u64,
+    mem_len: usize,
+) {
+    let has_mem = (0..instruction.op_count()).any(|i| instruction.op_kind(i) == OpKind::Memory);
+    if !has_mem {
+        return;
+    }
+
+    let base_reg = instruction.memory_base();
+    let index_reg = instruction.memory_index();
+    let scale = instruction.memory_index_scale();
+    let disp = instruction.memory_displacement64();
+    let size = instruction.memory_size().size().max(1) as u64;
+
+    let _ = writeln!(
+        out,
+        "mem_operand: size={size} base={base_reg:?} index={index_reg:?} scale={scale} disp={disp:#x}"
+    );
+
+    let eff = if instruction.is_ip_rel_memory_operand() {
+        instruction.ip_rel_memory_address()
+    } else {
+        let base = if base_reg == Register::None {
+            Some(0)
+        } else {
+            read_register_for_addr(init, base_reg)
+        };
+        let index = if index_reg == Register::None {
+            Some(0)
+        } else {
+            read_register_for_addr(init, index_reg)
+        };
+
+        let Some(base) = base else {
+            let _ = writeln!(
+                out,
+                "mem_effective: <unknown> (base reg {base_reg:?} not captured in CpuState)"
+            );
+            return;
+        };
+        let Some(index) = index else {
+            let _ = writeln!(
+                out,
+                "mem_effective: <unknown> (index reg {index_reg:?} not captured in CpuState)"
+            );
+            return;
+        };
+
+        base.wrapping_add(index.wrapping_mul(scale as u64))
+            .wrapping_add(disp)
+    };
+
+    let mem_end = mem_base.wrapping_add(mem_len as u64);
+    let in_range = eff >= mem_base && eff.checked_add(size).is_some_and(|end| end <= mem_end);
+
+    let diff = eff as i128 - mem_base as i128;
+    let off = if diff >= 0 {
+        format!("+0x{:x}", diff as u128)
+    } else {
+        format!("-0x{:x}", (-diff) as u128)
+    };
+
+    let _ = writeln!(
+        out,
+        "mem_effective: {eff:#x} (offset={off}){}",
+        if in_range { "" } else { " (out of range)" }
+    );
+}
+
+fn read_register_for_addr(state: &CpuState, reg: Register) -> Option<u64> {
+    use Register::*;
+
+    let (full, part) = match reg {
+        RAX | EAX | AX | AL | AH => (state.rax, reg),
+        RBX | EBX | BX | BL | BH => (state.rbx, reg),
+        RCX | ECX | CX | CL | CH => (state.rcx, reg),
+        RDX | EDX | DX | DL | DH => (state.rdx, reg),
+        RSI | ESI | SI | SIL => (state.rsi, reg),
+        RDI | EDI | DI | DIL => (state.rdi, reg),
+        R8 | R8D | R8W | R8L => (state.r8, reg),
+        R9 | R9D | R9W | R9L => (state.r9, reg),
+        R10 | R10D | R10W | R10L => (state.r10, reg),
+        R11 | R11D | R11W | R11L => (state.r11, reg),
+        R12 | R12D | R12W | R12L => (state.r12, reg),
+        R13 | R13D | R13W | R13L => (state.r13, reg),
+        R14 | R14D | R14W | R14L => (state.r14, reg),
+        R15 | R15D | R15W | R15L => (state.r15, reg),
+        RIP | EIP => (state.rip, reg),
+        None => return std::option::Option::None,
+        _ => return std::option::Option::None,
+    };
+
+    Some(match part {
+        EAX | EBX | ECX | EDX | ESI | EDI | EIP | R8D | R9D | R10D | R11D | R12D | R13D | R14D
+        | R15D => full & 0xFFFF_FFFF,
+        AX | BX | CX | DX | SI | DI | R8W | R9W | R10W | R11W | R12W | R13W | R14W | R15W => {
+            full & 0xFFFF
+        }
+        AL | BL | CL | DL | SIL | DIL | R8L | R9L | R10L | R11L | R12L | R13L | R14L | R15L => {
+            full & 0xFF
+        }
+        AH | BH | CH | DH => (full >> 8) & 0xFF,
+        _ => full,
+    })
 }
 
 fn decode_instruction_aero(bytes: &[u8], ip: u64) -> Option<String> {
