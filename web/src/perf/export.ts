@@ -82,7 +82,17 @@ export const JIT_DISABLED_SNAPSHOT: PerfJitSnapshot = {
   totals: {
     tier1: { blocksCompiled: 0, compileMs: 0 },
     tier2: { blocksCompiled: 0, compileMs: 0, passesMs: { constFold: 0, dce: 0, regalloc: 0 } },
-    cache: { lookupHit: 0, lookupMiss: 0, capacityBytes: 0, usedBytes: 0 },
+    cache: {
+      lookupHit: 0,
+      lookupMiss: 0,
+      install: 0,
+      evict: 0,
+      invalidate: 0,
+      staleInstallReject: 0,
+      compileRequest: 0,
+      capacityBytes: 0,
+      usedBytes: 0,
+    },
     deopt: { count: 0, guardFail: 0 },
   },
   rolling: { windowMs: 0, cacheHitRate: 0, compileMsPerSec: 0, blocksCompiledPerSec: 0 },

@@ -33,6 +33,11 @@ export type PerfJitTier2Totals = PerfJitTierTotals & {
 export type PerfJitCacheTotals = {
   lookupHit: number;
   lookupMiss: number;
+  install: number;
+  evict: number;
+  invalidate: number;
+  staleInstallReject: number;
+  compileRequest: number;
   capacityBytes: number;
   usedBytes: number;
 };
