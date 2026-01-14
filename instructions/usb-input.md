@@ -135,8 +135,11 @@ Guest-visible topology (UHCI external hub):
   - ports 1..4 reserved for synthetic keyboard/mouse/gamepad/consumer-control
   - dynamic passthrough ports start at 5 (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
 
-Note: the canonical `aero_machine::Machine` does not auto-attach an external hub or synthetic HID
-devices; USB controllers are opt-in. Hosts can attach device models explicitly via:
+Note: the canonical `aero_machine::Machine` only auto-attaches the external hub + synthetic HID
+devices when `MachineConfig.enable_synthetic_usb_hid = true` (or via the WASM wrapper helper
+`Machine.new_with_input_backends(..., enableSyntheticUsbHid=true)`). Enabling
+`MachineConfig.enable_uhci` by itself only attaches the UHCI controller; hosts can still attach
+device models explicitly via:
  - UHCI: `Machine.usb_attach_*` (when `MachineConfig.enable_uhci` is enabled)
  - xHCI: `Machine.usb_xhci_attach_*` (when `MachineConfig.enable_xhci` is enabled)
 
