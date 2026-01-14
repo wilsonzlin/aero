@@ -19554,10 +19554,6 @@ fn cs_main() {
 
             // Keep the scratch buffer small so the test is fast and can force growth without
             // allocating a multi-megabyte backing buffer.
-            let mut desc = ExpansionScratchDescriptor {
-                frames_in_flight: 1,
-                ..Default::default()
-            };
             // `ExpansionScratchAllocator` rounds the requested per-frame segment size up to satisfy
             // WebGPU offset alignment rules (storage/uniform/copy). Some backends (notably wgpu GL)
             // report `min_storage_buffer_offset_alignment == 256`, meaning two tiny allocations can
@@ -19609,7 +19605,11 @@ fn cs_main() {
             let offset_index = align_up(cursor_after_vertex, align_index);
             let required_bytes = offset_index.saturating_add(size_index);
 
-            desc.per_frame_size = required_bytes.max(required_alignment);
+            let desc = ExpansionScratchDescriptor {
+                frames_in_flight: 1,
+                per_frame_size: required_bytes.max(required_alignment),
+                ..Default::default()
+            };
             exec.expansion_scratch = ExpansionScratchAllocator::new(desc);
 
             let a = exec
@@ -19672,13 +19672,13 @@ fn cs_main() {
 
             // Keep the per-frame scratch capacity small (but deterministic) so that the test can
             // assert that repeated GS prepass draws do not force the allocator to grow/reallocate.
-            let mut desc = ExpansionScratchDescriptor {
-                frames_in_flight: 1,
-                ..Default::default()
-            };
             let storage_alignment =
                 (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
-            desc.per_frame_size = storage_alignment.saturating_mul(32).max(64 * 1024);
+            let desc = ExpansionScratchDescriptor {
+                frames_in_flight: 1,
+                per_frame_size: storage_alignment.saturating_mul(32).max(64 * 1024),
+                ..Default::default()
+            };
             exec.expansion_scratch = ExpansionScratchAllocator::new(desc);
             let _ = exec
                 .expansion_scratch

@@ -424,7 +424,7 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
                 module: &vs_module,
                 entry_point: "vs_main",
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[vb_layout],
+                buffers: std::slice::from_ref(&vb_layout),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fs_green_module,

@@ -39,7 +39,7 @@ fn end_cmd(stream: &mut [u8], start: usize) {
     let size = (stream.len() - start) as u32;
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
-    assert_eq!(size % 4, 0, "command not 4-byte aligned");
+    assert!(size.is_multiple_of(4), "command not 4-byte aligned");
 }
 
 fn rgba_within(got: &[u8], expected: [u8; 4], tol: u8) -> bool {

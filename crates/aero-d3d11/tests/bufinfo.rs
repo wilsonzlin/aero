@@ -99,7 +99,7 @@ fn assert_wgsl_validates(wgsl: &str) {
 #[test]
 fn decodes_and_translates_bufinfo_raw_to_array_length() {
     // dcl_thread_group 1, 1, 1
-    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // bufinfo r0.x, t0
     body.push(opcode_token(OPCODE_TEST_BUFINFO, 1 + 2 + 2));
@@ -148,7 +148,7 @@ fn decodes_and_translates_bufinfo_raw_to_array_length() {
 #[test]
 fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
     // dcl_thread_group 1, 1, 1
-    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // dcl_resource_structured t0, stride=16
     body.push(opcode_token(OPCODE_DCL_RESOURCE_STRUCTURED, 4));
@@ -200,7 +200,7 @@ fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
 #[test]
 fn decodes_and_translates_bufinfo_raw_uav_to_array_length() {
     // dcl_thread_group 1, 1, 1
-    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // bufinfo r0.x, u0
     body.push(opcode_token(OPCODE_TEST_BUFINFO, 1 + 2 + 2));
@@ -247,7 +247,7 @@ fn decodes_and_translates_bufinfo_raw_uav_to_array_length() {
 #[test]
 fn decodes_and_translates_bufinfo_structured_uav_uses_decl_stride() {
     // dcl_thread_group 1, 1, 1
-    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // dcl_uav_structured u0, stride=16
     body.push(opcode_token(OPCODE_DCL_UAV_STRUCTURED, 4));

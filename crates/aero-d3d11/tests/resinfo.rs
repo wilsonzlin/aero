@@ -95,7 +95,7 @@ fn assert_wgsl_validates(wgsl: &str) {
 #[test]
 fn decodes_and_translates_resinfo_for_texture2d() {
     // dcl_thread_group 1, 1, 1
-    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // dcl_resource_texture2d t0
     //

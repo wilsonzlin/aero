@@ -120,6 +120,7 @@ fn push_set_shader_resource_buffers_2(
     end_cmd(stream, start);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_set_uav_buffer(
     stream: &mut Vec<u8>,
     stage: u32,
@@ -419,4 +420,3 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
         );
     });
 }
-
