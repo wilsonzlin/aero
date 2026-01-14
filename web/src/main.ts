@@ -5092,7 +5092,7 @@ function renderAudioPanel(): HTMLElement {
               `- host-media-devices.json: browser media device inventory + mic permission state (device/group IDs hashed)`,
               `- audio-output-*.wav: buffered output ring snapshots (PCM16 WAV)`,
               `- audio-output-*.json: metadata for each output WAV (sample rate, ring indices/counters, signal stats)`,
-              `- microphone-buffered.wav / microphone-buffered.json: buffered mic ring snapshot + metadata (backend + track settings/constraints/capabilities; device/group IDs hashed)`,
+              `- microphone-buffered.wav / microphone-buffered.json: buffered mic ring snapshot + metadata (backend + track state/settings/constraints/capabilities; device/group IDs hashed)`,
               `- audio-samples.txt: one-line summary of captured WAVs (includes RMS/peak dBFS estimates)`,
               `- hda-codec-state.json: HDA codec gating debug state (requires IO worker + codec_debug_state export)`,
               `- hda-controller-state.bin: HDA controller snapshot bytes (deterministic, no guest RAM)`,

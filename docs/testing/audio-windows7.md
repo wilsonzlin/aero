@@ -297,7 +297,7 @@ Alternative (if the web UI exposes it):
   - `audio-output-*.wav` (best-effort; snapshot of currently-buffered output ring samples, usually a few hundred ms)
   - `audio-output-*.json` (best-effort; metadata for the output WAV snapshot: sample rate, frames captured, ring indices, and quick signal stats like RMS/peak)
   - `microphone-buffered.wav` (best-effort; snapshot of currently-buffered mic ring samples)
-  - `microphone-buffered.json` (best-effort; metadata for the mic WAV snapshot: sample rate, samples captured, ring counters, quick signal stats like RMS/peak, and track debug info like backend/settings/constraints/capabilities with device IDs hashed)
+  - `microphone-buffered.json` (best-effort; metadata for the mic WAV snapshot: sample rate, samples captured, ring counters, quick signal stats like RMS/peak, and track debug info like backend/state/settings/constraints/capabilities with device IDs hashed)
   - `audio-samples.txt` (best-effort; one-line summary of any captured WAV snapshots, including RMS/peak dBFS estimates)
   - `hda-codec-state.json` (best-effort; requires the I/O worker)
   - `hda-controller-state.bin` (best-effort; deterministic snapshot bytes of the HDA controller+codec state; no guest RAM)
