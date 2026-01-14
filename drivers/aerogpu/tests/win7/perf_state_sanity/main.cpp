@@ -81,6 +81,10 @@ static int RunPerfStateSanity(int argc, char** argv) {
   uint64_t last_contig_pool_hit = 0;
   uint64_t last_contig_pool_miss = 0;
   uint64_t last_contig_pool_bytes_saved = 0;
+  bool have_get_scanline_counters = false;
+  bool saw_get_scanline_counters = false;
+  uint64_t last_get_scanline_cache_hits = 0;
+  uint64_t last_get_scanline_mmio_polls = 0;
 
   for (uint32_t i = 0; i < samples; ++i) {
     aerogpu_escape_query_perf_out q;
@@ -169,6 +173,18 @@ static int RunPerfStateSanity(int argc, char** argv) {
       last_contig_pool_bytes_saved = bytes_saved;
     }
 
+    const bool have_get_scanline =
+        (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(q.get_scanline_mmio_polls));
+    if (i == 0) {
+      have_get_scanline_counters = have_get_scanline;
+    } else if (have_get_scanline != have_get_scanline_counters) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      return reporter.Fail("QUERY_PERF struct size changed across samples (get_scanline present=%s -> %s)",
+                           have_get_scanline_counters ? "true" : "false",
+                           have_get_scanline ? "true" : "false");
+    }
+
     // Flags are appended; require a VALID bit when present.
     const bool have_flags =
         (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, flags) + sizeof(q.flags));
@@ -181,6 +197,35 @@ static int RunPerfStateSanity(int argc, char** argv) {
       aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
       aerogpu_test::kmt::UnloadD3DKMT(&kmt);
       return reporter.Fail("QUERY_PERF flags missing VALID bit (flags=0x%08lX)", (unsigned long)q.flags);
+    }
+
+    if ((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0 && !have_get_scanline) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      return reporter.Fail("QUERY_PERF flags claim scanline counters valid but struct size is too small (hdr.size=%lu)",
+                           (unsigned long)q.hdr.size);
+    }
+
+    if (have_get_scanline &&
+        (q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0) {
+      // Counters are monotonic for the lifetime of the adapter; validate basic invariants.
+      const uint64_t cache_hits = (uint64_t)q.get_scanline_cache_hits;
+      const uint64_t mmio_polls = (uint64_t)q.get_scanline_mmio_polls;
+      if (saw_get_scanline_counters) {
+        if (cache_hits < last_get_scanline_cache_hits || mmio_polls < last_get_scanline_mmio_polls) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail(
+              "GetScanLine counters went backwards (cache_hits=%I64u->%I64u mmio_polls=%I64u->%I64u)",
+              (unsigned long long)last_get_scanline_cache_hits,
+              (unsigned long long)cache_hits,
+              (unsigned long long)last_get_scanline_mmio_polls,
+              (unsigned long long)mmio_polls);
+        }
+      }
+      saw_get_scanline_counters = true;
+      last_get_scanline_cache_hits = cache_hits;
+      last_get_scanline_mmio_polls = mmio_polls;
     }
 
     // If the ring snapshot is marked valid, check that the implied pending range is sane.
@@ -230,6 +275,14 @@ static int RunPerfStateSanity(int argc, char** argv) {
                                  (unsigned long long)q.contig_pool_hit,
                                  (unsigned long long)q.contig_pool_miss,
                                  (unsigned long long)q.contig_pool_bytes_saved);
+    }
+    if (have_get_scanline &&
+        (q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0) {
+      aerogpu_test::PrintfStdout("INFO: %s: [%lu] get_scanline(cache_hits=%I64u mmio_polls=%I64u)",
+                                 kTestName,
+                                 (unsigned long)i,
+                                 (unsigned long long)q.get_scanline_cache_hits,
+                                 (unsigned long long)q.get_scanline_mmio_polls);
     }
 
     if (i + 1 < samples) {
