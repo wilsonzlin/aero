@@ -392,6 +392,37 @@ func TestUDPWebSocketServer_JWTAuthViaHeader(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_JWTAuthViaHeader_XAPIKeyAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	token := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", time.Now().Unix()-10)
+	h := http.Header{}
+	h.Set("X-API-Key", token)
+	c := dialWSWithHeader(t, ts.URL, "/udp", h)
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+}
+
 func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_HeaderAlias(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeJWT,
@@ -1542,6 +1573,36 @@ func TestUDPWebSocketServer_APIKeyAuthViaHeader(t *testing.T) {
 
 	h := http.Header{}
 	h.Set("X-API-Key", "secret")
+	c := dialWSWithHeader(t, ts.URL, "/udp", h)
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+}
+
+func TestUDPWebSocketServer_APIKeyAuthViaHeader_AuthorizationBearerAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeAPIKey,
+		APIKey:                   "secret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+cfg.APIKey)
 	c := dialWSWithHeader(t, ts.URL, "/udp", h)
 	ready := readWSJSON(t, c, 2*time.Second)
 	if ready["type"] != "ready" {
