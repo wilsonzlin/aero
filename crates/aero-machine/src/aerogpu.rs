@@ -2,6 +2,7 @@
 
 use core::mem::offset_of;
 
+use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::PciBarMmioHandler;
 use aero_devices_gpu::ring::write_fence_page;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
@@ -342,6 +343,8 @@ pub struct AeroGpuMmioDevice {
     abi_version: u32,
     features: u64,
 
+    clock: Option<ManualClock>,
+
     ring_gpa: u64,
     ring_size_bytes: u32,
     ring_control: u32,
@@ -397,6 +400,8 @@ impl Default for AeroGpuMmioDevice {
                 | pci::AEROGPU_FEATURE_SCANOUT
                 | pci::AEROGPU_FEATURE_VBLANK,
 
+            clock: None,
+
             ring_gpa: 0,
             ring_size_bytes: 0,
             ring_control: 0,
@@ -440,12 +445,18 @@ impl Default for AeroGpuMmioDevice {
 }
 
 impl AeroGpuMmioDevice {
+    pub fn set_clock(&mut self, clock: ManualClock) {
+        self.clock = Some(clock);
+    }
+
     pub fn reset(&mut self) {
         let features = self.features;
         let abi_version = self.abi_version;
+        let clock = self.clock.clone();
         *self = Self {
             features,
             abi_version,
+            clock,
             ..Default::default()
         };
     }
@@ -638,6 +649,13 @@ impl AeroGpuMmioDevice {
     }
 
     pub fn process(&mut self, mem: &mut dyn MemoryBus, dma_enabled: bool) {
+        // Preserve the emulator device model ordering: keep the vblank clock caught up to "now"
+        // before processing newly-submitted work, so vsync pacing can't complete on an already-
+        // elapsed vblank edge.
+        if let Some(clock) = &self.clock {
+            self.tick_vblank(clock.now_ns());
+        }
+
         // Ring control RESET is an MMIO write-side effect, but touching the ring header requires
         // DMA; perform the actual memory update from the machine's device tick path when bus
         // mastering is enabled.
@@ -840,6 +858,16 @@ impl AeroGpuMmioDevice {
             }
 
             x if x == pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64 => {
+                // Match emulator semantics: catch up vblank scheduling before enabling vblank IRQ
+                // delivery so catch-up ticks don't immediately latch a "stale" vblank interrupt.
+                let enabling_vblank = (value & pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0
+                    && (self.irq_enable & pci::AEROGPU_IRQ_SCANOUT_VBLANK) == 0;
+                if enabling_vblank {
+                    if let Some(clock) = &self.clock {
+                        self.tick_vblank(clock.now_ns());
+                    }
+                }
+
                 self.irq_enable = value;
                 // Clear any IRQ status bits that are now masked so re-enabling doesn't immediately
                 // deliver a stale interrupt.

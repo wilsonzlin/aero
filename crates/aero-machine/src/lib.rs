@@ -5763,11 +5763,14 @@ Track progress: docs/21-smp.md\n\
                 };
                 match &self.aerogpu_mmio {
                     Some(dev) => {
-                        dev.borrow_mut().reset();
+                        let mut dev = dev.borrow_mut();
+                        dev.reset();
+                        dev.set_clock(clock.clone());
                     }
                     None => {
-                        self.aerogpu_mmio =
-                            Some(Rc::new(RefCell::new(AeroGpuMmioDevice::default())));
+                        let dev = Rc::new(RefCell::new(AeroGpuMmioDevice::default()));
+                        dev.borrow_mut().set_clock(clock.clone());
+                        self.aerogpu_mmio = Some(dev);
                     }
                 }
 
