@@ -50,6 +50,12 @@ class QmpCommandNotFoundDetectionTests(unittest.TestCase):
         )
         self.assertTrue(h._qmp_error_is_command_not_found(err, command="input-send-event"))
 
+        err2 = h._QmpCommandError(
+            execute="input-send-event",
+            resp={"error": {"class": "GenericError", "desc": "Unknown command 'input-send-event'"}},
+        )
+        self.assertTrue(h._qmp_error_is_command_not_found(err2, command="input-send-event"))
+
     def test_does_not_treat_device_not_found_as_missing_command(self) -> None:
         h = self.harness
 
@@ -72,7 +78,15 @@ class QmpCommandNotFoundDetectionTests(unittest.TestCase):
         msg = "The command input-send-event has not been found"
         self.assertTrue(h._qmp_error_is_command_not_found(RuntimeError(msg), command="input-send-event"))
 
+        msg2 = "The command 'input-send-event' has not been found"
+        self.assertTrue(h._qmp_error_is_command_not_found(RuntimeError(msg2), command="input-send-event"))
+
+        msg3 = 'The command "input-send-event" has not been found'
+        self.assertTrue(h._qmp_error_is_command_not_found(RuntimeError(msg3), command="input-send-event"))
+
+        msg4 = "Unknown command: input-send-event"
+        self.assertTrue(h._qmp_error_is_command_not_found(RuntimeError(msg4), command="input-send-event"))
+
 
 if __name__ == "__main__":
     unittest.main()
-
