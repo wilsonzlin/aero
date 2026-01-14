@@ -5592,19 +5592,26 @@ function renderMicrophonePanel(): HTMLElement {
           if (!value || typeof value !== "object") return null;
 
           const seen = new WeakMap<object, unknown>();
+          const collectSeen = new WeakSet<object>();
           const collectStrings = (v: unknown, out: string[]): void => {
             if (typeof v === "string") {
               out.push(v);
               return;
             }
+
+            if (!v || typeof v !== "object") return;
+
+            // Defensive: avoid recursion loops if a browser ever returns a cyclic structure here.
+            if (collectSeen.has(v)) return;
+            collectSeen.add(v);
+
             if (Array.isArray(v)) {
               for (const item of v) collectStrings(item, out);
               return;
             }
-            if (v && typeof v === "object") {
-              for (const item of Object.values(v as Record<string, unknown>)) {
-                collectStrings(item, out);
-              }
+
+            for (const item of Object.values(v as Record<string, unknown>)) {
+              collectStrings(item, out);
             }
           };
 
@@ -5614,7 +5621,7 @@ function renderMicrophonePanel(): HTMLElement {
 
             const obj = v as Record<string, unknown>;
             const cached = seen.get(obj);
-            if (cached) return cached;
+            if (cached !== undefined) return cached;
 
             const out: Record<string, unknown> = {};
             seen.set(obj, out);
