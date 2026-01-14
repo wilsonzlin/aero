@@ -584,3 +584,131 @@ fn ehci_async_out_reads_guest_memory_across_page_boundary() {
 
     assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
 }
+
+#[test]
+fn ehci_async_out_allows_full_5_page_qtd() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+
+    reset_port(&mut c, &mut mem, 0);
+
+    let base: u32 = 0x8000;
+    let len: usize = 5 * 4096;
+    let payload: Vec<u8> = (0..len).map(|i| (i & 0xff) as u8).collect();
+    mem.write(base, &payload);
+
+    write_qtd(
+        &mut mem,
+        QTD_BULK_OUT,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_OUT, len, true, true),
+        base,
+    );
+    // Provide all five page pointers so the transfer can span the full 5-page qTD capacity.
+    mem.write_u32(QTD_BULK_OUT + 0x10, base + 0x1000);
+    mem.write_u32(QTD_BULK_OUT + 0x14, base + 0x2000);
+    mem.write_u32(QTD_BULK_OUT + 0x18, base + 0x3000);
+    mem.write_u32(QTD_BULK_OUT + 0x1c, base + 0x4000);
+
+    let ep_char = qh_epchar(0, 1, 512);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_BULK_OUT,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let token = mem.read_u32(QTD_BULK_OUT + 0x08);
+    assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!((token >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBERRINT, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
+
+    let mut received = Vec::with_capacity(len);
+    for chunk in out_received.borrow().iter() {
+        received.extend_from_slice(chunk);
+    }
+    assert_eq!(received, payload);
+}
+
+#[test]
+fn ehci_async_in_allows_full_5_page_qtd() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+
+    reset_port(&mut c, &mut mem, 0);
+
+    let base: u32 = 0x8000;
+    let len: usize = 5 * 4096;
+    let payload: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(3)).collect();
+    for chunk in payload.chunks(512) {
+        in_queue.borrow_mut().push_back(chunk.to_vec());
+    }
+
+    let sentinel = 0xa5u8;
+    mem.write(base, &vec![sentinel; len]);
+
+    write_qtd(
+        &mut mem,
+        QTD_BULK_IN,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_IN, len, true, true),
+        base,
+    );
+    mem.write_u32(QTD_BULK_IN + 0x10, base + 0x1000);
+    mem.write_u32(QTD_BULK_IN + 0x14, base + 0x2000);
+    mem.write_u32(QTD_BULK_IN + 0x18, base + 0x3000);
+    mem.write_u32(QTD_BULK_IN + 0x1c, base + 0x4000);
+
+    let ep_char = qh_epchar(0, 1, 512);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_BULK_IN,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    assert!(out_received.borrow().is_empty());
+
+    let token = mem.read_u32(QTD_BULK_IN + 0x08);
+    assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!((token >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBERRINT, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
+
+    assert_eq!(&mem.data[base as usize..base as usize + len], payload);
+}
