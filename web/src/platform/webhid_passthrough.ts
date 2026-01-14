@@ -3,7 +3,7 @@ import {
   HID_INPUT_REPORT_RECORD_MAGIC,
   HID_INPUT_REPORT_RECORD_VERSION,
 } from "../hid/hid_input_report_ring";
-import { computeInputReportPayloadByteLengths } from "../hid/hid_report_sizes";
+import { computeFeatureReportPayloadByteLengths, computeInputReportPayloadByteLengths } from "../hid/hid_report_sizes";
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
@@ -109,6 +109,7 @@ function getBrowserSiteSettingsUrl(): string {
 
 const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
+const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
 
 export class WebHidPassthroughManager {
   readonly #hid: HidLike | null;
@@ -135,6 +136,8 @@ export class WebHidPassthroughManager {
   #externalHubAttached = false;
   readonly #inputReportListeners = new Map<string, (event: HIDInputReportEvent) => void>();
   readonly #inputReportExpectedPayloadBytes = new Map<string, Map<number, number>>();
+  readonly #featureReportExpectedPayloadBytes = new Map<string, Map<number, number>>();
+  readonly #featureReportSizeWarned = new Map<string, Set<string>>();
 
   readonly #deviceIds = new WeakMap<HIDDevice, string>();
   #nextDeviceOrdinal = 1;
@@ -214,6 +217,8 @@ export class WebHidPassthroughManager {
     }
     this.#inputReportListeners.clear();
     this.#inputReportExpectedPayloadBytes.clear();
+    this.#featureReportExpectedPayloadBytes.clear();
+    this.#featureReportSizeWarned.clear();
     this.#outputReportQueueByDeviceId.clear();
     this.#outputReportRunnerTokenByDeviceId.clear();
     this.#listeners.clear();
@@ -354,8 +359,47 @@ export class WebHidPassthroughManager {
             });
             return;
           }
-          const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-          const data = new Uint8Array(src.byteLength);
+
+          const srcLen = view.byteLength;
+          const expected = this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId);
+          const warned = this.#featureReportSizeWarned.get(deviceId);
+          const warnOnce = (key: string, message: string): void => {
+            if (!warned) {
+              console.warn(message);
+              return;
+            }
+            if (warned.has(key)) return;
+            warned.add(key);
+            console.warn(message);
+          };
+
+          let destLen: number;
+          if (expected !== undefined) {
+            destLen = expected;
+            if (srcLen > expected) {
+              warnOnce(
+                `${reportId}:truncated`,
+                `[webhid] feature report length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
+              );
+            } else if (srcLen < expected) {
+              warnOnce(
+                `${reportId}:padded`,
+                `[webhid] feature report length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
+              );
+            }
+          } else if (srcLen > UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES) {
+            destLen = UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES;
+            warnOnce(
+              `${reportId}:hardCap`,
+              `[webhid] feature report reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES}`,
+            );
+          } else {
+            destLen = srcLen;
+          }
+
+          const copyLen = Math.min(srcLen, destLen);
+          const src = new Uint8Array(view.buffer, view.byteOffset, copyLen);
+          const data = new Uint8Array(destLen);
           data.set(src);
           const res: HidFeatureReportResultMessage = {
             type: "hid:featureReportResult",
@@ -543,6 +587,7 @@ export class WebHidPassthroughManager {
       const numericDeviceId = this.#numericDeviceIdFor(deviceId);
       let normalizedCollections: ReturnType<typeof normalizeCollections>;
       let inputReportPayloadBytes: Map<number, number>;
+      let featureReportPayloadBytes: Map<number, number>;
       try {
         const rawCollections = (device as unknown as { collections?: unknown }).collections;
         normalizedCollections = normalizeCollections(
@@ -550,6 +595,7 @@ export class WebHidPassthroughManager {
           { validate: true },
         );
         inputReportPayloadBytes = computeInputReportPayloadByteLengths(normalizedCollections);
+        featureReportPayloadBytes = computeFeatureReportPayloadByteLengths(normalizedCollections);
       } catch (err) {
         try {
           await device.close();
@@ -581,6 +627,8 @@ export class WebHidPassthroughManager {
       }
 
       this.#inputReportExpectedPayloadBytes.set(deviceId, inputReportPayloadBytes);
+      this.#featureReportExpectedPayloadBytes.set(deviceId, featureReportPayloadBytes);
+      this.#featureReportSizeWarned.set(deviceId, new Set());
       const expectedInputPayloadBytes = inputReportPayloadBytes;
       const warned = new Set<string>();
       const warnOnce = (key: string, message: string): void => {
@@ -706,6 +754,8 @@ export class WebHidPassthroughManager {
     this.#outputReportQueueByDeviceId.delete(deviceId);
     this.#outputReportRunnerTokenByDeviceId.delete(deviceId);
     this.#inputReportExpectedPayloadBytes.delete(deviceId);
+    this.#featureReportExpectedPayloadBytes.delete(deviceId);
+    this.#featureReportSizeWarned.delete(deviceId);
 
     const listener = this.#inputReportListeners.get(deviceId);
     if (listener) {

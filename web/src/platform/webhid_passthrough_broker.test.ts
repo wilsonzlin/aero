@@ -332,6 +332,118 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(resEntry.transfer?.[0]).toBe(data);
   });
 
+  it("clamps oversized feature report payloads to the expected report size before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [
+            {
+              reportId: 7,
+              items: [{ reportSize: 8, reportCount: 4 }],
+            },
+          ],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      device.receiveFeatureReport.mockImplementationOnce(async () => {
+        const huge = new Uint8Array(1024 * 1024);
+        huge.set([1, 2, 3, 4], 0);
+        return new DataView(huge.buffer);
+      });
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      manager.handleWorkerMessage({
+        type: "hid:getFeatureReport",
+        deviceId,
+        requestId: 1,
+        reportId: 7,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      const resEntry = target.posted.find(
+        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).requestId === 1,
+      )!;
+      expect(resEntry.message).toMatchObject({ deviceId, requestId: 1, reportId: 7, ok: true });
+      const data = (resEntry.message as any).data as ArrayBuffer;
+      expect(new Uint8Array(data).byteLength).toBe(4);
+      expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3, 4]);
+      expect(resEntry.transfer?.[0]).toBe(data);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("hard-caps unknown oversized feature report payload sizes before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      // No feature report metadata -> expected size unknown.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.receiveFeatureReport.mockImplementation(async () => new DataView(huge.buffer));
+
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      manager.handleWorkerMessage({ type: "hid:getFeatureReport", deviceId, requestId: 1, reportId: 99 });
+      manager.handleWorkerMessage({ type: "hid:getFeatureReport", deviceId, requestId: 2, reportId: 99 });
+
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      const results = target.posted.filter(
+        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).ok === true,
+      ) as any[];
+      const a = results.find((r) => r.message.requestId === 1);
+      const b = results.find((r) => r.message.requestId === 2);
+      expect(a).toBeTruthy();
+      expect(b).toBeTruthy();
+
+      for (const entry of [a, b]) {
+        const data = entry.message.data as ArrayBuffer;
+        expect(new Uint8Array(data).byteLength).toBe(4096);
+        expect(Array.from(new Uint8Array(data).slice(0, 3))).toEqual([1, 2, 3]);
+      }
+
+      // Warn once per (deviceId, reportId) when hard-capping unknown report sizes.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("executes hid:sendReport sequentially per device", async () => {
     const device = new FakeHidDevice();
     const target = new TestTarget();
