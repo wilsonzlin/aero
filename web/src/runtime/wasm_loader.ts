@@ -412,6 +412,10 @@ export type MachineHandle = {
      * Pointer (byte offset) into WASM linear memory for the current display front buffer.
      *
      * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link display_framebuffer_len_bytes}.
+     *
+     * Safety/validity: callers must re-query both the pointer and length after each
+     * {@link display_present} call because the underlying Rust framebuffer cache may be resized or
+     * reallocated, invalidating previously returned pointers.
      */
     display_framebuffer_ptr?(): number;
     /** Length in bytes of the current display front buffer (RGBA8888). */
@@ -442,6 +446,10 @@ export type MachineHandle = {
      * Pointer (byte offset) into WASM linear memory for the current VGA front buffer.
      *
      * The buffer is RGBA8888 (`width * height * 4` bytes). Pair with {@link vga_framebuffer_len_bytes}.
+     *
+     * Safety/validity: callers must re-query both the pointer and length after each
+     * {@link vga_present} call because the underlying Rust framebuffer may be swapped/resized,
+     * invalidating previously returned pointers.
      */
     vga_framebuffer_ptr?(): number;
     /** Length in bytes of the current VGA front buffer (RGBA8888). */
