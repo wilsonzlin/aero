@@ -4059,51 +4059,68 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 }
 
 static int DoQueryScanout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId) {
-  const auto QueryScanout = [&](uint32_t requestedVidpnSourceId, aerogpu_escape_query_scanout_out *out) -> bool {
-    ZeroMemory(out, sizeof(*out));
-    out->hdr.version = AEROGPU_ESCAPE_VERSION;
-    out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-    out->hdr.size = sizeof(*out);
-    out->hdr.reserved0 = 0;
-    out->vidpn_source_id = requestedVidpnSourceId;
+  const uint32_t requested = vidpnSourceId;
+  bool fallbackToSource0 = false;
 
-    NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
-    if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requestedVidpnSourceId != 0) {
-      // Older KMDs may only support source 0; retry.
-      ZeroMemory(out, sizeof(*out));
-      out->hdr.version = AEROGPU_ESCAPE_VERSION;
-      out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-      out->hdr.size = sizeof(*out);
-      out->hdr.reserved0 = 0;
-      out->vidpn_source_id = 0;
-      st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
-    }
-    if (!NT_SUCCESS(st)) {
-      PrintNtStatus(L"D3DKMTEscape(query-scanout) failed", f, st);
-      return false;
-    }
-    return true;
-  };
+  aerogpu_escape_query_scanout_out_v2 q;
+  ZeroMemory(&q, sizeof(q));
+  q.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.base.hdr.size = sizeof(q);
+  q.base.hdr.reserved0 = 0;
+  q.base.vidpn_source_id = requested;
 
-  aerogpu_escape_query_scanout_out q;
-  if (!QueryScanout(vidpnSourceId, &q)) {
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requested != 0) {
+    // Older KMDs may only support source 0; retry.
+    fallbackToSource0 = true;
+    ZeroMemory(&q, sizeof(q));
+    q.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.base.hdr.size = sizeof(q);
+    q.base.hdr.reserved0 = 0;
+    q.base.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(query-scanout) failed", f, st);
     return 2;
   }
 
-  wprintf(L"Scanout%lu:\n", (unsigned long)q.vidpn_source_id);
+  wprintf(L"Scanout%lu:\n", (unsigned long)q.base.vidpn_source_id);
+  if (fallbackToSource0) {
+    wprintf(L"  note: fallback_to_source0 (requested=%lu)\n", (unsigned long)requested);
+  }
   wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%S pitch=%lu\n",
-          (unsigned long)q.cached_enable,
-          (unsigned long)q.cached_width,
-          (unsigned long)q.cached_height,
-          AerogpuFormatName(q.cached_format),
-          (unsigned long)q.cached_pitch_bytes);
+          (unsigned long)q.base.cached_enable,
+          (unsigned long)q.base.cached_width,
+          (unsigned long)q.base.cached_height,
+          AerogpuFormatName(q.base.cached_format),
+          (unsigned long)q.base.cached_pitch_bytes);
   wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
-          (unsigned long)q.mmio_enable,
-          (unsigned long)q.mmio_width,
-          (unsigned long)q.mmio_height,
-          AerogpuFormatName(q.mmio_format),
-          (unsigned long)q.mmio_pitch_bytes,
-           (unsigned long long)q.mmio_fb_gpa);
+          (unsigned long)q.base.mmio_enable,
+          (unsigned long)q.base.mmio_width,
+          (unsigned long)q.base.mmio_height,
+          AerogpuFormatName(q.base.mmio_format),
+          (unsigned long)q.base.mmio_pitch_bytes,
+          (unsigned long long)q.base.mmio_fb_gpa);
+
+  if (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) {
+    const uint32_t flags = q.base.reserved0;
+    const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+    const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+    const bool postDisplayReleased =
+        (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+
+    wprintf(L"  cached_fb_gpa=0x%I64x\n", (unsigned long long)q.cached_fb_gpa);
+    wprintf(L"  flags=0x%08lx\n", (unsigned long)flags);
+    if (flagsValid) {
+      wprintf(L"    cached_fb_gpa_valid=%lu\n", cachedFbGpaValid ? 1ul : 0ul);
+      wprintf(L"    post_display_ownership_released=%lu\n", postDisplayReleased ? 1ul : 0ul);
+    } else {
+      wprintf(L"    (flags_valid=0)\n");
+    }
+  }
   return 0;
 }
 
@@ -8237,29 +8254,36 @@ static int DoQueryScanoutJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
   const uint32_t requested = vidpnSourceId;
   bool fallbackToSource0 = false;
 
-  aerogpu_escape_query_scanout_out q;
+  aerogpu_escape_query_scanout_out_v2 q;
   ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-  q.hdr.size = sizeof(q);
-  q.hdr.reserved0 = 0;
-  q.vidpn_source_id = requested;
+  q.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.base.hdr.size = sizeof(q);
+  q.base.hdr.reserved0 = 0;
+  q.base.vidpn_source_id = requested;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && requested != 0) {
     fallbackToSource0 = true;
     ZeroMemory(&q, sizeof(q));
-    q.hdr.version = AEROGPU_ESCAPE_VERSION;
-    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-    q.hdr.size = sizeof(q);
-    q.hdr.reserved0 = 0;
-    q.vidpn_source_id = 0;
+    q.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.base.hdr.size = sizeof(q);
+    q.base.hdr.reserved0 = 0;
+    q.base.vidpn_source_id = 0;
     st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   }
   if (!NT_SUCCESS(st)) {
     JsonWriteTopLevelError(out, "query-scanout", f, "D3DKMTEscape(query-scanout) failed", st);
     return 2;
   }
+
+  const bool haveV2 = (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
+  const uint32_t flags = q.base.reserved0;
+  const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+  const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool postDisplayReleased =
+      (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
 
   JsonWriter w(out);
   w.BeginObject();
@@ -8277,33 +8301,47 @@ static int DoQueryScanoutJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
   w.Bool(fallbackToSource0);
   w.Key("scanout");
   w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("cached_fb_gpa_valid");
+  w.Bool(flagsValid && cachedFbGpaValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
+  if (haveV2) {
+    w.Key("cached_fb_gpa_hex");
+    w.String(HexU64(q.cached_fb_gpa));
+  } else {
+    w.Key("cached_fb_gpa_hex");
+    w.Null();
+  }
   w.Key("cached");
   w.BeginObject();
   w.Key("enable");
-  w.Uint32(q.cached_enable);
+  w.Uint32(q.base.cached_enable);
   w.Key("width");
-  w.Uint32(q.cached_width);
+  w.Uint32(q.base.cached_width);
   w.Key("height");
-  w.Uint32(q.cached_height);
+  w.Uint32(q.base.cached_height);
   w.Key("format");
-  w.String(AerogpuFormatName(q.cached_format));
+  w.String(AerogpuFormatName(q.base.cached_format));
   w.Key("pitch_bytes");
-  w.Uint32(q.cached_pitch_bytes);
+  w.Uint32(q.base.cached_pitch_bytes);
   w.EndObject();
   w.Key("mmio");
   w.BeginObject();
   w.Key("enable");
-  w.Uint32(q.mmio_enable);
+  w.Uint32(q.base.mmio_enable);
   w.Key("width");
-  w.Uint32(q.mmio_width);
+  w.Uint32(q.base.mmio_width);
   w.Key("height");
-  w.Uint32(q.mmio_height);
+  w.Uint32(q.base.mmio_height);
   w.Key("format");
-  w.String(AerogpuFormatName(q.mmio_format));
+  w.String(AerogpuFormatName(q.base.mmio_format));
   w.Key("pitch_bytes");
-  w.Uint32(q.mmio_pitch_bytes);
+  w.Uint32(q.base.mmio_pitch_bytes);
   w.Key("fb_gpa_hex");
-  w.String(HexU64(q.mmio_fb_gpa));
+  w.String(HexU64(q.base.mmio_fb_gpa));
   w.EndObject();
   w.EndObject();
   w.EndObject();

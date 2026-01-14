@@ -476,6 +476,7 @@ typedef struct aerogpu_escape_query_scanout_out {
    * Flags (newer KMDs):
    * - Bit 31: flags are valid.
    * - Bit 0: cached_fb_gpa is valid (requires QUERY_SCANOUT v2 output).
+   * - Bit 1: post-display ownership is currently released (scanout/cursor are gated off).
    *
    * This field was previously reserved; keep its name and offset for ABI stability.
    */
@@ -515,6 +516,7 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_fb_
 
 #define AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID (1u << 31)
 #define AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID (1u << 0)
+#define AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED (1u << 1)
 
 /*
  * Query scanout response (v2).

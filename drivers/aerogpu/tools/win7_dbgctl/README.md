@@ -382,7 +382,7 @@ Notes:
 
 The most common use of `--read-gpa` is to inspect the scanout framebuffer without a kernel debugger:
 
-1. Run `aerogpu_dbgctl --query-scanout` and note `mmio_fb_gpa` and `mmio_pitch_bytes`.
+1. Run `aerogpu_dbgctl --query-scanout` and note the framebuffer GPA (`mmio_fb_gpa` if non-zero; otherwise `cached_fb_gpa`) and the pitch (`pitch_bytes`).
 2. Dump a small header slice (first cache line/page):
    ```
    aerogpu_dbgctl --read-gpa <mmio_fb_gpa> --size 256
@@ -393,7 +393,9 @@ The most common use of `--read-gpa` is to inspect the scanout framebuffer withou
    ```
 
 If scanout is configured for `B8G8R8X8`, the first pixels should match the expected desktop contents (little-endian BGRA/XRGB).
-If the dump is all zeros, check that scanout is enabled/visible and that `mmio_fb_gpa` is non-zero.
+If `mmio_fb_gpa` is 0 but `cached_fb_gpa` is non-zero, use `cached_fb_gpa` for `--read-gpa` / `--dump-scanout-*`:
+this can happen during post-display ownership transitions (the KMD disables scanout and may clear MMIO FB GPA registers to stop DMA).
+`--query-scanout` also reports `post_display_ownership_released` in its flags to make this state explicit.
 
 ## Manual validation: dumping cursor framebuffer bytes
 

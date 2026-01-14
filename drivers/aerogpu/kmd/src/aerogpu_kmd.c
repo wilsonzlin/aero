@@ -13028,6 +13028,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->reserved0 = 0;
         if (haveV2) {
             uint32_t flags = AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID;
+            if (adapter->PostDisplayOwnershipReleased) {
+                flags |= AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED;
+            }
             const uint64_t cachedFbGpa = (uint64_t)adapter->CurrentScanoutFbPa.QuadPart;
             out2->cached_fb_gpa = cachedFbGpa;
             if (cachedFbGpa != 0) {
