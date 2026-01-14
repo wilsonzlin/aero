@@ -51,6 +51,48 @@ describe("workers/io_disk_dma", () => {
     expect(Array.from(guest)).toEqual(Array.from(diskData.subarray(0, guest.byteLength)));
   });
 
+  it("chunks aligned reads via readInto() when guest memory is SharedArrayBuffer", async () => {
+    const sectorSize = 512;
+    const diskData = new Uint8Array(sectorSize * 5);
+    for (let i = 0; i < diskData.length; i++) diskData[i] = (i * 11) & 0xff;
+
+    const calls: Array<{ op: "readInto"; lba: number; byteLength: number; offsetBytes: number }> = [];
+    const client: RuntimeDiskClientLike = {
+      async read() {
+        throw new Error("unexpected read()");
+      },
+      async write() {
+        throw new Error("unexpected write()");
+      },
+      async readInto(_handle, lba, byteLength, dest) {
+        calls.push({ op: "readInto", lba, byteLength, offsetBytes: dest.offsetBytes });
+        const start = lba * sectorSize;
+        new Uint8Array(dest.sab, dest.offsetBytes, byteLength).set(diskData.subarray(start, start + byteLength));
+      },
+    };
+
+    const sab = new SharedArrayBuffer(diskData.byteLength + 16);
+    const guest = new Uint8Array(sab, 4, diskData.byteLength);
+    const range = computeAlignedDiskIoRange(0n, guest.byteLength, sectorSize);
+    expect(range).toEqual({ lba: 0, byteLength: guest.byteLength, offset: 0 });
+
+    await diskReadIntoGuest({
+      client,
+      handle: 1,
+      range: range!,
+      sectorSize,
+      guestView: guest,
+      maxIoBytes: sectorSize * 2,
+    });
+
+    expect(calls).toEqual([
+      { op: "readInto", lba: 0, byteLength: 1024, offsetBytes: 4 },
+      { op: "readInto", lba: 2, byteLength: 1024, offsetBytes: 4 + 1024 },
+      { op: "readInto", lba: 4, byteLength: 512, offsetBytes: 4 + 2048 },
+    ]);
+    expect(Array.from(guest)).toEqual(Array.from(diskData));
+  });
+
   it("chunks large aligned writes into bounded runtime-disk requests", async () => {
     const sectorSize = 512;
     const diskData = new Uint8Array(sectorSize * 10);
@@ -77,6 +119,49 @@ describe("workers/io_disk_dma", () => {
       { op: "write", lba: 2, byteLength: 1024 },
       { op: "write", lba: 4, byteLength: 512 },
     ]);
+    expect(Array.from(diskData.subarray(0, guest.byteLength))).toEqual(Array.from(guest));
+  });
+
+  it("chunks aligned writes via writeFrom() when guest memory is SharedArrayBuffer", async () => {
+    const sectorSize = 512;
+    const diskData = new Uint8Array(sectorSize * 10);
+
+    const calls: Array<{ op: "writeFrom"; lba: number; byteLength: number; offsetBytes: number }> = [];
+    const client: RuntimeDiskClientLike = {
+      async read() {
+        throw new Error("unexpected read()");
+      },
+      async write() {
+        throw new Error("unexpected write()");
+      },
+      async writeFrom(_handle, lba, src) {
+        calls.push({ op: "writeFrom", lba, byteLength: src.byteLength, offsetBytes: src.offsetBytes });
+        diskData.set(new Uint8Array(src.sab, src.offsetBytes, src.byteLength), lba * sectorSize);
+      },
+    };
+
+    const sab = new SharedArrayBuffer(sectorSize * 5 + 16);
+    const guest = new Uint8Array(sab, 8, sectorSize * 5);
+    for (let i = 0; i < guest.length; i++) guest[i] = (0x5a + i) & 0xff;
+
+    const range = computeAlignedDiskIoRange(0n, guest.byteLength, sectorSize);
+    expect(range).toEqual({ lba: 0, byteLength: guest.byteLength, offset: 0 });
+
+    await diskWriteFromGuest({
+      client,
+      handle: 1,
+      range: range!,
+      sectorSize,
+      guestView: guest,
+      maxIoBytes: sectorSize * 2,
+    });
+
+    expect(calls).toEqual([
+      { op: "writeFrom", lba: 0, byteLength: 1024, offsetBytes: 8 },
+      { op: "writeFrom", lba: 2, byteLength: 1024, offsetBytes: 8 + 1024 },
+      { op: "writeFrom", lba: 4, byteLength: 512, offsetBytes: 8 + 2048 },
+    ]);
+
     expect(Array.from(diskData.subarray(0, guest.byteLength))).toEqual(Array.from(guest));
   });
 
@@ -120,4 +205,3 @@ describe("workers/io_disk_dma", () => {
     expect(Array.from(diskData.subarray(range!.byteLength))).toEqual(Array.from(original.subarray(range!.byteLength)));
   });
 });
-
