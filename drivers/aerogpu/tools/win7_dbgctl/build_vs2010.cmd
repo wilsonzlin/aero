@@ -9,7 +9,7 @@ echo [aerogpu_dbgctl] Building...
 cl /nologo /W4 /EHsc /O2 /MT /DUNICODE /D_UNICODE ^
   /I "%~dp0..\\..\\protocol" ^
   "%~dp0src\\aerogpu_dbgctl.cpp" ^
-  /link /OUT:"%OUTDIR%\\aerogpu_dbgctl.exe" user32.lib gdi32.lib
+  /link /OUT:"%OUTDIR%\\aerogpu_dbgctl.exe" /MACHINE:X86 user32.lib gdi32.lib
 if errorlevel 1 exit /b 1
 
 echo [aerogpu_dbgctl] OK: %OUTDIR%\\aerogpu_dbgctl.exe

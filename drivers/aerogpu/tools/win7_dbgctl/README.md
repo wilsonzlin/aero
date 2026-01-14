@@ -431,7 +431,8 @@ cl /nologo /W4 /EHsc /DUNICODE /D_UNICODE ^
   /I ..\..\protocol ^
   src\aerogpu_dbgctl.cpp ^
   /Feaerogpu_dbgctl.exe ^
-  user32.lib gdi32.lib
+  user32.lib gdi32.lib ^
+  /link /MACHINE:X86
 ```
 
 Outputs:
