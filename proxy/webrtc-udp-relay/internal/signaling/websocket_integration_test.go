@@ -79,7 +79,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 				return
 			}
 
-			msg, err := ParseSignalMessage(raw)
+			msg, err := parseSignalMessage(raw)
 			if err != nil {
 				readErr <- err
 				return
@@ -142,7 +142,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 		case <-offerSent:
 			_ = sendWS(ws, &wsWriteMu, SignalMessage{
 				Type:      MessageTypeCandidate,
-				Candidate: ptr(CandidateFromPion(init)),
+				Candidate: ptr(candidateFromPion(init)),
 			})
 		default:
 			localCandidateBufMu.Lock()
@@ -161,7 +161,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 
 	if err := sendWS(ws, &wsWriteMu, SignalMessage{
 		Type: MessageTypeOffer,
-		SDP:  ptr(SDPFromPion(offer)),
+		SDP:  ptr(sdpFromPion(offer)),
 	}); err != nil {
 		t.Fatalf("send offer: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	for _, cand := range buf {
 		_ = sendWS(ws, &wsWriteMu, SignalMessage{
 			Type:      MessageTypeCandidate,
-			Candidate: ptr(CandidateFromPion(cand)),
+			Candidate: ptr(candidateFromPion(cand)),
 		})
 	}
 

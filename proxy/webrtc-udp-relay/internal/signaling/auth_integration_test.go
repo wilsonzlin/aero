@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,24 @@ func newOfferSDP(t *testing.T, api *webrtc.API) signaling.SDP {
 	if local == nil {
 		t.Fatalf("missing local description")
 	}
-	return signaling.SDPFromPion(*local)
+	return signaling.SDP{Type: local.Type.String(), SDP: local.SDP}
+}
+
+func parseSignalMessage(data []byte) (signaling.SignalMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+
+	var msg signaling.SignalMessage
+	if err := dec.Decode(&msg); err != nil {
+		return signaling.SignalMessage{}, err
+	}
+	if err := msg.Validate(); err != nil {
+		return signaling.SignalMessage{}, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return signaling.SignalMessage{}, errors.New("unexpected trailing data")
+	}
+	return msg, nil
 }
 
 func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *metrics.Metrics) {
@@ -320,7 +338,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	if err != nil {
 		t.Fatalf("read ws1: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse ws1: %v", err)
 	}
@@ -343,7 +361,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	if err != nil {
 		t.Fatalf("read ws2: %v", err)
 	}
-	got, err = signaling.ParseSignalMessage(msg)
+	got, err = parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse ws2: %v", err)
 	}
@@ -717,7 +735,7 @@ func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -756,7 +774,7 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -799,7 +817,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	if err != nil {
 		t.Fatalf("read ws1: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse ws1: %v", err)
 	}
@@ -825,7 +843,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	if err != nil {
 		t.Fatalf("read ws2: %v", err)
 	}
-	got, err = signaling.ParseSignalMessage(msg)
+	got, err = parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse ws2: %v", err)
 	}
@@ -863,7 +881,7 @@ func TestAuth_APIKey_WebSocketSignal_QueryTokenAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -902,7 +920,7 @@ func TestAuth_JWT_WebSocketSignal_QueryAPIKeyAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	got, err := signaling.ParseSignalMessage(msg)
+	got, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1006,7 +1024,7 @@ func TestWebSocketRejectsBinaryBeforeAuth(t *testing.T) {
 	if msgType != websocket.TextMessage {
 		t.Fatalf("unexpected message type %d", msgType)
 	}
-	parsed, err := signaling.ParseSignalMessage(msg)
+	parsed, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1056,7 +1074,7 @@ func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
 		}
 		t.Fatalf("read: %v", err)
 	}
-	parsed, err := signaling.ParseSignalMessage(msg)
+	parsed, err := parseSignalMessage(msg)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1105,7 +1123,7 @@ func TestWebSocketRateLimitExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	parsed, err := signaling.ParseSignalMessage(raw)
+	parsed, err := parseSignalMessage(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

@@ -682,7 +682,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, httpOfferResponse{
 		SessionID: sessionID,
-		SDP:       SDPFromPion(*local),
+		SDP:       sdpFromPion(*local),
 	})
 }
 
@@ -903,7 +903,7 @@ func (wss *wsSession) installPeerHandlers() {
 			return
 		}
 
-		cand := CandidateFromPion(c.ToJSON())
+		cand := candidateFromPion(c.ToJSON())
 
 		wss.answerMu.Lock()
 		if !wss.answerSent {
@@ -1049,7 +1049,7 @@ func (wss *wsSession) run() {
 			return
 		}
 
-		msg, err := ParseSignalMessage(data)
+		msg, err := parseSignalMessage(data)
 		if err != nil {
 			_ = wss.fail("bad_message", err.Error(), websocket.ClosePolicyViolation, "bad message")
 			return
@@ -1222,7 +1222,7 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 
 	if err := wss.send(SignalMessage{
 		Type: MessageTypeAnswer,
-		SDP:  ptr(SDPFromPion(*local)),
+		SDP:  ptr(sdpFromPion(*local)),
 	}); err != nil {
 		_ = sess.Close()
 		return err

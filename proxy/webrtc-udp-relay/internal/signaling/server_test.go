@@ -86,7 +86,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		if local == nil {
 			t.Fatalf("missing local description")
 		}
-		return SDPFromPion(*local)
+		return sdpFromPion(*local)
 	}()
 
 	if err := ws1.WriteJSON(SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
@@ -108,7 +108,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("receive: %v", err)
 	}
-	msg, err := ParseSignalMessage(raw)
+	msg, err := parseSignalMessage(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 			}
 			break
 		}
-		parsed, parseErr := ParseSignalMessage(msg)
+		parsed, parseErr := parseSignalMessage(msg)
 		if parseErr == nil {
 			if parsed.Type != MessageTypeError || parsed.Code != "internal_error" {
 				t.Fatalf("unexpected message: %#v", parsed)
@@ -499,7 +499,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("missing local description")
 	}
 
-	body, err := json.Marshal(httpOfferRequest{SDP: SDPFromPion(*local)})
+	body, err := json.Marshal(httpOfferRequest{SDP: sdpFromPion(*local)})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 		t.Fatalf("missing local description")
 	}
 
-	body, err := json.Marshal(httpOfferRequest{SDP: SDPFromPion(*local)})
+	body, err := json.Marshal(httpOfferRequest{SDP: sdpFromPion(*local)})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 	}
 
 	body, err := json.Marshal(httpOfferRequest{
-		SDP: SDPFromPion(*local),
+		SDP: sdpFromPion(*local),
 	})
 	if err != nil {
 		t.Fatalf("marshal offer: %v", err)

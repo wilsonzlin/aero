@@ -25,7 +25,7 @@ type SDP struct {
 	SDP  string `json:"sdp"`
 }
 
-func SDPFromPion(desc webrtc.SessionDescription) SDP {
+func sdpFromPion(desc webrtc.SessionDescription) SDP {
 	return SDP{
 		Type: desc.Type.String(),
 		SDP:  desc.SDP,
@@ -52,7 +52,7 @@ type Candidate struct {
 	UsernameFragment *string `json:"usernameFragment,omitempty"`
 }
 
-func CandidateFromPion(init webrtc.ICECandidateInit) Candidate {
+func candidateFromPion(init webrtc.ICECandidateInit) Candidate {
 	return Candidate{
 		Candidate:        init.Candidate,
 		SDPMid:           init.SDPMid,
@@ -82,7 +82,7 @@ type SignalMessage struct {
 	Message string `json:"message,omitempty"`
 }
 
-func ParseSignalMessage(data []byte) (SignalMessage, error) {
+func parseSignalMessage(data []byte) (SignalMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 

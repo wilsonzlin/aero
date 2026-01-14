@@ -22,8 +22,8 @@ func FuzzParseSignalMessage(f *testing.F) {
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		msg1, err1 := ParseSignalMessage(data)
-		msg2, err2 := ParseSignalMessage(data)
+		msg1, err1 := parseSignalMessage(data)
+		msg2, err2 := parseSignalMessage(data)
 		if (err1 == nil) != (err2 == nil) {
 			t.Fatalf("non-deterministic parse result: err1=%v err2=%v", err1, err2)
 		}
@@ -46,7 +46,7 @@ func FuzzParseSignalMessage(f *testing.F) {
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		round, err := ParseSignalMessage(b)
+		round, err := parseSignalMessage(b)
 		if err != nil {
 			t.Fatalf("re-parse marshaled message: %v (json=%q)", err, string(b))
 		}
