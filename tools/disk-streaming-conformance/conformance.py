@@ -1737,20 +1737,16 @@ def _parse_chunked_manifest_v1(raw: object) -> ChunkedDiskManifest:
         _require(len(chunks) == chunk_count, f"chunks.length mismatch: expected={chunk_count} actual={len(chunks)}")
         for i, item in enumerate(chunks):
             _require(isinstance(item, dict), f"chunks[{i}] must be a JSON object")
-
-            if "size" not in item:
-                raise TestFailure(f"chunks[{i}].size is required when chunks[] is present")
-            size = _json_int(item.get("size"), name=f"chunks[{i}].size")
-            _require(size > 0, f"chunks[{i}].size must be > 0, got {size}")
-            if i < chunk_count - 1:
-                _require(
-                    size == chunk_size,
-                    f"chunks[{i}].size mismatch: expected={chunk_size} actual={size}",
-                )
+            expected_size = chunk_size if i < chunk_count - 1 else last_chunk_size
+            if "size" not in item or item.get("size") is None:
+                # `size` is optional; when omitted, clients derive it from `chunkSize` and `totalSize`.
+                size = expected_size
             else:
+                size = _json_int(item.get("size"), name=f"chunks[{i}].size")
+                _require(size > 0, f"chunks[{i}].size must be > 0, got {size}")
                 _require(
-                    size == last_chunk_size,
-                    f"chunks[{i}].size mismatch: expected={last_chunk_size} actual={size}",
+                    size == expected_size,
+                    f"chunks[{i}].size mismatch: expected={expected_size} actual={size}",
                 )
             chunk_sizes.append(size)
 
