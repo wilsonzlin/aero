@@ -4,6 +4,63 @@
 //! When the GPU backend can't sample BC formats (e.g. WebGL2 fallback), we
 //! deterministically decompress into RGBA8 on CPU and upload as `Rgba8Unorm*`.
 
+/// For BC1/BC3 blocks we frequently decode full 4x4 tiles.
+///
+/// The "color indices" portion is encoded as 16 2-bit indices packed into a u32
+/// in raster order. Each row is therefore an 8-bit value containing 4 indices.
+///
+/// In the SIMD fast paths we expand each row with a single byte-table lookup
+/// (`PSHUFB` on x86/SSSE3, `i8x16.swizzle` on wasm SIMD128). This table stores
+/// the swizzle mask for all possible row index patterns.
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+const fn bc_row_shuffle_masks() -> [[u8; 16]; 256] {
+    let mut table = [[0u8; 16]; 256];
+    let mut row = 0usize;
+    while row < 256 {
+        let i0 = (row & 0b11) as u8;
+        let i1 = ((row >> 2) & 0b11) as u8;
+        let i2 = ((row >> 4) & 0b11) as u8;
+        let i3 = ((row >> 6) & 0b11) as u8;
+
+        let b0 = i0 * 4;
+        let b1 = i1 * 4;
+        let b2 = i2 * 4;
+        let b3 = i3 * 4;
+
+        table[row] = [
+            b0,
+            b0 + 1,
+            b0 + 2,
+            b0 + 3,
+            b1,
+            b1 + 1,
+            b1 + 2,
+            b1 + 3,
+            b2,
+            b2 + 1,
+            b2 + 2,
+            b2 + 3,
+            b3,
+            b3 + 1,
+            b3 + 2,
+            b3 + 3,
+        ];
+        row += 1;
+    }
+    table
+}
+
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+const BC_ROW_SHUFFLE_MASKS: [[u8; 16]; 256] = bc_row_shuffle_masks();
+
 fn rgb565_to_rgb888(c: u16) -> [u8; 3] {
     let r5 = ((c >> 11) & 0x1f) as u8;
     let g6 = ((c >> 5) & 0x3f) as u8;
@@ -226,6 +283,217 @@ fn decompress_bc3_block(
     }
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod simd_x86 {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    use super::{
+        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette, BC_ROW_SHUFFLE_MASKS,
+    };
+
+    #[target_feature(enable = "sse2,ssse3")]
+    pub unsafe fn decompress_bc1_block_full(block: &[u8; 8], dst: *mut u8, dst_stride: usize) {
+        let color0 = u16::from_le_bytes([block[0], block[1]]);
+        let color1 = u16::from_le_bytes([block[2], block[3]]);
+        let indices = u32::from_le_bytes([block[4], block[5], block[6], block[7]]);
+
+        let palette = decode_bc1_palette(color0, color1);
+        let pal_bytes = [
+            palette[0][0],
+            palette[0][1],
+            palette[0][2],
+            palette[0][3],
+            palette[1][0],
+            palette[1][1],
+            palette[1][2],
+            palette[1][3],
+            palette[2][0],
+            palette[2][1],
+            palette[2][2],
+            palette[2][3],
+            palette[3][0],
+            palette[3][1],
+            palette[3][2],
+            palette[3][3],
+        ];
+
+        // Safe: unaligned loads/stores are permitted for movdqu.
+        let pal = _mm_loadu_si128(pal_bytes.as_ptr() as *const __m128i);
+
+        for row in 0..4usize {
+            let row_idx = ((indices >> (row * 8)) & 0xFF) as usize;
+            let mask = _mm_loadu_si128(BC_ROW_SHUFFLE_MASKS[row_idx].as_ptr() as *const __m128i);
+            let out = _mm_shuffle_epi8(pal, mask);
+            _mm_storeu_si128(dst.add(row * dst_stride) as *mut __m128i, out);
+        }
+    }
+
+    #[target_feature(enable = "sse2,ssse3")]
+    pub unsafe fn decompress_bc3_block_full(block: &[u8; 16], dst: *mut u8, dst_stride: usize) {
+        let alpha0 = block[0];
+        let alpha1 = block[1];
+        let alpha_palette = decode_bc3_alpha_palette(alpha0, alpha1);
+
+        // 48 bits, little-endian.
+        let mut alpha_indices: u64 = 0;
+        for (i, b) in block[2..8].iter().enumerate() {
+            alpha_indices |= (*b as u64) << (8 * i);
+        }
+
+        let color0 = u16::from_le_bytes([block[8], block[9]]);
+        let color1 = u16::from_le_bytes([block[10], block[11]]);
+        let color_indices = u32::from_le_bytes([block[12], block[13], block[14], block[15]]);
+        let color_palette = decode_bc3_color_palette(color0, color1);
+
+        let pal_bytes = [
+            color_palette[0][0],
+            color_palette[0][1],
+            color_palette[0][2],
+            0,
+            color_palette[1][0],
+            color_palette[1][1],
+            color_palette[1][2],
+            0,
+            color_palette[2][0],
+            color_palette[2][1],
+            color_palette[2][2],
+            0,
+            color_palette[3][0],
+            color_palette[3][1],
+            color_palette[3][2],
+            0,
+        ];
+        let pal = _mm_loadu_si128(pal_bytes.as_ptr() as *const __m128i);
+
+        for row in 0..4usize {
+            let row_idx = ((color_indices >> (row * 8)) & 0xFF) as usize;
+            let mask = _mm_loadu_si128(BC_ROW_SHUFFLE_MASKS[row_idx].as_ptr() as *const __m128i);
+            let mut out = _mm_shuffle_epi8(pal, mask);
+
+            let row_alpha = (alpha_indices >> (row * 12)) & 0xFFF;
+            let a0 = alpha_palette[(row_alpha & 0b111) as usize];
+            let a1 = alpha_palette[((row_alpha >> 3) & 0b111) as usize];
+            let a2 = alpha_palette[((row_alpha >> 6) & 0b111) as usize];
+            let a3 = alpha_palette[((row_alpha >> 9) & 0b111) as usize];
+            let alpha = _mm_set_epi32(
+                (a3 as i32) << 24,
+                (a2 as i32) << 24,
+                (a1 as i32) << 24,
+                (a0 as i32) << 24,
+            );
+            out = _mm_or_si128(out, alpha);
+
+            _mm_storeu_si128(dst.add(row * dst_stride) as *mut __m128i, out);
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod simd_wasm {
+    use core::arch::wasm32::*;
+
+    use super::{
+        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette, BC_ROW_SHUFFLE_MASKS,
+    };
+
+    pub unsafe fn decompress_bc1_block_full(block: &[u8; 8], dst: *mut u8, dst_stride: usize) {
+        let color0 = u16::from_le_bytes([block[0], block[1]]);
+        let color1 = u16::from_le_bytes([block[2], block[3]]);
+        let indices = u32::from_le_bytes([block[4], block[5], block[6], block[7]]);
+
+        let palette = decode_bc1_palette(color0, color1);
+        let pal_bytes = [
+            palette[0][0],
+            palette[0][1],
+            palette[0][2],
+            palette[0][3],
+            palette[1][0],
+            palette[1][1],
+            palette[1][2],
+            palette[1][3],
+            palette[2][0],
+            palette[2][1],
+            palette[2][2],
+            palette[2][3],
+            palette[3][0],
+            palette[3][1],
+            palette[3][2],
+            palette[3][3],
+        ];
+        let pal = v128_load(pal_bytes.as_ptr() as *const v128);
+
+        for row in 0..4usize {
+            let row_idx = ((indices >> (row * 8)) & 0xFF) as usize;
+            let mask = v128_load(BC_ROW_SHUFFLE_MASKS[row_idx].as_ptr() as *const v128);
+            let out = i8x16_swizzle(pal, mask);
+            v128_store(dst.add(row * dst_stride) as *mut v128, out);
+        }
+    }
+
+    pub unsafe fn decompress_bc3_block_full(block: &[u8; 16], dst: *mut u8, dst_stride: usize) {
+        let alpha0 = block[0];
+        let alpha1 = block[1];
+        let alpha_palette = decode_bc3_alpha_palette(alpha0, alpha1);
+
+        // 48 bits, little-endian.
+        let mut alpha_indices: u64 = 0;
+        for (i, b) in block[2..8].iter().enumerate() {
+            alpha_indices |= (*b as u64) << (8 * i);
+        }
+
+        let color0 = u16::from_le_bytes([block[8], block[9]]);
+        let color1 = u16::from_le_bytes([block[10], block[11]]);
+        let color_indices = u32::from_le_bytes([block[12], block[13], block[14], block[15]]);
+        let color_palette = decode_bc3_color_palette(color0, color1);
+
+        let pal_bytes = [
+            color_palette[0][0],
+            color_palette[0][1],
+            color_palette[0][2],
+            0,
+            color_palette[1][0],
+            color_palette[1][1],
+            color_palette[1][2],
+            0,
+            color_palette[2][0],
+            color_palette[2][1],
+            color_palette[2][2],
+            0,
+            color_palette[3][0],
+            color_palette[3][1],
+            color_palette[3][2],
+            0,
+        ];
+        let pal = v128_load(pal_bytes.as_ptr() as *const v128);
+
+        for row in 0..4usize {
+            let row_idx = ((color_indices >> (row * 8)) & 0xFF) as usize;
+            let mask = v128_load(BC_ROW_SHUFFLE_MASKS[row_idx].as_ptr() as *const v128);
+            let mut out = i8x16_swizzle(pal, mask);
+
+            let row_alpha = (alpha_indices >> (row * 12)) & 0xFFF;
+            let a0 = alpha_palette[(row_alpha & 0b111) as usize];
+            let a1 = alpha_palette[((row_alpha >> 3) & 0b111) as usize];
+            let a2 = alpha_palette[((row_alpha >> 6) & 0b111) as usize];
+            let a3 = alpha_palette[((row_alpha >> 9) & 0b111) as usize];
+
+            let alpha_lanes = [
+                u32::from(a0) << 24,
+                u32::from(a1) << 24,
+                u32::from(a2) << 24,
+                u32::from(a3) << 24,
+            ];
+            let alpha = v128_load(alpha_lanes.as_ptr() as *const v128);
+            out = v128_or(out, alpha);
+
+            v128_store(dst.add(row * dst_stride) as *mut v128, out);
+        }
+    }
+}
+
 /// Decompress BC1 texture data into an existing RGBA8 output buffer.
 ///
 /// The caller must supply an output slice at least `width * height * 4` bytes long.
@@ -241,6 +509,9 @@ pub fn decompress_bc1_rgba8_into(width: u32, height: u32, bc1_data: &[u8], out: 
         return;
     }
     let out = &mut out[..out_len];
+    if out.is_empty() {
+        return;
+    }
 
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
@@ -254,18 +525,86 @@ pub fn decompress_bc1_rgba8_into(width: u32, height: u32, bc1_data: &[u8], out: 
     let available_blocks = bc1_data.len() / 8;
     let blocks_to_process = expected_blocks.min(available_blocks);
 
-    for block_index in 0..blocks_to_process {
-        let start = block_index * 8;
-        let Some(block) = bc1_data
-            .get(start..start + 8)
-            .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
-        else {
-            break;
+    #[cfg(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))]
+    {
+        let dst_stride = (width as usize) * 4;
+        let simd_available = {
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                true
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                std::arch::is_x86_feature_detected!("ssse3")
+            }
         };
 
-        let bx = (block_index % blocks_w as usize) as u32;
-        let by = (block_index / blocks_w as usize) as u32;
-        decompress_bc1_block(block, bx * 4, by * 4, width, height, out);
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 8;
+            let Some(block) = bc1_data
+                .get(start..start + 8)
+                .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            let block_x = bx * 4;
+            let block_y = by * 4;
+
+            let full_block = u64::from(block_x) + 4 <= u64::from(width)
+                && u64::from(block_y) + 4 <= u64::from(height);
+
+            if simd_available && full_block {
+                let dst_base = (u64::from(block_y) * u64::from(width) + u64::from(block_x)) * 4;
+                let dst_base: usize = dst_base
+                    .try_into()
+                    .expect("pixel index should fit in usize for allocated output");
+
+                unsafe {
+                    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                    simd_wasm::decompress_bc1_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                    simd_x86::decompress_bc1_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                }
+            } else {
+                decompress_bc1_block(block, block_x, block_y, width, height, out);
+            }
+        }
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    {
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 8;
+            let Some(block) = bc1_data
+                .get(start..start + 8)
+                .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            decompress_bc1_block(block, bx * 4, by * 4, width, height, out);
+        }
     }
 }
 
@@ -293,6 +632,9 @@ pub fn decompress_bc3_rgba8_into(width: u32, height: u32, bc3_data: &[u8], out: 
         return;
     }
     let out = &mut out[..out_len];
+    if out.is_empty() {
+        return;
+    }
 
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
@@ -304,18 +646,86 @@ pub fn decompress_bc3_rgba8_into(width: u32, height: u32, bc3_data: &[u8], out: 
     let available_blocks = bc3_data.len() / 16;
     let blocks_to_process = expected_blocks.min(available_blocks);
 
-    for block_index in 0..blocks_to_process {
-        let start = block_index * 16;
-        let Some(block) = bc3_data
-            .get(start..start + 16)
-            .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
-        else {
-            break;
+    #[cfg(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))]
+    {
+        let dst_stride = (width as usize) * 4;
+        let simd_available = {
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                true
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                std::arch::is_x86_feature_detected!("ssse3")
+            }
         };
 
-        let bx = (block_index % blocks_w as usize) as u32;
-        let by = (block_index / blocks_w as usize) as u32;
-        decompress_bc3_block(block, bx * 4, by * 4, width, height, out);
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 16;
+            let Some(block) = bc3_data
+                .get(start..start + 16)
+                .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            let block_x = bx * 4;
+            let block_y = by * 4;
+
+            let full_block = u64::from(block_x) + 4 <= u64::from(width)
+                && u64::from(block_y) + 4 <= u64::from(height);
+
+            if simd_available && full_block {
+                let dst_base = (u64::from(block_y) * u64::from(width) + u64::from(block_x)) * 4;
+                let dst_base: usize = dst_base
+                    .try_into()
+                    .expect("pixel index should fit in usize for allocated output");
+
+                unsafe {
+                    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                    simd_wasm::decompress_bc3_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                    simd_x86::decompress_bc3_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                }
+            } else {
+                decompress_bc3_block(block, block_x, block_y, width, height, out);
+            }
+        }
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    {
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 16;
+            let Some(block) = bc3_data
+                .get(start..start + 16)
+                .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            decompress_bc3_block(block, bx * 4, by * 4, width, height, out);
+        }
     }
 }
 
@@ -448,6 +858,9 @@ pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8>
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    use proptest::prelude::*;
+
     #[test]
     fn bc1_known_vector_four_color_mode() {
         // color0=0xffff (white), color1=0x0000 (black), indices:
@@ -573,5 +986,266 @@ mod tests {
         // output buffer on obviously-invalid dimensions.
         let rgba = decompress_bc7_rgba8(u32::MAX, u32::MAX, &[]);
         assert!(rgba.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn decompress_bc1_rgba8_scalar(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8> {
+        let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+            return Vec::new();
+        };
+        let mut out = vec![0u8; out_len];
+        if out.is_empty() {
+            return out;
+        }
+
+        let blocks_w = width.div_ceil(4);
+        if blocks_w == 0 {
+            return out;
+        }
+
+        let expected_bytes = checked_expected_bc_bytes(width, height, 8);
+        let expected_blocks = expected_bytes.map(|b| b / 8).unwrap_or(0);
+        let available_blocks = bc1_data.len() / 8;
+        let blocks_to_process = expected_blocks.min(available_blocks);
+
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 8;
+            let Some(block) = bc1_data
+                .get(start..start + 8)
+                .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            decompress_bc1_block(block, bx * 4, by * 4, width, height, &mut out);
+        }
+
+        out
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
+    fn decompress_bc1_rgba8_simd(width: u32, height: u32, bc1_data: &[u8]) -> Option<Vec<u8>> {
+        if !std::arch::is_x86_feature_detected!("ssse3") {
+            return None;
+        }
+
+        let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+            return Some(Vec::new());
+        };
+        let mut out = vec![0u8; out_len];
+        if out.is_empty() {
+            return Some(out);
+        }
+
+        let blocks_w = width.div_ceil(4);
+        if blocks_w == 0 {
+            return Some(out);
+        }
+
+        let expected_bytes = checked_expected_bc_bytes(width, height, 8);
+        let expected_blocks = expected_bytes.map(|b| b / 8).unwrap_or(0);
+        let available_blocks = bc1_data.len() / 8;
+        let blocks_to_process = expected_blocks.min(available_blocks);
+
+        let dst_stride = (width as usize) * 4;
+
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 8;
+            let Some(block) = bc1_data
+                .get(start..start + 8)
+                .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            let block_x = bx * 4;
+            let block_y = by * 4;
+
+            let full_block = u64::from(block_x) + 4 <= u64::from(width)
+                && u64::from(block_y) + 4 <= u64::from(height);
+            if full_block {
+                let dst_base = (u64::from(block_y) * u64::from(width) + u64::from(block_x)) * 4;
+                let dst_base: usize = dst_base
+                    .try_into()
+                    .expect("pixel index should fit in usize for allocated output");
+
+                unsafe {
+                    simd_x86::decompress_bc1_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                }
+            } else {
+                decompress_bc1_block(block, block_x, block_y, width, height, &mut out);
+            }
+        }
+
+        Some(out)
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(any(target_arch = "x86", target_arch = "x86_64"))
+    ))]
+    fn decompress_bc1_rgba8_simd(_width: u32, _height: u32, _bc1_data: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn decompress_bc3_rgba8_scalar(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8> {
+        let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+            return Vec::new();
+        };
+        let mut out = vec![0u8; out_len];
+        if out.is_empty() {
+            return out;
+        }
+
+        let blocks_w = width.div_ceil(4);
+        if blocks_w == 0 {
+            return out;
+        }
+
+        let expected_bytes = checked_expected_bc_bytes(width, height, 16);
+        let expected_blocks = expected_bytes.map(|b| b / 16).unwrap_or(0);
+        let available_blocks = bc3_data.len() / 16;
+        let blocks_to_process = expected_blocks.min(available_blocks);
+
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 16;
+            let Some(block) = bc3_data
+                .get(start..start + 16)
+                .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            decompress_bc3_block(block, bx * 4, by * 4, width, height, &mut out);
+        }
+
+        out
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
+    fn decompress_bc3_rgba8_simd(width: u32, height: u32, bc3_data: &[u8]) -> Option<Vec<u8>> {
+        if !std::arch::is_x86_feature_detected!("ssse3") {
+            return None;
+        }
+
+        let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+            return Some(Vec::new());
+        };
+        let mut out = vec![0u8; out_len];
+        if out.is_empty() {
+            return Some(out);
+        }
+
+        let blocks_w = width.div_ceil(4);
+        if blocks_w == 0 {
+            return Some(out);
+        }
+
+        let expected_bytes = checked_expected_bc_bytes(width, height, 16);
+        let expected_blocks = expected_bytes.map(|b| b / 16).unwrap_or(0);
+        let available_blocks = bc3_data.len() / 16;
+        let blocks_to_process = expected_blocks.min(available_blocks);
+
+        let dst_stride = (width as usize) * 4;
+
+        for block_index in 0..blocks_to_process {
+            let start = block_index * 16;
+            let Some(block) = bc3_data
+                .get(start..start + 16)
+                .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+            else {
+                break;
+            };
+
+            let bx = (block_index % blocks_w as usize) as u32;
+            let by = (block_index / blocks_w as usize) as u32;
+            let block_x = bx * 4;
+            let block_y = by * 4;
+
+            let full_block = u64::from(block_x) + 4 <= u64::from(width)
+                && u64::from(block_y) + 4 <= u64::from(height);
+            if full_block {
+                let dst_base = (u64::from(block_y) * u64::from(width) + u64::from(block_x)) * 4;
+                let dst_base: usize = dst_base
+                    .try_into()
+                    .expect("pixel index should fit in usize for allocated output");
+
+                unsafe {
+                    simd_x86::decompress_bc3_block_full(
+                        block,
+                        out.as_mut_ptr().add(dst_base),
+                        dst_stride,
+                    );
+                }
+            } else {
+                decompress_bc3_block(block, block_x, block_y, width, height, &mut out);
+            }
+        }
+
+        Some(out)
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(any(target_arch = "x86", target_arch = "x86_64"))
+    ))]
+    fn decompress_bc3_rgba8_simd(_width: u32, _height: u32, _bc3_data: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    proptest! {
+        #[test]
+        fn bc1_simd_matches_scalar(
+            case in (0u32..=16, 0u32..=16).prop_flat_map(|(w, h)| {
+                let expected = checked_expected_bc_bytes(w, h, 8).unwrap_or(0);
+                let max_len = expected.saturating_add(16);
+                (Just((w, h)), proptest::collection::vec(any::<u8>(), 0..=max_len))
+            })
+        ) {
+            let ((w, h), data) = case;
+            let scalar = decompress_bc1_rgba8_scalar(w, h, &data);
+
+            if let Some(simd) = decompress_bc1_rgba8_simd(w, h, &data) {
+                prop_assert_eq!(simd, scalar);
+            } else {
+                prop_assert_eq!(decompress_bc1_rgba8(w, h, &data), scalar);
+            }
+        }
+
+        #[test]
+        fn bc3_simd_matches_scalar(
+            case in (0u32..=16, 0u32..=16).prop_flat_map(|(w, h)| {
+                let expected = checked_expected_bc_bytes(w, h, 16).unwrap_or(0);
+                let max_len = expected.saturating_add(16);
+                (Just((w, h)), proptest::collection::vec(any::<u8>(), 0..=max_len))
+            })
+        ) {
+            let ((w, h), data) = case;
+            let scalar = decompress_bc3_rgba8_scalar(w, h, &data);
+
+            if let Some(simd) = decompress_bc3_rgba8_simd(w, h, &data) {
+                prop_assert_eq!(simd, scalar);
+            } else {
+                prop_assert_eq!(decompress_bc3_rgba8(w, h, &data), scalar);
+            }
+        }
     }
 }

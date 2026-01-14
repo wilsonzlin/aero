@@ -301,6 +301,7 @@ dependencies = [
  "naga 0.20.0",
  "pollster",
  "pretty_assertions",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

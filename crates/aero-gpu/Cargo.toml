@@ -47,6 +47,7 @@ js-sys = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
 aero-gpu-trace = { path = "../aero-gpu-trace" }
+proptest = "1.5"
 
 [dev-dependencies]
 aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
