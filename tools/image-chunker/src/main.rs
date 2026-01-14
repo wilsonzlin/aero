@@ -3353,6 +3353,47 @@ mod tests {
     }
 
     #[test]
+    fn chunk_object_key_with_width_formats_with_padding() -> Result<()> {
+        assert_eq!(chunk_object_key_with_width(0, 1)?, "chunks/0.bin");
+        assert_eq!(chunk_object_key_with_width(0, 4)?, "chunks/0000.bin");
+        assert_eq!(chunk_object_key_with_width(42, 4)?, "chunks/0042.bin");
+        Ok(())
+    }
+
+    #[test]
+    fn chunk_object_key_with_width_rejects_zero_width() {
+        let err = chunk_object_key_with_width(0, 0).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("width must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn chunk_object_key_with_width_rejects_index_out_of_range() {
+        let err = chunk_object_key_with_width(MAX_CHUNKS, 8).expect_err("expected failure");
+        assert!(
+            err.to_string().contains("exceeds max supported index"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn chunk_size_at_index_returns_zero_when_offset_is_past_end() -> Result<()> {
+        assert_eq!(chunk_size_at_index(8, 4, 2)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn chunk_size_at_index_rejects_offset_overflow() {
+        let err = chunk_size_at_index(16, u64::MAX, 2).expect_err("expected overflow error");
+        assert!(
+            err.to_string().contains("offset overflows"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn infer_image_id_and_version_from_prefix() {
         assert_eq!(
             infer_image_id_and_version("images/win7/sha256-abc/"),
