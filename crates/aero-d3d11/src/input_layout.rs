@@ -653,7 +653,7 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             size_bytes: 4,
             align_bytes: 4,
             component_type: DxgiFormatComponentType::U16,
-            component_count: 2,
+            component_count: 1,
         },
         _ => return Err(InputLayoutError::UnsupportedDxgiFormat(dxgi_format)),
     })
