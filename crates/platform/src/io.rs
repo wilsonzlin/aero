@@ -23,11 +23,20 @@ impl RangeDevice {
     }
 }
 
+/// I/O port dispatch bus.
+///
+/// Exact-port handlers are stored in a fixed-size 64Ki table (indexed by `u16`) for O(1)
+/// dispatch. This avoids `HashMap` overhead in tight port I/O loops.
+///
+/// For a micro-benchmark harness, see `crates/platform/examples/io_port_bus_bench.rs`.
 pub struct IoPortBus {
     /// Exact port dispatch table.
     ///
     /// This is an intentionally fixed-size table (one entry per 16-bit I/O port) to keep port
     /// dispatch O(1) and avoid hashing overhead on the extremely hot port I/O path.
+    ///
+    /// (Memory note: `Option<Box<dyn PortIoDevice>>` is a fat pointer, so this is ~1MiB on
+    /// 64-bit targets; allocated once per bus.)
     devices: Box<[Option<Box<dyn PortIoDevice>>]>,
     ranges: Vec<RangeDevice>,
 }
