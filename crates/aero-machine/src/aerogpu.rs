@@ -1319,9 +1319,9 @@ impl AeroGpuMmioDevice {
         self.next_vblank_ns = snap.next_vblank_ns;
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
-        // Defensive: `SCANOUT0_ENABLE=0` releases WDDM ownership. If a snapshot/restore mismatch
-        // produces `enable=0` with `wddm_scanout_active=1`, prefer the enable bit and allow falling
-        // back to legacy presentation.
+        // Defensive (snapshot restore): if scanout is disabled (`enable=0`), clear the host-side
+        // WDDM ownership latch. This avoids restoring into a state where legacy output is
+        // suppressed even though scanout is disabled.
         if !self.scanout0_enable {
             self.wddm_scanout_active = false;
         }
@@ -2532,8 +2532,8 @@ mod tests {
     fn restore_snapshot_clears_wddm_scanout_active_when_scanout_is_disabled() {
         let mut snap = AeroGpuMmioDevice::default().snapshot_v1();
 
-        // Simulate an inconsistent snapshot/restore state where the host-side WDDM ownership latch
-        // is set but the guest-visible enable bit is cleared.
+        // Snapshot/restore should not resurrect a WDDM ownership latch when scanout itself is
+        // disabled.
         snap.scanout0_enable = 0;
         snap.wddm_scanout_active = true;
         snap.next_vblank_ns = Some(123);
@@ -2545,7 +2545,7 @@ mod tests {
         assert!(!dev.scanout0_enable);
         assert!(
             !dev.wddm_scanout_active,
-            "disable should release WDDM scanout ownership on restore"
+            "restoring with scanout disabled should clear WDDM scanout ownership"
         );
         assert!(
             dev.next_vblank_ns.is_none(),
@@ -2624,7 +2624,7 @@ mod tests {
         assert!(!dev.scanout0_enable);
         assert!(
             !dev.wddm_scanout_active,
-            "disable should release WDDM scanout ownership on load_state"
+            "load_state with scanout disabled should clear WDDM scanout ownership"
         );
         assert!(
             dev.next_vblank_ns.is_none(),
@@ -3728,9 +3728,9 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.vblank_interval_ns = vblank_interval_ns;
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
-        // Defensive: `SCANOUT0_ENABLE=0` releases WDDM ownership. If a snapshot/restore mismatch
-        // produces `enable=0` with `wddm_scanout_active=1`, prefer the enable bit and allow falling
-        // back to legacy presentation.
+        // Defensive (load_state): if scanout is disabled (`enable=0`), clear the host-side WDDM
+        // ownership latch. This avoids restoring into a state where legacy output is suppressed
+        // even though scanout is disabled.
         if !self.scanout0_enable {
             self.wddm_scanout_active = false;
         }
