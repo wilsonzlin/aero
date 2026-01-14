@@ -25,6 +25,11 @@ const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024;
 /// validation work. We keep a smaller cap here to maintain fuzz throughput.
 const MAX_RAW_DXBC_SIZE_BYTES: usize = 256 * 1024;
 
+/// `DxbcFile::parse` validates every chunk offset in an O(chunk_count) loop. Keep raw DXBC inputs
+/// bounded by refusing containers that declare an absurd number of chunks (even if the blob fits
+/// within `MAX_RAW_DXBC_SIZE_BYTES`).
+const MAX_DXBC_CHUNKS: u32 = 1024;
+
 /// Cap the shader chunk payload size before calling `Sm4Program::parse_from_dxbc` to avoid
 /// allocating huge `Vec<u32>` token buffers.
 const MAX_SHADER_CHUNK_BYTES: usize = 256 * 1024;
@@ -41,6 +46,11 @@ const MAX_SYNTH_INSTRUCTIONS: usize = 128;
 /// Cap the number of synthetic signature parameters we generate (keeps signature chunk parsing
 /// + WGSL struct generation bounded).
 const MAX_SYNTH_SIGNATURE_PARAMS: usize = 16;
+
+/// Cap signature chunk parsing in the raw DXBC path so hostile blobs can't trigger large
+/// allocations in signature parsing and interface struct generation.
+const MAX_SIGNATURE_CHUNK_BYTES: usize = 16 * 1024;
+const MAX_SIGNATURE_ENTRIES: usize = 256;
 
 /// Cap IR sizes before attempting WGSL generation to avoid pathological string allocations.
 const MAX_TRANSLATE_DECLS: usize = 4 * 1024;
@@ -573,7 +583,37 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     build_dxbc_container(chunks)
 }
 
+fn is_signature_fourcc(fourcc: FourCC) -> bool {
+    matches!(
+        fourcc.0,
+        *b"ISGN" | *b"ISG1" | *b"OSGN" | *b"OSG1" | *b"PSGN" | *b"PSG1" | *b"PCSG" | *b"PCG1"
+    )
+}
+
+fn signature_param_count(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+}
+
+fn should_parse_signature_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_SIGNATURE_CHUNK_BYTES {
+        return false;
+    }
+    signature_param_count(bytes).unwrap_or(0) <= MAX_SIGNATURE_ENTRIES
+}
+
 fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
+    // `DxbcFile::parse` validates every chunk offset in a loop; pre-filter absurd `chunk_count`
+    // values once the DXBC magic is present so a valid header can't force pathological parse time.
+    if bytes.len() >= 32 && &bytes[..4] == b"DXBC" {
+        let chunk_count = u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
+        if chunk_count > MAX_DXBC_CHUNKS {
+            return;
+        }
+    }
+
     let Ok(dxbc) = DxbcFile::parse(bytes) else {
         return;
     };
@@ -617,7 +657,17 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
         return;
     }
 
-    let signatures = aero_d3d11::parse_signatures(&dxbc).unwrap_or_default();
+    // `parse_signatures` walks all signature chunks and can allocate per-entry strings; only call it
+    // when the container's signature chunks are within conservative caps.
+    let chunk_count = dxbc.header().chunk_count as usize;
+    let safe_for_signatures = dxbc.chunks().take(chunk_count).all(|chunk| {
+        !is_signature_fourcc(chunk.fourcc) || should_parse_signature_chunk(chunk.data)
+    });
+    let signatures = if safe_for_signatures {
+        aero_d3d11::parse_signatures(&dxbc).unwrap_or_default()
+    } else {
+        Default::default()
+    };
     let _ = aero_d3d11::translate_sm4_module_to_wgsl(&dxbc, &module, &signatures);
 }
 
