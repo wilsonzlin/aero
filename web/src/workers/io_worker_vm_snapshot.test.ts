@@ -554,6 +554,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   });
 
   it("restores legacy gpu.vram blobs into vramU8 when vramU8 is provided (backwards compatibility)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
     const makeVramChunk = (data: Uint8Array, chunkIndex = 0, totalLenOverride?: number): Uint8Array => {
       const headerBytes = 24;
       const out = new Uint8Array(headerBytes + data.byteLength);
@@ -629,6 +631,9 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(Array.from(vramU8)).toEqual(Array.from(data));
     expect(res.devices).toBeUndefined();
     expect(res.restoredDevices).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("restores gpu.vram chunks best-effort when chunks are out-of-order/partial (holes remain zero)", async () => {
