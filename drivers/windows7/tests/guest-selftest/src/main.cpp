@@ -1529,9 +1529,52 @@ struct VirtioSndPciDevice {
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
 static const GUID kKsCategoryTopology = {0xdda54a40,
-                                          0x1e4c,
-                                          0x11d1,
-                                          {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
+                                           0x1e4c,
+                                           0x11d1,
+                                           {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
+
+// Custom virtio-snd property set (driver diagnostics).
+// Must match `drivers/windows7/virtio-snd/src/topology.c`.
+static const GUID kKsPropSetAeroVirtioSnd = {
+    0x3c0f8a06, 0x4f4b, 0x4c49, {0x9d, 0x1a, 0x8f, 0xbe, 0x0b, 0x9e, 0x4b, 0x7a}};
+static constexpr ULONG kKsPropAeroVirtioSndEventqStats = 0x00000001u;
+
+// Minimal KS property IOCTL definitions (some Win7 SDK-only toolchains omit ks.h).
+#ifndef FILE_DEVICE_KS
+#define FILE_DEVICE_KS 0x0000002F
+#endif
+#ifndef IOCTL_KS_PROPERTY
+#define IOCTL_KS_PROPERTY CTL_CODE(FILE_DEVICE_KS, 0x000, METHOD_NEITHER, FILE_ANY_ACCESS)
+#endif
+#ifndef KSPROPERTY_TYPE_GET
+#define KSPROPERTY_TYPE_GET 0x00000001u
+#endif
+
+#ifndef _KSPROPERTY_DEFINED
+#define _KSPROPERTY_DEFINED
+struct KSPROPERTY {
+  GUID Set;
+  ULONG Id;
+  ULONG Flags;
+};
+#endif
+
+#pragma pack(push, 1)
+struct AEROVIRTIO_SND_EVENTQ_STATS {
+  ULONG Size;
+  LONG Completions;
+  LONG Parsed;
+  LONG ShortBuffers;
+  LONG UnknownType;
+  LONG JackConnected;
+  LONG JackDisconnected;
+  LONG PcmPeriodElapsed;
+  LONG PcmXrun;
+  LONG CtlNotify;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(AEROVIRTIO_SND_EVENTQ_STATS) == 40, "AEROVIRTIO_SND_EVENTQ_STATS layout");
 
 static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bool allow_transitional,
                                                                  bool verbose = true) {
@@ -1720,6 +1763,93 @@ static bool HasDeviceInterfaceForInstance(Logger& log, const GUID& iface_guid,
 
   SetupDiDestroyDeviceInfoList(devinfo);
   return found;
+}
+
+static std::optional<std::wstring> GetDeviceInterfacePathForInstance(
+    Logger& log, const GUID& iface_guid, const std::wstring& target_instance_id,
+    const char* iface_name_for_log) {
+  HDEVINFO devinfo =
+      SetupDiGetClassDevsW(&iface_guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-snd: SetupDiGetClassDevs(%s) failed: %lu", iface_name_for_log, GetLastError());
+    return std::nullopt;
+  }
+
+  std::optional<std::wstring> found;
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVICE_INTERFACE_DATA iface{};
+    iface.cbSize = sizeof(iface);
+    if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &iface_guid, idx, &iface)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    DWORD detail_size = 0;
+    SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, nullptr, 0, &detail_size, nullptr);
+    if (detail_size == 0) continue;
+
+    std::vector<BYTE> detail_buf(detail_size);
+    auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detail_buf.data());
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+    if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, detail_size, nullptr, &dev)) {
+      continue;
+    }
+
+    const auto inst_id = GetDeviceInstanceIdString(devinfo, &dev);
+    if (!inst_id) continue;
+    if (!EqualsInsensitive(*inst_id, target_instance_id)) continue;
+
+    found = std::wstring(detail->DevicePath);
+    break;
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+
+  if (found) {
+    log.Logf("virtio-snd: using %s interface path=%s", iface_name_for_log,
+             WideToUtf8(*found).c_str());
+  }
+  return found;
+}
+
+static std::optional<AEROVIRTIO_SND_EVENTQ_STATS> QueryVirtioSndEventqStats(Logger& log,
+                                                                            const std::wstring& topology_path) {
+  if (topology_path.empty()) return std::nullopt;
+
+  HANDLE h = CreateFileW(topology_path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-snd-eventq: CreateFile(topology) failed: %lu", GetLastError());
+    return std::nullopt;
+  }
+
+  KSPROPERTY prop{};
+  prop.Set = kKsPropSetAeroVirtioSnd;
+  prop.Id = kKsPropAeroVirtioSndEventqStats;
+  prop.Flags = KSPROPERTY_TYPE_GET;
+
+  AEROVIRTIO_SND_EVENTQ_STATS out{};
+  DWORD bytes = 0;
+  const BOOL ok =
+      DeviceIoControl(h, IOCTL_KS_PROPERTY, &prop, sizeof(prop), &out, sizeof(out), &bytes, nullptr);
+  const DWORD err = ok ? 0 : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    log.Logf("virtio-snd-eventq: IOCTL_KS_PROPERTY failed: %lu", err);
+    return std::nullopt;
+  }
+
+  if (bytes < sizeof(out) || out.Size != sizeof(out)) {
+    log.Logf("virtio-snd-eventq: unexpected stats size bytes=%lu reported_size=%lu expected=%lu",
+             static_cast<unsigned long>(bytes), static_cast<unsigned long>(out.Size),
+             static_cast<unsigned long>(sizeof(out)));
+  }
+
+  return out;
 }
 
 static bool VirtioSndHasTopologyInterface(Logger& log, const std::vector<VirtioSndPciDevice>& devices) {
@@ -8290,6 +8420,34 @@ int wmain(int argc, wchar_t** argv) {
           }
         }
       }
+    }
+  }
+
+  // Best-effort virtio-snd eventq diagnostics:
+  // Query the topology miniport for eventq counters and emit a stable marker so
+  // host harnesses can observe whether a device model emitted events.
+  if (opt.disable_snd) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|disabled");
+  } else if (snd_pci.empty()) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|device_missing");
+  } else {
+    std::optional<std::wstring> topo_path;
+    for (const auto& dev : snd_pci) {
+      if (dev.instance_id.empty()) continue;
+      topo_path =
+          GetDeviceInterfacePathForInstance(log, kKsCategoryTopology, dev.instance_id, "KSCATEGORY_TOPOLOGY");
+      if (topo_path) break;
+    }
+
+    if (!topo_path) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|topology_interface_missing");
+    } else if (auto stats = QueryVirtioSndEventqStats(log, *topo_path)) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=%ld|parsed=%ld|short=%ld|unknown=%ld|jack_connected=%ld|jack_disconnected=%ld|pcm_period=%ld|xrun=%ld|ctl_notify=%ld",
+          stats->Completions, stats->Parsed, stats->ShortBuffers, stats->UnknownType, stats->JackConnected,
+          stats->JackDisconnected, stats->PcmPeriodElapsed, stats->PcmXrun, stats->CtlNotify);
+    } else {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|query_failed");
     }
   }
 

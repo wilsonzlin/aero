@@ -20,6 +20,34 @@
 #define KSAUDIO_SPEAKER_MONO SPEAKER_FRONT_CENTER
 #endif
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+/*
+ * Custom property set for driver diagnostics.
+ *
+ * This is intentionally a tiny, stable contract used by the guest selftest to
+ * query eventq counters at runtime (without requiring kernel debugging).
+ */
+static const GUID KSPROPSETID_AERO_VIRTIO_SND = {
+    0x3c0f8a06, 0x4f4b, 0x4c49, {0x9d, 0x1a, 0x8f, 0xbe, 0x0b, 0x9e, 0x4b, 0x7a}};
+
+#define KSPROPERTY_AERO_VIRTIO_SND_EVENTQ_STATS 0x00000001u
+
+typedef struct _AERO_VIRTIO_SND_EVENTQ_STATS {
+    ULONG Size; /* sizeof(AERO_VIRTIO_SND_EVENTQ_STATS) */
+    LONG Completions;
+    LONG Parsed;
+    LONG ShortBuffers;
+    LONG UnknownType;
+    LONG JackConnected;
+    LONG JackDisconnected;
+    LONG PcmPeriodElapsed;
+    LONG PcmXrun;
+    LONG CtlNotify;
+} AERO_VIRTIO_SND_EVENTQ_STATS, *PAERO_VIRTIO_SND_EVENTQ_STATS;
+
+C_ASSERT(sizeof(AERO_VIRTIO_SND_EVENTQ_STATS) == 40);
+#endif /* !defined(AERO_VIRTIO_SND_IOPORT_LEGACY) */
+
 /*
  * PortCls event verbs are defined by portcls.h, but older header environments may
  * omit them. Provide conservative fallbacks so the driver continues to build.
@@ -1061,6 +1089,68 @@ VirtIoSndEvent_JackInfoChangeMic(_In_ PPCEVENT_REQUEST EventRequest)
     return VirtIoSndEvent_JackInfoChangeCommon(EventRequest, VIRTIOSND_JACK_ID_MICROPHONE);
 }
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+static NTSTATUS
+VirtIoSndProperty_EventqStats(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    AERO_VIRTIO_SND_EVENTQ_STATS* out;
+
+    if (PropertyRequest == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
+    dx = (miniport != NULL) ? miniport->Dx : NULL;
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION* desc;
+        ULONG required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION*)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
+    if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(*out)) {
+        PropertyRequest->ValueSize = sizeof(*out);
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    out = (AERO_VIRTIO_SND_EVENTQ_STATS*)PropertyRequest->Value;
+    RtlZeroMemory(out, sizeof(*out));
+    out->Size = sizeof(*out);
+
+    if (dx != NULL && dx->Signature == VIRTIOSND_DX_SIGNATURE) {
+        out->Completions = InterlockedCompareExchange(&dx->EventqStats.Completions, 0, 0);
+        out->Parsed = InterlockedCompareExchange(&dx->EventqStats.Parsed, 0, 0);
+        out->ShortBuffers = InterlockedCompareExchange(&dx->EventqStats.ShortBuffers, 0, 0);
+        out->UnknownType = InterlockedCompareExchange(&dx->EventqStats.UnknownType, 0, 0);
+        out->JackConnected = InterlockedCompareExchange(&dx->EventqStats.JackConnected, 0, 0);
+        out->JackDisconnected = InterlockedCompareExchange(&dx->EventqStats.JackDisconnected, 0, 0);
+        out->PcmPeriodElapsed = InterlockedCompareExchange(&dx->EventqStats.PcmPeriodElapsed, 0, 0);
+        out->PcmXrun = InterlockedCompareExchange(&dx->EventqStats.PcmXrun, 0, 0);
+        out->CtlNotify = InterlockedCompareExchange(&dx->EventqStats.CtlNotify, 0, 0);
+    }
+
+    PropertyRequest->ValueSize = sizeof(*out);
+    return STATUS_SUCCESS;
+}
+#endif /* !defined(AERO_VIRTIO_SND_IOPORT_LEGACY) */
+
 static const PCPROPERTY_ITEM g_VirtIoSndTopoAudioProperties[] = {
     {KSPROPERTY_AUDIO_CHANNEL_CONFIG, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_ChannelConfig},
 };
@@ -1089,14 +1179,26 @@ static const PCPROPERTY_ITEM g_VirtIoSndTopoJackPropertiesMic[] = {
     {KSPROPERTY_JACK_CONTAINERID, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackContainerId},
 };
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+static const PCPROPERTY_ITEM g_VirtIoSndTopoAeroProperties[] = {
+    {KSPROPERTY_AERO_VIRTIO_SND_EVENTQ_STATS, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_EventqStats},
+};
+#endif
+
 static const PCPROPERTY_SET g_VirtIoSndTopoPropertySets[] = {
     {&KSPROPSETID_Audio, RTL_NUMBER_OF(g_VirtIoSndTopoAudioProperties), g_VirtIoSndTopoAudioProperties},
     {&KSPROPSETID_Jack, RTL_NUMBER_OF(g_VirtIoSndTopoJackProperties), g_VirtIoSndTopoJackProperties},
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    {&KSPROPSETID_AERO_VIRTIO_SND, RTL_NUMBER_OF(g_VirtIoSndTopoAeroProperties), g_VirtIoSndTopoAeroProperties},
+#endif
 };
 
 static const PCPROPERTY_SET g_VirtIoSndTopoPropertySetsMic[] = {
     {&KSPROPSETID_Audio, RTL_NUMBER_OF(g_VirtIoSndTopoAudioPropertiesMic), g_VirtIoSndTopoAudioPropertiesMic},
     {&KSPROPSETID_Jack, RTL_NUMBER_OF(g_VirtIoSndTopoJackPropertiesMic), g_VirtIoSndTopoJackPropertiesMic},
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    {&KSPROPSETID_AERO_VIRTIO_SND, RTL_NUMBER_OF(g_VirtIoSndTopoAeroProperties), g_VirtIoSndTopoAeroProperties},
+#endif
 };
 
 static const PCEVENT_ITEM g_VirtIoSndTopoJackEvents[] = {
