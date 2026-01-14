@@ -222,7 +222,10 @@ pub fn translate_d3d9_shader_to_wgsl(
         }
         Err(err) => {
             if !err.is_fallbackable() {
-                return Err(ShaderTranslateError::Malformed(err.to_string()));
+                if err.is_malformed() {
+                    return Err(ShaderTranslateError::Malformed(err.to_string()));
+                }
+                return Err(ShaderTranslateError::Translation(err.to_string()));
             }
 
             // Fallback to the legacy translator. Use the extracted token stream so malformed DXBC
@@ -351,6 +354,9 @@ impl Sm3TranslateFailure {
             // failures (these are treated as malformed to avoid using fallback as an escape hatch).
             Sm3TranslateFailure::Wgsl(e) => {
                 let msg = e.message.to_ascii_lowercase();
+                if msg.contains("unsupported sampler texture type") {
+                    return false;
+                }
                 // Be permissive in matching: we want to catch both "relative addressing" and
                 // phrases like "relative register addressing".
                 if msg.contains("relative") && msg.contains("address") {
@@ -359,6 +365,35 @@ impl Sm3TranslateFailure {
                 msg.contains("unsupported") || msg.contains("not supported")
             }
         }
+    }
+
+    fn is_malformed(&self) -> bool {
+        // Structural corruption should not trigger fallback. In practice this is caught at decode.
+        //
+        // Some feature gaps are treated as *malformed* rather than a generic translation failure
+        // because we do not want callers to fall back to the legacy translator as an escape hatch.
+        // Relative addressing is the main case today: it can be legal SM3, but our WGSL lowering
+        // cannot represent it safely/portably.
+        matches!(self, Sm3TranslateFailure::Decode(_))
+            // Verify errors indicate that the decoded shader produced invalid IR. This is treated
+            // as malformed input rather than a recoverable translation failure, and should never
+            // trigger legacy fallback.
+            || matches!(self, Sm3TranslateFailure::Verify(_))
+            || matches!(self, Sm3TranslateFailure::Build(e) if {
+                let msg = e.message.to_ascii_lowercase();
+                msg.contains("unsupported source modifier")
+                    || msg.contains("unknown result shift modifier")
+                    || msg.contains("unsupported register file")
+                    || msg.contains("unsupported encoding")
+                    || (msg.contains("relative") && msg.contains("address"))
+                    || msg.contains("missing ")
+            })
+            || matches!(self, Sm3TranslateFailure::Wgsl(e) if {
+                let msg = e.message.to_ascii_lowercase();
+                (msg.contains("relative") && msg.contains("address"))
+                    // Unknown `dcl_* s#` texture-type encodings are malformed input.
+                    || (msg.contains("unsupported sampler texture type") && msg.contains("unknown("))
+            })
     }
 }
 

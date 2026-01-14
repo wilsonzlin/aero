@@ -37,6 +37,13 @@ use crate::{
     pack_rgba8_to_b5g6r5_unorm, readback_depth32f, readback_rgba8, readback_stencil8,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+static HEADLESS_PRIMARY_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+#[cfg(not(target_arch = "wasm32"))]
+static HEADLESS_GL_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+#[cfg(not(target_arch = "wasm32"))]
+static HEADLESS_ALL_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+
 #[cfg(target_arch = "wasm32")]
 fn compute_wgpu_caps_hash(device: &wgpu::Device, downlevel_flags: wgpu::DownlevelFlags) -> String {
     // This hash is included in the persistent shader cache key to avoid reusing translation output
@@ -7778,8 +7785,6 @@ impl AerogpuD3d9Executor {
                     return Ok(());
                 };
 
-                self.ensure_clear_dummy_color_target(depth_width, depth_height);
-
                 let key = ClearDepthPipelineKey {
                     format: depth_format,
                     write_depth,
@@ -7797,22 +7802,6 @@ impl AerogpuD3d9Executor {
                     _ => return Err(AerogpuD3d9Error::UnknownResource(depth_handle)),
                 };
 
-                let dummy_color_view = self.clear_dummy_color_view(depth_width, depth_height);
-
-                let color_attachments = [Some(wgpu::RenderPassColorAttachment {
-                    view: dummy_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
-                        store: wgpu::StoreOp::Discard,
-                    },
-                })];
-
                 let depth_attachment = wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -7827,7 +7816,10 @@ impl AerogpuD3d9Executor {
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("aerogpu-d3d9.clear_scissor_depth"),
-                    color_attachments: &color_attachments,
+                    // Depth-only pass: avoid dummy color targets and avoid `@builtin(frag_depth)`
+                    // so this stays compatible across wgpu backends (some Vulkan software stacks
+                    // have been observed to crash when using frag_depth on Depth32Float).
+                    color_attachments: &[],
                     depth_stencil_attachment: Some(depth_attachment),
                     timestamp_writes: None,
                     occlusion_query_set: None,
@@ -7871,20 +7863,13 @@ impl AerogpuD3d9Executor {
                 layout: Some(&self.clear_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &self.clear_shader,
-                    entry_point: "vs",
+                    // Prefer setting the depth value via clip-space Z rather than `@builtin(frag_depth)`.
+                    // This avoids backend-specific frag_depth issues and enables depth-only pipelines.
+                    entry_point: "vs_depth",
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[],
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.clear_shader,
-                    entry_point: "fs_depth",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
+                fragment: None,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     ..Default::default()

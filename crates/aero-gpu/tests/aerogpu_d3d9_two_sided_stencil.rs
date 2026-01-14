@@ -175,9 +175,9 @@ fn create_executor_with_d24s8_support() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
 
     let backends = if cfg!(target_os = "linux") {
-        // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-        // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
-        wgpu::Backends::PRIMARY
+        // Prefer wgpu's GL backend on Linux CI for stability. Vulkan software adapters have been a
+        // recurring source of flakes/crashes in headless sandboxes.
+        wgpu::Backends::GL
     } else {
         wgpu::Backends::all()
     };

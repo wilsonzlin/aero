@@ -1157,8 +1157,11 @@ fn protocol_parses_all_opcodes() {
 fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     let stage_compute = AerogpuShaderStage::Compute as u32;
 
-    // Use non-zero values per opcode so copy/paste mistakes are caught (only a small set of
-    // stage_ex values exist, so some reuse is unavoidable).
+    // Use distinct non-zero values per opcode so copy/paste mistakes are caught.
+    //
+    // `AerogpuShaderStageEx` intentionally cannot represent Pixel/Vertex (those are already
+    // representable in the legacy stage enum, and `reserved0==0` is reserved for "no override").
+    // Use raw numeric values when we need additional distinct values.
     let stage_ex_create_shader = AerogpuShaderStageEx::Hull as u32;
     let stage_ex_set_texture = AerogpuShaderStageEx::Domain as u32;
     let stage_ex_set_samplers = AerogpuShaderStageEx::Geometry as u32;
@@ -1166,8 +1169,8 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     // (1, matching DXBC program type "Vertex") to ensure it is preserved verbatim.
     let stage_ex_set_constant_buffers = 1u32;
     let stage_ex_set_srv_buffers = AerogpuShaderStageEx::Compute as u32;
-    let stage_ex_set_uav_buffers = AerogpuShaderStageEx::Hull as u32;
-    let stage_ex_set_constants_f = AerogpuShaderStageEx::Domain as u32;
+    let stage_ex_set_uav_buffers = 6u32;
+    let stage_ex_set_constants_f = 7u32;
 
     let dxbc_bytes = [9u8, 8, 7, 6];
 

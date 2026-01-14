@@ -27,11 +27,11 @@ fn create_test_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
         }
     }
 
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
+    // Prefer wgpu's GL backend on Linux CI for stability. Vulkan software adapters have been a
+    // recurring source of flakes/crashes in headless sandboxes.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
+            wgpu::Backends::GL
         } else {
             wgpu::Backends::all()
         },

@@ -49,39 +49,45 @@ static EXECUTOR_WITH_BC: OnceLock<Mutex<Option<AerogpuD3d9Executor>>> = OnceLock
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
 
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
+    // Prefer wgpu's GL backend on Linux CI for stability. Vulkan software adapters have been a
+    // recurring source of flakes/crashes in headless sandboxes.
     //
     // These tests exercise the CPU decompression fallback path, so relying on native Vulkan
     // features is not required.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
+            wgpu::Backends::GL
         } else {
             wgpu::Backends::all()
         },
         ..Default::default()
     });
 
+    // Prefer non-fallback adapters first. Some Vulkan software adapters (e.g. lavapipe) have been
+    // observed to crash (SIGSEGV) under certain texture copy/readback workloads. When running in
+    // headless CI without a real GPU, it's better to skip these tests than to crash the entire
+    // suite.
     let adapter = match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: None,
-            force_fallback_adapter: true,
+            force_fallback_adapter: false,
         })
         .await
     {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
+        Some(adapter) => adapter,
+        None => instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await?,
+    };
+
+    if cfg!(target_os = "linux") && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+        return None;
+    }
 
     let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
