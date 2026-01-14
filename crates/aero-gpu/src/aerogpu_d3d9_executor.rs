@@ -485,12 +485,12 @@ impl PersistentShaderStage {
 #[cfg(target_arch = "wasm32")]
 fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
     // The D3D9 translator declares sampler bindings using stable names:
-    //   var tex{s}: texture_2d<f32> / texture_cube<f32>
+    //   var tex{s}: texture_{2d,cube,3d,1d}<f32>
     //   var samp{s}: sampler
     //
     // Persisted reflection includes sampler masks used by the executor to:
     // - flush textures before draw
-    // - select bind group layouts (2D vs Cube view_dimension)
+    // - select bind group layouts (view_dimension)
     //
     // When cached reflection is stale/corrupt, the masks can become inconsistent with the cached
     // WGSL. Derive masks from WGSL declarations for validation on persistent cache hits.
@@ -521,7 +521,6 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
         }
         let bit = 1u16 << idx;
         used |= bit;
-
         let dim_code = if line.contains("texture_cube<f32>") {
             1u32
         } else if line.contains("texture_3d<f32>") {
@@ -2881,9 +2880,9 @@ impl AerogpuD3d9Executor {
                     debug!(
                         shader_handle,
                         expected_used = reflection.used_samplers_mask,
-                        expected_sampler_dim_key = reflection.sampler_dim_key,
+                        expected_dim_key = reflection.sampler_dim_key,
                         derived_used = wgsl_used_samplers_mask,
-                        derived_sampler_dim_key = wgsl_sampler_dim_key,
+                        derived_dim_key = wgsl_sampler_dim_key,
                         "cached shader sampler mask metadata does not match WGSL; invalidating and retranslating"
                     );
                     if !invalidated_once {

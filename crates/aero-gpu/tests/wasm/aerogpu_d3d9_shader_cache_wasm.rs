@@ -725,9 +725,9 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_used_samplers_mask_m
 }
 
 #[wasm_bindgen_test(async)]
-async fn d3d9_executor_retranslates_on_persisted_reflection_cube_samplers_mask_mismatch() {
-    // Corrupting cubeSamplersMask can cause bind group layouts that don't match the cached WGSL
-    // (texture_cube vs texture_2d). The executor should detect this and invalidate+retry.
+async fn d3d9_executor_retranslates_on_persisted_reflection_sampler_dim_key_mismatch() {
+    // Corrupting samplerDimKey can cause bind group layouts that don't match the cached WGSL
+    // (e.g. texture_cube vs texture_2d). The executor should detect this and invalidate+retry.
     let (api, store) = make_persistent_cache_stub();
     let _guard = PersistentCacheApiGuard::install(&api, &store);
 
@@ -759,27 +759,27 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_cube_samplers_mask_m
 
     let reflection =
         Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
-    let cube_mask_before = Reflect::get(&reflection, &JsValue::from_str("cubeSamplersMask"))
+    let dim_key_before = Reflect::get(&reflection, &JsValue::from_str("samplerDimKey"))
         .ok()
         .and_then(|v| v.as_f64())
         .map(|v| v as u32)
         .unwrap_or(0);
     assert_eq!(
-        cube_mask_before, 1,
+        dim_key_before, 1,
         "expected shader to use cube sampler s0"
     );
 
-    // Corrupt cubeSamplersMask.
+    // Corrupt samplerDimKey.
     let reflection_obj: Object = reflection
         .clone()
         .dyn_into()
         .expect("cached.reflection should be an object");
     Reflect::set(
         &reflection_obj,
-        &JsValue::from_str("cubeSamplersMask"),
+        &JsValue::from_str("samplerDimKey"),
         &JsValue::from_f64(0.0),
     )
-    .expect("set reflection.cubeSamplersMask");
+    .expect("set reflection.samplerDimKey");
 
     exec.reset();
     exec.execute_cmd_stream_for_context_async(0, &stream)
@@ -799,14 +799,14 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_cube_samplers_mask_m
     let cached_after = map.get(&key);
     let reflection_after =
         Reflect::get(&cached_after, &JsValue::from_str("reflection")).expect("get reflection");
-    let cube_mask_after = Reflect::get(&reflection_after, &JsValue::from_str("cubeSamplersMask"))
+    let dim_key_after = Reflect::get(&reflection_after, &JsValue::from_str("samplerDimKey"))
         .ok()
         .and_then(|v| v.as_f64())
         .map(|v| v as u32)
         .unwrap_or(0);
     assert_eq!(
-        cube_mask_after, cube_mask_before,
-        "expected retranslation to restore cubeSamplersMask"
+        dim_key_after, dim_key_before,
+        "expected retranslation to restore samplerDimKey"
     );
 }
 
