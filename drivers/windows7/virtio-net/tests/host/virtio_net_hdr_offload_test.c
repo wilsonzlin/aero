@@ -110,6 +110,40 @@ static int test_ipv4_tcp_no_vlan(void) {
   return 0;
 }
 
+static int test_no_offload_builds_zero(void) {
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  /* Build-from-frame should not require a frame when no offload is requested. */
+  memset(&TxReq, 0, sizeof(TxReq));
+  memset(&Hdr, 0xAA, sizeof(Hdr));
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(NULL, 0, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, 0);
+  ASSERT_EQ_U8(Hdr.GsoType, 0);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.GsoSize, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 0);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 0);
+
+  /* Build-from-info should also produce all zeros when no offload is requested. */
+  memset(&Info, 0xCC, sizeof(Info));
+  memset(&TxReq, 0, sizeof(TxReq));
+  memset(&Hdr, 0xBB, sizeof(Hdr));
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, 0);
+  ASSERT_EQ_U8(Hdr.GsoType, 0);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.GsoSize, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 0);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 0);
+
+  return 0;
+}
+
 static int test_ipv4_udp_no_vlan(void) {
   static const uint8_t Frame[] = {
       /* dst/src */
@@ -643,6 +677,7 @@ int main(void) {
 
   rc = 0;
   rc |= test_ipv4_tcp_no_vlan();
+  rc |= test_no_offload_builds_zero();
   rc |= test_ipv4_udp_no_vlan();
   rc |= test_ipv6_tcp_no_vlan();
   rc |= test_ipv6_hopbyhop_tcp();
