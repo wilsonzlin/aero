@@ -2699,27 +2699,33 @@ async function withPatchedMemoryImport<T>(
     // Node/Vitest execute these `.ts` sources directly with stripped types.
     // Keep the runtime behavior correct while sidestepping TypeScript overload
     // assignability issues across TS versions.
-    const instantiatePatched = (module: any, imports?: any) => {
+    const originalInstantiateUntyped = originalInstantiate as unknown as (module: unknown, imports?: unknown) => unknown;
+    const instantiatePatched = (module: unknown, imports?: unknown) => {
         const patchedImports = imports ?? {};
         patchWasmImportsWithMemory(patchedImports, memory);
-        return originalInstantiate(module as any, patchedImports as any);
+        return originalInstantiateUntyped(module, patchedImports);
     };
 
-    (WebAssembly as any).instantiate = instantiatePatched;
+    const wasm = WebAssembly as unknown as { instantiate: unknown; instantiateStreaming?: unknown };
+    wasm.instantiate = instantiatePatched;
     if (hasInstantiateStreaming) {
-        const instantiateStreamingPatched = (source: any, imports?: any) => {
+        const originalInstantiateStreamingUntyped = originalInstantiateStreaming as unknown as (
+            source: unknown,
+            imports?: unknown,
+        ) => unknown;
+        const instantiateStreamingPatched = (source: unknown, imports?: unknown) => {
             const patchedImports = imports ?? {};
             patchWasmImportsWithMemory(patchedImports, memory);
-            return originalInstantiateStreaming!(source as any, patchedImports as any);
+            return originalInstantiateStreamingUntyped(source, patchedImports);
         };
-        (WebAssembly as any).instantiateStreaming = instantiateStreamingPatched;
+        wasm.instantiateStreaming = instantiateStreamingPatched;
     }
     try {
         return await fn();
     } finally {
-        (WebAssembly as any).instantiate = originalInstantiate;
+        wasm.instantiate = originalInstantiate;
         if (hasInstantiateStreaming) {
-            (WebAssembly as any).instantiateStreaming = originalInstantiateStreaming;
+            wasm.instantiateStreaming = originalInstantiateStreaming;
         }
     }
 }
