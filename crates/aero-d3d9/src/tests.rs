@@ -7586,11 +7586,7 @@ fn translate_entrypoint_supports_used_1d_sampler() {
         "wgsl:\n{}",
         translated.wgsl
     );
-    assert!(
-        translated.wgsl.contains(".x"),
-        "wgsl:\n{}",
-        translated.wgsl
-    );
+    assert!(translated.wgsl.contains(".x"), "wgsl:\n{}", translated.wgsl);
 }
 
 #[test]

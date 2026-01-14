@@ -634,7 +634,11 @@ mod tests {
 
         let dev = dev.borrow();
         let msi = dev.config.capability::<MsiCapability>().unwrap();
-        assert_eq!(msi.mask_bits() & 1, 0, "mask bits should sync from canonical config");
+        assert_eq!(
+            msi.mask_bits() & 1,
+            0,
+            "mask bits should sync from canonical config"
+        );
         assert_eq!(
             msi.pending_bits() & 1,
             1,

@@ -13,10 +13,22 @@ fn vga_transitional_stub_profile_matches_aero_gpu_vga_constants() {
     // VGA/VBE device model crate (`aero_gpu_vga`).
     assert_eq!(profile::VGA_TRANSITIONAL_STUB.vendor_id, VGA_PCI_VENDOR_ID);
     assert_eq!(profile::VGA_TRANSITIONAL_STUB.device_id, VGA_PCI_DEVICE_ID);
-    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.base_class, VGA_PCI_CLASS_CODE);
-    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.sub_class, VGA_PCI_SUBCLASS);
-    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.prog_if, VGA_PCI_PROG_IF);
-    assert_eq!(profile::VGA_TRANSITIONAL_STUB_BAR0_SIZE, DEFAULT_VRAM_SIZE as u64);
+    assert_eq!(
+        profile::VGA_TRANSITIONAL_STUB.class.base_class,
+        VGA_PCI_CLASS_CODE
+    );
+    assert_eq!(
+        profile::VGA_TRANSITIONAL_STUB.class.sub_class,
+        VGA_PCI_SUBCLASS
+    );
+    assert_eq!(
+        profile::VGA_TRANSITIONAL_STUB.class.prog_if,
+        VGA_PCI_PROG_IF
+    );
+    assert_eq!(
+        profile::VGA_TRANSITIONAL_STUB_BAR0_SIZE,
+        DEFAULT_VRAM_SIZE as u64
+    );
 }
 
 #[test]
@@ -79,14 +91,8 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
 
     if vga_vendor != 0xFFFF {
         let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
-        assert_eq!(
-            vga_vendor,
-            profile::VGA_TRANSITIONAL_STUB.vendor_id
-        );
-        assert_eq!(
-            vga_device,
-            profile::VGA_TRANSITIONAL_STUB.device_id
-        );
+        assert_eq!(vga_vendor, profile::VGA_TRANSITIONAL_STUB.vendor_id);
+        assert_eq!(vga_device, profile::VGA_TRANSITIONAL_STUB.device_id);
     }
 }
 

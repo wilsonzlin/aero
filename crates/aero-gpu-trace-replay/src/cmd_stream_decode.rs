@@ -610,24 +610,15 @@ fn decode_known_fields(
             let blend_op = read_u32_le(pkt.payload, 12).unwrap();
 
             out.insert("enable".into(), json!(enable));
-            out.insert(
-                "src_factor".into(),
-                json!(src_factor),
-            );
+            out.insert("src_factor".into(), json!(src_factor));
             if let Some(name) = decode_blend_factor_name(src_factor) {
                 out.insert("src_factor_name".into(), Value::String(name));
             }
-            out.insert(
-                "dst_factor".into(),
-                json!(dst_factor),
-            );
+            out.insert("dst_factor".into(), json!(dst_factor));
             if let Some(name) = decode_blend_factor_name(dst_factor) {
                 out.insert("dst_factor_name".into(), Value::String(name));
             }
-            out.insert(
-                "blend_op".into(),
-                json!(blend_op),
-            );
+            out.insert("blend_op".into(), json!(blend_op));
             if let Some(name) = decode_blend_op_name(blend_op) {
                 out.insert("blend_op_name".into(), Value::String(name));
             }
@@ -675,17 +666,11 @@ fn decode_known_fields(
             }
             let fill_mode = read_u32_le(pkt.payload, 0).unwrap();
             let cull_mode = read_u32_le(pkt.payload, 4).unwrap();
-            out.insert(
-                "fill_mode".into(),
-                json!(fill_mode),
-            );
+            out.insert("fill_mode".into(), json!(fill_mode));
             if let Some(name) = decode_fill_mode_name(fill_mode) {
                 out.insert("fill_mode_name".into(), Value::String(name));
             }
-            out.insert(
-                "cull_mode".into(),
-                json!(cull_mode),
-            );
+            out.insert("cull_mode".into(), json!(cull_mode));
             if let Some(name) = decode_cull_mode_name(cull_mode) {
                 out.insert("cull_mode_name".into(), Value::String(name));
             }

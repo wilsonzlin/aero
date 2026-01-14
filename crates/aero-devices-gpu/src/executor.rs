@@ -2099,7 +2099,8 @@ mod tests {
         }
 
         let ring_size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
         let mut regs = AeroGpuRegs {
             ring_gpa,
             ring_size_bytes,
@@ -2128,7 +2129,10 @@ mod tests {
         let drained = exec.drain_pending_submissions();
         assert_eq!(drained.len(), max_by_bytes as usize);
         assert_eq!(drained.first().map(|s| s.signal_fence), Some(2));
-        assert_eq!(drained.last().map(|s| s.signal_fence), Some(u64::from(tail)));
+        assert_eq!(
+            drained.last().map(|s| s.signal_fence),
+            Some(u64::from(tail))
+        );
     }
 
     #[test]
