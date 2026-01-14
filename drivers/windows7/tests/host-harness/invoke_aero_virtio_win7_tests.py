@@ -3287,7 +3287,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Require virtio-blk to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
             "and also requires the guest marker: "
-            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|..."
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|... "
+            "Tip: to make the guest fail-fast when virtio-blk is not using MSI/MSI-X, provision it with "
+            "--expect-blk-msi (or env var AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1); "
+            "when provisioning via New-AeroWin7TestImage.ps1, use -ExpectBlkMsi."
         ),
     )
     parser.add_argument(

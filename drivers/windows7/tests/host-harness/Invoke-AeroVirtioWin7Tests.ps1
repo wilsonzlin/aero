@@ -235,6 +235,10 @@ param(
   #
   # For virtio-blk, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
+  # Tip: to make the guest fail-fast when virtio-blk is not using MSI/MSI-X, provision it with:
+  #   aero-virtio-selftest.exe --expect-blk-msi
+  # (or env var AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1). When provisioning via New-AeroWin7TestImage.ps1,
+  # pass -ExpectBlkMsi.
   #
   # For virtio-snd, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...
