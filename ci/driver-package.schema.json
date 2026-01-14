@@ -28,7 +28,8 @@
     "$schema": {
       "type": "string",
       "description": "Optional JSON Schema reference for editor tooling (example: \"../../ci/driver-package.schema.json\"). CI ignores this field. Update the relative path as needed if your driver directory is nested (for example, drivers/windows7/<driver>/...).",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "infFiles": {
       "type": "array",
