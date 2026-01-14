@@ -1636,21 +1636,29 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             collect_used_pixel_inputs_modifiers(modifiers, out);
         }
         // Ops with 3 source operands (mad/lrp/dp2add).
+        //
+        // Keep these as separate match arms: this function is built with
+        // `#[deny(unreachable_patterns)]` and merge conflict resolutions have repeatedly duplicated
+        // `Dp2Add` inside an or-pattern group, breaking the build.
         IrOp::Dp2Add {
             src0,
             src1,
             src2,
             modifiers,
             ..
+        } => {
+            collect_used_pixel_inputs_src3(src0, src1, src2, modifiers, out);
         }
-        | IrOp::Mad {
+        IrOp::Mad {
             src0,
             src1,
             src2,
             modifiers,
             ..
+        } => {
+            collect_used_pixel_inputs_src3(src0, src1, src2, modifiers, out);
         }
-        | IrOp::Lrp {
+        IrOp::Lrp {
             src0,
             src1,
             src2,
