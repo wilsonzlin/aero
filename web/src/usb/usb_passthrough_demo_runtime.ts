@@ -160,6 +160,12 @@ const USB_PASSTHROUGH_DEMO_ID_BASE = 1_000_000_000;
 
 export class UsbPassthroughDemoRuntime {
   readonly #demo: UsbPassthroughDemoApi;
+  readonly #resetFn: () => void;
+  readonly #queueGetDeviceDescriptorFn: (len: number) => void;
+  readonly #queueGetConfigDescriptorFn: (len: number) => void;
+  readonly #drainActionsFn: () => unknown;
+  readonly #pushCompletionFn: (completion: unknown) => void;
+  readonly #pollLastResultFn: () => unknown;
   readonly #postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => void;
   readonly #inflightByProxyId = new Map<number, { wasmId: number; kind: UsbHostAction["kind"] }>();
   #nextProxyId = USB_PASSTHROUGH_DEMO_ID_BASE;
@@ -167,10 +173,38 @@ export class UsbPassthroughDemoRuntime {
   constructor(opts: { demo: UsbPassthroughDemoApi; postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => void }) {
     this.#demo = opts.demo;
     this.#postMessage = opts.postMessage;
+
+    // Backwards compatibility: accept both snake_case and camelCase demo exports and always invoke
+    // extracted methods via `.call(demo, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+    const demoAny = opts.demo as unknown as Record<string, unknown>;
+    const reset = demoAny.reset;
+    const queueGetDeviceDescriptor = demoAny.queue_get_device_descriptor ?? demoAny.queueGetDeviceDescriptor;
+    const queueGetConfigDescriptor = demoAny.queue_get_config_descriptor ?? demoAny.queueGetConfigDescriptor;
+    const drainActions = demoAny.drain_actions ?? demoAny.drainActions;
+    const pushCompletion = demoAny.push_completion ?? demoAny.pushCompletion;
+    const pollLastResult = demoAny.poll_last_result ?? demoAny.pollLastResult;
+
+    if (typeof reset !== "function") throw new Error("UsbPassthroughDemo missing reset() export.");
+    if (typeof queueGetDeviceDescriptor !== "function") {
+      throw new Error("UsbPassthroughDemo missing queue_get_device_descriptor/queueGetDeviceDescriptor export.");
+    }
+    if (typeof queueGetConfigDescriptor !== "function") {
+      throw new Error("UsbPassthroughDemo missing queue_get_config_descriptor/queueGetConfigDescriptor export.");
+    }
+    if (typeof drainActions !== "function") throw new Error("UsbPassthroughDemo missing drain_actions/drainActions export.");
+    if (typeof pushCompletion !== "function") throw new Error("UsbPassthroughDemo missing push_completion/pushCompletion export.");
+    if (typeof pollLastResult !== "function") throw new Error("UsbPassthroughDemo missing poll_last_result/pollLastResult export.");
+
+    this.#resetFn = reset as () => void;
+    this.#queueGetDeviceDescriptorFn = queueGetDeviceDescriptor as (len: number) => void;
+    this.#queueGetConfigDescriptorFn = queueGetConfigDescriptor as (len: number) => void;
+    this.#drainActionsFn = drainActions as () => unknown;
+    this.#pushCompletionFn = pushCompletion as (completion: unknown) => void;
+    this.#pollLastResultFn = pollLastResult as () => unknown;
   }
 
   reset(): void {
-    this.#demo.reset();
+    this.#resetFn.call(this.#demo);
     this.#inflightByProxyId.clear();
   }
 
@@ -184,9 +218,9 @@ export class UsbPassthroughDemoRuntime {
           : 255;
 
     if (request === "deviceDescriptor") {
-      this.#demo.queue_get_device_descriptor(len);
+      this.#queueGetDeviceDescriptorFn.call(this.#demo, len);
     } else if (request === "configDescriptor") {
-      this.#demo.queue_get_config_descriptor(len);
+      this.#queueGetConfigDescriptorFn.call(this.#demo, len);
     }
 
     this.tick();
@@ -209,7 +243,8 @@ export class UsbPassthroughDemoRuntime {
     this.#inflightByProxyId.delete(completion.id);
 
     if (completion.kind !== info.kind) {
-      this.#demo.push_completion(
+      this.#pushCompletionFn.call(
+        this.#demo,
         usbErrorCompletion(
           info.kind,
           info.wasmId,
@@ -220,12 +255,12 @@ export class UsbPassthroughDemoRuntime {
       return;
     }
 
-    this.#demo.push_completion({ ...completion, id: info.wasmId } satisfies UsbHostCompletion);
+    this.#pushCompletionFn.call(this.#demo, { ...completion, id: info.wasmId } satisfies UsbHostCompletion);
     this.pollResults();
   }
 
   tick(): void {
-    const rawActions = this.#demo.drain_actions();
+    const rawActions = this.#drainActionsFn.call(this.#demo);
     if (rawActions === null || rawActions === undefined) return;
     if (!Array.isArray(rawActions)) {
       throw new Error("UsbPassthroughDemo emitted an invalid actions payload (expected array).");
@@ -264,7 +299,7 @@ export class UsbPassthroughDemoRuntime {
 
   pollResults(): void {
     while (true) {
-      const raw = this.#demo.poll_last_result();
+      const raw = this.#pollLastResultFn.call(this.#demo);
       if (raw === null || raw === undefined) return;
       const result = parseDemoResult(raw);
       if (!result) {

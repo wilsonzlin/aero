@@ -98,6 +98,53 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     expect(snapshot.lastCompletion?.id).toBe(1);
   });
 
+  it("accepts camelCase harness exports (backwards compatibility)", () => {
+    const port = new FakePort();
+
+    const actions: UsbHostAction[] = [
+      {
+        kind: "controlIn",
+        id: 1,
+        setup: { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 },
+      },
+    ];
+
+    const tick = vi.fn();
+    const drainActions = vi.fn(() => actions);
+    const pushCompletion = vi.fn();
+    const free = vi.fn();
+
+    const harness = { tick, drainActions, pushCompletion, free };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness as unknown as { tick(): void; drain_actions(): unknown; push_completion(_c: unknown): void; free(): void },
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+
+    runtime.start();
+    runtime.pollOnce();
+
+    expect(tick).toHaveBeenCalledTimes(1);
+    const posted = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.action") as Array<{
+      type: "usb.action";
+      action: UsbHostAction;
+    }>;
+    expect(posted).toHaveLength(1);
+
+    const brokerId = posted[0]!.action.id;
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "controlIn", id: brokerId, status: "success", data: Uint8Array.of(9) } satisfies UsbHostCompletion,
+    });
+
+    expect(pushCompletion).toHaveBeenCalledTimes(1);
+    expect(pushCompletion.mock.calls[0]?.[0]).toMatchObject({ kind: "controlIn", id: 1, status: "success" });
+
+    runtime.destroy();
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
   it("captures device + config descriptor bytes from GET_DESCRIPTOR(ControlIn) pairs", () => {
     const port = new FakePort();
 

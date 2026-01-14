@@ -47,6 +47,27 @@ describe("bridgeHarnessDrainActions", () => {
     expect(harnessCompletions).toEqual(completions);
   });
 
+  it("accepts camelCase harness exports (backwards compatibility)", async () => {
+    const actions: UsbHostAction[] = [{ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 }];
+
+    const harness = {
+      drainActions: vi.fn(() => actions),
+      pushCompletion: vi.fn<[UsbHostCompletion], void>(),
+    };
+
+    const backend = {
+      execute: vi.fn(async (action: UsbHostAction): Promise<UsbHostCompletion> => {
+        if (action.kind !== "bulkIn") throw new Error("expected bulkIn");
+        return { kind: "bulkIn", id: action.id, status: "stall" } satisfies UsbHostCompletion;
+      }),
+    };
+
+    const { completions } = await bridgeHarnessDrainActions(harness as unknown as any, backend);
+    expect(harness.drainActions).toHaveBeenCalledTimes(1);
+    expect(harness.pushCompletion).toHaveBeenCalledTimes(1);
+    expect(harness.pushCompletion.mock.calls[0]?.[0]).toBe(completions[0]);
+  });
+
   it("rejects actions with invalid ids before executing anything", async () => {
     const setup = { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 };
     const harness = {

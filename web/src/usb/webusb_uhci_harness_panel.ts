@@ -143,12 +143,20 @@ export async function bridgeHarnessDrainActions(
   harness: UhciHarnessLike,
   backend: UsbHostActionExecutor,
 ): Promise<UhciHarnessDrainResult> {
-  const actions = asUsbHostActions(harness.drain_actions());
+  const anyHarness = harness as unknown as Record<string, unknown>;
+  // Backwards compatibility: accept both snake_case and camelCase harness exports and always invoke
+  // extracted methods via `.call(harness, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+  const drainActions = anyHarness.drain_actions ?? anyHarness.drainActions;
+  const pushCompletion = anyHarness.push_completion ?? anyHarness.pushCompletion;
+  if (typeof drainActions !== "function") throw new Error("UHCI harness missing drain_actions/drainActions export.");
+  if (typeof pushCompletion !== "function") throw new Error("UHCI harness missing push_completion/pushCompletion export.");
+
+  const actions = asUsbHostActions((drainActions as () => unknown).call(harness));
   const completions: UsbHostCompletion[] = [];
 
   for (const action of actions) {
     const completion = await backend.execute(action);
-    harness.push_completion(completion);
+    (pushCompletion as (completion: UsbHostCompletion) => void).call(harness, completion);
     completions.push(completion);
   }
 

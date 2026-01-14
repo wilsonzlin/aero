@@ -65,6 +65,64 @@ class FakeDemo {
   }
 }
 
+class CamelCaseDemo {
+  actions: unknown[] = [];
+  pushed: unknown[] = [];
+  nextResult: unknown = null;
+  nextId = 1;
+
+  reset(): void {
+    this.actions = [];
+    this.pushed = [];
+    this.nextResult = null;
+  }
+
+  queueGetDeviceDescriptor(len: number): void {
+    this.actions.push({
+      kind: "controlIn",
+      id: this.nextId++,
+      setup: {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0100,
+        wIndex: 0,
+        wLength: len,
+      },
+    });
+  }
+
+  queueGetConfigDescriptor(len: number): void {
+    this.actions.push({
+      kind: "controlIn",
+      id: this.nextId++,
+      setup: {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0,
+        wLength: len,
+      },
+    });
+  }
+
+  drainActions(): unknown {
+    const out = this.actions;
+    this.actions = [];
+    return out;
+  }
+
+  pushCompletion(completion: unknown): void {
+    this.pushed.push(completion);
+    this.nextResult = { status: "success", data: [0x12, 0x34] };
+  }
+
+  pollLastResult(): unknown {
+    const out = this.nextResult;
+    this.nextResult = null;
+    return out;
+  }
+}
+
 class ThrowingDemo extends FakeDemo {
   constructor(private readonly mode: "drain" | "poll") {
     super();
@@ -204,6 +262,36 @@ describe("UsbPassthroughDemoRuntime", () => {
 
     const runtime = new UsbPassthroughDemoRuntime({
       demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.onUsbSelected({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+    runtime.tick();
+
+    const completion: UsbHostCompletion = { kind: "controlIn", id: 1_000_000_000, status: "success", data: Uint8Array.of(0x12, 0x34) };
+    runtime.onUsbCompletion({ type: "usb.completion", completion });
+
+    expect(demo.pushed).toEqual([
+      {
+        kind: "controlIn",
+        id: 1,
+        status: "success",
+        data: Uint8Array.of(0x12, 0x34),
+      },
+    ]);
+
+    expect(posted).toContainEqual({
+      type: "usb.demoResult",
+      result: { status: "success", data: Uint8Array.of(0x12, 0x34) },
+    });
+  });
+
+  it("accepts camelCase demo exports (backwards compatibility)", () => {
+    const demo = new CamelCaseDemo();
+    const posted: unknown[] = [];
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo: demo as unknown as any,
       postMessage: (msg) => posted.push(msg),
     });
 

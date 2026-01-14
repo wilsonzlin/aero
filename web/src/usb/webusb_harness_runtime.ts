@@ -346,6 +346,38 @@ function formatError(err: unknown): string {
   return String(err);
 }
 
+function normalizeWebUsbUhciPassthroughHarnessLike(harness: WebUsbUhciPassthroughHarnessLike): WebUsbUhciPassthroughHarnessLike {
+  const anyHarness = harness as unknown as Record<string, unknown>;
+
+  // Backwards compatibility: accept camelCase exports and always invoke extracted methods via
+  // `.call(harness, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+  const tick = anyHarness.tick;
+  const drainActions = anyHarness.drain_actions ?? anyHarness.drainActions;
+  const pushCompletion = anyHarness.push_completion ?? anyHarness.pushCompletion;
+  const free = anyHarness.free;
+
+  if (typeof tick !== "function") throw new Error("WebUsbUhciPassthroughHarness missing tick() export.");
+  if (typeof drainActions !== "function") throw new Error("WebUsbUhciPassthroughHarness missing drain_actions/drainActions export.");
+  if (typeof pushCompletion !== "function")
+    throw new Error("WebUsbUhciPassthroughHarness missing push_completion/pushCompletion export.");
+  if (typeof free !== "function") throw new Error("WebUsbUhciPassthroughHarness missing free() export.");
+
+  return {
+    tick: () => {
+      (tick as () => void).call(harness);
+    },
+    drain_actions: () => {
+      return (drainActions as () => unknown).call(harness);
+    },
+    push_completion: (completion) => {
+      (pushCompletion as (completion: UsbHostCompletion) => void).call(harness, completion);
+    },
+    free: () => {
+      (free as () => void).call(harness);
+    },
+  };
+}
+
 function safeFree(obj: WebUsbUhciPassthroughHarnessLike | null): void {
   if (!obj) return;
   try {
@@ -626,7 +658,7 @@ export class WebUsbUhciHarnessRuntime {
   private ensureHarness(): void {
     if (this.#harness) return;
     try {
-      this.#harness = this.#createHarness();
+      this.#harness = normalizeWebUsbUhciPassthroughHarnessLike(this.#createHarness());
     } catch (err) {
       this.#lastError = `Failed to construct WebUsbUhciPassthroughHarness: ${formatError(err)}`;
       this.stop(this.#lastError);

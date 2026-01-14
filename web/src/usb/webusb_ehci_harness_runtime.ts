@@ -383,6 +383,101 @@ function safeFree(obj: WebUsbEhciPassthroughHarnessLike | null): void {
   }
 }
 
+function normalizeWebUsbEhciPassthroughHarnessLike(harness: WebUsbEhciPassthroughHarnessLike): WebUsbEhciPassthroughHarnessLike {
+  const anyHarness = harness as unknown as Record<string, unknown>;
+
+  // Backwards compatibility: accept camelCase exports and always invoke extracted methods via
+  // `.call(harness, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+  const attachController = anyHarness.attach_controller ?? anyHarness.attachController;
+  const detachController = anyHarness.detach_controller ?? anyHarness.detachController;
+  const attachDevice = anyHarness.attach_device ?? anyHarness.attachDevice;
+  const detachDevice = anyHarness.detach_device ?? anyHarness.detachDevice;
+  const cmdGetDeviceDescriptor = anyHarness.cmd_get_device_descriptor ?? anyHarness.cmdGetDeviceDescriptor;
+  const cmdGetConfigDescriptor = anyHarness.cmd_get_config_descriptor ?? anyHarness.cmdGetConfigDescriptor;
+  const clearUsbSts = anyHarness.clear_usbsts ?? anyHarness.clearUsbsts ?? anyHarness.clearUsbSts;
+  const tick = anyHarness.tick;
+  const drainActions = anyHarness.drain_actions ?? anyHarness.drainActions;
+  const pushCompletion = anyHarness.push_completion ?? anyHarness.pushCompletion;
+  const controllerAttached = anyHarness.controller_attached ?? anyHarness.controllerAttached;
+  const deviceAttached = anyHarness.device_attached ?? anyHarness.deviceAttached;
+  const usbSts = anyHarness.usbsts ?? anyHarness.usbSts;
+  const irqLevel = anyHarness.irq_level ?? anyHarness.irqLevel;
+  const lastError = anyHarness.last_error ?? anyHarness.lastError;
+  const free = anyHarness.free;
+
+  if (typeof attachController !== "function") throw new Error("WebUsbEhciPassthroughHarness missing attach_controller/attachController export.");
+  if (typeof detachController !== "function") throw new Error("WebUsbEhciPassthroughHarness missing detach_controller/detachController export.");
+  if (typeof attachDevice !== "function") throw new Error("WebUsbEhciPassthroughHarness missing attach_device/attachDevice export.");
+  if (typeof detachDevice !== "function") throw new Error("WebUsbEhciPassthroughHarness missing detach_device/detachDevice export.");
+  if (typeof cmdGetDeviceDescriptor !== "function")
+    throw new Error("WebUsbEhciPassthroughHarness missing cmd_get_device_descriptor/cmdGetDeviceDescriptor export.");
+  if (typeof cmdGetConfigDescriptor !== "function")
+    throw new Error("WebUsbEhciPassthroughHarness missing cmd_get_config_descriptor/cmdGetConfigDescriptor export.");
+  if (typeof clearUsbSts !== "function") throw new Error("WebUsbEhciPassthroughHarness missing clear_usbsts/clearUsbsts export.");
+  if (typeof tick !== "function") throw new Error("WebUsbEhciPassthroughHarness missing tick() export.");
+  if (typeof drainActions !== "function") throw new Error("WebUsbEhciPassthroughHarness missing drain_actions/drainActions export.");
+  if (typeof pushCompletion !== "function") throw new Error("WebUsbEhciPassthroughHarness missing push_completion/pushCompletion export.");
+  if (typeof controllerAttached !== "function")
+    throw new Error("WebUsbEhciPassthroughHarness missing controller_attached/controllerAttached export.");
+  if (typeof deviceAttached !== "function")
+    throw new Error("WebUsbEhciPassthroughHarness missing device_attached/deviceAttached export.");
+  if (typeof usbSts !== "function") throw new Error("WebUsbEhciPassthroughHarness missing usbsts/usbSts export.");
+  if (typeof irqLevel !== "function") throw new Error("WebUsbEhciPassthroughHarness missing irq_level/irqLevel export.");
+  if (typeof lastError !== "function") throw new Error("WebUsbEhciPassthroughHarness missing last_error/lastError export.");
+  if (typeof free !== "function") throw new Error("WebUsbEhciPassthroughHarness missing free() export.");
+
+  return {
+    attach_controller: () => {
+      (attachController as () => void).call(harness);
+    },
+    detach_controller: () => {
+      (detachController as () => void).call(harness);
+    },
+    attach_device: () => {
+      (attachDevice as () => void).call(harness);
+    },
+    detach_device: () => {
+      (detachDevice as () => void).call(harness);
+    },
+    cmd_get_device_descriptor: () => {
+      (cmdGetDeviceDescriptor as () => void).call(harness);
+    },
+    cmd_get_config_descriptor: () => {
+      (cmdGetConfigDescriptor as () => void).call(harness);
+    },
+    clear_usbsts: (bits) => {
+      (clearUsbSts as (bits: number) => void).call(harness, bits >>> 0);
+    },
+    tick: () => {
+      (tick as () => void).call(harness);
+    },
+    drain_actions: () => {
+      return (drainActions as () => unknown).call(harness);
+    },
+    push_completion: (completion) => {
+      (pushCompletion as (completion: UsbHostCompletion) => void).call(harness, completion);
+    },
+    controller_attached: () => {
+      return Boolean((controllerAttached as () => unknown).call(harness));
+    },
+    device_attached: () => {
+      return Boolean((deviceAttached as () => unknown).call(harness));
+    },
+    usbsts: () => {
+      return Number((usbSts as () => unknown).call(harness)) >>> 0;
+    },
+    irq_level: () => {
+      return Boolean((irqLevel as () => unknown).call(harness));
+    },
+    last_error: () => {
+      return (lastError as () => unknown).call(harness);
+    },
+    free: () => {
+      (free as () => void).call(harness);
+    },
+  };
+}
+
 function parseNullableString(value: unknown): string | null {
   return typeof value === "string" ? value : value === null ? null : null;
 }
@@ -722,7 +817,7 @@ export class WebUsbEhciHarnessRuntime {
   private ensureHarness(): void {
     if (this.#harness) return;
     try {
-      this.#harness = this.#createHarness();
+      this.#harness = normalizeWebUsbEhciPassthroughHarnessLike(this.#createHarness());
     } catch (err) {
       this.#lastError = `Failed to construct WebUsbEhciPassthroughHarness: ${formatError(err)}`;
     }
