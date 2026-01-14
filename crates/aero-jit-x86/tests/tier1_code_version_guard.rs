@@ -42,45 +42,51 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
     // `Tier1Compilation::byte_len` is expected to cover only executed bytes, so the page-version
     // snapshot should not include the second page. Modifying bytes in that second page should not
     // invalidate the cached block.
-    let entry = 0x0fff_u64;
-    let mut bus = SimpleBus::new(0x3000);
-    bus.load(entry, &[0x53]); // push rbx
-    let invalid = tier1_common::pick_invalid_opcode(64);
-    bus.load(0x1000, &[invalid]); // invalid/unsupported opcode (decoded as Invalid by Tier-1)
+    for bitness in [16u32, 32, 64] {
+        let entry = 0x0fff_u64;
+        let mut bus = SimpleBus::new(0x3000);
+        bus.load(entry, &[0x53]); // push rbx/bx/ebx
+        let invalid = tier1_common::pick_invalid_opcode(bitness);
+        bus.load(0x1000, &[invalid]); // invalid/unsupported opcode (decoded as Invalid by Tier-1)
 
-    let queue = Tier1CompileQueue::new();
-    let config = JitConfig {
-        enabled: true,
-        hot_threshold: 1,
-        cache_max_blocks: 16,
-        cache_max_bytes: 0,
-        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
-    };
-    let mut jit: JitRuntime<DummyBackend, Tier1CompileQueue> =
-        JitRuntime::new(config, DummyBackend, queue.clone());
+        let queue = Tier1CompileQueue::new();
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1,
+            cache_max_blocks: 16,
+            cache_max_bytes: 0,
+            code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
+        };
+        let mut jit: JitRuntime<DummyBackend, Tier1CompileQueue> =
+            JitRuntime::new(config, DummyBackend, queue.clone());
 
-    let mut compiler = Tier1Compiler::new(bus.clone(), NoopRegistry).with_limits(BlockLimits {
-        max_insts: 16,
-        max_bytes: 64,
-    });
-    let handle = compiler
-        .compile_handle(&jit, entry, 64)
-        .expect("Tier-1 compile_handle");
+        let mut compiler = Tier1Compiler::new(bus.clone(), NoopRegistry).with_limits(BlockLimits {
+            max_insts: 16,
+            max_bytes: 64,
+        });
+        let handle = compiler
+            .compile_handle(&jit, entry, bitness)
+            .expect("Tier-1 compile_handle");
 
-    assert_eq!(handle.meta.byte_len, 1);
-    assert_eq!(handle.meta.page_versions.len(), 1);
-    assert_eq!(handle.meta.page_versions[0].page, 0);
+        assert_eq!(handle.meta.byte_len, 1);
+        assert_eq!(handle.meta.page_versions.len(), 1);
+        assert_eq!(handle.meta.page_versions[0].page, 0);
 
-    jit.install_handle(handle);
-    assert!(queue.is_empty());
+        jit.install_handle(handle);
+        assert!(queue.is_empty());
 
-    // Modify the next page (contains the unsupported instruction). This should NOT invalidate.
-    jit.on_guest_write(0x1000, 1);
-    assert!(jit.prepare_block(entry).is_some());
-    assert!(queue.is_empty());
+        // Modify the next page (contains the unsupported instruction). This should NOT invalidate.
+        jit.on_guest_write(0x1000, 1);
+        assert!(jit.prepare_block(entry).is_some());
+        assert!(queue.is_empty());
 
-    // Modifying an executed byte must invalidate and request recompilation.
-    jit.on_guest_write(entry, 1);
-    assert!(jit.prepare_block(entry).is_none());
-    assert_eq!(queue.drain(), vec![entry]);
+        // Modifying an executed byte must invalidate and request recompilation.
+        jit.on_guest_write(entry, 1);
+        assert!(jit.prepare_block(entry).is_none());
+        assert_eq!(
+            queue.drain(),
+            vec![entry],
+            "expected invalidation/recompile request for bitness={bitness}"
+        );
+    }
 }
