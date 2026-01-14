@@ -128,8 +128,8 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
 
     // Ensure the output Slot Context in guest memory is populated. Configure Endpoint reads the
     // Slot Context from the output Device Context and mirrors it back into controller-local state;
-    // if we leave it zeroed, the slot would no longer resolve to an attached device after dropping
-    // endpoints.
+    // if we leave it zeroed, the slot would no longer resolve to the attached device when
+    // executing transfers after dropping endpoints.
     let mut out_slot_ctx = SlotContext::default();
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
