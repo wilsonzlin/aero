@@ -432,19 +432,20 @@ impl IoSnapshot for XhciPciDevice {
             d.finish()?;
         }
 
+        if let Some(buf) = r.bytes(TAG_CONTROLLER) {
+            // Older snapshots may omit the controller field; the default controller created above
+            // is a valid deterministic baseline in that case.
+            self.controller.load_state(buf)?;
+        }
+
         if let Some(buf) = r.bytes(TAG_LAST_IRQ) {
             let mut d = Decoder::new(buf);
             self.last_irq_level = d.bool()?;
             d.finish()?;
         } else {
-            // Older snapshots (or minimal ones) default to the restored IRQ level to avoid
-            // spuriously generating an MSI edge immediately after restore.
-            self.last_irq_level = self.irq.level();
-        }
-
-        if let Some(buf) = r.bytes(TAG_CONTROLLER) {
-            // Older snapshots may omit the controller field. Default controller state is fine.
-            self.controller.load_state(buf)?;
+            // Older snapshots default to the restored interrupt condition to avoid spuriously
+            // generating an MSI edge immediately after restore.
+            self.last_irq_level = self.controller.irq_level() || self.irq.level();
         }
 
         Ok(())
@@ -507,12 +508,15 @@ fn all_ones(size: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::XhciPciDevice;
+    use super::{regs, XhciPciDevice};
+    use aero_io_snapshot::io::state::IoSnapshot;
     use crate::pci::config::PciClassCode;
     use crate::pci::msi::PCI_CAP_ID_MSI;
     use crate::pci::profile::{PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU};
     use crate::pci::{PciBarDefinition, PciDevice};
     use memory::MmioHandler;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn exposes_msi_capability() {
@@ -604,6 +608,93 @@ mod tests {
 
         // Enable MEM decoding and verify the capability dword becomes visible.
         dev.config_mut().set_command(0x2);
-        assert_eq!(MmioHandler::read(&mut dev, 0x00, 4) as u32, 0x0100_0040);
+        assert_eq!(
+            MmioHandler::read(&mut dev, 0x00, 4) as u32,
+            regs::CAPLENGTH_HCIVERSION
+        );
+    }
+
+    #[test]
+    fn bme_gates_dma_on_run() {
+        #[derive(Default)]
+        struct Counts {
+            reads: usize,
+        }
+
+        struct CountingBus {
+            counts: Rc<RefCell<Counts>>,
+        }
+
+        impl memory::MemoryBus for CountingBus {
+            fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+                self.counts.borrow_mut().reads += 1;
+                buf.fill(0);
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+        }
+
+        let counts = Rc::new(RefCell::new(Counts::default()));
+        let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(CountingBus {
+            counts: counts.clone(),
+        }));
+
+        let mut dev = XhciPciDevice::default();
+        dev.set_dma_memory_bus(Some(bus));
+        dev.config_mut().set_command(1 << 1); // MEM
+
+        // Point CRCR somewhere arbitrary; the controller ignores the contents but should touch the
+        // DMA bus on RUN transitions when BME is enabled.
+        MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1000);
+        MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
+
+        // BME disabled: RUN should not touch the DMA bus (NoDma adapter).
+        MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        assert_eq!(counts.borrow().reads, 0);
+
+        // Stop + enable bus mastering, then start again -> DMA should now be reachable.
+        MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, 0);
+        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
+        MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        assert!(
+            counts.borrow().reads > 0,
+            "controller should touch the DMA bus when BME is enabled"
+        );
+    }
+
+    #[test]
+    fn intx_disable_gates_irq_level() {
+        let mut dev = XhciPciDevice::default();
+        dev.config_mut().set_command(1 << 1); // MEM
+
+        // Trigger the controller's interrupt condition.
+        MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+        assert!(dev.irq_level());
+
+        // Disable INTx via PCI command bit 10.
+        let command = dev.config().command();
+        dev.config_mut().set_command(command | (1 << 10));
+        assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn snapshot_roundtrip_includes_controller_state() {
+        let mut dev = XhciPciDevice::default();
+        dev.config_mut().set_command(1 << 1); // MEM
+
+        MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1234);
+        MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
+        MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+        let snap = dev.save_state();
+
+        let mut restored = XhciPciDevice::default();
+        restored.load_state(&snap).expect("load snapshot");
+
+        let usbcmd = MmioHandler::read(&mut restored, regs::REG_USBCMD, 4) as u32;
+        let crcr = MmioHandler::read(&mut restored, regs::REG_CRCR_LO, 4) as u32;
+        assert_eq!(usbcmd & regs::USBCMD_RUN, regs::USBCMD_RUN);
+        assert_eq!(crcr, 0x1234);
+        assert!(restored.irq_level());
     }
 }

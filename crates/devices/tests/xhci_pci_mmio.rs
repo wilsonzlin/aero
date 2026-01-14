@@ -45,7 +45,7 @@ fn xhci_mmio_reads_capability_regs_when_mem_enabled() {
     dev.config_mut().set_command(1 << 1);
 
     let cap = MmioHandler::read(&mut dev, regs::REG_CAPLENGTH_HCIVERSION, 4) as u32;
-    assert_eq!(cap, (0x0100u32 << 16) | 0x40);
+    assert_eq!(cap, regs::CAPLENGTH_HCIVERSION);
 
     // Reads outside the BAR window should float high even when MEM decoding is enabled.
     let oob = MmioHandler::read(&mut dev, u64::from(XhciPciDevice::MMIO_BAR_SIZE), 4);
