@@ -298,7 +298,7 @@ fn aerogpu_submission_bridge_drains_cmd_streams_with_zero_fence() {
 }
 
 #[test]
-fn aerogpu_submission_bridge_vsync_present_fence_waits_for_vblank_tick() {
+fn aerogpu_submission_bridge_vsync_present_fence_completes_on_host_completion() {
     let cfg = MachineConfig {
         ram_size_bytes: 16 * 1024 * 1024,
         enable_pc_platform: true,
@@ -387,22 +387,9 @@ fn aerogpu_submission_bridge_vsync_present_fence_waits_for_vblank_tick() {
     m.process_aerogpu();
     assert_eq!(m.aerogpu_drain_submissions().len(), 1);
 
-    // Host reports completion, but the vblank fence must not complete until a vblank tick.
+    // Host reports completion. With the submission bridge enabled, vsync pacing is the host's
+    // responsibility; the device model should complete the fence as soon as the host reports it.
     m.aerogpu_complete_fence(signal_fence);
-    let completed_fence = read_mmio_u64(
-        &mut m,
-        bar0,
-        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
-        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
-    );
-    assert_eq!(completed_fence, 0);
-
-    let period_ns = u64::from(
-        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
-    );
-    m.tick_platform(period_ns);
-    m.process_aerogpu();
-
     let completed_fence = read_mmio_u64(
         &mut m,
         bar0,

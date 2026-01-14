@@ -1561,7 +1561,13 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        let kind = if self.vblank_pacing_active()
+        let kind = if self.submission_bridge_enabled {
+            // When the submission bridge is enabled, fence completion timing is driven by the
+            // out-of-process executor (e.g. browser GPU worker) via `complete_fence_from_backend`.
+            // Treat all fences as immediate so the host can decide whether/when to apply any
+            // presentation pacing (vsync, etc) before reporting completion.
+            PendingFenceKind::Immediate
+        } else if self.vblank_pacing_active()
             && desc.cmd_gpa != 0
             && desc.cmd_size_bytes != 0
             && desc.cmd_size_bytes <= MAX_CMD_STREAM_SIZE_BYTES
