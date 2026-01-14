@@ -17,6 +17,7 @@ use anyhow::{bail, Context};
 const DEFAULT_HEAD_DWORDS: usize = 32;
 const DEFAULT_MAX_TOKEN_DWORDS_PER_OP: usize = 16;
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
+const MAX_DXBC_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 fn usage() -> &'static str {
     "\
@@ -93,6 +94,17 @@ fn real_main() -> anyhow::Result<()> {
     let Some(path) = path else {
         bail!("missing DXBC input path\n\n{}", usage());
     };
+
+    if let Ok(meta) = fs::metadata(&path) {
+        if meta.len() > MAX_DXBC_FILE_BYTES {
+            bail!(
+                "DXBC input {} is too large ({} bytes > max {} bytes)",
+                path.display(),
+                meta.len(),
+                MAX_DXBC_FILE_BYTES
+            );
+        }
+    }
 
     let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let dxbc = DxbcFile::parse(&bytes)
