@@ -638,6 +638,56 @@ fn ehci_async_in_transfer_spans_five_pages_without_buffer_error() {
 }
 
 #[test]
+fn ehci_async_invalid_cpage_halts_qtd_with_buffer_error() {
+    let mut mem = TestMemory::new(0x40000);
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut().attach(0, Box::new(FillInDevice { pattern: 0xaa }));
+
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd = alloc.alloc(0x20, 0x20);
+    let buf = alloc.alloc(0x1000, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    // Encode an out-of-range CPAGE (7). A robust EHCI engine should treat this as a buffer error.
+    let token = qtd_token(PID_IN, 1, true, true) | (7 << 12);
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        LINK_TERMINATE,
+        token,
+        buf,
+    );
+    write_qh(&mut mem, qh_addr, qh_ep_char(0, 1, 64), qtd);
+
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    ctrl.tick_1ms(&mut mem);
+
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_eq!(tok & QTD_STS_ACTIVE, 0, "qTD should halt on invalid CPAGE");
+    assert_eq!(
+        tok & (QTD_STS_HALT | QTD_STS_BUFERR),
+        QTD_STS_HALT | QTD_STS_BUFERR,
+        "invalid CPAGE should set HALT+BUFERR"
+    );
+
+    let sts = ctrl.mmio_read(REG_USBSTS, 4);
+    assert_ne!(sts & USBSTS_USBERRINT, 0, "BUFERR should raise USBERRINT");
+    assert_ne!(sts & USBSTS_USBINT, 0, "IOC should raise USBINT even on error");
+    assert!(ctrl.irq_level());
+}
+
+#[test]
 fn ehci_async_partial_progress_then_nak_updates_total_bytes_and_retries() {
     let mut mem = TestMemory::new(0x40000);
     let mut ctrl = EhciController::new();

@@ -157,8 +157,13 @@ enum BufferFault {
 impl QtdCursor {
     fn from_token_and_bufs(token: u32, bufs: [u32; 5]) -> Self {
         let page = ((token & QTD_CPAGE_MASK) >> QTD_CPAGE_SHIFT) as usize;
-        let page = page.min(4);
-        let offset = (bufs[page] & 0x0fff) as usize;
+        // CPAGE is only valid for values 0..=4. Preserve invalid values so we can surface a
+        // deterministic buffer fault instead of silently clamping to an arbitrary page.
+        let offset = if page < 5 {
+            (bufs[page] & 0x0fff) as usize
+        } else {
+            0
+        };
         Self { page, offset, bufs }
     }
 
