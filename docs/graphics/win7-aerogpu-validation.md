@@ -556,6 +556,7 @@ For the canonical, up-to-date command list and global options, see:
 Note: commands that read guest memory (`--read-gpa`, `--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-submit`) rely on
 `AEROGPU_ESCAPE_OP_READ_GPA`, which is disabled by default in the Win7 KMD. Enable via
 `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1` (`REG_DWORD`) and reboot/reload the driver.
+The caller must also be privileged (**Administrator** and/or `SeDebugPrivilege`), otherwise the KMD will return `STATUS_NOT_SUPPORTED`.
 See `drivers/aerogpu/tools/win7_dbgctl/README.md` for the full gating/security behavior.
 
 Common global options:

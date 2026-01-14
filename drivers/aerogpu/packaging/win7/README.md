@@ -442,11 +442,12 @@ build_vs2010.cmd
  bin\aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
  bin\aerogpu_dbgctl.exe --selftest
 
- :: Scanout/cursor image dumps (requires KMD support for AEROGPU_ESCAPE_OP_READ_GPA; disabled by default, enable via EnableReadGpaEscape=1; see drivers/aerogpu/tools/win7_dbgctl/README.md)
-  bin\aerogpu_dbgctl.exe --dump-scanout-bmp C:\scanout.bmp
-  bin\aerogpu_dbgctl.exe --dump-scanout-png C:\scanout.png
-  bin\aerogpu_dbgctl.exe --dump-cursor-bmp C:\cursor.bmp
-  bin\aerogpu_dbgctl.exe --dump-cursor-png C:\cursor.png
+ :: Scanout/cursor image dumps (requires AEROGPU_ESCAPE_OP_READ_GPA; disabled by default.
+ :: Enable via HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape=1 (REG_DWORD) and run as Administrator/SeDebug; see drivers/aerogpu/tools/win7_dbgctl/README.md)
+   bin\aerogpu_dbgctl.exe --dump-scanout-bmp C:\scanout.bmp
+   bin\aerogpu_dbgctl.exe --dump-scanout-png C:\scanout.png
+   bin\aerogpu_dbgctl.exe --dump-cursor-bmp C:\cursor.bmp
+   bin\aerogpu_dbgctl.exe --dump-cursor-png C:\cursor.png
 ```
 
 ## 7) Run the guest-side Direct3D validation suite (recommended)
