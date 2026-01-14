@@ -1012,15 +1012,18 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         continue;
                                     }
 
-                                    let discard_result =
-                                        self.backend.discard_range(byte_off, byte_len);
+                                    let discard_result = self.backend.discard_range(byte_off, byte_len);
                                     let mut needs_zero_fallback = discard_result.is_err();
 
                                     if !needs_zero_fallback {
                                         // If `discard_range` was a no-op, ensure guest-visible
-                                        // semantics by scanning the full discarded range and
-                                        // falling back to explicit zero writes when any byte
-                                        // remains non-zero.
+                                        // semantics by scanning the discarded range and writing
+                                        // zeros only for chunks that still contain non-zero bytes.
+                                        //
+                                        // This preserves hole-punching on sparse backends: if a
+                                        // chunk already reads as zero (e.g. fully deallocated
+                                        // sparse block), we skip the explicit zero write and avoid
+                                        // re-allocating the block.
                                         let mut scan_off = byte_off;
                                         let mut scan_remaining = byte_len;
                                         while scan_remaining != 0 {
@@ -1030,8 +1033,13 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                             {
                                                 Ok(()) => {
                                                     if read_buf[..take].iter().any(|b| *b != 0) {
-                                                        needs_zero_fallback = true;
-                                                        break;
+                                                        if self.backend
+                                                            .write_at(scan_off, &zero_buf[..take])
+                                                            .is_err()
+                                                        {
+                                                            status = VIRTIO_BLK_S_IOERR;
+                                                            break;
+                                                        }
                                                     }
                                                 }
                                                 Err(_) => {
@@ -1050,7 +1058,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         }
                                     }
 
-                                    if needs_zero_fallback {
+                                    if needs_zero_fallback && status == VIRTIO_BLK_S_OK {
                                         let mut remaining = byte_len;
                                         let mut cur_off = byte_off;
                                         while remaining != 0 {
