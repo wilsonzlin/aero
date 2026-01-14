@@ -15,7 +15,7 @@ const PORTSC_RD: u16 = 1 << 6;
 const PORTSC_SUSP: u16 = 1 << 12;
 
 fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
-    let dev = ctrl
+    let mut dev = ctrl
         .hub_mut()
         .device_mut_for_address(addr)
         .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
@@ -118,4 +118,3 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect() {
         "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
     );
 }
-
