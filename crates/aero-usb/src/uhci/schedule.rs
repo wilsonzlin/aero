@@ -1,11 +1,20 @@
 use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::hub::RootHub;
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
 
-use super::regs::{USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
+use super::regs::{
+    USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_HSE, USBSTS_USBERRINT, USBSTS_USBINT,
+};
+
+/// Maximum number of schedule link pointers walked per frame.
+///
+/// UHCI schedule structures are guest-controlled and can contain cycles. Without bounding, an
+/// adversarial schedule can hang `tick_1ms()` in an infinite loop.
+const MAX_SCHEDULE_LINKS_PER_FRAME: usize = 4096;
 
 const PID_IN: u8 = 0x69;
 const PID_OUT: u8 = 0xe1;
@@ -54,25 +63,42 @@ pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
 ) {
     let entry_addr = flbaseadd.wrapping_add(frame_index as u32 * 4) as u64;
     let link = LinkPointer(ctx.mem.read_u32(entry_addr));
-    walk_link(ctx, link, 0);
+    walk_link(ctx, link);
 }
 
 fn walk_link<M: MemoryBus + ?Sized>(
     ctx: &mut ScheduleContext<'_, M>,
     mut link: LinkPointer,
-    depth: u32,
 ) {
-    if depth > 4096 {
-        return;
+    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    for _ in 0..MAX_SCHEDULE_LINKS_PER_FRAME {
+        if link.terminated() {
+            return;
+        }
+
+        let addr = link.addr();
+        if addr == 0 {
+            // Treat null pointers as terminated. This prevents hangs when the guest programs an
+            // uninitialized frame list (all zeros).
+            return;
+        }
+
+        if visited.iter().any(|&a| a == addr) {
+            // Cycle detected in guest schedule memory.
+            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+            return;
+        }
+        visited.push(addr);
+
+        link = if link.is_qh() {
+            process_qh(ctx, addr)
+        } else {
+            process_td_chain(ctx, addr, 0)
+        };
     }
 
-    while !link.terminated() {
-        if link.is_qh() {
-            link = process_qh(ctx, link.addr());
-        } else {
-            link = process_td_chain(ctx, link.addr(), 0);
-        }
-    }
+    // Schedule traversal budget exceeded.
+    *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
 }
 
 fn process_qh<M: MemoryBus + ?Sized>(
