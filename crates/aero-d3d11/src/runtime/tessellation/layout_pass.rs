@@ -76,19 +76,19 @@ var<storage, read_write> out_patch_meta: array<PatchMeta>;
 @group({group}) @binding({out_indirect_args_binding})
 var<storage, read_write> out_indirect: DrawIndexedIndirectArgs;
 
- @group({group}) @binding({out_debug_binding})
- var<storage, read_write> out_debug: DebugOut;
- 
- fn safe_round_tess_factor(x: f32) -> u32 {{
-     // Defensive against NaN/Inf; treat as 0.
-     //
-     // wgpu 0.20's WGSL parser doesn't recognize `isNan`/`isInf`, so we
-     // implement the check manually using IEEE-754 exponent bits.
-     let bits: u32 = bitcast<u32>(x);
-     let exp: u32 = (bits >> 23u) & 0xFFu;
-     if (exp == 0xFFu) {{
-         return 0u;
-     }}
+@group({group}) @binding({out_debug_binding})
+var<storage, read_write> out_debug: DebugOut;
+
+fn safe_round_tess_factor(x: f32) -> u32 {{
+    // Defensive against NaN/Inf; treat as 0.
+    //
+    // wgpu 0.20's WGSL parser doesn't recognize `isNan`/`isInf`, so we
+    // implement the check manually using IEEE-754 exponent bits.
+    let bits: u32 = bitcast<u32>(x);
+    let exp: u32 = (bits >> 23u) & 0xFFu;
+    if (exp == 0xFFu) {{
+        return 0u;
+    }}
 
     // Clamp before rounding to avoid undefined float→int conversions.
     let clamped = clamp(x, 0.0, f32(MAX_TESS_FACTOR));
