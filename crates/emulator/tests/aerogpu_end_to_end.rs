@@ -20,7 +20,6 @@ use emulator::devices::aerogpu_ring::{
     RING_TAIL_OFFSET,
 };
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
-use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
@@ -111,21 +110,14 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_executes_and_updates_scanout"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_executes_and_updates_scanout"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;

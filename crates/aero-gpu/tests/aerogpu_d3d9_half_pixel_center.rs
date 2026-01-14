@@ -1,5 +1,8 @@
 mod common;
 
+use std::sync::Arc;
+
+use aero_gpu::stats::GpuStats;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -415,18 +418,17 @@ fn d3d9_half_pixel_center_cases() {
         }
         Err(err) => panic!("failed to create executor: {err}"),
     };
-    let mut exec_on = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
+    // Share the underlying wgpu device/queue between executors to avoid repeatedly creating/dropping
+    // devices, which can be fragile on some backends.
+    let mut exec_on = AerogpuD3d9Executor::new_with_config(
+        exec_off.device().clone(),
+        exec_off.queue().clone(),
+        exec_off.downlevel_flags(),
+        Arc::new(GpuStats::new()),
         AerogpuD3d9ExecutorConfig {
             half_pixel_center: true,
         },
-    )) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
-    };
+    );
 
     // Explicit viewport (matches RT).
     let off = run(&mut exec_off, Some((4.0, 4.0)));
