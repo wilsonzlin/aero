@@ -395,7 +395,7 @@ GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-
 - The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
   extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
-  args) are internal to the compute-expansion pipeline. The **target** design places these in a
+  args) are internal to the compute-expansion pipeline. The current implementation places these in a
   dedicated internal bind group (`@group(4)`, `BIND_GROUP_INTERNAL_EMULATION`) using a reserved
   binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
@@ -1186,7 +1186,9 @@ struct ExpandCounters {
   overflow: atomic<u32>; // 0/1 (set when any pass exceeds out_*_max)
   _pad0: u32;
 }
-@group(4) @binding(272) var<storage, read_write> counters: ExpandCounters;
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
+// using a dedicated internal group instead use `@group(4)`.
+@group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
 ```
 
 **Initialization requirements**
