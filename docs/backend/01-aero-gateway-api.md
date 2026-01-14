@@ -575,7 +575,7 @@ The gateway must treat all requests as untrusted and enforce the following contr
 - The gateway must validate the `Origin` header for:
   - `POST /session` (CORS)
   - WebSocket upgrades to `/tcp`
-  - `/dns-query` (CORS)
+  - `/dns-query` and `/dns-json` (CORS)
 - Only configured frontend origins may use the gateway.
 
 ### 5.2 Port allowlist (TCP egress)
