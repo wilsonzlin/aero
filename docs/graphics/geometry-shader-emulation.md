@@ -506,6 +506,7 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_texture_t0_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_samples_texture_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_translated_primitive_id.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
@@ -527,6 +528,7 @@ cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_reads_srv_buffer_tra
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_texture_t0_translated_prepass
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_samples_texture_translated_prepass
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_primitive_id
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs
 ```
 

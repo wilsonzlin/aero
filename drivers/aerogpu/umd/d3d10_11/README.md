@@ -40,7 +40,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
   - D3D10/D3D10.1: VS/PS/GS
-  - D3D11: VS/PS/GS/CS (GS binding triggers compute-prepass path; a small translated SM4 GS subset can execute for a limited set of IA input topologies: `PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj`; other cases fall back to synthetic expansion; see “Geometry shaders (GS)” below)
+  - D3D11: VS/PS/GS/CS (GS binding triggers compute-prepass path; a small translated SM4 GS subset can execute for a limited set of IA input topologies: `PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj` (`Draw` + `DrawIndexed`); other IA input topologies (strip inputs, strip-adjacency, patchlists) still fall back to synthetic expansion; see “Geometry shaders (GS)” below)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -105,7 +105,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
     - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for the supported IA input topology subset):
       - End-to-end execution path: `Draw` and `DrawIndexed` for `PointList`/`LineList`/`TriangleList` and adjacency list variants (`LineListAdj`/`TriangleListAdj`).
-      - Remaining work (translated-GS execution): `LineStrip`/`TriangleStrip` and adjacency strip variants (these currently route through synthetic expansion).
+      - Remaining work (translated-GS execution): strip input topologies (`LineStrip`/`TriangleStrip`) and strip-adjacency variants (`LineStripAdj`/`TriangleStripAdj`) (these currently route through synthetic expansion).
       - Output (end-to-end): GS output topology `pointlist`/`linestrip`/`triangle_strip` (stream 0). Strip output is expanded into indexed list topologies for `draw_indexed_indirect` (and `pointlist` is rendered as `PointList`).
       - Shader instructions/operands: a small SM4 subset (see `docs/graphics/geometry-shader-emulation.md`), including `emit`/`cut`, basic ALU, structured control flow (`if`/`loop`/`break`/`continue`, etc), and a small set of **read-only** resource ops:
         - Texture2D: `sample`/`sample_l`/`ld`/`resinfo`

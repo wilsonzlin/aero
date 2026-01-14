@@ -482,7 +482,7 @@ For Win7 D3D9Ex/DWM context:
 
 `crates/aero-d3d11` contains:
 
-1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed via the translated-GS prepass for a small set of IA input topologies (`PointList`, `LineList`, `TriangleList`, `LineListAdj`, `TriangleListAdj`); HS/DS translation/execution is not implemented).
+1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed via the translated-GS prepass for a small set of IA input topologies (`PointList`, `LineList`, `TriangleList`, `LineListAdj`, and `TriangleListAdj`); HS/DS translation/execution is not implemented).
 2. A wgpu-backed executor for the AeroGPU command stream (`aerogpu_cmd.h`).
 
 Code pointers:
@@ -564,6 +564,7 @@ Known gaps / limitations (enforced by code/tests):
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_samples_texture_translated_prepass`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_primitive_id`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id`
 - GS/HS/DS shader objects can be created/bound (the command stream binds these stages via
   `BIND_SHADERS`; newer streams may append `{gs,hs,ds}` handles after the stable 24-byte prefix—when
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
