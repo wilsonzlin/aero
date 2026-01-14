@@ -38,8 +38,9 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   worker execution via the submission bridge, or optional in-process backends in native/test
   builds). See: [`docs/graphics/status.md`](./graphics/status.md).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
-  `aero_gpu_vga` (VGA + Bochs VBE). When the PC platform is enabled, the VBE LFB MMIO aperture is
-  mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
+  `aero_gpu_vga` (VGA + Bochs VBE). When the PC platform is enabled, the machine exposes a minimal
+  Bochs/QEMU-compatible “Standard VGA” PCI function (currently `00:0c.0`) and routes the VBE LFB
+  through its BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator).
 
 See:
 

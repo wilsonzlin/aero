@@ -247,8 +247,9 @@ Note on boot display vs AeroGPU:
 
 - With `MachineConfig::enable_vga=true`, the canonical `aero_machine::Machine` implements these
   VGA/VBE legacy ports using the standalone `aero_gpu_vga` device model (boot display). When the
-  PC platform is enabled, the VBE LFB MMIO aperture is mapped directly at the configured LFB base
-  inside the PCI MMIO window (no dedicated PCI VGA stub).
+  PC platform is enabled, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA” PCI
+  function (currently `00:0c.0`) so the VBE LFB is reachable via PCI BAR0 inside the PCI MMIO
+  window.
 - With `MachineConfig::enable_aerogpu=true`, the canonical machine exposes the AeroGPU PCI identity
   (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture) for
   stable Windows driver binding. In `aero_machine` today BAR1 is backed by a dedicated VRAM buffer

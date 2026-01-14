@@ -40,8 +40,10 @@ Note on the canonical machine (`aero_machine::Machine`):
   - For an explicit breakdown of these executor modes, see [`docs/graphics/aerogpu-executor-modes.md`](./aerogpu-executor-modes.md).
   - For a broader “what’s implemented vs missing” checklist, see [`docs/graphics/status.md`](./status.md).
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
-  when `MachineConfig::enable_vga=true`. When the PC platform is enabled, the VBE LFB MMIO aperture
-  is mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
+  when `MachineConfig::enable_vga=true`. When the PC platform is enabled, the machine exposes a
+  minimal Bochs/QEMU-compatible “Standard VGA” PCI function (currently `00:0c.0`) and routes the VBE
+  LFB through its BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST / the PCI
+  allocator).
 
 See:
 

@@ -130,8 +130,9 @@ Current canonical machine note:
   submission bridge, or optional in-process backends in native/test builds). See:
   [`docs/graphics/status.md`](./graphics/status.md).
 - Boot display is provided by `aero_gpu_vga` (VGA + Bochs VBE) when `MachineConfig::enable_vga=true`.
-  When the PC platform is enabled, the VBE LFB MMIO aperture is mapped directly at the configured
-  LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
+  When the PC platform is enabled, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
+  PCI function (currently `00:0c.0`) so the VBE LFB is reachable via PCI BAR0 inside the PCI MMIO
+  window.
 
 Legacy bring-up ABI note:
 

@@ -54,10 +54,12 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   `crates/aero-devices-gpu`, with legacy sandbox integration in `crates/emulator`
   (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
-  `aero_gpu_vga` VGA/VBE device model for boot display. When the PC platform is enabled, the VBE
-  linear framebuffer (LFB) MMIO aperture is mapped directly at the configured LFB base inside the
-  PCI MMIO window (no dedicated PCI VGA stub). The configured LFB base historically defaults to
-  `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`.
+  `aero_gpu_vga` VGA/VBE device model for boot display.
+  - When the PC platform is enabled, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
+    PCI function (currently `00:0c.0`) and routes the VBE linear framebuffer (LFB) through its BAR0
+    inside the PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator).
+  - When the PC platform is disabled, the LFB is mapped directly at the configured base, which
+    historically defaults to `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`.
 
 `enable_aerogpu` and `enable_vga` are **mutually exclusive** (the machine rejects configurations
 that enable both).
