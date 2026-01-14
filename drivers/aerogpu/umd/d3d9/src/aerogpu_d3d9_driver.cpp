@@ -17988,6 +17988,17 @@ HRESULT device_set_shader_const_i_impl(
     dst[base + i] = static_cast<int32_t>(pData[i]);
   }
   stateblock_record_shader_const_i_locked(dev, stage_norm, start, dst + base, count);
+
+  const size_t payload_size = static_cast<size_t>(elems) * sizeof(int32_t);
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, dst + base, payload_size);
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage_norm);
+  cmd->start_register = start;
+  cmd->vec4_count = count;
+  cmd->reserved0 = 0;
   return trace.ret(S_OK);
 }
 
@@ -18073,6 +18084,27 @@ HRESULT device_set_shader_const_b_impl(
     dst[start + i] = pData[i] ? 1u : 0u;
   }
   stateblock_record_shader_const_b_locked(dev, stage_norm, start, dst + start, count);
+
+  std::vector<uint32_t> expanded;
+  expanded.resize(static_cast<size_t>(count) * 4u);
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t v = dst[start + i] ? 1u : 0u;
+    const size_t base = static_cast<size_t>(i) * 4u;
+    expanded[base + 0] = v;
+    expanded[base + 1] = v;
+    expanded[base + 2] = v;
+    expanded[base + 3] = v;
+  }
+
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_B, expanded.data(), expanded.size() * sizeof(uint32_t));
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage_norm);
+  cmd->start_register = start;
+  cmd->bool_count = count;
+  cmd->reserved0 = 0;
   return trace.ret(S_OK);
 }
 

@@ -894,7 +894,11 @@ impl Default for RasterizerState {
 }
 
 const MAX_SAMPLERS: usize = 16;
-const CONSTANTS_BUFFER_SIZE_BYTES: usize = 512 * 16;
+const CONSTANTS_REGION_SIZE_BYTES: u64 = 512 * 16;
+const CONSTANTS_FLOATS_OFFSET_BYTES: u64 = 0;
+const CONSTANTS_INTS_OFFSET_BYTES: u64 = 512 * 16;
+const CONSTANTS_BOOLS_OFFSET_BYTES: u64 = 512 * 16 * 2;
+const CONSTANTS_BUFFER_SIZE_BYTES: usize = 512 * 16 * 3;
 const HALF_PIXEL_UNIFORM_SIZE_BYTES: usize = 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
@@ -961,16 +965,38 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 fn create_constants_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("aerogpu-d3d9.constants_bind_group_layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES as u64),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
+            },
+        ],
     })
 }
 
@@ -1057,10 +1083,32 @@ fn create_constants_bind_group(
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("aerogpu-d3d9.constants_bind_group"),
         layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: constants_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: constants_buffer,
+                    offset: CONSTANTS_FLOATS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: constants_buffer,
+                    offset: CONSTANTS_INTS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: constants_buffer,
+                    offset: CONSTANTS_BOOLS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+        ],
     })
 }
 
@@ -5988,7 +6036,7 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
-                let offset = stage_base
+                let offset = (CONSTANTS_FLOATS_OFFSET_BYTES + stage_base)
                     .checked_add(start_register as u64 * 16)
                     .ok_or_else(|| {
                         AerogpuD3d9Error::Validation(
@@ -6014,6 +6062,146 @@ impl AerogpuD3d9Executor {
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("aerogpu-d3d9.constants_staging"),
+                        contents: data,
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                let mut encoder = self.encoder.take().unwrap();
+                encoder.copy_buffer_to_buffer(
+                    &staging,
+                    0,
+                    &self.constants_buffer,
+                    offset,
+                    data.len() as u64,
+                );
+                self.encoder = Some(encoder);
+                Ok(())
+            }
+            AeroGpuCmd::SetShaderConstantsI {
+                stage,
+                start_register,
+                vec4_count,
+                data,
+                ..
+            } => {
+                if data.is_empty() {
+                    return Ok(());
+                }
+
+                let stage_base = match stage {
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "SET_SHADER_CONSTANTS_I: unsupported stage {stage}"
+                        )));
+                    }
+                };
+
+                let end_register = start_register.checked_add(vec4_count).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_I: register range overflow".into(),
+                    )
+                })?;
+                if end_register > 256 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_I: register range out of bounds (start_register={start_register} vec4_count={vec4_count})"
+                    )));
+                }
+
+                let offset = (CONSTANTS_INTS_OFFSET_BYTES + stage_base)
+                    .checked_add(start_register as u64 * 16)
+                    .ok_or_else(|| {
+                        AerogpuD3d9Error::Validation(
+                            "SET_SHADER_CONSTANTS_I: register offset overflow".into(),
+                        )
+                    })?;
+                let end_offset = offset.checked_add(data.len() as u64).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_I: data length overflow".into(),
+                    )
+                })?;
+                if end_offset > CONSTANTS_BUFFER_SIZE_BYTES as u64 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_I: upload out of bounds (end_offset={end_offset} buffer_size={})",
+                        CONSTANTS_BUFFER_SIZE_BYTES
+                    )));
+                }
+
+                self.ensure_encoder();
+                let staging = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("aerogpu-d3d9.constants_i_staging"),
+                        contents: data,
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+                let mut encoder = self.encoder.take().unwrap();
+                encoder.copy_buffer_to_buffer(
+                    &staging,
+                    0,
+                    &self.constants_buffer,
+                    offset,
+                    data.len() as u64,
+                );
+                self.encoder = Some(encoder);
+                Ok(())
+            }
+            AeroGpuCmd::SetShaderConstantsB {
+                stage,
+                start_register,
+                bool_count,
+                data,
+                ..
+            } => {
+                if data.is_empty() {
+                    return Ok(());
+                }
+
+                let stage_base = match stage {
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "SET_SHADER_CONSTANTS_B: unsupported stage {stage}"
+                        )));
+                    }
+                };
+
+                let end_register = start_register.checked_add(bool_count).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_B: register range overflow".into(),
+                    )
+                })?;
+                if end_register > 256 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_B: register range out of bounds (start_register={start_register} bool_count={bool_count})"
+                    )));
+                }
+
+                let offset = (CONSTANTS_BOOLS_OFFSET_BYTES + stage_base)
+                    .checked_add(start_register as u64 * 16)
+                    .ok_or_else(|| {
+                        AerogpuD3d9Error::Validation(
+                            "SET_SHADER_CONSTANTS_B: register offset overflow".into(),
+                        )
+                    })?;
+                let end_offset = offset.checked_add(data.len() as u64).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_B: data length overflow".into(),
+                    )
+                })?;
+                if end_offset > CONSTANTS_BUFFER_SIZE_BYTES as u64 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_B: upload out of bounds (end_offset={end_offset} buffer_size={})",
+                        CONSTANTS_BUFFER_SIZE_BYTES
+                    )));
+                }
+
+                self.ensure_encoder();
+                let staging = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("aerogpu-d3d9.constants_b_staging"),
                         contents: data,
                         usage: wgpu::BufferUsages::COPY_SRC,
                     });

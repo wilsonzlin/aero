@@ -1219,12 +1219,15 @@ pub fn generate_wgsl_with_options(
 ) -> Result<WgslOutput, ShaderError> {
     let mut wgsl = String::new();
 
-    // Constants: D3D9 has separate `c#` register files for each shader stage. The minimal D3D9
-    // token-stream translator models those by packing both stages into a single uniform buffer:
-    // - constants.c[0..255]   = vertex shader constants
-    // - constants.c[256..511] = pixel shader constants
+    // Shader constants: D3D9 has separate per-stage constant register files (VS=0..255, PS=256..511).
+    //
+    // Pack each register file into a stable per-type uniform buffer:
+    // - binding(0): float4 constants (`c#`)
+    // - binding(2): bool constants (`b#`, represented as `vec4<u32>` per register)
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
-    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
+    wgsl.push_str("struct ConstantsB { b: array<vec4<u32>, 512>, };\n");
+    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
+    wgsl.push_str("@group(0) @binding(2) var<uniform> constants_b: ConstantsB;\n\n");
 
     let sampler_group = match ir.version.stage {
         ShaderStage::Vertex => 1u32,
@@ -1300,10 +1303,12 @@ pub fn generate_wgsl_with_options(
         ShaderStage::Pixel => 256u32,
     };
 
-    // D3D9 boolean constants (`b#`). The legacy translator currently does not support dynamic bool
-    // constant updates from the host; declare referenced `b#` registers as compile-time values
-    // (defaulting to false unless overridden by `defb`) so shaders using `if b#` still
-    // translate/validate.
+    // D3D9 boolean constants (`b#`).
+    //
+    // Notes:
+    // - D3D9 bool regs are scalar; we splat them across vec4 for register-like access with swizzles.
+    // - `defb` values override the uniform constant buffer.
+    // - Non-embedded `b#` values are loaded from the host-updated uniform buffer.
     let mut used_bool_consts = BTreeSet::<u16>::new();
     for inst in &ir.ops {
         if let Some(dst) = inst.dst {
@@ -1356,9 +1361,15 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
             }
             for b in &used_bool_consts {
-                let v = ir.const_defs_bool.get(b).copied().unwrap_or(false);
-                let v = if v { "1.0" } else { "0.0" };
-                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
+                if let Some(v) = ir.const_defs_bool.get(b).copied() {
+                    let v = if v { "1.0" } else { "0.0" };
+                    wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
+                } else {
+                    wgsl.push_str(&format!(
+                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants_b.b[{}u + {}u].x != 0u));\n",
+                        b, const_base, b
+                    ));
+                }
             }
             for &v in &ir.used_inputs {
                 wgsl.push_str(&format!("  let v{}: vec4<f32> = input.v{};\n", v, v));
@@ -1496,9 +1507,15 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
             }
             for b in &used_bool_consts {
-                let v = ir.const_defs_bool.get(b).copied().unwrap_or(false);
-                let v = if v { "1.0" } else { "0.0" };
-                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
+                if let Some(v) = ir.const_defs_bool.get(b).copied() {
+                    let v = if v { "1.0" } else { "0.0" };
+                    wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
+                } else {
+                    wgsl.push_str(&format!(
+                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants_b.b[{}u + {}u].x != 0u));\n",
+                        b, const_base, b
+                    ));
+                }
             }
             // Load inputs.
             if has_inputs {

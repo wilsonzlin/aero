@@ -62,6 +62,8 @@ pub enum AerogpuCmdOpcode {
     DestroyShader = 0x201,
     BindShaders = 0x202,
     SetShaderConstantsF = 0x203,
+    SetShaderConstantsI = 0x207,
+    SetShaderConstantsB = 0x208,
     CreateInputLayout = 0x204,
     DestroyInputLayout = 0x205,
     SetInputLayout = 0x206,
@@ -122,6 +124,8 @@ impl AerogpuCmdOpcode {
             0x201 => Some(Self::DestroyShader),
             0x202 => Some(Self::BindShaders),
             0x203 => Some(Self::SetShaderConstantsF),
+            0x207 => Some(Self::SetShaderConstantsI),
+            0x208 => Some(Self::SetShaderConstantsB),
             0x204 => Some(Self::CreateInputLayout),
             0x205 => Some(Self::DestroyInputLayout),
             0x206 => Some(Self::SetInputLayout),
@@ -825,6 +829,34 @@ impl AerogpuCmdSetShaderConstantsF {
     pub fn resolved_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
         resolve_stage(self.stage, self.reserved0)
     }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetShaderConstantsI {
+    pub hdr: AerogpuCmdHdr,
+    pub stage: u32,
+    pub start_register: u32,
+    pub vec4_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetShaderConstantsI {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetShaderConstantsB {
+    pub hdr: AerogpuCmdHdr,
+    pub stage: u32,
+    pub start_register: u32,
+    pub bool_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetShaderConstantsB {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE

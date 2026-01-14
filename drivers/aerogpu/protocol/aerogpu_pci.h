@@ -36,7 +36,7 @@ extern "C" {
  * The ABI version is reported by MMIO register `AEROGPU_MMIO_REG_ABI_VERSION`.
  */
 #define AEROGPU_ABI_MAJOR 1u
-#define AEROGPU_ABI_MINOR 3u
+#define AEROGPU_ABI_MINOR 4u
 #define AEROGPU_ABI_VERSION_U32 (((uint32_t)AEROGPU_ABI_MAJOR << 16) | (uint32_t)AEROGPU_ABI_MINOR)
 
 /* ------------------------------- PCI identity ---------------------------- */

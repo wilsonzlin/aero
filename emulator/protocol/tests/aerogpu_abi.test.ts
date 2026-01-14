@@ -48,7 +48,9 @@ import {
   AEROGPU_CMD_SET_SAMPLER_STATE_SIZE,
   AEROGPU_CMD_SET_SAMPLERS_SIZE,
   AEROGPU_CMD_SET_SCISSOR_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE,
   AEROGPU_CMD_SET_TEXTURE_SIZE,
   AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE,
   AEROGPU_CMD_SET_VIEWPORT_SIZE,
@@ -612,6 +614,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_destroy_shader"), AEROGPU_CMD_DESTROY_SHADER_SIZE);
   assert.equal(size("aerogpu_cmd_bind_shaders"), AEROGPU_CMD_BIND_SHADERS_SIZE);
   assert.equal(size("aerogpu_cmd_set_shader_constants_f"), AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE);
+  assert.equal(size("aerogpu_cmd_set_shader_constants_i"), AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE);
+  assert.equal(size("aerogpu_cmd_set_shader_constants_b"), AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE);
   assert.equal(size("aerogpu_input_layout_blob_header"), AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE);
   assert.equal(size("aerogpu_input_layout_element_dxgi"), AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE);
   assert.equal(size("aerogpu_cmd_create_input_layout"), AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE);
@@ -828,6 +832,8 @@ test("TypeScript layout matches C headers", () => {
   // Variable-length packets (must remain stable for parsing).
   assert.equal(off("aerogpu_cmd_create_shader_dxbc", "dxbc_size_bytes"), 16);
   assert.equal(off("aerogpu_cmd_set_shader_constants_f", "vec4_count"), 16);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_i", "vec4_count"), 16);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_b", "bool_count"), 16);
   assert.equal(off("aerogpu_cmd_create_input_layout", "blob_size_bytes"), 12);
   assert.equal(off("aerogpu_cmd_set_vertex_buffers", "buffer_count"), 12);
   assert.equal(off("aerogpu_cmd_upload_resource", "offset_bytes"), 16);
@@ -863,6 +869,10 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_cmd_bind_shaders", "reserved0"), 20);
   assert.equal(off("aerogpu_cmd_set_shader_constants_f", "stage"), 8);
   assert.equal(off("aerogpu_cmd_set_shader_constants_f", "start_register"), 12);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_i", "stage"), 8);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_i", "start_register"), 12);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_b", "stage"), 8);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_b", "start_register"), 12);
   assert.equal(off("aerogpu_cmd_create_input_layout", "input_layout_handle"), 8);
   assert.equal(off("aerogpu_cmd_destroy_input_layout", "input_layout_handle"), 8);
   assert.equal(off("aerogpu_cmd_set_input_layout", "input_layout_handle"), 8);

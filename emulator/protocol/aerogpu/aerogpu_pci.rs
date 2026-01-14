@@ -7,7 +7,7 @@ use core::fmt;
 /// ABI major version (breaking changes).
 pub const AEROGPU_ABI_MAJOR: u32 = 1;
 /// ABI minor version (backwards-compatible extensions).
-pub const AEROGPU_ABI_MINOR: u32 = 3;
+pub const AEROGPU_ABI_MINOR: u32 = 4;
 
 pub const AEROGPU_ABI_VERSION_U32: u32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
 

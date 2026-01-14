@@ -17,7 +17,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
     AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
     AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
-    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsB,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI,
     AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
     AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
     AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
@@ -661,6 +662,14 @@ fn rust_layout_matches_c_headers() {
         AerogpuCmdSetShaderConstantsF,
         "aerogpu_cmd_set_shader_constants_f"
     );
+    assert_cmd_size!(
+        AerogpuCmdSetShaderConstantsI,
+        "aerogpu_cmd_set_shader_constants_i"
+    );
+    assert_cmd_size!(
+        AerogpuCmdSetShaderConstantsB,
+        "aerogpu_cmd_set_shader_constants_b"
+    );
     assert_size!(
         AerogpuInputLayoutBlobHeader,
         "aerogpu_input_layout_blob_header"
@@ -1041,6 +1050,18 @@ fn rust_layout_matches_c_headers() {
         vec4_count,
         "aerogpu_cmd_set_shader_constants_f",
         "vec4_count"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsI,
+        vec4_count,
+        "aerogpu_cmd_set_shader_constants_i",
+        "vec4_count"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsB,
+        bool_count,
+        "aerogpu_cmd_set_shader_constants_b",
+        "bool_count"
     );
     assert_off!(
         AerogpuCmdCreateInputLayout,
@@ -1535,6 +1556,64 @@ fn rust_layout_matches_c_headers() {
         AerogpuCmdSetShaderConstantsF,
         reserved0,
         "aerogpu_cmd_set_shader_constants_f",
+        "reserved0"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdSetShaderConstantsI,
+        "aerogpu_cmd_set_shader_constants_i"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsI,
+        stage,
+        "aerogpu_cmd_set_shader_constants_i",
+        "stage"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsI,
+        start_register,
+        "aerogpu_cmd_set_shader_constants_i",
+        "start_register"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsI,
+        vec4_count,
+        "aerogpu_cmd_set_shader_constants_i",
+        "vec4_count"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsI,
+        reserved0,
+        "aerogpu_cmd_set_shader_constants_i",
+        "reserved0"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdSetShaderConstantsB,
+        "aerogpu_cmd_set_shader_constants_b"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsB,
+        stage,
+        "aerogpu_cmd_set_shader_constants_b",
+        "stage"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsB,
+        start_register,
+        "aerogpu_cmd_set_shader_constants_b",
+        "start_register"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsB,
+        bool_count,
+        "aerogpu_cmd_set_shader_constants_b",
+        "bool_count"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsB,
+        reserved0,
+        "aerogpu_cmd_set_shader_constants_b",
         "reserved0"
     );
 
@@ -2764,14 +2843,8 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
         24
     );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_perf_out", "ring0_head"),
-        32
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"),
-        36
-    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
         40

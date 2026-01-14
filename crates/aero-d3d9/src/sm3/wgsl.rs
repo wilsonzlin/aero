@@ -2528,10 +2528,17 @@ pub fn generate_wgsl_with_options(
 
     let mut wgsl = String::new();
 
-    // Float constants: pack per-stage `c#` register files into a single uniform buffer to keep
-    // bindings stable across shader stages (VS=0..255, PS=256..511).
+    // Shader constants: D3D9 has separate per-stage register files (VS=0..255, PS=256..511).
+    // Pack each register file into a stable per-type uniform buffer:
+    // - binding(0): float4 constants (`c#`)
+    // - binding(1): int4 constants (`i#`)
+    // - binding(2): bool constants (`b#`, represented as `vec4<u32>` per register)
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
+    wgsl.push_str("struct ConstantsI { i: array<vec4<i32>, 512>, };\n");
+    wgsl.push_str("struct ConstantsB { b: array<vec4<u32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
+    wgsl.push_str("@group(0) @binding(1) var<uniform> constants_i: ConstantsI;\n");
+    wgsl.push_str("@group(0) @binding(2) var<uniform> constants_b: ConstantsB;\n");
 
     let sampler_group = sampler_bind_group(ir.version.stage);
 
@@ -2577,7 +2584,6 @@ pub fn generate_wgsl_with_options(
         wgsl.push_str("struct HalfPixel { inv_viewport: vec2<f32>, _pad: vec2<f32>, };\n");
         wgsl.push_str("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;\n\n");
     }
-
     let const_base = match ir.version.stage {
         ShaderStage::Vertex => 0u32,
         ShaderStage::Pixel => 256u32,
@@ -2614,38 +2620,20 @@ pub fn generate_wgsl_with_options(
         wgsl.push_str("}\n\n");
     }
 
-    // Embedded integer constants (`defi i#`). D3D9 i# registers are not writable at runtime, so we
-    // can lower them as module-scope `const`.
-    if !usage.int_consts.is_empty() {
-        for idx in &usage.int_consts {
-            let value = i32_defs.get(idx).copied().unwrap_or([0; 4]);
-            let _ = writeln!(
-                wgsl,
-                "const i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
-                value[0], value[1], value[2], value[3]
-            );
-        }
-        wgsl.push('\n');
-    }
-
-    // Embedded boolean constants (`defb b#`). D3D bool regs are scalar; we splat across vec4 for
-    // register-like access with swizzles.
-    if !usage.bool_consts.is_empty() {
-        for idx in &usage.bool_consts {
-            let v = bool_defs.get(idx).copied().unwrap_or(false);
-            let _ = writeln!(
-                wgsl,
-                "const b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
-            );
-        }
-        wgsl.push('\n');
-    }
-
     // Private register state shared between the entry point and SM3 subroutine helper functions.
     //
     // WGSL functions cannot capture entry-point locals. Declaring registers as `var<private>`
     // allows helper functions (`call` targets) to mutate the same register state as the main
     // program.
+    for idx in &usage.int_consts {
+        let _ = writeln!(wgsl, "var<private> i{idx}: vec4<i32> = vec4<i32>(0);");
+    }
+    for idx in &usage.bool_consts {
+        let _ = writeln!(
+            wgsl,
+            "var<private> b{idx}: vec4<bool> = vec4<bool>(false);"
+        );
+    }
     if let Some(max_r) = usage.temps.iter().copied().max() {
         for r in 0..=max_r {
             let _ = writeln!(wgsl, "var<private> r{r}: vec4<f32> = vec4<f32>(0.0);");
@@ -2687,6 +2675,8 @@ pub fn generate_wgsl_with_options(
     }
     if !usage.temps.is_empty()
         || !usage.addrs.is_empty()
+        || !usage.int_consts.is_empty()
+        || !usage.bool_consts.is_empty()
         || !usage.loop_regs.is_empty()
         || !usage.predicates.is_empty()
         || !usage.inputs.is_empty()
@@ -2838,6 +2828,38 @@ pub fn generate_wgsl_with_options(
             if has_inputs {
                 for idx in &vs_inputs {
                     let _ = writeln!(wgsl, "  v{idx} = input.v{idx};");
+                }
+            }
+
+            // Load integer/bool constants into private registers so SM3 call targets can read them.
+            for idx in &usage.int_consts {
+                if let Some(value) = i32_defs.get(idx).copied() {
+                    let _ = writeln!(
+                        wgsl,
+                        "  i{idx} = vec4<i32>({}, {}, {}, {});",
+                        value[0],
+                        value[1],
+                        value[2],
+                        value[3]
+                    );
+                } else {
+                    let _ = writeln!(
+                        wgsl,
+                        "  i{idx} = constants_i.i[CONST_BASE + {idx}u];"
+                    );
+                }
+            }
+            for idx in &usage.bool_consts {
+                if let Some(v) = bool_defs.get(idx).copied() {
+                    let _ = writeln!(
+                        wgsl,
+                        "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});"
+                    );
+                } else {
+                    let _ = writeln!(
+                        wgsl,
+                        "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
+                    );
                 }
             }
 
@@ -3054,6 +3076,38 @@ pub fn generate_wgsl_with_options(
                     // boolean, so map it to the legacy sign convention and splat to vec4.
                     wgsl.push_str("  let face: f32 = select(-1.0, 1.0, input.front_facing);\n");
                     wgsl.push_str("  misc1 = vec4<f32>(face, face, face, face);\n");
+                }
+            }
+
+            // Load integer/bool constants into private registers so SM3 call targets can read them.
+            for idx in &usage.int_consts {
+                if let Some(value) = i32_defs.get(idx).copied() {
+                    let _ = writeln!(
+                        wgsl,
+                        "  i{idx} = vec4<i32>({}, {}, {}, {});",
+                        value[0],
+                        value[1],
+                        value[2],
+                        value[3]
+                    );
+                } else {
+                    let _ = writeln!(
+                        wgsl,
+                        "  i{idx} = constants_i.i[CONST_BASE + {idx}u];"
+                    );
+                }
+            }
+            for idx in &usage.bool_consts {
+                if let Some(v) = bool_defs.get(idx).copied() {
+                    let _ = writeln!(
+                        wgsl,
+                        "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});"
+                    );
+                } else {
+                    let _ = writeln!(
+                        wgsl,
+                        "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
+                    );
                 }
             }
 

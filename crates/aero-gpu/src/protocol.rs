@@ -294,6 +294,18 @@ pub enum AeroGpuCmd<'a> {
         stage_ex: u32,
         data: &'a [u8],
     },
+    SetShaderConstantsI {
+        stage: u32,
+        start_register: u32,
+        vec4_count: u32,
+        data: &'a [u8],
+    },
+    SetShaderConstantsB {
+        stage: u32,
+        start_register: u32,
+        bool_count: u32,
+        data: &'a [u8],
+    },
 
     // Input layouts
     CreateInputLayout {
@@ -753,6 +765,46 @@ pub fn parse_cmd_stream(
                     start_register: u32::from_le(cmd.start_register),
                     vec4_count,
                     stage_ex,
+                    data,
+                }
+            }
+            Some(AeroGpuOpcode::SetShaderConstantsI) => {
+                let cmd: protocol::AerogpuCmdSetShaderConstantsI = read_packed_prefix(packet)?;
+                let vec4_count = u32::from_le(cmd.vec4_count);
+                let data_len = (vec4_count as usize)
+                    .checked_mul(16)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let data_start = protocol::AerogpuCmdSetShaderConstantsI::SIZE_BYTES;
+                let data_end = data_start
+                    .checked_add(data_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let data = packet
+                    .get(data_start..data_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetShaderConstantsI {
+                    stage: u32::from_le(cmd.stage),
+                    start_register: u32::from_le(cmd.start_register),
+                    vec4_count,
+                    data,
+                }
+            }
+            Some(AeroGpuOpcode::SetShaderConstantsB) => {
+                let cmd: protocol::AerogpuCmdSetShaderConstantsB = read_packed_prefix(packet)?;
+                let bool_count = u32::from_le(cmd.bool_count);
+                let data_len = (bool_count as usize)
+                    .checked_mul(16)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let data_start = protocol::AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
+                let data_end = data_start
+                    .checked_add(data_len)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let data = packet
+                    .get(data_start..data_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                AeroGpuCmd::SetShaderConstantsB {
+                    stage: u32::from_le(cmd.stage),
+                    start_register: u32::from_le(cmd.start_register),
+                    bool_count,
                     data,
                 }
             }

@@ -103,6 +103,12 @@ enum aerogpu_cmd_opcode {
   /* D3D9-style shader constant updates (float4 registers). */
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F = 0x203,
 
+  /* D3D9-style shader constant updates (int4 registers). */
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_I = 0x207,
+
+  /* D3D9-style shader constant updates (bool registers). */
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_B = 0x208,
+
   /* D3D9 vertex declaration / D3D10+ input layout blob (opaque to protocol). */
   AEROGPU_CMD_CREATE_INPUT_LAYOUT = 0x204,
   AEROGPU_CMD_DESTROY_INPUT_LAYOUT = 0x205,
@@ -693,6 +699,53 @@ struct aerogpu_cmd_set_shader_constants_f {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_f) == 24);
+
+/*
+ * SET_SHADER_CONSTANTS_I:
+ * D3D9-style int4 constants.
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_shader_constants_i
+ *   int32_t data[vec4_count * 4]
+ *   padding to 4-byte alignment
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_shader_constants_i {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_I */
+  uint32_t stage; /* enum aerogpu_shader_stage */
+  uint32_t start_register;
+  uint32_t vec4_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_i) == 24);
+
+/*
+ * SET_SHADER_CONSTANTS_B:
+ * D3D9-style bool constants.
+ *
+ * Notes:
+ * - D3D9 bool registers are scalar, but AeroGPU represents them as a vec4<u32>
+ *   per register (replicated across all 4 components) to support register-like
+ *   access with swizzles in shader translation backends.
+ *
+ * Payload format:
+ *   struct aerogpu_cmd_set_shader_constants_b
+ *   uint32_t data[bool_count * 4]   // vec4<u32> per register
+ *   padding to 4-byte alignment
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_set_shader_constants_b {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_B */
+  uint32_t stage; /* enum aerogpu_shader_stage */
+  uint32_t start_register;
+  uint32_t bool_count;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_b) == 24);
 
 /*
  * CREATE_INPUT_LAYOUT:

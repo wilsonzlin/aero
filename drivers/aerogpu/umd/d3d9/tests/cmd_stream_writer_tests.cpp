@@ -10,6 +10,7 @@
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <condition_variable>
 
@@ -61,6 +62,18 @@ constexpr uint32_t kD3dRTypeVolume = 2u; // D3DRTYPE_VOLUME
 constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRTYPE_TEXTURE
 constexpr uint32_t kD3dRTypeVolumeTexture = 4u; // D3DRTYPE_VOLUMETEXTURE
 constexpr uint32_t kD3dRTypeCubeTexture = 5u; // D3DRTYPE_CUBETEXTURE
+
+template <typename T, typename = void>
+struct HasPfnSetShaderConstI : std::false_type {};
+template <typename T>
+struct HasPfnSetShaderConstI<T, std::void_t<decltype(&T::pfnSetShaderConstI)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct HasPfnSetShaderConstB : std::false_type {};
+template <typename T>
+struct HasPfnSetShaderConstB<T, std::void_t<decltype(&T::pfnSetShaderConstB)>>
+    : std::true_type {};
 
 // ABI-compatible D3DVERTEXELEMENT9 encoding (8 bytes, packed). The UMD treats
 // vertex decls as opaque blobs at the DDI boundary, so tests define a portable
@@ -13581,6 +13594,154 @@ bool TestInvalidPayloadArgs() {
     return false;
   }
   return Check(vec.error() == CmdStreamError::kSizeTooLarge, "VectorCmdStreamWriter near-max payload sets kSizeTooLarge");
+}
+
+template <typename DeviceFuncsT>
+bool TestSetShaderConstIBEmitsCommandsImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value) {
+    // Some D3D9 DDI header variants do not expose the I/B constant entrypoints in the device
+    // function table. In those builds we cannot exercise the DDI surface area; treat the test as a
+    // no-op.
+    return true;
+  } else {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    DeviceFuncsT device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  // Set 2 int4 registers: i5..i6.
+  const uint32_t int_start = 5;
+  const uint32_t int_count = 2;
+  const int32_t ints[int_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
+  hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice,
+                                              kD3d9ShaderStagePs,
+                                              int_start,
+                                              ints,
+                                              int_count);
+  if (!Check(hr == S_OK, "SetShaderConstI")) {
+    return false;
+  }
+
+  // Set 2 bool registers: b7..b8.
+  const uint32_t bool_start = 7;
+  const uint32_t bool_count = 2;
+  const uint32_t bools[bool_count] = {1u, 0u};
+  hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice,
+                                              kD3d9ShaderStagePs,
+                                              bool_start,
+                                              bools,
+                                              bool_count);
+  if (!Check(hr == S_OK, "SetShaderConstB")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dma.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+    return false;
+  }
+
+  const CmdLoc i_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+  if (!Check(i_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_I emitted")) {
+    return false;
+  }
+  const auto* i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(i_loc.hdr);
+  if (!Check(i_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "I stage")) {
+    return false;
+  }
+  if (!Check(i_cmd->start_register == int_start, "I start_register")) {
+    return false;
+  }
+  if (!Check(i_cmd->vec4_count == int_count, "I vec4_count")) {
+    return false;
+  }
+  const auto* i_payload = reinterpret_cast<const int32_t*>(
+      reinterpret_cast<const uint8_t*>(i_cmd) + sizeof(*i_cmd));
+  if (!Check(std::memcmp(i_payload, ints, sizeof(ints)) == 0, "I payload matches")) {
+    return false;
+  }
+
+  const CmdLoc b_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+  if (!Check(b_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_B emitted")) {
+    return false;
+  }
+  const auto* b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(b_loc.hdr);
+  if (!Check(b_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "B stage")) {
+    return false;
+  }
+  if (!Check(b_cmd->start_register == bool_start, "B start_register")) {
+    return false;
+  }
+  if (!Check(b_cmd->bool_count == bool_count, "B bool_count")) {
+    return false;
+  }
+  const auto* b_payload = reinterpret_cast<const uint32_t*>(
+      reinterpret_cast<const uint8_t*>(b_cmd) + sizeof(*b_cmd));
+  // Payload uses a vec4<u32> per bool register.
+  const uint32_t expected_b[bool_count * 4] = {1u, 1u, 1u, 1u, 0u, 0u, 0u, 0u};
+  return Check(std::memcmp(b_payload, expected_b, sizeof(expected_b)) == 0, "B payload matches");
+  }
+}
+
+bool TestSetShaderConstIBEmitsCommands() {
+  return TestSetShaderConstIBEmitsCommandsImpl<D3D9DDI_DEVICEFUNCS>();
 }
 
 bool TestDestroyBoundShaderUnbinds() {
@@ -35540,6 +35701,7 @@ int main() {
   RUN_TEST(TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2UsesRowPitchBytes);
   RUN_TEST(TestOpenResourceUsesReserved0PitchHintForUncompressedSingleMipSurface);
   RUN_TEST(TestInvalidPayloadArgs);
+  RUN_TEST(TestSetShaderConstIBEmitsCommands);
   RUN_TEST(TestDestroyBoundShaderUnbinds);
   RUN_TEST(TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws);
   RUN_TEST(TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws);

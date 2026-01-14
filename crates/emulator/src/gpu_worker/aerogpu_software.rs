@@ -3538,6 +3538,12 @@ impl AeroGpuSoftwareExecutor {
             cmd::AerogpuCmdOpcode::SetShaderConstantsF => {
                 // Currently ignored by the software backend.
             }
+            cmd::AerogpuCmdOpcode::SetShaderConstantsI => {
+                // Currently ignored by the software backend.
+            }
+            cmd::AerogpuCmdOpcode::SetShaderConstantsB => {
+                // Currently ignored by the software backend.
+            }
             cmd::AerogpuCmdOpcode::CreateInputLayout => {
                 if packet.len() < cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES {
                     Self::record_error(regs);

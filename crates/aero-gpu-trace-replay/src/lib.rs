@@ -1725,6 +1725,8 @@ pub fn decode_cmd_stream_listing(
 
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
+                    | AerogpuCmdOpcode::SetShaderConstantsI
+                    | AerogpuCmdOpcode::SetShaderConstantsB
                     | AerogpuCmdOpcode::DestroyInputLayout
                     | AerogpuCmdOpcode::SetInputLayout
                     | AerogpuCmdOpcode::SetBlendState

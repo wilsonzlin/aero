@@ -206,6 +206,8 @@ export const AerogpuCmdOpcode = {
   DestroyShader: 0x201,
   BindShaders: 0x202,
   SetShaderConstantsF: 0x203,
+  SetShaderConstantsI: 0x207,
+  SetShaderConstantsB: 0x208,
   CreateInputLayout: 0x204,
   DestroyInputLayout: 0x205,
   SetInputLayout: 0x206,
@@ -767,6 +769,10 @@ export const AEROGPU_CMD_BIND_SHADERS_SIZE = 24;
 export const AEROGPU_CMD_BIND_SHADERS_EX_SIZE = AEROGPU_CMD_BIND_SHADERS_SIZE + 12;
 // Payload: aerogpu_cmd_set_shader_constants_f + float data[vec4_count * 4] + 4-byte alignment padding.
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE = 24;
+// Payload: aerogpu_cmd_set_shader_constants_i + int32_t data[vec4_count * 4] + 4-byte alignment padding.
+export const AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE = 24;
+// Payload: aerogpu_cmd_set_shader_constants_b + uint32_t data[bool_count * 4] + 4-byte alignment padding.
+export const AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE = 24;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
 // Payload: aerogpu_cmd_create_input_layout + blob[blob_size_bytes] + 4-byte alignment padding.
@@ -1913,6 +1919,47 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 20, reserved0, true);
     for (let i = 0; i < data.length; i++) {
       this.view.setFloat32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + i * 4, data[i]!, true);
+    }
+  }
+
+  setShaderConstantsI(stage: AerogpuShaderStage, startRegister: number, data: Int32Array | readonly number[]): void {
+    if (data.length % 4 !== 0) {
+      throw new Error(`SET_SHADER_CONSTANTS_I data must be int4-aligned (got ${data.length} ints)`);
+    }
+
+    const vec4Count = data.length / 4;
+    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + data.length * 4;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsI, unpadded);
+    this.view.setUint32(base + 8, stage, true);
+    this.view.setUint32(base + 12, startRegister, true);
+    this.view.setUint32(base + 16, vec4Count, true);
+    for (let i = 0; i < data.length; i++) {
+      this.view.setInt32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + i * 4, data[i]!, true);
+    }
+  }
+
+  /**
+   * SET_SHADER_CONSTANTS_B.
+   *
+   * D3D9 bool registers are scalar, but the AeroGPU protocol represents each register as a
+   * `vec4<u32>` (replicated across all 4 lanes) so backends can expose it as a swizzlable vec4.
+   */
+  setShaderConstantsB(stage: AerogpuShaderStage, startRegister: number, data: readonly (boolean | number)[]): void {
+    const boolCount = data.length;
+    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsB, unpadded);
+    this.view.setUint32(base + 8, stage, true);
+    this.view.setUint32(base + 12, startRegister, true);
+    this.view.setUint32(base + 16, boolCount, true);
+
+    const payloadBase = base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
+    for (let i = 0; i < boolCount; i++) {
+      const v = data[i] ? 1 : 0;
+      // vec4<u32> per bool register (replicated across lanes).
+      this.view.setUint32(payloadBase + i * 16 + 0, v, true);
+      this.view.setUint32(payloadBase + i * 16 + 4, v, true);
+      this.view.setUint32(payloadBase + i * 16 + 8, v, true);
+      this.view.setUint32(payloadBase + i * 16 + 12, v, true);
     }
   }
 
