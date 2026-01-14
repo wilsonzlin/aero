@@ -520,6 +520,53 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 	}
 }
 
+func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_SessionEndpoint(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:    config.AuthModeJWT,
+		JWTSecret:   "supersecret",
+		MaxSessions: 2,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test_a", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test_b", now-9)
+
+	do := func(token string) (int, string) {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, strings.TrimSpace(string(body))
+	}
+
+	statusA, idA := do(tokenA)
+	if statusA != http.StatusCreated {
+		t.Fatalf("first /session status=%d, want %d", statusA, http.StatusCreated)
+	}
+	if idA == "" {
+		t.Fatalf("expected non-empty session id for sid A")
+	}
+
+	statusB, idB := do(tokenB)
+	if statusB != http.StatusCreated {
+		t.Fatalf("second /session status=%d, want %d", statusB, http.StatusCreated)
+	}
+	if idB == "" {
+		t.Fatalf("expected non-empty session id for sid B")
+	}
+	if idA == idB {
+		t.Fatalf("expected distinct session IDs, got %q", idA)
+	}
+}
+
 func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:  config.AuthModeJWT,

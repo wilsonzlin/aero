@@ -352,6 +352,44 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 	}
 }
 
+func TestUDPWebSocketServer_JWTAllowsConcurrentSessionsWithDifferentSID(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test_a", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test_b", now-9)
+
+	c1 := dialWS(t, ts.URL, "/udp?token="+tokenA)
+	ready1 := readWSJSON(t, c1, 2*time.Second)
+	if ready1["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready1)
+	}
+
+	c2 := dialWS(t, ts.URL, "/udp?token="+tokenB)
+	ready2 := readWSJSON(t, c2, 2*time.Second)
+	if ready2["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready2)
+	}
+}
+
 func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()
