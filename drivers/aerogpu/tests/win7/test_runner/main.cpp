@@ -1390,6 +1390,7 @@ int main(int argc, char** argv) {
       "d3d9ex_multiframe_triangle",
       "d3d9ex_vb_dirty_range",
       "d3d9_process_vertices_smoke",
+      "d3d9_dynamic_vb_lock_semantics",
       "d3d9ex_stretchrect",
       "d3d9ex_query_latency",
       "d3d9ex_shared_surface",
