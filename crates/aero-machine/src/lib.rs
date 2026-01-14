@@ -522,7 +522,8 @@ pub struct MachineConfig {
     ///
     /// - Legacy VGA ports: `0x3B0..0x3DF` (covers both mono and color decode ranges, e.g.
     ///   `0x3B4/0x3B5` and `0x3D4/0x3D5`)
-    /// - Bochs VBE: `0x01CE/0x01CF`
+    /// - Bochs VBE: [`aero_gpu_vga::VBE_DISPI_INDEX_PORT`] (index),
+    ///   [`aero_gpu_vga::VBE_DISPI_DATA_PORT`] (data)
     pub enable_vga: bool,
     /// Physical base address for the VGA/VBE Bochs-compatible linear framebuffer (LFB).
     ///
@@ -7528,8 +7529,8 @@ impl Machine {
                 Box::new(VgaPortIoDevice { dev: vga.clone() }),
             );
             self.io.register_range(
-                0x01CE,
-                0x0002,
+                aero_gpu_vga::VBE_DISPI_IO_START,
+                aero_gpu_vga::VBE_DISPI_IO_LEN,
                 Box::new(VgaPortIoDevice { dev: vga.clone() }),
             );
 
@@ -7672,7 +7673,8 @@ impl Machine {
                 // Register legacy VGA + Bochs VBE ports.
                 //
                 // - VGA: 0x3B0..0x3DF (includes both mono and color decode ranges)
-                // - Bochs VBE: 0x01CE (index), 0x01CF (data)
+                // - Bochs VBE: aero_gpu_vga::VBE_DISPI_INDEX_PORT (index),
+                //   aero_gpu_vga::VBE_DISPI_DATA_PORT (data)
                 self.io.register_shared_range(
                     aero_gpu_vga::VGA_LEGACY_IO_START,
                     aero_gpu_vga::VGA_LEGACY_IO_LEN,
@@ -7681,10 +7683,14 @@ impl Machine {
                         move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                     },
                 );
-                self.io.register_shared_range(0x01CE, 2, {
-                    let vga = vga.clone();
-                    move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
-                });
+                self.io.register_shared_range(
+                    aero_gpu_vga::VBE_DISPI_IO_START,
+                    aero_gpu_vga::VBE_DISPI_IO_LEN,
+                    {
+                        let vga = vga.clone();
+                        move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
+                    },
+                );
 
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`). The SVGA linear framebuffer
                 // is routed via PCI BAR/MMIO when the PC platform is enabled, so do not map it
@@ -9925,14 +9931,30 @@ impl Machine {
 
                             // Mirror BIOS VBE state into Bochs VBE_DISPI regs via the port I/O path so
                             // the VGA device marks the output dirty when panning/stride changes.
-                            vga.port_write(0x01CE, 2, 0x0005);
-                            vga.port_write(0x01CF, 2, u32::from(bank));
-                            vga.port_write(0x01CE, 2, 0x0006);
-                            vga.port_write(0x01CF, 2, u32::from(virt_width));
-                            vga.port_write(0x01CE, 2, 0x0008);
-                            vga.port_write(0x01CF, 2, u32::from(x_off));
-                            vga.port_write(0x01CE, 2, 0x0009);
-                            vga.port_write(0x01CF, 2, u32::from(y_off));
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0005);
+                            vga.port_write(
+                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
+                                2,
+                                u32::from(bank),
+                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0006);
+                            vga.port_write(
+                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
+                                2,
+                                u32::from(virt_width),
+                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0008);
+                            vga.port_write(
+                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
+                                2,
+                                u32::from(x_off),
+                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0009);
+                            vga.port_write(
+                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
+                                2,
+                                u32::from(y_off),
+                            );
                             vga.set_vbe_bytes_per_scan_line_override(
                                 self.bios.video.vbe.bytes_per_scan_line,
                             );
@@ -11315,10 +11337,14 @@ impl snapshot::SnapshotTarget for Machine {
                                 move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                             },
                         );
-                        self.io.register_shared_range(0x01CE, 2, {
-                            let vga = vga.clone();
-                            move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
-                        });
+                        self.io.register_shared_range(
+                            aero_gpu_vga::VBE_DISPI_IO_START,
+                            aero_gpu_vga::VBE_DISPI_IO_LEN,
+                            {
+                                let vga = vga.clone();
+                                move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
+                            },
+                        );
 
                         // MMIO mappings persist in the physical bus; install legacy + LFB.
                         let legacy_base = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;

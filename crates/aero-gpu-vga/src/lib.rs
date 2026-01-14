@@ -78,6 +78,16 @@ pub const VGA_LEGACY_IO_END: u16 = 0x3DF;
 /// Length of [`VGA_LEGACY_IO_START`]..=[`VGA_LEGACY_IO_END`] in I/O ports.
 pub const VGA_LEGACY_IO_LEN: u16 = VGA_LEGACY_IO_END - VGA_LEGACY_IO_START + 1;
 
+/// Bochs VBE ("VBE_DISPI") index register port.
+pub const VBE_DISPI_INDEX_PORT: u16 = 0x01CE;
+/// Bochs VBE ("VBE_DISPI") data register port.
+pub const VBE_DISPI_DATA_PORT: u16 = 0x01CF;
+/// Full Bochs VBE ("VBE_DISPI") I/O decode range.
+pub const VBE_DISPI_IO_START: u16 = VBE_DISPI_INDEX_PORT;
+pub const VBE_DISPI_IO_END: u16 = VBE_DISPI_DATA_PORT;
+/// Length of [`VBE_DISPI_IO_START`]..=[`VBE_DISPI_IO_END`] in I/O ports.
+pub const VBE_DISPI_IO_LEN: u16 = VBE_DISPI_IO_END - VBE_DISPI_IO_START + 1;
+
 /// Legacy VGA memory window covering the 128KiB aperture (`A0000-BFFFF`).
 pub const VGA_LEGACY_MEM_START: u32 = 0xA0000;
 pub const VGA_LEGACY_MEM_END: u32 = 0xBFFFF;
@@ -1756,10 +1766,10 @@ impl PortIO for VgaDevice {
             1 => u32::from(self.port_read_u8(port)),
             2 => {
                 // Bochs VBE.
-                if port == 0x01CE {
+                if port == VBE_DISPI_INDEX_PORT {
                     return u32::from(self.vbe_index);
                 }
-                if port == 0x01CF {
+                if port == VBE_DISPI_DATA_PORT {
                     return u32::from(self.vbe_read_reg(self.vbe_index));
                 }
 
@@ -1784,11 +1794,11 @@ impl PortIO for VgaDevice {
             1 => self.port_write_u8(port, val as u8),
             2 => {
                 // Bochs VBE.
-                if port == 0x01CE {
+                if port == VBE_DISPI_INDEX_PORT {
                     self.vbe_index = (val & 0xFFFF) as u16;
                     return;
                 }
-                if port == 0x01CF {
+                if port == VBE_DISPI_DATA_PORT {
                     self.vbe_write_reg(self.vbe_index, (val & 0xFFFF) as u16);
                     return;
                 }
@@ -2167,8 +2177,8 @@ mod tests {
     use aero_shared::scanout_state::{SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB};
 
     fn vbe_write(dev: &mut VgaDevice, index: u16, val: u16) {
-        dev.port_write(0x01CE, 2, index as u32);
-        dev.port_write(0x01CF, 2, val as u32);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, index as u32);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, val as u32);
     }
 
     fn vbe_write_bgrx32(dev: &mut VgaDevice, byte_offset: u32, b: u8, g: u8, r: u8) {
@@ -2479,14 +2489,14 @@ mod tests {
         let mut dev = VgaDevice::new();
 
         // 64x64x32bpp, LFB enabled.
-        dev.port_write(0x01CE, 2, 0x0001);
-        dev.port_write(0x01CF, 2, 64);
-        dev.port_write(0x01CE, 2, 0x0002);
-        dev.port_write(0x01CF, 2, 64);
-        dev.port_write(0x01CE, 2, 0x0003);
-        dev.port_write(0x01CF, 2, 32);
-        dev.port_write(0x01CE, 2, 0x0004);
-        dev.port_write(0x01CF, 2, 0x0041);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 32);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
         // Write a red pixel at (0,0) in BGRX format.
         let base = dev.lfb_base();
@@ -2547,14 +2557,14 @@ mod tests {
         let mut dev = VgaDevice::new();
 
         // 64x64x32bpp, LFB enabled.
-        dev.port_write(0x01CE, 2, 0x0001);
-        dev.port_write(0x01CF, 2, 64);
-        dev.port_write(0x01CE, 2, 0x0002);
-        dev.port_write(0x01CF, 2, 64);
-        dev.port_write(0x01CE, 2, 0x0003);
-        dev.port_write(0x01CF, 2, 32);
-        dev.port_write(0x01CE, 2, 0x0004);
-        dev.port_write(0x01CF, 2, 0x0041);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 32);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
         // Write a red pixel at (0,0) in BGRX format.
         let lfb_base = dev.lfb_base();
@@ -2780,16 +2790,16 @@ mod tests {
 
         // Ensure the index port is a true 16-bit port: the full value should be latched, not just
         // the low byte.
-        dev.port_write(0x01CE, 2, 0xBEEF);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0xBEEF);
         assert_eq!(dev.vbe_index, 0xBEEF);
-        assert_eq!(dev.port_read(0x01CE, 2), 0xBEEF);
+        assert_eq!(dev.port_read(VBE_DISPI_INDEX_PORT, 2), 0xBEEF);
 
         // Program a real VBE register (XRES) through the index+data ports and verify we can read
         // it back via `inw` on the data port.
-        dev.port_write(0x01CE, 2, 0x0001);
-        dev.port_write(0x01CF, 2, 0x0123);
+        dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        dev.port_write(VBE_DISPI_DATA_PORT, 2, 0x0123);
         assert_eq!(dev.vbe.xres, 0x0123);
-        assert_eq!(dev.port_read(0x01CF, 2), 0x0123);
+        assert_eq!(dev.port_read(VBE_DISPI_DATA_PORT, 2), 0x0123);
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]

@@ -292,8 +292,7 @@ impl AeroGpuPciDevice {
 
         // VGA legacy ports + Bochs VBE ports.
         if (aero_gpu_vga::VGA_LEGACY_IO_START..=aero_gpu_vga::VGA_LEGACY_IO_END).contains(&port)
-            || port == 0x01CE
-            || port == 0x01CF
+            || (aero_gpu_vga::VBE_DISPI_IO_START..=aero_gpu_vga::VBE_DISPI_IO_END).contains(&port)
         {
             return self.vga.port_read(port, size);
         }
@@ -311,8 +310,7 @@ impl AeroGpuPciDevice {
             return;
         }
         if (aero_gpu_vga::VGA_LEGACY_IO_START..=aero_gpu_vga::VGA_LEGACY_IO_END).contains(&port)
-            || port == 0x01CE
-            || port == 0x01CF
+            || (aero_gpu_vga::VBE_DISPI_IO_START..=aero_gpu_vga::VBE_DISPI_IO_END).contains(&port)
         {
             self.vga.port_write(port, size, value);
             self.update_scanout_state_from_vga();

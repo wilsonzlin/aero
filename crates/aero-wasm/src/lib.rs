@@ -5272,7 +5272,8 @@ impl Machine {
             return;
         };
 
-        // Detect Bochs VBE linear framebuffer modes programmed via ports 0x01CE/0x01CF.
+        // Detect Bochs VBE linear framebuffer modes programmed via the VBE_DISPI index/data ports
+        // (`aero_gpu_vga::VBE_DISPI_INDEX_PORT` / `aero_gpu_vga::VBE_DISPI_DATA_PORT`).
         let regs = vga.borrow().vbe;
         let vbe_enabled = (regs.enable & 0x0001) != 0;
         let lfb_enabled = (regs.enable & 0x0040) != 0;

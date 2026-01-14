@@ -6,7 +6,8 @@ use std::rc::Rc;
 /// [`aero_platform::io::PortIoDevice`] adapter for [`VgaDevice`].
 ///
 /// This can be registered on an [`aero_platform::io::IoPortBus`] to expose the VGA/VBE port space
-/// (for example `0x3B0..0x3DF` and `0x01CE..0x01CF`).
+/// (for example [`crate::VGA_LEGACY_IO_START`]..=[`crate::VGA_LEGACY_IO_END`] and
+/// [`crate::VBE_DISPI_IO_START`]..=[`crate::VBE_DISPI_IO_END`]).
 pub struct VgaPortIoDevice {
     pub dev: Rc<RefCell<VgaDevice>>,
 }
