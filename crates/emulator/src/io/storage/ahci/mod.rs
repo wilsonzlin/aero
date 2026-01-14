@@ -28,10 +28,8 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 
 use memory::MemoryBus;
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::cell::Cell;
+use std::rc::Rc;
 
 const AHCI_ABAR_CFG_OFFSET: u16 = profile::AHCI_ABAR_CFG_OFFSET as u16;
 
@@ -41,18 +39,18 @@ const PCI_COMMAND_INTX_DISABLE: u16 = 1 << 10;
 
 #[derive(Clone, Default)]
 struct RecordingIrqLine {
-    level: Arc<AtomicBool>,
+    level: Rc<Cell<bool>>,
 }
 
 impl RecordingIrqLine {
     fn level(&self) -> bool {
-        self.level.load(Ordering::SeqCst)
+        self.level.get()
     }
 }
 
 impl IrqLine for RecordingIrqLine {
     fn set_level(&self, high: bool) {
-        self.level.store(high, Ordering::SeqCst);
+        self.level.set(high);
     }
 }
 
