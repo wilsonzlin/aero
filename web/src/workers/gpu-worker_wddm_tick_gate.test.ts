@@ -25,6 +25,7 @@ import {
   publishScanoutState,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
 } from "../ipc/scanout_state";
 
@@ -84,7 +85,7 @@ async function waitForWorkerMessage(
 }
 
 describe("workers/gpu-worker WDDM tick gating", () => {
-  it("clears legacy shared framebuffer dirty on tick when scanout is WDDM-owned even if FRAME_STATUS is PRESENTED", async () => {
+  it("clears legacy shared framebuffer dirty on tick when scanout is ScanoutState-owned even if FRAME_STATUS is PRESENTED", async () => {
     const fbLayout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
     const sharedFramebuffer = new SharedArrayBuffer(fbLayout.totalBytes);
     const fbHeader = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
@@ -200,6 +201,31 @@ describe("workers/gpu-worker WDDM tick gating", () => {
       // transitions away from PRESENTING so the assertion is not racy across Node versions.
       const statusWait = Atomics.wait(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTING, 5_000);
       expect(statusWait === "ok" || statusWait === "not-equal").toBe(true);
+      expect(Atomics.load(frameState, FRAME_STATUS_INDEX)).toBe(FRAME_PRESENTED);
+
+      // 3) Legacy VBE LFB scanout: tick must also run a present pass even though FRAME_STATUS stayed
+      // PRESENTED, clearing the legacy shared framebuffer dirty flag. This mirrors the behavior used
+      // by VBE mode while booting (ScanoutState owns output).
+      const vbeBasePaddr = 0x2000;
+      views.guestU8.set([0, 255, 0, 0], vbeBasePaddr); // BGRX = green, X byte 0.
+      publishScanoutState(scanoutWords, {
+        source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+        basePaddrLo: vbeBasePaddr >>> 0,
+        basePaddrHi: 0,
+        width: 1,
+        height: 1,
+        pitchBytes: 4,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+      });
+
+      Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 2 });
+      const vbeWait = Atomics.wait(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1, 5_000);
+      expect(vbeWait === "ok" || vbeWait === "not-equal").toBe(true);
+      expect(Atomics.load(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY)).toBe(0);
+
+      const vbeStatusWait = Atomics.wait(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTING, 5_000);
+      expect(vbeStatusWait === "ok" || vbeStatusWait === "not-equal").toBe(true);
       expect(Atomics.load(frameState, FRAME_STATUS_INDEX)).toBe(FRAME_PRESENTED);
     } finally {
       await worker.terminate();
