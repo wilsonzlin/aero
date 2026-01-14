@@ -138,6 +138,31 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     }
   }
 
+  // Ensure a known viewport (some runtimes may leave it uninitialized until the
+  // first Present; make this test self-contained).
+  D3DVIEWPORT9 vp;
+  ZeroMemory(&vp, sizeof(vp));
+  vp.X = 0;
+  vp.Y = 0;
+  vp.Width = kWidth;
+  vp.Height = kHeight;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = dev->SetViewport(&vp);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetViewport", hr);
+  }
+
+  // Force fixed-function (no user shaders).
+  hr = dev->SetVertexShader(NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetVertexShader(NULL)", hr);
+  }
+  hr = dev->SetPixelShader(NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetPixelShader(NULL)", hr);
+  }
+
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
