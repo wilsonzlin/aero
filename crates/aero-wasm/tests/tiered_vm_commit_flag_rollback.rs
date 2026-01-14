@@ -178,4 +178,44 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         other => panic!("expected JIT block outcome, got {other:?}"),
     }
     assert_eq!(tsc_after, tsc_before, "rollback exits must not advance TSC");
+
+    // ---------------------------------------------------------------------
+    // Post-rollback commit path: the backend must reset the commit flag to 1 on
+    // every call, even if the previous exit cleared it to 0.
+    // ---------------------------------------------------------------------
+    let tsc_before = vm.cpu_tsc();
+    let outcome = {
+        let commit_again = Closure::wrap(Box::new(
+            move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                let commit_flag_ptr = cpu_ptr + commit_flag_offset;
+                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                assert_eq!(
+                    before, 1,
+                    "commit flag should be reset to 1 before the host hook runs"
+                );
+                0x1000
+            },
+        ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
+        let _guard = GlobalThisValueGuard::set("__aero_jit_call", commit_again.as_ref());
+        vm.step_raw()
+    };
+    let tsc_after = vm.cpu_tsc();
+
+    let retired = match outcome {
+        StepOutcome::Block {
+            tier: ExecutedTier::Jit,
+            instructions_retired,
+            ..
+        } => instructions_retired,
+        other => panic!("expected JIT block outcome, got {other:?}"),
+    };
+    assert_eq!(
+        retired, committed_retired,
+        "expected instruction_count to be stable across repeated committed exits"
+    );
+    assert_eq!(
+        tsc_after.wrapping_sub(tsc_before),
+        committed_retired,
+        "committed JIT blocks must advance TSC by instructions_retired"
+    );
 }
