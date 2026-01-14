@@ -14,7 +14,7 @@ Currently:
     - `hidtest.exe --get-log-mask` / `hidtest.exe --set-log-mask 0x...`
   - Can reset in-driver diagnostics counters during a session:
     - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
-    - `hidtest.exe --reset-counters`
+    - `hidtest.exe --reset-counters` (requires write access, rerun elevated if needed)
     - Tip: `hidtest.exe --reset-counters --counters` / `--counters-json` to reset and immediately verify that the monotonic counters are cleared.
   - Includes optional probes for `IOCTL_VIOINPUT_QUERY_COUNTERS` / `IOCTL_VIOINPUT_QUERY_STATE` using short output
     buffers (verifies that the driver returns `STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` for
