@@ -300,6 +300,86 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("updates held-state telemetry for keyboard HID usages and mouse buttons (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0).toBe(0);
+
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+      const tsUs = (nowUs - 1_000_000) >>> 0;
+
+      // Press one key usage and hold left mouse button.
+      const buf1 = new ArrayBuffer((2 + 4 * 2) * 4);
+      const w1 = new Int32Array(buf1);
+      w1[0] = 2;
+      w1[1] = tsUs | 0;
+      w1[2] = InputEventType.KeyHidUsage;
+      w1[3] = tsUs | 0;
+      w1[4] = (0x04 | (1 << 8)) | 0; // HID usage 0x04 ("A") pressed
+      w1[5] = 0;
+      w1[6] = InputEventType.MouseButtons;
+      w1[7] = tsUs | 0;
+      w1[8] = 0x01; // left held
+      w1[9] = 0;
+
+      const recycled1 = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle", 10_000);
+      worker.postMessage({ type: "in:input-batch", buffer: buf1, recycle: true }, [buf1]);
+      await recycled1;
+
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0).toBe(1);
+      expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0).toBe(1);
+
+      // Release key and mouse button.
+      const buf2 = new ArrayBuffer((2 + 4 * 2) * 4);
+      const w2 = new Int32Array(buf2);
+      w2[0] = 2;
+      w2[1] = tsUs | 0;
+      w2[2] = InputEventType.KeyHidUsage;
+      w2[3] = tsUs | 0;
+      w2[4] = (0x04 | (0 << 8)) | 0; // released
+      w2[5] = 0;
+      w2[6] = InputEventType.MouseButtons;
+      w2[7] = tsUs | 0;
+      w2[8] = 0x00; // none held
+      w2[9] = 0;
+
+      const recycled2 = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle", 10_000);
+      worker.postMessage({ type: "in:input-batch", buffer: buf2, recycle: true }, [buf2]);
+      await recycled2;
+
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0).toBe(0);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("counts clamped input batch claims as drops (dummy machine)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
