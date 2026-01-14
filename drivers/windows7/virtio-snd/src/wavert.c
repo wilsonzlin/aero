@@ -787,7 +787,9 @@ VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULON
                     VirtIoSndWaveRtGetPositionSnapshot(stream, (ULONGLONG)nowQpc.QuadPart, &linearFrames, &ringBytes, NULL);
 
                     if (stream->PeriodBytes != 0 && stream->BufferSize != 0) {
-                        stream->SubmittedLinearPositionBytes = linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+                        ULONG blockAlign;
+                        blockAlign = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_BLOCK_ALIGN;
+                        stream->SubmittedLinearPositionBytes = linearFrames * (ULONGLONG)blockAlign;
                         stream->SubmittedRingPositionBytes = ringBytes;
                     }
                 }
