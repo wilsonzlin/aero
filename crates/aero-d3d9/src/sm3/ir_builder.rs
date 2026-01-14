@@ -9,7 +9,7 @@ use crate::sm3::ir::{
 };
 use crate::sm3::types::ShaderStage;
 use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
-use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
+use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1305,6 +1305,7 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
     // Only enable semantic remapping when we have DCL declarations for all used input registers.
     // Otherwise, fall back to raw v# indices (legacy behavior).
     let mut dcl_map = HashMap::<u32, (DeclUsage, u8)>::new();
+    let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
     for decl in &ir.inputs {
         if decl.reg.file != RegFile::Input {
             continue;
@@ -1313,9 +1314,11 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
             continue;
         };
         dcl_map.insert(decl.reg.index, (usage, usage_index));
+        input_dcl_order.push((usage, usage_index));
     }
 
-    let map = StandardLocationMap;
+    let map = AdaptiveLocationMap::new(input_dcl_order)
+        .map_err(|e| err_internal(&format!("failed to build vertex input location map: {e}")))?;
     let mut remap = HashMap::<u32, u32>::new();
     let mut used_locations = HashMap::<u32, u32>::new();
 
@@ -1326,7 +1329,7 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
 
         let loc = map
             .location_for(usage, usage_index)
-            .map_err(|e| err_internal(&e.to_string()))?;
+            .map_err(|e| err_internal(&format!("failed to map vertex input semantic: {e}")))?;
         if let Some(prev_v) = used_locations.insert(loc, v) {
             if prev_v != v {
                 return Err(err_internal(&format!(

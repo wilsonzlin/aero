@@ -19,7 +19,7 @@ pub struct ShaderIr {
     pub body: Block,
     /// True when vertex shader input registers were remapped from raw `v#` indices to canonical
     /// WGSL `@location(n)` values based on `dcl_*` semantics (see
-    /// [`crate::vertex::StandardLocationMap`]).
+    /// [`crate::vertex::AdaptiveLocationMap`]).
     pub uses_semantic_locations: bool,
 }
 

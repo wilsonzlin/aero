@@ -104,6 +104,35 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     out
 }
 
+fn assemble_vs_passthrough_with_texcoord8_dcl_sm3_decoder() -> Vec<u32> {
+    // vs_2_0 with a TEXCOORD8 input semantic. This is outside the fixed StandardLocationMap range
+    // and exercises the adaptive semantic→location allocator.
+    let mut out = vec![0xFFFE0200];
+    // dcl_position v0
+    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
+    // dcl_texcoord0 v1
+    out.extend(enc_inst_with_extra(
+        0x001F,
+        5u32 << 16,
+        &[enc_dst(1, 1, 0xF)],
+    ));
+    // dcl_texcoord8 v2
+    out.extend(enc_inst_with_extra(
+        0x001F,
+        (5u32 << 16) | (8u32 << 20),
+        &[enc_dst(1, 2, 0xF)],
+    ));
+
+    // mov oPos, v0
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    // mov oT0, v1
+    out.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)]));
+    // mov oT1, v2 (ensure TEXCOORD8 input is actually used)
+    out.extend(enc_inst(0x0001, &[enc_dst(6, 1, 0xF), enc_src(1, 2, 0xE4)]));
+
+    out.push(0x0000FFFF);
+    out
+}
 fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -1502,6 +1531,47 @@ fn translate_entrypoint_prefers_sm3_when_supported() {
     .expect("wgsl validate");
     assert!(translated.wgsl.contains("@fragment"));
     assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_sm3_supports_texcoord8_vertex_inputs() {
+    // TEXCOORD8 is outside the fixed StandardLocationMap TEXCOORD0..7 range. Ensure the SM3
+    // translator uses the adaptive semantic mapping and does not fall back to the legacy
+    // translator.
+    let vs_bytes = to_bytes(&assemble_vs_passthrough_with_texcoord8_dcl_sm3_decoder());
+    let translated = shader_translate::translate_d3d9_shader_to_wgsl(
+        &vs_bytes,
+        shader::WgslOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+    assert!(translated.uses_semantic_locations);
+
+    let tex0 = translated
+        .semantic_locations
+        .iter()
+        .find(|s| s.usage == crate::vertex::DeclUsage::TexCoord && s.usage_index == 0)
+        .unwrap();
+    assert_eq!(tex0.location, 8);
+
+    let tex8 = translated
+        .semantic_locations
+        .iter()
+        .find(|s| s.usage == crate::vertex::DeclUsage::TexCoord && s.usage_index == 8)
+        .unwrap();
+    assert_eq!(tex8.location, 1);
+
+    // Validate WGSL via naga to ensure WebGPU compatibility.
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
 }
 
 #[test]
