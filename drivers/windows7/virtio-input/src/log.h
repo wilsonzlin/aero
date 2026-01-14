@@ -68,6 +68,21 @@
  *   - METHOD_BUFFERED
  *   - FILE_WRITE_ACCESS
  *   - Resets all VIOINPUT_COUNTERS fields except Size/Version.
+ *
+ * IOCTL_VIOINPUT_QUERY_STATE:
+ *   - METHOD_BUFFERED
+ *   - FILE_READ_ACCESS
+ *   - Output: VIOINPUT_STATE
+ *
+ * IOCTL_VIOINPUT_GET_LOG_MASK (diagnostics builds only):
+ *   - METHOD_BUFFERED
+ *   - FILE_READ_ACCESS
+ *   - Output: ULONG (current DiagnosticsMask)
+ *
+ * IOCTL_VIOINPUT_SET_LOG_MASK (diagnostics builds only):
+ *   - METHOD_BUFFERED
+ *   - FILE_WRITE_ACCESS
+ *   - Input: ULONG (new DiagnosticsMask)
  */
 #define IOCTL_VIOINPUT_QUERY_COUNTERS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
