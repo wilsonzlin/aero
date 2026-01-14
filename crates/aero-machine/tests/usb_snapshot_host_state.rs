@@ -294,3 +294,59 @@ fn snapshot_restore_clears_uhci_webhid_feature_report_host_state() {
         .expect("expected feature report request after restore");
     assert_eq!(req2.request_id, 2);
 }
+
+#[test]
+fn snapshot_restore_clears_ehci_webhid_feature_report_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ehci: true,
+        enable_uhci: false,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webhid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_hid_report_descriptor_input_2_bytes(),
+        false,
+        None,
+        None,
+        None,
+    );
+
+    vm.usb_ehci_attach_root(0, Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind EHCI");
+
+    // Queue a host-side feature report request and simulate the host popping it before snapshot.
+    queue_webhid_feature_report_request(&webhid);
+    let req = webhid
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert_eq!(req.request_id, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // Host-side feature report requests are backed by asynchronous WebHID operations; after restore
+    // they must be cleared so the guest can re-issue a fresh request.
+    assert!(webhid.pop_feature_report_request().is_none());
+
+    // Re-issue the request; IDs should continue from the saved counter.
+    queue_webhid_feature_report_request(&webhid);
+    let req2 = webhid
+        .pop_feature_report_request()
+        .expect("expected feature report request after restore");
+    assert_eq!(req2.request_id, 2);
+}
