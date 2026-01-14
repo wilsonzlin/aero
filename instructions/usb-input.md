@@ -35,10 +35,12 @@ Aero supports input through two different integration styles:
     - Canonical BDFs: `00:0A.0` (keyboard) and `00:0A.1` (mouse).
 - **Browser worker runtime (production)**
   - Main thread captures browser events and batches them in `web/src/input/*`.
-  - The **I/O worker** (`web/src/workers/io.worker.ts`) receives batches (`in:input-batch`) and routes them to:
-    - **virtio-input** (fast path, once the guest driver sets `DRIVER_OK`)
-    - **synthetic USB HID devices behind the guest-visible USB controller** (when enabled/available; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds)
-    - **PS/2 i8042** fallback (via the `aero-devices-input` model / equivalents)
+  - The worker that injects input depends on `vmRuntime`:
+    - `vmRuntime=legacy`: the **I/O worker** (`web/src/workers/io.worker.ts`) owns guest device models and routes input to:
+      - **virtio-input** (fast path, once the guest driver sets `DRIVER_OK`)
+      - **synthetic USB HID devices behind the guest-visible USB controller** (when enabled/available; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds)
+      - **PS/2 i8042** fallback (via the `aero-devices-input` model / equivalents)
+    - `vmRuntime=machine`: the **machine CPU worker** (`web/src/workers/machine_cpu.worker.ts`) owns the canonical `api.Machine` instance and injects input directly (including backend selection/routing). The I/O worker runs in host-only stub mode and does not own guest input devices.
 
 ---
 
