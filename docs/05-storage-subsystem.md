@@ -406,6 +406,15 @@ actually synchronous inside a Worker and can implement `aero_storage::StorageBac
 [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
 [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
+Important caveat: OPFS `FileSystemSyncAccessHandle` is **exclusive per file**. Browsers generally
+allow only **one** SyncAccessHandle to be open for a given OPFS file at a time; attempting to open a
+second handle (even from another Worker in the same origin) typically fails with an
+`InvalidStateError` due to the file lock.
+
+The web runtime must therefore ensure each disk image file is opened at most once concurrently. In
+`vmRuntime=machine` mode, only the worker that owns the canonical `api.Machine` opens OPFS-backed
+disks; other workers avoid opening competing handles.
+
 The snippet below is illustrative; see `crates/aero-opfs` for the current implementation.
 
 ```rust
