@@ -14,7 +14,7 @@ use crate::shader_limits::{
     MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 use crate::sm3::decode::TextureType;
-use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
+use crate::vertex::{AdaptiveLocationMap, DeclUsage, LocationMapError, VertexLocationMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderStage {
@@ -212,8 +212,24 @@ pub struct ShaderProgram {
     /// WGSL `@location(n)` values based on `dcl_*` semantics.
     ///
     /// When this is true, the host-side D3D9 executor must bind vertex attributes using the same
-    /// semantic-based mapping (see [`StandardLocationMap`]).
+    /// semantic-based mapping.
     pub uses_semantic_locations: bool,
+
+    /// Semantic → WGSL location mapping derived from vertex shader `dcl_*` declarations when
+    /// [`ShaderProgram::uses_semantic_locations`] is true.
+    ///
+    /// This is required by host-side executors to bind vertex buffers consistently with the
+    /// semantic-based remapping performed during shader translation.
+    pub semantic_locations: Vec<SemanticLocation>,
+}
+
+/// Semantic-to-location mapping entry produced by semantic-based vertex input remapping.
+#[cfg_attr(target_arch = "wasm32", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SemanticLocation {
+    pub usage: DeclUsage,
+    pub usage_index: u8,
+    pub location: u32,
 }
 
 #[derive(Debug, Error)]
@@ -501,6 +517,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     let mut temp_max = 0u16;
     let mut if_stack = Vec::<bool>::new(); // tracks whether an `else` has been seen for each active `if`
     let mut input_dcl_map = HashMap::<u16, (DeclUsage, u8)>::new();
+    let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
     let mut sampler_texture_types = HashMap::<u16, TextureType>::new();
 
     while idx < words.len() {
@@ -623,6 +640,9 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             };
             if dst.reg.file == RegisterFile::Input {
                 input_dcl_map.insert(dst.reg.index, (usage, usage_index));
+                if !input_dcl_order.contains(&(usage, usage_index)) {
+                    input_dcl_order.push((usage, usage_index));
+                }
             }
             continue;
         }
@@ -889,6 +909,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     // indices to a canonical semantic-based location assignment. This makes vertex input binding
     // stable and ensures non-trivial register assignments receive the correct data.
     let mut uses_semantic_locations = false;
+    let mut semantic_locations = Vec::<SemanticLocation>::new();
     if version.stage == ShaderStage::Vertex {
         let mut used_vs_inputs = BTreeSet::<u16>::new();
         for inst in &instructions {
@@ -909,7 +930,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             // registers. Otherwise, fall back to the legacy behavior (input index unchanged).
             let mut remap = HashMap::<u16, u16>::new();
             let mut used_locations = HashMap::<u32, u16>::new();
-            let map = StandardLocationMap;
+            let map = AdaptiveLocationMap::new(input_dcl_order.clone())?;
             let mut can_remap = true;
             for &v in &used_vs_inputs {
                 let Some(&(usage, usage_index)) = input_dcl_map.get(&v) else {
@@ -930,6 +951,17 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             }
 
             if can_remap {
+                // Expose the semantic mapping used by this shader so the host can bind matching
+                // vertex attributes.
+                for (usage, usage_index) in input_dcl_order {
+                    let location = map.location_for(usage, usage_index)?;
+                    semantic_locations.push(SemanticLocation {
+                        usage,
+                        usage_index,
+                        location,
+                    });
+                }
+
                 for inst in &mut instructions {
                     if let Some(dst) = inst.dst.as_mut() {
                         if dst.reg.file == RegisterFile::Input {
@@ -970,6 +1002,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         used_outputs,
         temp_count: temp_max.max(1),
         uses_semantic_locations,
+        semantic_locations,
     })
 }
 
@@ -998,6 +1031,7 @@ pub struct ShaderIr {
     pub used_inputs: BTreeSet<u16>,
     pub used_outputs: BTreeSet<Register>,
     pub uses_semantic_locations: bool,
+    pub semantic_locations: Vec<SemanticLocation>,
 }
 
 pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
@@ -1013,6 +1047,7 @@ pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
         used_inputs: program.used_inputs.clone(),
         used_outputs: program.used_outputs.clone(),
         uses_semantic_locations: program.uses_semantic_locations,
+        semantic_locations: program.semantic_locations.clone(),
     }
 }
 

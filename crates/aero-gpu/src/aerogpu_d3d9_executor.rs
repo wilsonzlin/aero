@@ -405,6 +405,11 @@ struct Shader {
     wgsl: String,
     entry_point: &'static str,
     uses_semantic_locations: bool,
+    /// Semantic→location mapping produced by `aero-d3d9` shader translation.
+    ///
+    /// When empty (e.g. legacy cached shader artifacts), callers should fall back to
+    /// `StandardLocationMap` for the common semantics.
+    semantic_locations: Vec<shader::SemanticLocation>,
     used_samplers_mask: u16,
     cube_samplers_mask: u16,
 }
@@ -432,6 +437,8 @@ struct PersistentShaderReflection {
     used_samplers_mask: u16,
     #[serde(default)]
     cube_samplers_mask: u16,
+    #[serde(default)]
+    semantic_locations: Vec<shader::SemanticLocation>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2439,6 +2446,7 @@ impl AerogpuD3d9Executor {
                 entry_point: cached.wgsl.entry_point,
                 uses_semantic_locations: cached.ir.uses_semantic_locations
                     && bytecode_stage == shader::ShaderStage::Vertex,
+                semantic_locations: cached.ir.semantic_locations.clone(),
                 used_samplers_mask,
                 cube_samplers_mask,
             },
@@ -2492,6 +2500,7 @@ impl AerogpuD3d9Executor {
                         uses_semantic_locations: ir.uses_semantic_locations,
                         used_samplers_mask,
                         cube_samplers_mask,
+                        semantic_locations: ir.semantic_locations.clone(),
                     };
                     let reflection = serde_json::to_value(reflection).map_err(|e| e.to_string())?;
 
@@ -2726,6 +2735,7 @@ impl AerogpuD3d9Executor {
                     entry_point,
                     uses_semantic_locations: reflection.uses_semantic_locations
                         && bytecode_stage == shader::ShaderStage::Vertex,
+                    semantic_locations: reflection.semantic_locations.clone(),
                     used_samplers_mask: reflection.used_samplers_mask,
                     cube_samplers_mask: reflection.cube_samplers_mask,
                 },
@@ -6973,11 +6983,11 @@ impl AerogpuD3d9Executor {
                 self.flush_buffer_if_dirty(Some(encoder), index_binding.buffer, ctx)?;
             }
         }
-
         let (
             vs_key,
             ps_key,
             vs_uses_semantic_locations,
+            vs_semantic_locations,
             vs_used_mask,
             ps_used_mask,
             vs_cube_mask,
@@ -7009,6 +7019,7 @@ impl AerogpuD3d9Executor {
                 vs.key,
                 ps.key,
                 vs.uses_semantic_locations,
+                vs.semantic_locations.clone(),
                 vs.used_samplers_mask,
                 ps.used_samplers_mask,
                 vs.cube_samplers_mask,
@@ -7039,7 +7050,7 @@ impl AerogpuD3d9Executor {
                 .input_layouts
                 .get(&layout_handle)
                 .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
-            self.vertex_buffer_layouts(layout, vs_uses_semantic_locations)?
+            self.vertex_buffer_layouts(layout, vs_uses_semantic_locations, &vs_semantic_locations)?
         };
         let vertex_buffers_ref = vertex_buffers
             .buffers
@@ -8689,6 +8700,7 @@ impl AerogpuD3d9Executor {
         &self,
         input_layout: &InputLayout,
         uses_semantic_locations: bool,
+        semantic_locations: &[shader::SemanticLocation],
     ) -> Result<VertexInputs, AerogpuD3d9Error> {
         let mut streams: Vec<u8> = input_layout
             .decl
@@ -8723,6 +8735,10 @@ impl AerogpuD3d9Executor {
             .collect();
 
         let location_map = StandardLocationMap;
+        let semantic_location_map = semantic_locations
+            .iter()
+            .map(|s| ((s.usage, s.usage_index), s.location))
+            .collect::<HashMap<_, _>>();
         let mut seen_locations = HashMap::<u32, (aero_d3d9::vertex::DeclUsage, u8)>::new();
 
         // Map declaration elements to shader locations.
@@ -8732,18 +8748,41 @@ impl AerogpuD3d9Executor {
             };
             let fmt = map_decl_type_to_vertex_format(e.ty)?;
             let shader_location = if uses_semantic_locations {
-                let loc = location_map
-                    .location_for(e.usage, e.usage_index)
-                    .map_err(|e| AerogpuD3d9Error::VertexDeclaration(e.to_string()))?;
-                if let Some((prev_usage, prev_index)) =
-                    seen_locations.insert(loc, (e.usage, e.usage_index))
-                {
-                    return Err(AerogpuD3d9Error::VertexDeclaration(format!(
-                        "vertex declaration maps multiple elements to WGSL @location({loc}): {prev_usage:?}{prev_index} and {:?}{}",
-                        e.usage, e.usage_index
-                    )));
+                if !semantic_locations.is_empty() {
+                    // Prefer the semantic mapping produced by shader translation.
+                    let Some(&loc) = semantic_location_map.get(&(e.usage, e.usage_index)) else {
+                        // Element not declared by the shader; ignore it to avoid unnecessary
+                        // `maxVertexAttributes` pressure and to tolerate declarations that contain
+                        // unused semantics.
+                        continue;
+                    };
+                    if let Some((prev_usage, prev_index)) =
+                        seen_locations.insert(loc, (e.usage, e.usage_index))
+                    {
+                        return Err(AerogpuD3d9Error::VertexDeclaration(format!(
+                            "vertex declaration maps multiple elements to WGSL @location({loc}): {prev_usage:?}{prev_index} and {:?}{}",
+                            e.usage, e.usage_index
+                        )));
+                    }
+                    loc
+                } else {
+                    // Legacy fallback for cached shaders that don't provide semantic location
+                    // metadata. Use the standard mapping, but skip unsupported semantics (which are
+                    // necessarily unused by the cached shader, otherwise translation would have
+                    // failed).
+                    let Ok(loc) = location_map.location_for(e.usage, e.usage_index) else {
+                        continue;
+                    };
+                    if let Some((prev_usage, prev_index)) =
+                        seen_locations.insert(loc, (e.usage, e.usage_index))
+                    {
+                        return Err(AerogpuD3d9Error::VertexDeclaration(format!(
+                            "vertex declaration maps multiple elements to WGSL @location({loc}): {prev_usage:?}{prev_index} and {:?}{}",
+                            e.usage, e.usage_index
+                        )));
+                    }
+                    loc
                 }
-                loc
             } else {
                 i as u32
             };

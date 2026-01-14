@@ -255,6 +255,7 @@ impl DeclMethod {
 }
 
 /// D3D9 `D3DDECLUSAGE`.
+#[cfg_attr(target_arch = "wasm32", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DeclUsage {

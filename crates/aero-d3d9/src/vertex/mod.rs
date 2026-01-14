@@ -18,7 +18,8 @@ pub use instancing::{
     StreamStep, StreamStepState, StreamsFreqState,
 };
 pub use location_map::{
-    FixedFunctionLocationMap, LocationMapError, StandardLocationMap, VertexLocationMap,
+    AdaptiveLocationMap, FixedFunctionLocationMap, LocationMapError, StandardLocationMap,
+    VertexLocationMap,
 };
 pub use wgsl::{wgsl_vertex_input_fields, WgslTypeInfo, WgslVertexInputField};
 
