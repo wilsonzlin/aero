@@ -1255,6 +1255,13 @@ export class WorkerCoordinator {
     // Forward to the workers that care. `io.worker.ts` blocks READY on receiving this message.
     // - legacy: IO worker opens disks; CPU worker uses this as a "VM active" signal for demo policies.
     // - machine: CPU worker opens disks; IO worker only needs mount IDs (no disk handles).
+    if (vmRuntime === "machine") {
+      // Applying a new boot-disk selection in machine runtime triggers a `Machine.reset()` inside
+      // `machine_cpu.worker.ts`. Clear any cached "current boot session" debug state so callers do
+      // not observe stale values while the worker is reattaching disks/rebooting.
+      this.machineCpuActiveBootDevice = null;
+      this.machineCpuBootConfig = null;
+    }
     this.workers.io?.worker.postMessage(ioMsg);
     this.workers.cpu?.worker.postMessage(msg);
 
