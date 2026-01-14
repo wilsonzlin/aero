@@ -2792,6 +2792,21 @@ export class WorkerCoordinator {
         this.resetRequestCount += 1;
         this.lastResetRequestAtMs = nowMs();
         if (perf.traceEnabled) perf.instant("vm:reset:request", "p", { role: info.role });
+        // Install-media flows often boot from CD exactly once, then reboot into the newly-installed
+        // HDD while leaving the ISO mounted. The machine CPU worker attempts to persist this policy
+        // shift by sending a `machineCpu.bootDeviceSelected` side-channel message before requesting
+        // a reset, but ordering between postMessage and the ring-buffer `resetRequest` event is not
+        // guaranteed. Apply a coordinator-side fallback so a reset request cannot accidentally
+        // loop back into install media when both HDD and CD are present.
+        if ((this.activeConfig?.vmRuntime ?? "legacy") === "machine" && this.bootDisks?.bootDevice === "cdrom") {
+          const mounts = this.bootDisks.mounts;
+          const hasHdd =
+            !!this.bootDisks.hdd || (typeof mounts?.hddId === "string" && mounts.hddId.trim().length > 0);
+          const hasCd = !!this.bootDisks.cd || (typeof mounts?.cdId === "string" && mounts.cdId.trim().length > 0);
+          if (hasHdd && hasCd) {
+            this.bootDisks = { ...this.bootDisks, bootDevice: "hdd" };
+          }
+        }
         this.reset("resetRequest");
         return;
       case "tripleFault":

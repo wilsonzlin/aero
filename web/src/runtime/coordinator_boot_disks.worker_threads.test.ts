@@ -234,6 +234,51 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
   });
 
+  it("switches boot-device policy to HDD when the guest requests a reset and both HDD+CD are present (machine runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { enableWorkers: true, vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("cdrom");
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as { workers: Record<string, unknown> }).workers.cpu as unknown as Record<string, unknown>;
+
+    // Avoid triggering a full VM reset in this unit test; we only care about the boot-device
+    // policy rewrite that happens before reset is invoked.
+    const resetSpy = vi.spyOn(coordinator, "reset").mockImplementation(() => {});
+
+    (coordinator as unknown as { handleEvent: (info: unknown, evt: unknown) => void }).handleEvent(cpuInfo, { kind: "resetRequest" });
+
+    expect(resetSpy).toHaveBeenCalledWith("resetRequest");
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("hdd");
+  });
+
   it("preserves bootDevice when setBootDisks is called with unchanged disk IDs (machine runtime)", () => {
     const coordinator = new WorkerCoordinator();
 
