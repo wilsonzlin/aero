@@ -3,7 +3,8 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::{
     OPCODE_ADD, OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT,
-    OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_EMIT, OPCODE_LEN_SHIFT, OPCODE_RET,
+    OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_DCL_INPUT, OPCODE_DCL_OUTPUT, OPCODE_EMIT,
+    OPCODE_LEN_SHIFT, OPCODE_RET,
 };
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -192,14 +193,18 @@ fn build_gs_triangle_strip_adds_cb1_offset_dxbc() -> Vec<u8> {
     tokens.push(3);
 
     // dcl_constantbuffer cb1[1]
-    tokens.push(opcode_token(0x100, 1 + 1 + 2 + 1));
+    //
+    // Note: the SM4 decoder treats any opcode >= 0x100 as a declaration; it keys off the operand
+    // type and trailing access-pattern token for constant-buffer declarations. Use a declaration
+    // opcode value in that range to keep the stream well-formed.
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 1 + 1 + 2 + 1));
     tokens.push(cb_operand);
     tokens.push(1); // slot
     tokens.push(1); // reg_count
     tokens.push(0); // access pattern (ignored)
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(dst_o0);
     tokens.push(0); // o0
 
