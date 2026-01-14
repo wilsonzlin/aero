@@ -2391,6 +2391,135 @@ mod tests {
     }
 
     #[test]
+    fn create_render_pipeline_trims_all_fragment_outputs_when_rt0_not_written() {
+        // Regression test: D3D allows pixel shaders that only write to a non-zero RTV slot (e.g.
+        // SV_Target1) even when only RTV0 is bound. D3D discards writes to unbound RTVs, leaving
+        // RTV0 unchanged.
+        //
+        // WebGPU requires that every fragment `@location(N)` output has a corresponding pipeline
+        // target at index N. Ensure the runtime can trim away *all* fragment outputs when none map
+        // to the single supported target (RT0).
+        pollster::block_on(async {
+            let mut rt = match D3D11Runtime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    eprintln!("skipping {}: wgpu unavailable ({err:#})", module_path!());
+                    return;
+                }
+            };
+
+            let vs_wgsl = r#"
+                @vertex
+                fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
+                    var pos = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -1.0),
+                        vec2<f32>( 3.0, -1.0),
+                        vec2<f32>(-1.0,  3.0),
+                    );
+                    return vec4<f32>(pos[idx], 0.0, 1.0);
+                }
+            "#;
+
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(1) o1: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o1 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            // Baseline: the untrimmed shader should fail validation when paired with a single
+            // color target (it declares only @location(1)).
+            let vs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime unbound rt0 baseline vs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
+                });
+            let fs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime unbound rt0 baseline fs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
+                });
+            let layout = rt
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("d3d11 runtime unbound rt0 baseline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("d3d11 runtime unbound rt0 baseline pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_some(),
+                "untrimmed shader writing only to @location(1) should fail validation"
+            );
+
+            // Now go through the D3D11 runtime command path; the runtime should trim outputs and
+            // pipeline creation should succeed without validation errors.
+            let mut writer = CmdWriter::new();
+            writer.create_shader_module_wgsl(1, vs_wgsl);
+            writer.create_shader_module_wgsl(2, fs_wgsl);
+            writer.create_render_pipeline(
+                3,
+                RenderPipelineDesc {
+                    vs_shader: 1,
+                    fs_shader: 2,
+                    color_format: DxgiFormat::R8G8B8A8Unorm,
+                    depth_format: DxgiFormat::Unknown,
+                    topology: PrimitiveTopology::TriangleList,
+                    vertex_buffers: &[],
+                    bindings: &[],
+                },
+            );
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            rt.execute(&writer.finish())
+                .expect("runtime should create pipeline with trimmed outputs");
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
+            );
+        });
+    }
+
+    #[test]
     fn create_render_pipeline_trims_stage_interface_to_match() {
         // Regression test: WebGPU requires vertex outputs and fragment inputs to line up by
         // `@location`. D3D shaders may declare unused PS inputs or export extra VS varyings.
