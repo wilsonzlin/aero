@@ -786,11 +786,12 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
   }
 
   std::vector<std::wstring> args;
-  args.push_back(L"--dump-last-submit");  // alias: --dump-last-cmd
+  // Prefer the older spelling for maximum compatibility with older dbgctl builds.
+  args.push_back(L"--dump-last-cmd");  // alias: --dump-last-submit
   args.push_back(L"--count");
   args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
       aerogpu_test::FormatString("%lu", (unsigned long)kDbgctlDumpLastSubmitCount)));
-  args.push_back(L"--cmd-out");
+  args.push_back(L"--out");  // alias: --cmd-out
   args.push_back(cmd_base_path);
   args.push_back(L"--timeout-ms");
   args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
