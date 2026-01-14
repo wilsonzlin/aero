@@ -108,7 +108,9 @@ function requireSafeNonNegativeInteger(value: unknown, label: string): number {
 }
 
 function requireSharedArrayBuffer(value: unknown, label: string): SharedArrayBuffer {
-  if (!(value instanceof SharedArrayBuffer)) {
+  // Some environments (non-COI browsers) do not define SharedArrayBuffer at all. Avoid
+  // ReferenceError by checking via `typeof` first.
+  if (typeof SharedArrayBuffer === "undefined" || !(value instanceof SharedArrayBuffer)) {
     throw new Error(`invalid ${label} (expected SharedArrayBuffer)`);
   }
   return value;

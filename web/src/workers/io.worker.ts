@@ -4924,7 +4924,8 @@ function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpc
     try {
       if (range.byteLength > 0) {
         const guestBuf = view.buffer as unknown as ArrayBufferLike;
-        if (aligned && guestBuf instanceof SharedArrayBuffer) {
+        const hasSab = typeof SharedArrayBuffer !== "undefined";
+        if (aligned && hasSab && guestBuf instanceof SharedArrayBuffer) {
           await client.readInto(disk.handle, range.lba, range.byteLength, {
             sab: guestBuf,
             offsetBytes: view.byteOffset,
@@ -4980,7 +4981,8 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
       if (range.byteLength > 0) {
         if (aligned) {
           const guestBuf = view.buffer as unknown as ArrayBufferLike;
-          if (guestBuf instanceof SharedArrayBuffer) {
+          const hasSab = typeof SharedArrayBuffer !== "undefined";
+          if (hasSab && guestBuf instanceof SharedArrayBuffer) {
             await client.writeFrom(disk.handle, range.lba, {
               sab: guestBuf,
               offsetBytes: view.byteOffset,
