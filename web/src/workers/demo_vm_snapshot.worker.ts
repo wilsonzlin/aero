@@ -33,10 +33,11 @@ const TICK_MS = 250;
 let commandChain: Promise<void> = Promise.resolve();
 
 function getSerialOutputLenFromVm(current: InstanceType<WasmApi["DemoVm"]>): number | null {
-  const fn = (current as unknown as { serial_output_len?: () => number }).serial_output_len;
+  const anyVm = current as unknown as Record<string, unknown>;
+  const fn = anyVm.serial_output_len ?? anyVm.serialOutputLen;
   if (typeof fn !== "function") return null;
   try {
-    const value = fn.call(current);
+    const value = (fn as () => unknown).call(current);
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
     return value;
   } catch {
@@ -86,7 +87,10 @@ function startStepLoop(): void {
     try {
       if (stepLoopPaused) return;
       const current = ensureVm();
-      current.run_steps(STEPS_PER_TICK);
+      const anyVm = current as unknown as Record<string, unknown>;
+      const runSteps = anyVm.run_steps ?? anyVm.runSteps;
+      if (typeof runSteps !== "function") throw new Error("DemoVm missing run_steps/runSteps export.");
+      (runSteps as (steps: number) => void).call(current, STEPS_PER_TICK);
       const maybeLen = getSerialOutputLenFromVm(current);
       if (maybeLen !== null) {
         // Demo VM writes one serial byte per step; treat serial length as a proxy
@@ -155,7 +159,10 @@ async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
 
 async function handleRunSteps(steps: number): Promise<DemoVmWorkerStepResult> {
   const current = ensureVm();
-  current.run_steps(steps);
+  const anyVm = current as unknown as Record<string, unknown>;
+  const runSteps = anyVm.run_steps ?? anyVm.runSteps;
+  if (typeof runSteps !== "function") throw new Error("DemoVm missing run_steps/runSteps export.");
+  (runSteps as (steps: number) => void).call(current, steps);
   const maybeLen = getSerialOutputLenFromVm(current);
   if (maybeLen !== null) {
     stepsTotal = maybeLen;

@@ -1598,13 +1598,18 @@ function renderMachinePanel(): HTMLElement {
       }
 
       const timer = window.setInterval(() => {
-        const exit = machine.run_slice(50_000);
+        const machineAny = machine as unknown as Record<string, unknown>;
+        const runSlice = machineAny.run_slice ?? machineAny.runSlice;
+        if (typeof runSlice !== "function") {
+          throw new Error("Machine missing run_slice/runSlice export.");
+        }
+        const exit = (runSlice as (maxInsts: number) => unknown).call(machine, 50_000) as any;
         const exitKind = exit.kind;
         const exitExecuted = exit.executed;
         const exitDetail = exit.detail;
 
         // Avoid copying serial output into JS when empty.
-        const serialLenFn = (machine as unknown as { serial_output_len?: unknown }).serial_output_len;
+        const serialLenFn = machineAny.serial_output_len ?? machineAny.serialOutputLen;
         const shouldReadSerial = (() => {
           if (typeof serialLenFn !== "function") return true;
           try {
@@ -1615,7 +1620,11 @@ function renderMachinePanel(): HTMLElement {
           }
         })();
         if (shouldReadSerial) {
-          const bytes = machine.serial_output();
+          const serialOutputFn = machineAny.serial_output ?? machineAny.serialOutput;
+          if (typeof serialOutputFn !== "function") {
+            throw new Error("Machine missing serial_output/serialOutput export.");
+          }
+          const bytes = (serialOutputFn as () => unknown).call(machine) as Uint8Array;
           if (bytes.byteLength) {
             output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
           }
@@ -2106,10 +2115,11 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   }
 
   function getSerialOutputLenFromVm(current: InstanceType<WasmApi["DemoVm"]>): number | null {
-    const fn = current.serial_output_len;
+    const anyVm = current as unknown as Record<string, unknown>;
+    const fn = anyVm.serial_output_len ?? anyVm.serialOutputLen;
     if (typeof fn !== "function") return null;
     try {
-      const value = fn.call(current);
+      const value = (fn as () => unknown).call(current);
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
       return value;
     } catch {
@@ -2141,7 +2151,10 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       try {
         const current = vm;
         if (!current) return;
-        current.run_steps(STEPS_PER_TICK);
+        const anyVm = current as unknown as Record<string, unknown>;
+        const runSteps = anyVm.run_steps ?? anyVm.runSteps;
+        if (typeof runSteps !== "function") throw new Error("DemoVm missing run_steps/runSteps export.");
+        (runSteps as (steps: number) => void).call(current, STEPS_PER_TICK);
         const maybeLen = getSerialOutputLenFromVm(current);
         if (maybeLen !== null) {
           // Demo VM writes one serial byte per step; treat serial length as a proxy for total steps.
@@ -2202,7 +2215,12 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       stopMainStepLoop();
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        vm.restore_snapshot(bytes);
+        {
+          const anyVm = vm as unknown as Record<string, unknown>;
+          const restore = anyVm.restore_snapshot ?? anyVm.restoreSnapshot;
+          if (typeof restore !== "function") throw new Error("DemoVm missing restore_snapshot/restoreSnapshot export.");
+          (restore as (bytes: Uint8Array) => void).call(vm, bytes);
+        }
         const maybeLen = getSerialOutputLenFromVm(vm);
         if (maybeLen !== null) {
           updateOutputState(maybeLen, maybeLen);
@@ -2216,7 +2234,14 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
 
         // If the WASM build lacks `serial_output_len`, fall back to copying the buffer once
         // during restore (avoid doing this repeatedly in the main stepping loop).
-        const len = vm.serial_output().byteLength;
+        const len = (() => {
+          const anyVm = vm as unknown as Record<string, unknown>;
+          const serialOutput = anyVm.serial_output ?? anyVm.serialOutput;
+          if (typeof serialOutput !== "function") throw new Error("DemoVm missing serial_output/serialOutput export.");
+          const bytes = (serialOutput as () => unknown).call(vm);
+          if (!(bytes instanceof Uint8Array)) throw new Error("DemoVm serial_output did not return Uint8Array.");
+          return bytes.byteLength;
+        })();
         savedSerialBytesByPath.set(SNAPSHOT_PATH, len);
         updateOutputState(len, len);
         return { sizeBytes: file.size, serialBytes: len };
@@ -2241,7 +2266,14 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     if (!vm) throw new Error("Demo VM not initialized");
     stopMainStepLoop();
     try {
-      const bytes = vm.snapshot_full();
+      const bytes = (() => {
+        const anyVm = vm as unknown as Record<string, unknown>;
+        const snapshotFull = anyVm.snapshot_full ?? anyVm.snapshotFull;
+        if (typeof snapshotFull !== "function") throw new Error("DemoVm missing snapshot_full/snapshotFull export.");
+        const out = (snapshotFull as () => unknown).call(vm);
+        if (!(out instanceof Uint8Array)) throw new Error("DemoVm snapshot_full did not return Uint8Array.");
+        return out;
+      })();
       await writeBytesToOpfs(SNAPSHOT_PATH, bytes);
       const savedSerial = getSerialOutputLenFromVm(vm) ?? serialBytes ?? null;
       savedSerialBytesByPath.set(SNAPSHOT_PATH, savedSerial);
@@ -2313,7 +2345,10 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
 
     if (!vm) return;
     try {
-      vm.run_steps(50_000);
+      const anyVm = vm as unknown as Record<string, unknown>;
+      const runSteps = anyVm.run_steps ?? anyVm.runSteps;
+      if (typeof runSteps !== "function") throw new Error("DemoVm missing run_steps/runSteps export.");
+      (runSteps as (steps: number) => void).call(vm, 50_000);
       const maybeLen = getSerialOutputLenFromVm(vm);
       if (maybeLen !== null) {
         updateOutputState(maybeLen, maybeLen);

@@ -2243,17 +2243,20 @@ function drainSerialOutput(): void {
   const m = machine;
   if (!m) return;
 
-  if (typeof m.serial_output_len === "function") {
+  const anyMachine = m as unknown as Record<string, unknown>;
+  const serialOutputLen = anyMachine.serial_output_len ?? anyMachine.serialOutputLen;
+  if (typeof serialOutputLen === "function") {
     try {
-      const n = m.serial_output_len();
+      const n = (serialOutputLen as () => unknown).call(m);
       if (typeof n === "number" && Number.isFinite(n) && n <= 0) return;
     } catch {
       // ignore
     }
   }
 
-  if (typeof m.serial_output !== "function") return;
-  const bytes = m.serial_output();
+  const serialOutput = anyMachine.serial_output ?? anyMachine.serialOutput;
+  if (typeof serialOutput !== "function") return;
+  const bytes = (serialOutput as () => unknown).call(m);
   if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return;
 
   const port = UART_COM1.basePort;
@@ -2778,7 +2781,12 @@ async function runLoop(): Promise<void> {
         continue;
       }
 
-      const exit = machine.run_slice(RUN_SLICE_MAX_INSTS);
+      const anyMachine = machine as unknown as Record<string, unknown>;
+      const runSlice = anyMachine.run_slice ?? anyMachine.runSlice;
+      if (typeof runSlice !== "function") {
+        throw new Error("Machine missing run_slice/runSlice export.");
+      }
+      const exit = (runSlice as (maxInsts: number) => unknown).call(machine, RUN_SLICE_MAX_INSTS);
       const exitKind = (exit as unknown as { kind?: unknown }).kind;
       let exitKindNum = -1;
       if (typeof exitKind === "number") {

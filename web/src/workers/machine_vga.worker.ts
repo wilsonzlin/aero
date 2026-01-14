@@ -584,7 +584,12 @@ function tick(): void {
   const m = machine;
   if (!m) return;
 
-  const exit = m.run_slice(50_000);
+  const anyMachine = m as unknown as Record<string, unknown>;
+  const runSlice = anyMachine.run_slice ?? anyMachine.runSlice;
+  if (typeof runSlice !== "function") {
+    throw new Error("Machine missing run_slice/runSlice export.");
+  }
+  const exit = (runSlice as (maxInsts: number) => unknown).call(m, 50_000);
   const detail = (exit as unknown as { detail?: string }).detail;
   if (typeof detail === "string" && detail !== lastExitDetail) {
     lastExitDetail = detail;
@@ -592,7 +597,7 @@ function tick(): void {
   }
 
   // Avoid copying large serial buffers into JS when empty.
-  const lenFn = (m as unknown as { serial_output_len?: unknown }).serial_output_len;
+  const lenFn = anyMachine.serial_output_len ?? anyMachine.serialOutputLen;
   const shouldReadSerial = (() => {
     if (typeof lenFn !== "function") return true;
     try {
@@ -604,7 +609,11 @@ function tick(): void {
   })();
 
   if (shouldReadSerial) {
-    const serialBytes = m.serial_output();
+    const serialOutput = anyMachine.serial_output ?? anyMachine.serialOutput;
+    if (typeof serialOutput !== "function") {
+      throw new Error("Machine missing serial_output/serialOutput export.");
+    }
+    const serialBytes = (serialOutput as () => unknown).call(m);
     if (serialBytes instanceof Uint8Array && serialBytes.byteLength > 0) {
       // Prefer transferring the buffer for standalone ArrayBuffers, but avoid throwing if the
       // underlying memory is non-transferable (e.g. a WebAssembly.Memory view).

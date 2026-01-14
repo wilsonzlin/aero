@@ -3184,22 +3184,27 @@ async function runLoopInner(): Promise<void> {
             }
           }
 
-            if (vmBootSectorLoaded && !vmBooted) {
-              try {
-                wasmVm.reset_real_mode(0x7c00);
-                // `reset_real_mode` reconstructs the CPU core (including `a20_enabled`), so
-                // re-apply the current platform A20 gate state.
-                writeWasmVmA20Flag(a20Enabled);
-                vmBooted = true;
-                vmLastVgaTextBytes = null;
-              } catch (err) {
-                console.error("[cpu] vm boot: reset_real_mode failed:", err);
-              }
+          if (vmBootSectorLoaded && !vmBooted) {
+            try {
+              wasmVm.reset_real_mode(0x7c00);
+              // `reset_real_mode` reconstructs the CPU core (including `a20_enabled`), so
+              // re-apply the current platform A20 gate state.
+              writeWasmVmA20Flag(a20Enabled);
+              vmBooted = true;
+              vmLastVgaTextBytes = null;
+            } catch (err) {
+              console.error("[cpu] vm boot: reset_real_mode failed:", err);
+            }
           }
 
           if (vmBooted) {
             try {
-              const exit = wasmVm.run_slice(10_000);
+              const vmAny = wasmVm as unknown as Record<string, unknown>;
+              const runSlice = vmAny.run_slice ?? vmAny.runSlice;
+              if (typeof runSlice !== "function") {
+                throw new Error("Legacy VM missing run_slice/runSlice export.");
+              }
+              const exit = (runSlice as (maxInsts: number) => unknown).call(wasmVm, 10_000);
               try {
                 const executed = readDemoNumber(exit, "executed") ?? 0;
                 if (perfActive) perfInstructions += BigInt(executed >>> 0);
