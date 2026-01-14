@@ -388,7 +388,6 @@ On failure it emits:
 
 Additionally, when the guest includes recovery fields on the main virtio-blk marker, the guest selftest appends these
 counters to the virtio-blk marker (best-effort):
-
 - `abort_srb`
 - `reset_device_srb`
 - `reset_bus_srb`
