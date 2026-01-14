@@ -262,6 +262,16 @@ template <typename T>
 struct has_member_pUMCallbacks<T, std::void_t<decltype(std::declval<T>().pUMCallbacks)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pShaderCode : std::false_type {};
+template <typename T>
+struct has_member_pShaderCode<T, std::void_t<decltype(std::declval<T>().pShaderCode)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ShaderCodeSize : std::false_type {};
+template <typename T>
+struct has_member_ShaderCodeSize<T, std::void_t<decltype(std::declval<T>().ShaderCodeSize)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_hRTDevice : std::false_type {};
 template <typename T>
 struct has_member_hRTDevice<T, std::void_t<decltype(std::declval<T>().hRTDevice)>> : std::true_type {};
@@ -4668,6 +4678,62 @@ void AEROGPU_APIENTRY DestroyPixelShader11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HP
 SIZE_T AEROGPU_APIENTRY CalcPrivateGeometryShaderSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATEGEOMETRYSHADER*) {
   return sizeof(Shader);
 }
+
+template <typename FnPtr>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl;
+
+template <typename Ret, typename... Args>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args...) {
+    return static_cast<Ret>(sizeof(Shader));
+  }
+};
+
+template <typename FnPtr>
+struct CreateGeometryShaderWithStreamOutputImpl;
+
+template <typename Ret, typename... Args>
+struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D11DDI_HDEVICE hDevice{};
+    D3D11DDI_HGEOMETRYSHADER hShader{};
+    const void* shader_code = nullptr;
+    SIZE_T shader_code_size = 0;
+
+    auto capture = [&](auto v) {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D11DDI_HDEVICE>) {
+        hDevice = v;
+      } else if constexpr (std::is_same_v<T, D3D11DDI_HGEOMETRYSHADER>) {
+        hShader = v;
+      } else if constexpr (std::is_pointer_v<T>) {
+        using Pointee = std::remove_pointer_t<T>;
+        if constexpr (has_member_pShaderCode<Pointee>::value && has_member_ShaderCodeSize<Pointee>::value) {
+          if (v) {
+            shader_code = v->pShaderCode;
+            shader_code_size = static_cast<SIZE_T>(v->ShaderCodeSize);
+          }
+        }
+      }
+    };
+    (capture(args), ...);
+
+    if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate || !shader_code || shader_code_size == 0) {
+      return E_INVALIDARG;
+    }
+
+    auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+    if (!dev) {
+      return E_FAIL;
+    }
+
+    std::lock_guard<std::mutex> lock(dev->mutex);
+
+    auto* sh = new (hShader.pDrvPrivate) Shader();
+    const HRESULT hr = CreateShaderCommon(hDevice, shader_code, shader_code_size, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
+    return hr;
+  }
+};
 
 HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
                                                 const D3D11DDIARG_CREATEGEOMETRYSHADER* pDesc,
@@ -10419,6 +10485,17 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize11;
   pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader11;
   pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader11;
+
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
+        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+            decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnCreateGeometryShaderWithStreamOutput) {
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput =
+        &CreateGeometryShaderWithStreamOutputImpl<
+            decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+  }
 
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCalcPrivateComputeShaderSize) {
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateComputeShaderSize = &CalcPrivateComputeShaderSize11;
