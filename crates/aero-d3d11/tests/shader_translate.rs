@@ -2775,7 +2775,10 @@ fn translates_compute_store_raw_to_storage_buffer() {
             Sm4Inst::StoreRaw {
                 uav: UavRef { slot: 0 },
                 addr: src_imm([0.0, 0.0, 0.0, 0.0]),
-                value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
+                // Regression: store_raw values must preserve raw u32 lane bits even when the bits
+                // *look* like an integer-valued float (0x3f800000 == 1.0f). Numeric float→int
+                // conversions would incorrectly collapse this to `1u`.
+                value: src_imm_bits([0x3f80_0000u32, 0, 0, 0]),
                 mask: WriteMask::X,
             },
             Sm4Inst::Ret,
@@ -2793,6 +2796,26 @@ fn translates_compute_store_raw_to_storage_buffer() {
         .wgsl
         .contains("var<storage, read_write> u0: AeroStorageBufferU32"));
     assert!(translated.wgsl.contains("u0.data["));
+    let val_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let store_raw_val"))
+        .expect("expected store_raw value temp");
+    assert!(
+        val_line.contains("0x3f800000u"),
+        "expected raw-bit u32 literal to flow into store_raw value:\n{val_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !val_line.contains("bitcast<f32>(0x3f800000u)"),
+        "store_raw value should not route through float numeric conversions:\n{val_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !val_line.contains("vec4<u32>(vec4<f32>"),
+        "store_raw value should not cast vec4<f32> to vec4<u32> numerically:\n{val_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
