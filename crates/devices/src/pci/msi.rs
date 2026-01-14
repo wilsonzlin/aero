@@ -105,12 +105,27 @@ impl MsiCapability {
     /// simplified way:
     /// - If the single supported vector is masked, delivery is suppressed and the pending bit
     ///   is set.
+    /// - If the MSI message address is not programmed to a valid LAPIC MSI window address, delivery
+    ///   is suppressed and the pending bit is set (when supported).
     /// - The pending bit is cleared when the device successfully delivers a message.
     /// - The pending bit is *not* automatically re-delivered on unmask by this capability; device
     ///   models should re-trigger when a pending bit is latched (for example, from a periodic tick
     ///   or when handling PCI config writes that unmask MSI).
     pub fn trigger<T: MsiTrigger + ?Sized>(&mut self, platform: &mut T) -> bool {
         if !self.enabled {
+            return false;
+        }
+
+        // MSI delivery is modelled as an xAPIC-style write into the Local APIC MMIO window
+        // (0xFEE0_0000). If the guest has not yet programmed a valid MSI address, treat delivery as
+        // blocked and latch the pending bit so callers can re-trigger after the guest completes
+        // programming.
+        let addr = self.message_address;
+        let addr_valid = (addr >> 32) == 0 && (addr & 0xFFF0_0000) == 0xFEE0_0000;
+        if !addr_valid {
+            if self.per_vector_masking {
+                self.pending_bits |= 1;
+            }
             return false;
         }
 
@@ -389,5 +404,39 @@ mod tests {
         config.write(cap_offset + 0x10, 4, 0xFFFF_FFFF);
         assert_eq!(config.read(cap_offset + 0x10, 4), 1);
         assert_eq!(config.capability::<MsiCapability>().unwrap().mask_bits(), 1);
+    }
+
+    #[test]
+    fn unprogrammed_msi_address_latches_pending_and_delivers_after_programming() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+        let cap_offset = config.find_capability(super::PCI_CAP_ID_MSI).unwrap() as u16;
+
+        // Enable MSI before programming the message address/data.
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        let mut interrupts = PlatformInterrupts::new();
+        interrupts.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&interrupts, 0);
+
+        // Triggering with an invalid message address should not deliver an interrupt, but should
+        // latch the pending bit when supported.
+        {
+            let msi = config.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut interrupts));
+            assert_eq!(msi.pending_bits() & 1, 1);
+        }
+        assert_eq!(interrupts.get_pending(), None);
+
+        // Program a valid message address/data and trigger again; it should now deliver and clear
+        // the pending bit.
+        config.write(cap_offset + 0x04, 4, 0xfee0_0000);
+        config.write(cap_offset + 0x08, 4, 0);
+        config.write(cap_offset + 0x0c, 2, 0x0045);
+        let msi = config.capability_mut::<MsiCapability>().unwrap();
+        assert!(msi.trigger(&mut interrupts));
+        assert_eq!(msi.pending_bits() & 1, 0);
+        assert_eq!(interrupts.get_pending(), Some(0x45));
     }
 }
