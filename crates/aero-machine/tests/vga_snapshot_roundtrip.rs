@@ -23,11 +23,16 @@ fn framebuffer_hash_rgba8888(framebuffer: &[u32]) -> u64 {
 
 #[test]
 fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
+    // Use a non-default base to ensure snapshots don't have a hidden dependency on
+    // `aero_gpu_vga::SVGA_LFB_BASE` (important for AeroGPU BAR1 integration).
+    let lfb_base: u32 = 0xE100_0000;
+
     let cfg = MachineConfig {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: lfb_base,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,
@@ -65,17 +70,15 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     vm.io_write(0x01CF, 2, 0x0041);
 
     // Write a few pixels (packed 32bpp BGRX).
-    let base = {
-        let vga = vm.vga().expect("pc platform should include VGA");
-        let base = u64::from(vga.borrow().lfb_base());
-        base
-    };
+    let base = u64::from(lfb_base);
+    assert_eq!(vm.vbe_lfb_base(), base);
+    let vga = vm.vga().expect("pc platform should include VGA");
+    assert_eq!(vga.borrow().lfb_base(), lfb_base);
     vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
     vm.write_physical_u32(base + 12, 0x00FF_FFFF); // (3,0) white
 
-    let vga = vm.vga().expect("pc platform should include VGA");
     vga.borrow_mut().present();
     let (width, height) = vga.borrow().get_resolution();
     let hash_before = framebuffer_hash_rgba8888(vga.borrow().get_framebuffer());
@@ -89,6 +92,7 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     let vga2 = vm2
         .vga()
         .expect("pc platform should include VGA after restore");
+    assert_eq!(vga2.borrow().lfb_base(), lfb_base);
     vga2.borrow_mut().present();
     assert_eq!(vga2.borrow().get_resolution(), (width, height));
     let hash_after = framebuffer_hash_rgba8888(vga2.borrow().get_framebuffer());
