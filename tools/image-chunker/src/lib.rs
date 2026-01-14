@@ -581,7 +581,7 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
     if args.chunk_size == 0 {
         bail!("--chunk-size must be > 0");
     }
-    if args.chunk_size % sector != 0 {
+    if !args.chunk_size.is_multiple_of(sector) {
         bail!("--chunk-size must be a multiple of {sector} bytes");
     }
     if args.concurrency == 0 {
@@ -837,6 +837,7 @@ async fn build_s3_client(args: &PublishArgs) -> Result<S3Client> {
     Ok(S3Client::from_conf(s3_config_builder.build()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn worker_loop(
     work_rx: async_channel::Receiver<ChunkJob>,
     result_tx: tokio::sync::mpsc::UnboundedSender<ChunkResult>,
@@ -947,6 +948,7 @@ async fn upload_json_object<T: Serialize>(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn put_object_with_retry(
     s3: &S3Client,
     bucket: &str,
@@ -1010,7 +1012,7 @@ pub fn chunk_disk_to_vecs(
     let mut disk = open_disk_image(path, format)?;
     let total_size = disk.capacity_bytes();
     validate_virtual_disk_alignment(total_size)?;
-    if chunk_size == 0 || chunk_size % (SECTOR_SIZE as u64) != 0 {
+    if chunk_size == 0 || !chunk_size.is_multiple_of(SECTOR_SIZE as u64) {
         bail!("chunk_size must be a non-zero multiple of {}", SECTOR_SIZE);
     }
 

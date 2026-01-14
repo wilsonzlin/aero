@@ -2326,6 +2326,16 @@ mod tests {
     }
 
     #[test]
+    fn sampled_chunk_indices_allow_zero_sample() -> Result<()> {
+        let chunk_count = 10;
+        let sample = 0;
+        let mut rng = fastrand::Rng::with_seed(1);
+        let indices = select_sampled_chunk_indices(chunk_count, sample, &mut rng)?;
+        assert_eq!(indices, vec![chunk_count - 1]);
+        Ok(())
+    }
+
+    #[test]
     fn chunk_sample_seed_requires_chunk_sample_flag() {
         let err = Cli::try_parse_from([
             "aero-image-chunker",
