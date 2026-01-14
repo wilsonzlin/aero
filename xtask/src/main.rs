@@ -106,58 +106,47 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
 
     let root = paths::repo_root()?;
     let fixtures_dir = root.join("tests/fixtures");
-    fs::create_dir_all(&fixtures_dir)
-        .map_err(|e| XtaskError::Message(format!("create {fixtures_dir:?}: {e}")))?;
-
     let boot_fixtures_dir = fixtures_dir.join("boot");
-    fs::create_dir_all(&boot_fixtures_dir)
-        .map_err(|e| XtaskError::Message(format!("create {boot_fixtures_dir:?}: {e}")))?;
+    if !check {
+        fs::create_dir_all(&boot_fixtures_dir)
+            .map_err(|e| XtaskError::Message(format!("create {boot_fixtures_dir:?}: {e}")))?;
+    }
+
+    let mut fixtures = FixtureWriter::new(check);
 
     let boot_sector = boot_sector_from_code(fixture_sources::boot_vga_serial::CODE)?;
 
     // Raw boot sector (exactly 512 bytes).
-    ensure_file(
-        &boot_fixtures_dir.join("boot_vga_serial.bin"),
-        &boot_sector,
-        check,
-    )?;
+    fixtures.ensure_file(&boot_fixtures_dir.join("boot_vga_serial.bin"), &boot_sector)?;
 
     // Tiny "disk image" (8 sectors / 4KiB) whose first sector is the boot sector.
     let disk_img = disk_image_with_fill(&boot_sector, 8)?;
-    ensure_file(
-        &boot_fixtures_dir.join("boot_vga_serial_8s.img"),
-        &disk_img,
-        check,
-    )?;
+    fixtures.ensure_file(&boot_fixtures_dir.join("boot_vga_serial_8s.img"), &disk_img)?;
 
     // Legacy BIOS interrupt sanity boot sector (`int_sanity.asm`), kept in-repo to avoid requiring
     // an assembler in CI.
-    ensure_file(
+    fixtures.ensure_file(
         &boot_fixtures_dir.join("int_sanity.bin"),
         &fixture_sources::int_sanity::BIN,
-        check,
     )?;
 
     // Legacy tiny boot fixtures at `tests/fixtures/*.bin` (generated here to
     // avoid requiring external assemblers like `nasm` / GNU `as` in CI).
-    ensure_file(
+    fixtures.ensure_file(
         &fixtures_dir.join("bootsector.bin"),
         &fixture_sources::bootsector::BIN,
-        check,
     )?;
     let realmode_vbe_test = boot_sector_from_code(fixture_sources::realmode_vbe_test::CODE)?;
-    ensure_file(
+    fixtures.ensure_file(
         &fixtures_dir.join("realmode_vbe_test.bin"),
         &realmode_vbe_test,
-        check,
     )?;
 
     // QEMU differential-test boot sector (`tools/qemu_diff/boot/boot.S`), committed and
     // regenerated here so `qemu_diff` does not need an assembler toolchain in CI.
-    ensure_file(
+    fixtures.ensure_file(
         &root.join("tools/qemu_diff/boot/boot.bin"),
         &fixture_sources::qemu_diff_boot::BIN,
-        check,
     )?;
 
     // Firmware fixtures (kept in-repo; must remain small and deterministic).
@@ -166,7 +155,10 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     // ACPI DSDT (legacy PCI root bridge; ECAM/MMCONFIG disabled).
     let cfg = AcpiConfig::default();
     let acpi_tables = AcpiTables::build(&cfg, placement);
-    ensure_file(&root.join("crates/firmware/acpi/dsdt.aml"), &acpi_tables.dsdt, check)?;
+    fixtures.ensure_file(
+        &root.join("crates/firmware/acpi/dsdt.aml"),
+        &acpi_tables.dsdt,
+    )?;
 
     // ACPI DSDT with PCIe ECAM/MMCONFIG enabled (PCI0 becomes a PCIe root bridge).
     let cfg = AcpiConfig {
@@ -177,18 +169,17 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         ..Default::default()
     };
     let acpi_tables = AcpiTables::build(&cfg, placement);
-    ensure_file(
+    fixtures.ensure_file(
         &root.join("crates/firmware/acpi/dsdt_pcie.aml"),
         &acpi_tables.dsdt,
-        check,
     )?;
 
     // BIOS ROM image.
     let bios_rom = firmware::bios::build_bios_rom();
     cmd_bios_rom::validate_bios_rom(&bios_rom)?;
-    ensure_file(&root.join("assets/bios.bin"), &bios_rom, check)?;
+    fixtures.ensure_file(&root.join("assets/bios.bin"), &bios_rom)?;
 
-    Ok(())
+    fixtures.finish()
 }
 
 fn boot_sector_from_code(code: &[u8]) -> Result<Vec<u8>> {
@@ -232,32 +223,57 @@ fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>> {
     Ok(img)
 }
 
-fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
-    let path_display = paths::display_rel_path(path);
-    let existing = match fs::read(path) {
-        Ok(bytes) => Some(bytes),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(err) => {
-            return Err(format!("read {path_display}: {err}").into());
-        }
-    };
+struct FixtureWriter {
+    check: bool,
+    failures: Vec<String>,
+}
 
-    if check {
-        let Some(existing) = existing else {
-            return Err(format!("{path_display} is missing (run `cargo xtask fixtures`)").into());
+impl FixtureWriter {
+    fn new(check: bool) -> Self {
+        Self {
+            check,
+            failures: Vec::new(),
+        }
+    }
+
+    fn ensure_file(&mut self, path: &Path, expected: &[u8]) -> Result<()> {
+        let path_display = paths::display_rel_path(path);
+        let existing = match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(format!("read {path_display}: {err}").into());
+            }
         };
-        if existing != expected {
-            return Err(
-                format!("{path_display} is out of date (run `cargo xtask fixtures`)").into(),
-            );
+
+        if self.check {
+            let Some(existing) = existing else {
+                self.failures.push(format!("- {path_display} (missing)"));
+                return Ok(());
+            };
+            if existing != expected {
+                self.failures
+                    .push(format!("- {path_display} (out of date)"));
+            }
+            return Ok(());
         }
-        return Ok(());
+
+        if existing.as_deref() != Some(expected) {
+            fs::write(path, expected)
+                .map_err(|e| XtaskError::Message(format!("write {path_display}: {e}")))?;
+        }
+
+        Ok(())
     }
 
-    if existing.as_deref() != Some(expected) {
-        fs::write(path, expected)
-            .map_err(|e| XtaskError::Message(format!("write {path_display}: {e}")))?;
-    }
+    fn finish(self) -> Result<()> {
+        if !self.check || self.failures.is_empty() {
+            return Ok(());
+        }
 
-    Ok(())
+        Err(XtaskError::Message(format!(
+            "fixtures are out of date:\n{}\n\nrun `cargo xtask fixtures` to regenerate",
+            self.failures.join("\n")
+        )))
+    }
 }
