@@ -190,6 +190,13 @@ fn said_rust_only_skips_node_and_npm() -> Result<(), Box<dyn std::error::Error>>
         cargo_usb.iter().any(|arg| arg == "--test"),
         "expected default input run to filter aero-usb tests (use --usb-all to remove); argv={cargo_usb:?}"
     );
+    for expected in ["uhci", "ehci", "xhci_enum_smoke", "webusb_passthrough_uhci", "xhci_webusb_passthrough"]
+    {
+        assert!(
+            cargo_usb.iter().any(|arg| arg == expected),
+            "expected `{expected}` to be part of the focused aero-usb test list; argv={cargo_usb:?}"
+        );
+    }
 
     Ok(())
 }
@@ -288,6 +295,8 @@ fn said_machine_rust_only_runs_machine_tests() -> Result<(), Box<dyn std::error:
     for expected in [
         "--lib",
         "--locked",
+        "machine_i8042_snapshot_pending_bytes",
+        "machine_virtio_input",
         "machine_uhci",
         "uhci_snapshot",
         "machine_uhci_snapshot_roundtrip",
@@ -304,6 +313,7 @@ fn said_machine_rust_only_runs_machine_tests() -> Result<(), Box<dyn std::error:
         "machine_xhci_snapshot",
         "xhci_snapshot",
         "machine_xhci_usb_attach_at_path",
+        "usb_snapshot_host_state",
     ] {
         assert!(
             cargo_machine.iter().any(|arg| arg == expected),
