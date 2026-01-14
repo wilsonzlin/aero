@@ -98,6 +98,13 @@ connect/disconnect events when host audio backends are attached/detached:
 - Speaker jack (`jack_id = 0`): AudioWorklet output ring attach/detach (`VirtioSndPciBridge::set_audio_ring_buffer`)
 - Microphone jack (`jack_id = 1`): mic capture ring attach/detach (`VirtioSndPciBridge::set_mic_ring_buffer`)
 
+Implementation notes (device model):
+
+- The device model keeps a **bounded** FIFO of pending event messages (currently capped at 256) to avoid unbounded host memory
+  growth if a guest never posts/consumes event buffers.
+- `queue_jack_event(...)` deduplicates redundant JACK state transitions within the pending FIFO (it will not enqueue repeated
+  identical connected/disconnected events for the same jack ID).
+
 Even when no events are emitted:
 
 - The Windows 7 virtio-snd driver posts a small bounded set of writable buffers and keeps `eventq` running.
