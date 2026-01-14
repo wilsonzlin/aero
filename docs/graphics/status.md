@@ -73,6 +73,13 @@ Test pointers:
   - `mode13h_golden_hash`
   - `vbe_linear_framebuffer_write_shows_up_in_output`
 
+CI/regression command:
+
+```bash
+# Runs the boot-display stack end-to-end (VGA/VBE device model + BIOS INT10 + machine wiring).
+bash ./scripts/ci/run-vga-vbe-tests.sh
+```
+
 ### Wired into the canonical machine (`crates/aero-machine`)
 
 When `MachineConfig::enable_vga=true`, `aero_machine::Machine` wires the VGA/VBE device model for boot display.
