@@ -109,8 +109,8 @@ The in-tree Win7 virtio-input INFs use these subsystem-qualified HWIDs to assign
 - `SUBSYS_00111AF4` → **Aero VirtIO Mouse** (`inf/aero_virtio_input.inf`)
 - `SUBSYS_00121AF4` → **Aero VirtIO Tablet Device** (`inf/aero_virtio_tablet.inf`)
 
-The keyboard/mouse INF (`inf/aero_virtio_input.inf`) also includes a generic `PCI\VEN_1AF4&DEV_1052&REV_01` fallback entry
-that will appear as **Aero VirtIO Input Device** when subsystem IDs are not exposed.
+The optional legacy alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable) includes a generic
+`PCI\VEN_1AF4&DEV_1052&REV_01` fallback entry that will appear as **Aero VirtIO Input Device** when subsystem IDs are not exposed.
 
 Topology notes:
 
