@@ -667,15 +667,6 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 
     KeAcquireSpinLock(&Stream->Lock, &oldIrql);
     Stream->Stopping = FALSE;
-#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-    /*
-     * Reset tick coalescing when (re)starting the timer so a PAUSE->RUN transition
-     * doesn't accidentally suppress the first DPC tick due to a stale timestamp
-     * from the previous RUN segment.
-     */
-    Stream->TickBaseTime100ns = KeQueryInterruptTime();
-    Stream->LastTickPeriodIndex = ~0ull;
-#endif
     KeReleaseSpinLock(&Stream->Lock, oldIrql);
 
     period100ns = Stream->Period100ns;
@@ -3638,6 +3629,23 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         stream->StartQpc = nowQpcValue;
         stream->StartLinearFrames = stream->FrozenLinearFrames;
         stream->State = KSSTATE_RUN;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        /*
+         * Tick coalescing base for playback:
+         *
+         * eventq PCM notifications can queue the WaveRT DPC before the periodic
+         * timer is started (we prime the device with lead audio first). If the
+         * base were taken from the timer-start time, the first event-driven tick
+         * could land in a different period window than the first timer tick,
+         * leading to a double PacketCount increment.
+         *
+         * Anchor the base time when entering KSSTATE_RUN (before priming) so both
+         * timer-driven and event-driven wakeups for the same period fall into the
+         * same period index.
+         */
+        stream->TickBaseTime100ns = KeQueryInterruptTime();
+        stream->LastTickPeriodIndex = ~0ull;
+#endif
 
         startLinearFrames = stream->StartLinearFrames;
         startOffsetBytes = 0;
