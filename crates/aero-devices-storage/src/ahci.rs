@@ -2228,7 +2228,6 @@ mod tests {
             mem.read_physical(data_buf, &mut out);
             assert_eq!(out[0], 0x40);
 
-            // Clear the interrupt.
             ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
             assert!(!irq.level());
         };
@@ -2238,14 +2237,17 @@ mod tests {
             ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
             SSTS_DET_DEVICE_PRESENT_PHY
         );
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), SATA_SIG_ATA);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & 0xFF,
+            (ATA_STATUS_DRDY | ATA_STATUS_DSC) as u32
+        );
         run_identify(&mut ctl, &mut mem);
 
         // Issue COMRESET (DET=1) then release it back to DET=0.
         ctl.write_u32(PORT_BASE + PORT_REG_SCTL, SCTL_DET_COMRESET);
-        assert_eq!(
-            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & u32::from(ATA_STATUS_BSY),
-            u32::from(ATA_STATUS_BSY)
-        );
+        assert_ne!(ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
         // While reset is asserted, report device present but PHY not established.
         assert_eq!(
             ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
@@ -2257,9 +2259,29 @@ mod tests {
             ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
             SSTS_DET_DEVICE_PRESENT_PHY
         );
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), SATA_SIG_ATA);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & 0xFF,
+            (ATA_STATUS_DRDY | ATA_STATUS_DSC) as u32
+        );
 
         // Port reset stops the command/FIS engines; re-enable and IDENTIFY again.
         ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
         run_identify(&mut ctl, &mut mem);
+    }
+
+    #[test]
+    fn pxserr_is_write_one_to_clear() {
+        let (mut ctl, _irq, _mem, _drive) = setup_controller();
+
+        ctl.ports[0].regs.serr = 0xA5A5_A5A5;
+
+        // Only bits written as '1' should clear.
+        ctl.write_u32(PORT_BASE + PORT_REG_SERR, 0x0000_F0F0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SERR), 0xA5A5_0505);
+
+        // Writing zeros should be a no-op.
+        ctl.write_u32(PORT_BASE + PORT_REG_SERR, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SERR), 0xA5A5_0505);
     }
 }
