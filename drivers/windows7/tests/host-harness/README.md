@@ -393,8 +393,8 @@ On failure it emits:
 
 `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
 
-Additionally, when the guest includes recovery fields on the main virtio-blk marker, the guest selftest appends these
-counters to the virtio-blk marker (best-effort):
+Legacy guest selftests may append these counters to the main virtio-blk marker (best-effort; kept for backwards
+compatibility with older images/tools):
 - `abort_srb`
 - `reset_device_srb`
 - `reset_bus_srb`
@@ -418,8 +418,10 @@ If any counter is non-zero, the harness fails with a deterministic token:
 
 `FAIL: VIRTIO_BLK_RECOVERY_NONZERO: ...`
 
-Note: this is best-effort and only runs when the guest marker includes the counter fields (older guest binaries or
-drivers may omit them).
+Note: this is best-effort. `VIRTIO_BLK_RECOVERY` is derived from either:
+
+- the dedicated guest `virtio-blk-counters` marker (preferred), or
+- legacy fields on the guest `virtio-blk` marker (older guest binaries).
 
 ### virtio-net MSI/MSI-X interrupt mode (guest-observed, optional)
 

@@ -10967,22 +10967,6 @@ int wmain(int argc, wchar_t** argv) {
       marker += vec;
     }
 
-    // Best-effort: append StorPort recovery counters when the miniport reports the v2 payload.
-    // If the miniport does not expose these fields (older contract), keep the marker stable by
-    // omitting them entirely.
-    if (blk_miniport_info->returned_len >= kCountersEnd) {
-      marker += "|abort_srb=";
-      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.AbortSrbCount));
-      marker += "|reset_device_srb=";
-      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.ResetDeviceSrbCount));
-      marker += "|reset_bus_srb=";
-      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.ResetBusSrbCount));
-      marker += "|pnp_srb=";
-      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.PnpSrbCount));
-      marker += "|ioctl_reset=";
-      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.IoctlResetCount));
-    }
-
     /*
      * Dedicated marker for MSI/MSI-X diagnostics (used by the host harness).
      *

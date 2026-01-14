@@ -5543,7 +5543,11 @@ def main() -> int:
                             result_code = 1
                             break
                         if args.require_no_blk_recovery:
-                            msg = _check_no_blk_recovery_requirement(tail, blk_test_line=virtio_blk_marker_line)
+                            msg = _check_no_blk_recovery_requirement(
+                                tail,
+                                blk_test_line=virtio_blk_marker_line,
+                                blk_counters_line=virtio_blk_counters_marker_line,
+                            )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -6876,7 +6880,11 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if args.require_no_blk_recovery:
-                                msg = _check_no_blk_recovery_requirement(tail, blk_test_line=virtio_blk_marker_line)
+                                msg = _check_no_blk_recovery_requirement(
+                                    tail,
+                                    blk_test_line=virtio_blk_marker_line,
+                                    blk_counters_line=virtio_blk_counters_marker_line,
+                                )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -6997,7 +7005,11 @@ def main() -> int:
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         _emit_virtio_blk_msix_host_marker(tail)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
-        _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
+        _emit_virtio_blk_recovery_host_marker(
+            tail,
+            blk_test_line=virtio_blk_marker_line,
+            blk_counters_line=virtio_blk_counters_marker_line,
+        )
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
         _emit_virtio_net_large_host_marker(tail)
@@ -8272,15 +8284,26 @@ def _try_parse_int_base0(s: str) -> Optional[int]:
         return None
 
 
-def _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(tail: bytes) -> Optional[dict[str, int]]:
+def _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(
+    tail: bytes, *, blk_counters_line: Optional[str] = None
+) -> Optional[dict[str, int]]:
     """
     Best-effort: extract virtio-blk recovery counters from the dedicated `virtio-blk-counters` guest marker.
 
     Guest marker:
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...
     """
-    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|")
+    marker_line = blk_counters_line
     if marker_line is None:
+        marker_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
+        )
+    if marker_line is None:
+        return None
+
+    toks = marker_line.split("|")
+    status = toks[3] if len(toks) >= 4 else ""
+    if status == "SKIP":
         return None
 
     fields = _parse_marker_kv_fields(marker_line)
@@ -8310,6 +8333,7 @@ def _try_parse_virtio_blk_recovery_counters(
     tail: bytes,
     *,
     blk_test_line: Optional[str] = None,
+    blk_counters_line: Optional[str] = None,
 ) -> Optional[dict[str, int]]:
     """
     Best-effort: extract virtio-blk StorPort recovery counters from the guest virtio-blk test marker.
@@ -8338,7 +8362,9 @@ def _try_parse_virtio_blk_recovery_counters(
 
     # Backward/robustness: if the virtio-blk per-test marker does not include the counters fields (or is truncated),
     # fall back to the dedicated virtio-blk-counters marker.
-    return _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(tail)
+    return _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(
+        tail, blk_counters_line=blk_counters_line
+    )
 
 
 def _virtio_blk_recovery_is_nonzero(counters: dict[str, int], *, threshold: int = 0) -> bool:
@@ -8358,8 +8384,11 @@ def _check_no_blk_recovery_requirement(
     *,
     threshold: int = 0,
     blk_test_line: Optional[str] = None,
+    blk_counters_line: Optional[str] = None,
 ) -> Optional[str]:
-    counters = _try_parse_virtio_blk_recovery_counters(tail, blk_test_line=blk_test_line)
+    counters = _try_parse_virtio_blk_recovery_counters(
+        tail, blk_test_line=blk_test_line, blk_counters_line=blk_counters_line
+    )
     if counters is None:
         return None
     if _virtio_blk_recovery_is_nonzero(counters, threshold=threshold):
@@ -8419,13 +8448,16 @@ def _emit_virtio_blk_recovery_host_marker(
     tail: bytes,
     *,
     blk_test_line: Optional[str] = None,
+    blk_counters_line: Optional[str] = None,
 ) -> None:
     """
     Best-effort: emit a host-side marker describing the guest virtio-blk StorPort recovery counters.
 
     This does not affect harness PASS/FAIL by itself; gating is controlled by --require-no-blk-recovery.
     """
-    counters = _try_parse_virtio_blk_recovery_counters(tail, blk_test_line=blk_test_line)
+    counters = _try_parse_virtio_blk_recovery_counters(
+        tail, blk_test_line=blk_test_line, blk_counters_line=blk_counters_line
+    )
     if counters is None:
         return
 
