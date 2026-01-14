@@ -95,6 +95,15 @@ Driver status helpers exist for routing decisions:
 
 These calls are only meaningful once the guest driver has finished initialization (i.e. after the guest sets `DRIVER_OK`).
 
+Synthetic USB HID readiness helpers exist for routing decisions:
+
+- `Machine.usb_hid_keyboard_configured()`
+- `Machine.usb_hid_mouse_configured()`
+- `Machine.usb_hid_gamepad_configured()`
+- `Machine.usb_hid_consumer_control_configured()`
+
+These reflect whether each synthetic HID device is present **and configured** by the guest (`SET_CONFIGURATION != 0`).
+
 #### USB HID (synthetic devices behind the external hub)
 
 In the production browser runtime, browser keyboard/mouse/gamepad input (including consumer-control
