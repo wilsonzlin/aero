@@ -1038,8 +1038,8 @@ pub fn demo_render_rgba8888(
 
         let slice_len = stride * draw_height;
         unsafe {
-            let dst = core::slice::from_raw_parts_mut(dst_offset as *mut u8, slice_len);
-            demo_renderer::render_rgba8888(dst, width, height, stride_bytes, now_ms)
+            let dst_ptr = dst_offset as *mut u8;
+            demo_renderer::render_rgba8888_raw(dst_ptr, slice_len, width, height, stride_bytes, now_ms)
         }
     }
 

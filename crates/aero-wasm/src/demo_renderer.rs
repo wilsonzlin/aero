@@ -1,5 +1,6 @@
-pub fn render_rgba8888(
-    dst: &mut [u8],
+pub unsafe fn render_rgba8888_raw(
+    dst: *mut u8,
+    dst_len: usize,
     width: u32,
     height: u32,
     stride_bytes: u32,
@@ -29,7 +30,7 @@ pub fn render_rgba8888(
 
     // Clamp height to the provided destination slice so row addressing never
     // overflows.
-    let max_height = dst.len() / stride;
+    let max_height = dst_len / stride;
     let draw_height = height_usize.min(max_height);
     if draw_height == 0 {
         return 0;
@@ -47,8 +48,6 @@ pub fn render_rgba8888(
     let r_off = ((now * 60.0) / 1000.0) as u32;
     let g_off = ((now * 35.0) / 1000.0) as u32;
     let b_off = ((now * 20.0) / 1000.0) as u32;
-
-    let base_ptr = dst.as_mut_ptr();
 
     for y in 0..draw_height {
         let y_u32 = y as u32;
@@ -68,7 +67,7 @@ pub fn render_rgba8888(
             let rgba = (r | (g << 8) | (b << 16) | (0xff << 24)).to_le();
             unsafe {
                 core::ptr::write_unaligned(
-                    base_ptr.add(row_base + x * BYTES_PER_PIXEL) as *mut u32,
+                    dst.add(row_base + x * BYTES_PER_PIXEL) as *mut u32,
                     rgba,
                 );
             }
@@ -78,6 +77,18 @@ pub fn render_rgba8888(
     (width as u64)
         .saturating_mul(draw_height as u64)
         .min(u32::MAX as u64) as u32
+}
+
+#[cfg(test)]
+pub fn render_rgba8888(
+    dst: &mut [u8],
+    width: u32,
+    height: u32,
+    stride_bytes: u32,
+    now_ms: f64,
+) -> u32 {
+    // Safety: `dst` is a valid mutable slice, so its pointer is valid for `dst.len()` bytes.
+    unsafe { render_rgba8888_raw(dst.as_mut_ptr(), dst.len(), width, height, stride_bytes, now_ms) }
 }
 
 #[cfg(test)]
