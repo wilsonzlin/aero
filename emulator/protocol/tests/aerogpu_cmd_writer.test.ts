@@ -43,8 +43,11 @@ import {
   decodeCmdSetConstantBuffersPayload,
   decodeCmdSetSamplersPayload,
   decodeCmdSetShaderResourceBuffersPayload,
+  decodeCmdSetShaderResourceBuffersPayloadFromPacket,
   decodeCmdSetUnorderedAccessBuffersPayload,
+  decodeCmdSetUnorderedAccessBuffersPayloadFromPacket,
   decodeShaderStageEx,
+  decodeCmdStreamView,
   decodeStageEx,
   decodeCmdStreamHeader,
   encodeStageEx,
@@ -918,6 +921,28 @@ test("AerogpuCmdWriter stage_ex binding packets encode GS/HS/DS via (COMPUTE, re
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
 
   assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter stage_ex SRV/UAV buffer binding packets decode via packet decoders", () => {
+  const w = new AerogpuCmdWriter();
+  w.setShaderResourceBuffersEx(AerogpuShaderStageEx.Hull, 1, [
+    { buffer: 10, offsetBytes: 0, sizeBytes: 64 },
+    { buffer: 11, offsetBytes: 16, sizeBytes: 128 },
+  ]);
+  w.setUnorderedAccessBuffersEx(AerogpuShaderStageEx.Domain, 2, [
+    { buffer: 20, offsetBytes: 0, sizeBytes: 256, initialCount: 0xffff_ffff },
+  ]);
+
+  const { packets } = decodeCmdStreamView(w.finish());
+  assert.equal(packets.length, 2);
+
+  const srv = decodeCmdSetShaderResourceBuffersPayloadFromPacket(packets[0]!);
+  assert.equal(srv.shaderStage, AerogpuShaderStage.Compute);
+  assert.equal(decodeStageEx(srv.shaderStage, srv.reserved0), AerogpuShaderStageEx.Hull);
+
+  const uav = decodeCmdSetUnorderedAccessBuffersPayloadFromPacket(packets[1]!);
+  assert.equal(uav.shaderStage, AerogpuShaderStage.Compute);
+  assert.equal(decodeStageEx(uav.shaderStage, uav.reserved0), AerogpuShaderStageEx.Domain);
 });
 
 test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, reserved0=stageEx) for GS/HS/DS", () => {
