@@ -120,6 +120,61 @@ class DryRunQemuCmdTests(unittest.TestCase):
             mock_httpd.assert_not_called()
             mock_udp.assert_not_called()
 
+    def test_dry_run_with_net_link_flap_includes_qmp_and_net_device_id(self) -> None:
+        """
+        When --with-net-link-flap is enabled, the harness requires QMP to flap the NIC link state.
+
+        Dry-run mode should still print a consistent QEMU argv that includes:
+        - a QMP monitor (`-qmp ...`)
+        - a stable virtio-net `id=` so QMP `set_link name=<id>` can target it deterministically.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--with-net-link-flap",
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(
+                    self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
+                ),
+                contextlib.redirect_stdout(out),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+            stdout = out.getvalue()
+
+            self.assertIn("qmp=enabled", stdout)
+            self.assertIn("aero_virtio_net0", stdout)
+
+            first_line = stdout.splitlines()[0]
+            parsed = json.loads(first_line)
+            self.assertIn("-qmp", parsed)
+            self.assertIn(
+                "virtio-net-pci,id=aero_virtio_net0,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
+                parsed,
+            )
+
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+
     def test_dry_run_with_virtio_disable_msix_does_not_spawn_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
