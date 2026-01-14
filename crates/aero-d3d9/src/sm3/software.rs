@@ -1247,6 +1247,7 @@ fn run_vertex_shader(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_pixel_shader(
     ir: &crate::sm3::ir::ShaderIr,
     inputs_v: &HashMap<u16, Vec4>,
