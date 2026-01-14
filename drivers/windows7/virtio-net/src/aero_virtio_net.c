@@ -3822,6 +3822,7 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
     case OID_TCP_OFFLOAD_PARAMETERS: {
       NDIS_OFFLOAD_PARAMETERS* Params;
       ULONG MinSize;
+      NDIS_STATUS SetStatus;
 
       if (InLen < sizeof(NDIS_OBJECT_HEADER)) {
         return NDIS_STATUS_INVALID_LENGTH;
@@ -3850,6 +3851,13 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         BOOLEAN TxTsoV4;
         BOOLEAN TxTsoV6;
 
+        SetStatus = NDIS_STATUS_SUCCESS;
+
+        // Serialize the full "read current -> apply deltas -> commit" update so
+        // concurrent OID requests (including OID_TCP_OFFLOAD_CURRENT_CONFIG) see
+        // a consistent config.
+        NdisAcquireSpinLock(&Adapter->Lock);
+
         TxCsumV4 = Adapter->TxChecksumV4Enabled;
         TxCsumV6 = Adapter->TxChecksumV6Enabled;
         TxUdpCsumV4 = Adapter->TxUdpChecksumV4Enabled;
@@ -3868,7 +3876,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxCsumV4 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3881,7 +3890,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxCsumV6 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3894,7 +3904,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxUdpCsumV4 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3907,7 +3918,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxUdpCsumV6 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3920,7 +3932,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxTsoV4 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3933,7 +3946,8 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
             } else if (V == 2 || V == 4) {
               TxTsoV6 = TRUE;
             } else {
-              return NDIS_STATUS_INVALID_DATA;
+              SetStatus = NDIS_STATUS_INVALID_DATA;
+              goto TcpOffloadParamsDone;
             }
           }
         }
@@ -3952,14 +3966,19 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
           TxTsoV6 = FALSE;
         }
 
-        NdisAcquireSpinLock(&Adapter->Lock);
         Adapter->TxChecksumV4Enabled = TxCsumV4;
         Adapter->TxChecksumV6Enabled = TxCsumV6;
         Adapter->TxUdpChecksumV4Enabled = TxUdpCsumV4;
         Adapter->TxUdpChecksumV6Enabled = TxUdpCsumV6;
         Adapter->TxTsoV4Enabled = TxTsoV4;
         Adapter->TxTsoV6Enabled = TxTsoV6;
+
+TcpOffloadParamsDone:
         NdisReleaseSpinLock(&Adapter->Lock);
+
+        if (SetStatus != NDIS_STATUS_SUCCESS) {
+          return SetStatus;
+        }
       }
 
       BytesRead = BytesNeeded;
