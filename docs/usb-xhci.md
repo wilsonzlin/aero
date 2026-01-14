@@ -495,6 +495,9 @@ USB-related unit tests commonly live under:
 Rust xHCI-focused tests commonly live under:
 
 - `crates/aero-usb/tests/xhci_controller_mmio.rs`
+- `crates/aero-usb/tests/xhci_mmio_smoke.rs`
+- `crates/aero-usb/tests/xhci_mmio_doorbell_command_ring.rs`
+- `crates/aero-usb/tests/xhci_doorbell_bme_gating.rs` (PCI BME gating + event ring delivery)
 - `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_command_ring.rs`
@@ -503,13 +506,9 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_extcaps.rs`
 - `crates/aero-usb/tests/xhci_supported_protocol.rs`
 - `crates/aero-usb/tests/xhci_ports.rs`
-- `crates/aero-usb/tests/xhci_snapshot_roundtrip.rs`
-- `crates/aero-usb/tests/xhci_snapshot_ports.rs`
-- `crates/aero-usb/tests/xhci_snapshot_pending_events.rs`
+- `crates/aero-usb/tests/xhci_snapshot_*.rs` (snapshot/restore, legacy compatibility, determinism)
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
-- `crates/aero-usb/tests/xhci_control_get_descriptor.rs`
-- `crates/aero-usb/tests/xhci_control_set_configuration.rs`
-- `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
+- `crates/aero-usb/tests/xhci_control_*.rs` (EP0 control transfer behavior)
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
 - `crates/emulator/tests/xhci_mmio_gating.rs` (emulator-side PCI/MMIO/BME gating; requires `--features legacy-usb-xhci`)
 
