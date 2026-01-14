@@ -1260,6 +1260,50 @@ fn assemble_ps3_defb_if(branch: bool) -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_defb_if_high_index(branch: bool) -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c1, 0.0, 1.0, 0.0, 1.0 (green)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // defb b20, <branch>
+    out.extend(enc_inst(
+        0x0053,
+        &[enc_dst(14, 20, 0x0), if branch { 1 } else { 0 }],
+    ));
+    // if b20
+    out.extend(enc_inst(0x0028, &[enc_src(14, 20, 0x00)]));
+    // mov oC0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // else
+    out.extend(enc_inst(0x002A, &[]));
+    // mov oC0, c1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 1, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -5664,6 +5708,47 @@ fn sm3_rep_relative_const_high_int_index_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "f0ea24543939c1b353690b0561b904ea57c604ffb63e4d0bf145020d213a3796"
+    );
+}
+
+#[test]
+fn sm3_defb_high_index_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_defb_if_high_index(true));
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // `defb b20, true` should take the if-branch and output red.
+    assert_eq!(rt.get(8, 8).to_rgba8(), [255, 0, 0, 255]);
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "f319f67af7e26fb3e108840dfe953de674f251a9542b12738334ad592fbff483"
     );
 }
 
