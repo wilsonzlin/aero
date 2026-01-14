@@ -126,7 +126,7 @@ export function tryInitVirtioSndDevice(opts: {
   }
 
   try {
-    const dev = new VirtioSndPciDevice({ bridge: bridge as unknown as any, irqSink: mgr.irqSink, mode });
+    const dev = new VirtioSndPciDevice({ bridge, irqSink: mgr.irqSink, mode });
     try {
       mgr.registerPciDevice(dev);
     } catch {
