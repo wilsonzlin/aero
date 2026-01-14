@@ -2,6 +2,9 @@
 
 This note documents the **Win7 shared-surface strategy** used by AeroGPU (D3D9Ex *and* DXGI/D3D10/D3D11) so future work does not accidentally rely on **user-mode `HANDLE` numeric values** (which are not stable cross-process).
 
+For the “legacy scratchpad task ID → current implementation/tests” audit (to avoid duplicating already-implemented shared-surface work), see:
+[`docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`](./task-489-sm3-dxbc-sharedsurface-audit.md).
+
 ## Problem: D3D “shared handles” are not stable cross-process
 
 On Windows 7, D3D9/D3D9Ex exposes resource sharing via a user-mode `HANDLE` (e.g. `pSharedHandle` in `CreateTexture`, `CreateRenderTarget`, etc).

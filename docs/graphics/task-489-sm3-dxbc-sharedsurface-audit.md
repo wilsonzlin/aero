@@ -137,6 +137,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 
 **Status:** ✅ Done
 
+**See also:**
+- [`docs/graphics/win7-shared-surfaces-share-token.md`](./win7-shared-surfaces-share-token.md) (the `share_token` vs user-mode `HANDLE` contract + collision/retirement policy; cross-process test pointers)
+
 **Implementation (key files):**
 - `crates/aero-gpu/src/shared_surface.rs` (single source of truth)
 - Used by:
