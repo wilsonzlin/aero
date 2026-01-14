@@ -3649,6 +3649,107 @@ fn atapi_dma_read_out_of_bounds_aborts_without_setting_bus_master_error() {
 }
 
 #[test]
+fn atapi_packet_phase_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
+    let iso = MemIso::new(1);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_primary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on primary channel.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(PRIMARY_PORTS.cmd_base, 2);
+    }
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    // Mask interrupts before issuing the PACKET command.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // Issue a DMA-capable READ(10) packet; the initial packet-phase IRQ should latch internally
+    // but be masked from the output.
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Re-enable interrupts; the latched packet-phase IRQ should now surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
+fn atapi_packet_phase_irq_can_be_acknowledged_while_nien_is_set() {
+    let iso = MemIso::new(1);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_primary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on primary channel.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(PRIMARY_PORTS.cmd_base, 2);
+    }
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    // Mask interrupts before issuing the PACKET command.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // Output should remain masked by nIEN.
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Acknowledge the latched interrupt while still masked.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    // Re-enable interrupts; because it was already acknowledged, it should not surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn atapi_dma_success_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
     let mut iso = MemIso::new(1);
     let expected: Vec<u8> = (0..2048u32)
