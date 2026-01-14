@@ -96,6 +96,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
     controlSab: segments.control,
     guestMemory: segments.guestMemory,
     vram: segments.vram,
+    vgaFramebuffer: segments.sharedFramebuffer,
     scanoutState: segments.scanoutState,
     scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
     cursorState: segments.cursorState,

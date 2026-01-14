@@ -2153,6 +2153,8 @@ export class WorkerCoordinator {
         vram: segments.vram,
         vramBasePaddr: segments.vram ? VRAM_BASE_PADDR : undefined,
         vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
+        // Legacy VGA scanout is backed by the shared framebuffer segment in the web runtime.
+        vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         cursorState: segments.cursorState,
