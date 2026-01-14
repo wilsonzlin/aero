@@ -3963,6 +3963,124 @@ fn translate_entrypoint_rejects_vertex_shader_write_to_o_depth() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_relative_sampler_addressing() {
+    // Sampler operands are not addressable. Relative addressing on sampler operands should be
+    // treated as malformed input and rejected by the strict SM3 pipeline (not silently ignored).
+    const RELATIVE: u32 = 0x0000_2000;
+
+    let mut words = vec![0xFFFF_0300];
+    // texld r0, t0, s0[a0.x]
+    let sampler = enc_src(10, 0, 0xE4) | RELATIVE;
+    let rel = enc_src(3, 0, 0x00); // a0.x (swizzle = xxxx)
+    words.extend(enc_inst(
+        0x0042,
+        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), sampler, rel],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_sampler_operand_with_src_modifier() {
+    // Sampler operands are not general-purpose source operands; they should not carry source
+    // modifiers. Reject as malformed to avoid ignoring invalid encodings.
+    let mut words = vec![0xFFFF_0300];
+    // texld r0, t0, -s0
+    words.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src_mod(10, 0, 0xE4, 1), // negate
+        ],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_relative_def_destination_operand() {
+    // `def` destinations are not addressable; reject malformed relative-addressing encodings.
+    const RELATIVE: u32 = 0x0000_2000;
+
+    let mut words = vec![0xFFFF_0300];
+    // def c0[a0.x], 1.0, 0.0, 0.0, 1.0
+    let dst = enc_dst(2, 0, 0xF) | RELATIVE;
+    let rel = enc_src(3, 0, 0x00); // a0.x
+    words.extend(enc_inst(
+        0x0051,
+        &[
+            dst,
+            rel,
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // mov oC0, c0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_relative_dcl_destination_operand() {
+    // `dcl` destinations are not addressable; reject malformed relative-addressing encodings.
+    const RELATIVE: u32 = 0x0000_2000;
+
+    let mut words = vec![0xFFFF_0300];
+    // Legacy DCL form: <decl_token>, <dst>
+    // dcl_position v0[a0.x]
+    let decl_token = 0u32; // usage = position (0), usage_index = 0
+    let dst = enc_dst(1, 0, 0xF) | RELATIVE;
+    let rel = enc_src(3, 0, 0x00); // a0.x
+    words.extend(enc_inst(0x001F, &[decl_token, dst, rel]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_label_register_as_src_operand() {
     // Label registers (`l#`) are not runtime storage and may not appear as generic source operands.
     let mut words = vec![0xFFFF_0300];

@@ -881,6 +881,12 @@ fn handle_dcl(
     };
 
     let reg = to_ir_reg(inst, &dst.reg)?;
+    if reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for dcl destination operands",
+        ));
+    }
     let mask = dst.mask;
 
     match dcl.usage {
@@ -925,6 +931,12 @@ fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Resu
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "def missing destination operand")),
     };
+    if dst.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for def destination operands",
+        ));
+    }
     if dst.reg.file != RegisterFile::Const {
         return Err(err(
             inst,
@@ -953,6 +965,12 @@ fn handle_def_i32(inst: &DecodedInstruction, out: &mut Vec<ConstDefI32>) -> Resu
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "defi missing destination operand")),
     };
+    if dst.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for defi destination operands",
+        ));
+    }
     if dst.reg.file != RegisterFile::ConstInt {
         return Err(err(
             inst,
@@ -984,6 +1002,12 @@ fn handle_def_bool(
         Some(Operand::Dst(dst)) => dst,
         _ => return Err(err(inst, "defb missing destination operand")),
     };
+    if dst.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for defb destination operands",
+        ));
+    }
     if dst.reg.file != RegisterFile::ConstBool {
         return Err(err(
             inst,
@@ -2020,6 +2044,15 @@ fn push_texld(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Buil
     if sampler_src.reg.file != RegFile::Sampler {
         return Err(err(inst, "tex sampler operand is not a sampler register"));
     }
+    if sampler_src.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for sampler operands",
+        ));
+    }
+    if !matches!(sampler_src.modifier, SrcModifier::None) {
+        return Err(err(inst, "unsupported source modifier on sampler operand"));
+    }
     let specific = match inst.operands.last() {
         Some(Operand::Imm32(v)) => (*v & 0xF) as u8,
         _ => 0,
@@ -2060,6 +2093,15 @@ fn push_texldl(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Bui
             "texldl sampler operand is not a sampler register",
         ));
     }
+    if sampler_src.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for sampler operands",
+        ));
+    }
+    if !matches!(sampler_src.modifier, SrcModifier::None) {
+        return Err(err(inst, "unsupported source modifier on sampler operand"));
+    }
     let modifiers = build_modifiers(inst)?;
     push_stmt(
         stack,
@@ -2086,6 +2128,15 @@ fn push_texldd(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Bui
             inst,
             "texldd sampler operand is not a sampler register",
         ));
+    }
+    if sampler_src.reg.relative.is_some() {
+        return Err(err(
+            inst,
+            "relative addressing is not supported for sampler operands",
+        ));
+    }
+    if !matches!(sampler_src.modifier, SrcModifier::None) {
+        return Err(err(inst, "unsupported source modifier on sampler operand"));
     }
     let modifiers = build_modifiers(inst)?;
     push_stmt(
