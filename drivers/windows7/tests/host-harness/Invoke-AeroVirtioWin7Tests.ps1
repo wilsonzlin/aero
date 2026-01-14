@@ -867,6 +867,14 @@ function Wait-AeroSelftestResult {
   $tail = ""
   $configExpectBlkMsi = $null
   $sawConfigExpectBlkMsi = $false
+  $configUdpPort = $null
+  $sawConfigUdpPort = $false
+  $udpHostPort = $null
+  if ($null -ne $UdpSocket) {
+    try {
+      $udpHostPort = ([System.Net.IPEndPoint]$UdpSocket.LocalEndPoint).Port
+    } catch { }
+  }
   $virtioBlkMarkerTime = $null
   $sawVirtioBlkPass = $false
   $sawVirtioBlkFail = $false
@@ -996,6 +1004,21 @@ function Wait-AeroSelftestResult {
             $sawConfigExpectBlkMsi = $true
             if ($configExpectBlkMsi -ne "1") {
               return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
+            }
+          }
+        }
+      }
+      if (($null -ne $UdpSocket) -and (-not $sawConfigUdpPort) -and $tail.Contains("AERO_VIRTIO_SELFTEST|CONFIG|")) {
+        # If a host UDP echo server is running, ensure it matches the guest selftest's configured udp_port.
+        $prefix = "AERO_VIRTIO_SELFTEST|CONFIG|"
+        $matches = [regex]::Matches($tail, [regex]::Escape($prefix) + "[^`r`n]*")
+        if ($matches.Count -gt 0) {
+          $line = $matches[$matches.Count - 1].Value
+          if ($line -match "(?:^|\|)udp_port=([0-9]+)(?:\||$)") {
+            $configUdpPort = [int]$Matches[1]
+            $sawConfigUdpPort = $true
+            if (($null -ne $udpHostPort) -and ($configUdpPort -ne $udpHostPort)) {
+              return @{ Result = "UDP_PORT_MISMATCH"; Tail = $tail; GuestPort = $configUdpPort; HostPort = $udpHostPort }
             }
           }
         }
@@ -6297,6 +6320,18 @@ try {
     }
     "MISSING_VIRTIO_NET" {
       Write-Host "FAIL: MISSING_VIRTIO_NET: selftest RESULT=PASS but did not emit virtio-net test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "UDP_PORT_MISMATCH" {
+      $guestPort = "?"
+      $hostPort = "?"
+      try { $guestPort = [string]$result.GuestPort } catch { }
+      try { $hostPort = [string]$result.HostPort } catch { }
+      Write-Host "FAIL: UDP_PORT_MISMATCH: guest selftest CONFIG udp_port=$guestPort but host harness UDP echo server is on $hostPort. Run Invoke-AeroVirtioWin7Tests.ps1 -UdpPort $guestPort (or provision the guest scheduled task with --udp-port $hostPort / New-AeroWin7TestImage.ps1 -UdpPort $hostPort)."
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

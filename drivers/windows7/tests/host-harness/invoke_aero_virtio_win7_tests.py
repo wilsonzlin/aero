@@ -3740,6 +3740,7 @@ def main() -> int:
             virtio_blk_counters_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             expect_blk_msi_config: Optional[str] = None
+            udp_port_config: Optional[str] = None
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             virtio_blk_marker_time: Optional[float] = None
@@ -3851,6 +3852,25 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
+                    if udp_port_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                        udp_port_config = _try_get_selftest_config_udp_port(tail)
+                        if udp_port_config is not None and udp_server is not None:
+                            try:
+                                guest_port = int(udp_port_config, 10)
+                            except Exception:
+                                guest_port = None
+                            host_port = int(udp_server.port)
+                            if guest_port is not None and guest_port != host_port:
+                                print(
+                                    "FAIL: UDP_PORT_MISMATCH: guest selftest CONFIG udp_port="
+                                    f"{guest_port} but host harness UDP echo server is on {host_port}. "
+                                    f"Run the harness with --udp-port {guest_port}, or re-provision the guest "
+                                    f"to use --udp-port {host_port} (New-AeroWin7TestImage.ps1 -UdpPort {host_port}).",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                     if len(tail) > 131072:
                         tail = tail[-131072:]
                     if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
@@ -5456,6 +5476,25 @@ def main() -> int:
                         tail += chunk2
                         if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
                             expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                        if udp_port_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                            udp_port_config = _try_get_selftest_config_udp_port(tail)
+                            if udp_port_config is not None and udp_server is not None:
+                                try:
+                                    guest_port = int(udp_port_config, 10)
+                                except Exception:
+                                    guest_port = None
+                                host_port = int(udp_server.port)
+                                if guest_port is not None and guest_port != host_port:
+                                    print(
+                                        "FAIL: UDP_PORT_MISMATCH: guest selftest CONFIG udp_port="
+                                        f"{guest_port} but host harness UDP echo server is on {host_port}. "
+                                        f"Run the harness with --udp-port {guest_port}, or re-provision the guest "
+                                        f"to use --udp-port {host_port} (New-AeroWin7TestImage.ps1 -UdpPort {host_port}).",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                         if len(tail) > 131072:
                             tail = tail[-131072:]
                         if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
@@ -7094,6 +7133,20 @@ def _try_get_selftest_config_expect_blk_msi(tail: bytes) -> Optional[str]:
     if cfg is None:
         return None
     return cfg.get("expect_blk_msi")
+
+
+def _try_get_selftest_config_udp_port(tail: bytes) -> Optional[str]:
+    """
+    Return the value of `udp_port` from the guest CONFIG marker if present.
+
+    Returns:
+      - decimal string when present (e.g. "18081")
+      - None when the CONFIG marker (or field) is not present
+    """
+    cfg = _try_parse_selftest_config_marker(tail)
+    if cfg is None:
+        return None
+    return cfg.get("udp_port")
 
 
 _VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")
