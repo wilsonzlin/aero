@@ -4491,6 +4491,753 @@ bool TestCreateStateBlockPixelStateDoesNotCaptureTransform() {
   return true;
 }
 
+bool TestApplyStateBlockViewportCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  D3DDDIVIEWPORTINFO vp_a{};
+  vp_a.X = 1.0f;
+  vp_a.Y = 2.0f;
+  vp_a.Width = 320.0f;
+  vp_a.Height = 240.0f;
+  vp_a.MinZ = 0.25f;
+  vp_a.MaxZ = 0.75f;
+
+  D3DDDIVIEWPORTINFO vp_b{};
+  vp_b.X = 10.0f;
+  vp_b.Y = 20.0f;
+  vp_b.Width = 640.0f;
+  vp_b.Height = 480.0f;
+  vp_b.MinZ = 0.0f;
+  vp_b.MaxZ = 1.0f;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_a);
+  if (!Check(hr == S_OK, "SetViewport(A)")) {
+    return false;
+  }
+
+  // Record a redundant SetViewport(A). D3D9 state blocks must still capture it
+  // even if the UMD skips redundant viewport command emission.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant viewport)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_a);
+  if (!Check(hr == S_OK, "SetViewport(A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant viewport)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change the viewport so applying the state block must restore it.
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_b);
+  if (!Check(hr == S_OK, "SetViewport(B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(F32Bits(dev->viewport.X) == F32Bits(vp_a.X) &&
+                   F32Bits(dev->viewport.Y) == F32Bits(vp_a.Y) &&
+                   F32Bits(dev->viewport.Width) == F32Bits(vp_a.Width) &&
+                   F32Bits(dev->viewport.Height) == F32Bits(vp_a.Height) &&
+                   F32Bits(dev->viewport.MinZ) == F32Bits(vp_a.MinZ) &&
+                   F32Bits(dev->viewport.MaxZ) == F32Bits(vp_a.MaxZ),
+               "ApplyStateBlock restores viewport A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_vp = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VIEWPORT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_viewport)) {
+      continue;
+    }
+    const auto* vp = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+    if (vp->x_f32 == F32Bits(vp_a.X) &&
+        vp->y_f32 == F32Bits(vp_a.Y) &&
+        vp->width_f32 == F32Bits(vp_a.Width) &&
+        vp->height_f32 == F32Bits(vp_a.Height) &&
+        vp->min_depth_f32 == F32Bits(vp_a.MinZ) &&
+        vp->max_depth_f32 == F32Bits(vp_a.MaxZ)) {
+      saw_vp = true;
+      break;
+    }
+  }
+  if (!Check(saw_vp, "ApplyStateBlock emits SET_VIEWPORT with viewport A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestApplyStateBlockTextureCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "pfnSetTexture is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE tex_a{};
+  D3DDDI_HRESOURCE tex_b{};
+  if (!CreateDummyTexture(&cleanup, &tex_a)) {
+    return false;
+  }
+  if (!CreateDummyTexture(&cleanup, &tex_b)) {
+    return false;
+  }
+
+  auto* tex_a_res = reinterpret_cast<Resource*>(tex_a.pDrvPrivate);
+  auto* tex_b_res = reinterpret_cast<Resource*>(tex_b.pDrvPrivate);
+  if (!Check(tex_a_res && tex_b_res, "texture resource pointers")) {
+    return false;
+  }
+
+  // Use a stage outside the fixed-function combiner range so applying the state
+  // block does not trigger fixed-function pixel shader selection/creation.
+  constexpr uint32_t kStage = 5u;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, kStage, tex_a);
+  if (!Check(hr == S_OK, "SetTexture(stage=5, A) seed")) {
+    return false;
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant texture)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, kStage, tex_a);
+  if (!Check(hr == S_OK, "SetTexture(stage=5, A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant texture)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change the texture so applying the state block must restore it.
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, kStage, tex_b);
+  if (!Check(hr == S_OK, "SetTexture(stage=5, B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant texture)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->textures[kStage] == tex_a_res, "ApplyStateBlock restores stage5 texture A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant texture)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_tex = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_TEXTURE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_texture)) {
+      continue;
+    }
+    const auto* st = reinterpret_cast<const aerogpu_cmd_set_texture*>(hdr);
+    if (st->shader_stage == AEROGPU_SHADER_STAGE_PIXEL &&
+        st->slot == kStage &&
+        st->texture == tex_a_res->handle) {
+      saw_tex = true;
+      break;
+    }
+  }
+  if (!Check(saw_tex, "ApplyStateBlock emits SET_TEXTURE(stage=5, A)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestApplyStateBlockRenderTargetCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateRenderTarget = [&](const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create_rt{};
+    create_rt.type = 1u;    // D3DRTYPE_SURFACE
+    create_rt.format = 22u; // D3DFMT_X8R8G8B8
+    create_rt.width = 64;
+    create_rt.height = 64;
+    create_rt.depth = 1;
+    create_rt.mip_levels = 1;
+    create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+    create_rt.pool = 0;
+    create_rt.size = 0;
+    create_rt.hResource.pDrvPrivate = nullptr;
+    create_rt.pSharedHandle = nullptr;
+    create_rt.pPrivateDriverData = nullptr;
+    create_rt.PrivateDriverDataSize = 0;
+    create_rt.wddm_hAllocation = 0;
+
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create_rt.hResource);
+    *out_res = create_rt.hResource;
+    return true;
+  };
+
+  D3DDDI_HRESOURCE rt_a{};
+  D3DDDI_HRESOURCE rt_b{};
+  if (!CreateRenderTarget("CreateResource(RT A)", &rt_a)) {
+    return false;
+  }
+  if (!CreateRenderTarget("CreateResource(RT B)", &rt_b)) {
+    return false;
+  }
+
+  auto* rt_a_res = reinterpret_cast<Resource*>(rt_a.pDrvPrivate);
+  auto* rt_b_res = reinterpret_cast<Resource*>(rt_b.pDrvPrivate);
+  if (!Check(rt_a_res && rt_b_res, "RT resource pointers")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_a);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT A) seed")) {
+    return false;
+  }
+
+  // Record a redundant SetRenderTarget(RT A). The DDI may skip redundant
+  // SET_RENDER_TARGETS emission, but the state block must capture it.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant RT)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_a);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant RT)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Switch to RT B.
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_b);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant RT)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_targets[0] == rt_a_res, "ApplyStateBlock restores RT0=A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant RT)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_rt = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_targets)) {
+      continue;
+    }
+    const auto* rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(hdr);
+    if (rt->color_count >= 1 && rt->colors[0] == rt_a_res->handle) {
+      saw_rt = true;
+      break;
+    }
+  }
+  if (!Check(saw_rt, "ApplyStateBlock emits SET_RENDER_TARGETS(RT0=A)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestApplyStateBlockDepthStencilCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetDepthStencil != nullptr, "pfnSetDepthStencil is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateSurface = [&](uint32_t format, uint32_t usage, const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create{};
+    create.type = 1u; // D3DRTYPE_SURFACE
+    create.format = format;
+    create.width = 64;
+    create.height = 64;
+    create.depth = 1;
+    create.mip_levels = 1;
+    create.usage = usage;
+    create.pool = 0;
+    create.size = 0;
+    create.hResource.pDrvPrivate = nullptr;
+    create.pSharedHandle = nullptr;
+    create.pPrivateDriverData = nullptr;
+    create.PrivateDriverDataSize = 0;
+    create.wddm_hAllocation = 0;
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create.hResource.pDrvPrivate != nullptr, "CreateResource returned handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create.hResource);
+    *out_res = create.hResource;
+    return true;
+  };
+
+  D3DDDI_HRESOURCE rt{};
+  D3DDDI_HRESOURCE ds_a{};
+  D3DDDI_HRESOURCE ds_b{};
+  // RT: X8R8G8B8 (22), usage=RENDERTARGET (1).
+  if (!CreateSurface(/*format=*/22u, /*usage=*/0x00000001u, "CreateResource(RT)", &rt)) {
+    return false;
+  }
+  // DS: D24S8 (75), usage=DEPTHSTENCIL (2).
+  if (!CreateSurface(/*format=*/75u, /*usage=*/0x00000002u, "CreateResource(DS A)", &ds_a)) {
+    return false;
+  }
+  if (!CreateSurface(/*format=*/75u, /*usage=*/0x00000002u, "CreateResource(DS B)", &ds_b)) {
+    return false;
+  }
+
+  auto* rt_res = reinterpret_cast<Resource*>(rt.pDrvPrivate);
+  auto* ds_a_res = reinterpret_cast<Resource*>(ds_a.pDrvPrivate);
+  auto* ds_b_res = reinterpret_cast<Resource*>(ds_b.pDrvPrivate);
+  if (!Check(rt_res && ds_a_res && ds_b_res, "surface resource pointers")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0) seed")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_a);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS A) seed")) {
+    return false;
+  }
+
+  // Record a redundant SetDepthStencil(DS A).
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant DS)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_a);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant DS)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Switch to DS B.
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_b);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant DS)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->depth_stencil == ds_a_res, "ApplyStateBlock restores DS=A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant DS)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_ds = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_targets)) {
+      continue;
+    }
+    const auto* rt_cmd = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(hdr);
+    if (rt_cmd->color_count >= 1 &&
+        rt_cmd->colors[0] == rt_res->handle &&
+        rt_cmd->depth_stencil == ds_a_res->handle) {
+      saw_ds = true;
+      break;
+    }
+  }
+  if (!Check(saw_ds, "ApplyStateBlock emits SET_RENDER_TARGETS with DS=A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestApplyStateBlockStreamSourceCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateBuffer = [&](uint32_t size_bytes, const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create{};
+    create.type = 0u;   // Buffer type is inferred from `size` by the UMD.
+    create.format = 0u; // Unused for buffers.
+    create.width = 0;
+    create.height = 0;
+    create.depth = 0;
+    create.mip_levels = 1;
+    create.usage = 0;
+    create.pool = 0;
+    create.size = size_bytes;
+    create.hResource.pDrvPrivate = nullptr;
+    create.pSharedHandle = nullptr;
+    create.pPrivateDriverData = nullptr;
+    create.PrivateDriverDataSize = 0;
+    create.wddm_hAllocation = 0;
+
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create.hResource.pDrvPrivate != nullptr, "CreateResource returned buffer handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create.hResource);
+    *out_res = create.hResource;
+    return true;
+  };
+
+  D3DDDI_HRESOURCE vb_a{};
+  D3DDDI_HRESOURCE vb_b{};
+  if (!CreateBuffer(/*size_bytes=*/256u, "CreateResource(VB A)", &vb_a)) {
+    return false;
+  }
+  if (!CreateBuffer(/*size_bytes=*/256u, "CreateResource(VB B)", &vb_b)) {
+    return false;
+  }
+
+  auto* vb_a_res = reinterpret_cast<Resource*>(vb_a.pDrvPrivate);
+  auto* vb_b_res = reinterpret_cast<Resource*>(vb_b.pDrvPrivate);
+  if (!Check(vb_a_res && vb_b_res, "VB resource pointers")) {
+    return false;
+  }
+
+  constexpr uint32_t kStream0 = 0u;
+  constexpr uint32_t kOffset = 0u;
+  constexpr uint32_t kStrideA = 16u;
+  constexpr uint32_t kStrideB = 32u;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, kStream0, vb_a, kOffset, kStrideA);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=VB A) seed")) {
+    return false;
+  }
+
+  // Record a redundant SetStreamSource(VB A). The helper may skip redundant
+  // SET_VERTEX_BUFFERS emission, but the state block must capture it.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant stream source)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, kStream0, vb_a, kOffset, kStrideA);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=VB A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant stream source)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Switch to VB B.
+  hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, kStream0, vb_b, kOffset, kStrideB);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=VB B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant stream source)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->streams[kStream0].vb == vb_a_res &&
+                   dev->streams[kStream0].offset_bytes == kOffset &&
+                   dev->streams[kStream0].stride_bytes == kStrideA,
+               "ApplyStateBlock restores stream0=VB A binding")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant stream source)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding)) {
+      continue;
+    }
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->start_slot != kStream0 || svb->buffer_count == 0) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
+    if (bindings[0].buffer == vb_a_res->handle &&
+        bindings[0].offset_bytes == kOffset &&
+        bindings[0].stride_bytes == kStrideA) {
+      saw_vb = true;
+      break;
+    }
+  }
+  if (!Check(saw_vb, "ApplyStateBlock emits SET_VERTEX_BUFFERS for stream0=VB A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockRenderStateCapturesRedundantSet() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24827,6 +25574,21 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCreateStateBlockPixelStateDoesNotCaptureTransform()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockViewportCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockTextureCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockRenderTargetCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockDepthStencilCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockStreamSourceCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockRenderStateCapturesRedundantSet()) {
