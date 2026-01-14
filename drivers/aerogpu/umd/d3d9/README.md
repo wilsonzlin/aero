@@ -663,6 +663,9 @@ In particular:
   - `D3DDEVCAPS_NPATCHES` and `D3DDEVCAPS_QUINTICRTPATCHES` are not advertised.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`).
+- **FVF caps**: keep `D3DCAPS9.FVFCaps` conservative (advertise only 1 texture coordinate set / `TEX1`) so fixed-function
+  apps don't assume multi-texcoord fixed-function coverage. The UMD can translate additional FVFs into input layouts for
+  user shaders (see “FVF-derived input layouts for user shaders” above), but this is not fully advertised in caps.
 - **TextureOpCaps**: keep `D3DCAPS9.TextureOpCaps` intentionally conservative (advertise only
   `DISABLE`/`SELECTARG1`/`SELECTARG2`/`MODULATE`) so apps don't assume full fixed-function combiner coverage. The UMD's
   stage0 fixed-function fallback can recognize a few additional bring-up patterns (ADD/SUBTRACT/MODULATE2X/4X, plus
