@@ -587,7 +587,5 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` between draws (blue fullscreen, then green centered triangle) and validates output via readback (requires feature level >= 10_0)
 * `d3d11_depth_test_sanity` validates `CreateDepthStencilView`, `ClearDepthStencilView` (clears depth to both 0.0 and 1.0), depth comparisons, depth writes, and ClearState depth-stencil reset behavior via readback (requires feature level >= 10_0)
 * `d3d11_compute_smoke` runs simple `cs_4_0` compute shaders that exercise **constant buffer** (`b0`) binding plus both **structured** and **raw** buffer SRV/UAV bindings, then validates output bytes via staging readback (requires feature level >= 10_0 and the D3D10_X compute option)
-* `d3d9ex_instancing_sanity` validates D3D9Ex instancing via `SetStreamSourceFreq`: draws two triangle instances using a per-instance vertex stream (offset + color) and validates via readback that the left instance is red, the right instance is green, and the background remains the clear color (sanity-check for multi-stream vertex fetch + instancing state)
-
 All rendering tests also print the active adapter description + VendorId/DeviceId to help confirm the expected GPU/driver is being exercised.
 The D3D9Ex and D3D10/11-based tests also print the resolved path of the loaded AeroGPU UMD DLL (including process bitness and WOW64 state, e.g. `x86 (WOW64)`), to validate WOW64 registration.
