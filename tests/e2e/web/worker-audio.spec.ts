@@ -78,12 +78,13 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
          // the WASM heap, so huge guest sizes significantly increase total
          // SharedArrayBuffer memory pressure and can cause audio underruns in
          // headless CI.
-         guestMemoryMiB: 16,
-         enableWorkers: true,
-         enableWebGPU: false,
-         proxyUrl: null,
-         activeDiskImage: null,
-         logLevel: "info",
+          guestMemoryMiB: 16,
+          vramMiB: 0,
+          enableWorkers: true,
+          enableWebGPU: false,
+          proxyUrl: null,
+          activeDiskImage: null,
+          logLevel: "info",
       };
 
         try {

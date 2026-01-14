@@ -36,7 +36,8 @@ test("Worker snapshot resume discards buffered mic samples (stale latency avoida
       const coord = (globalThis as any).__aeroWorkerCoordinator as any;
 
       const workerConfig = {
-        guestMemoryMiB: 64,
+        guestMemoryMiB: 16,
+        vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,

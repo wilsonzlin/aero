@@ -46,7 +46,8 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
 
     const workerConfig = {
-      guestMemoryMiB: 64,
+      guestMemoryMiB: 32,
+      vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,

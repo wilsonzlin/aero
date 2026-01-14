@@ -20,7 +20,8 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
     }
 
     const config = {
-      guestMemoryMiB: 64,
+      guestMemoryMiB: 16,
+      vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -140,7 +141,8 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
       const scanoutWidth = 3;
       const scanoutHeight = 2;
       const pitchBytes = 16; // 12 bytes of pixels + 4 bytes padding per row.
-      const basePaddr = 0x80_0000; // 8MiB, away from the demo framebuffer region.
+      // Keep this well above any demo framebuffer scratch regions in guest RAM.
+      const basePaddr = 0xc0_0000; // 12MiB
 
       const guestLayout = sharedLayout.readGuestRamLayoutFromStatus(status);
       const guestU8 = new Uint8Array(guestMemory.buffer as ArrayBuffer, guestLayout.guest_base, guestLayout.guest_size);

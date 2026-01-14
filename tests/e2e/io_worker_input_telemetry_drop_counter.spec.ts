@@ -35,7 +35,7 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
