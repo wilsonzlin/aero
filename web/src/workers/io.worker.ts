@@ -41,6 +41,7 @@ import {
   HIGH_RAM_START,
   LOW_RAM_END,
   StatusIndex,
+  STATUS_OFFSET_BYTES,
   STATUS_INTS,
   createSharedMemoryViews,
   guestPaddrToRamOffset,
@@ -3988,7 +3989,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
         // Host-only mode must not touch guest RAM. Avoid creating any typed array views into
         // `guestMemory.buffer` (even read-only ones); only map the small control/status region.
-        status = new Int32Array(control, 0, STATUS_INTS);
+        status = new Int32Array(control, STATUS_OFFSET_BYTES, STATUS_INTS);
         guestU8 = new Uint8Array(0);
         guestLayout = null;
         guestBase = 0;

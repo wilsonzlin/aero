@@ -531,6 +531,9 @@ const CONTROL_LAYOUT = (() => {
 })();
 
 export const CONTROL_BYTES = CONTROL_LAYOUT.controlBytes;
+// Byte offset within the control SAB where the shared `status` Int32Array begins.
+// Exported so worker entrypoints can map status without needing to know the private control layout.
+export const STATUS_OFFSET_BYTES = CONTROL_LAYOUT.statusOffset;
 
 export function ringRegionsForWorker(role: WorkerRole): RingRegions {
   return CONTROL_LAYOUT.rings[role];
