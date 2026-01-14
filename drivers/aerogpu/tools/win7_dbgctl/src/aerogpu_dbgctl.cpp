@@ -1650,23 +1650,6 @@ static bool FindSegmentGroupSizeTypeAndData(const D3DKMT_FUNCS *f,
   return false;
 }
 
-static const wchar_t *DeviceErrorCodeToString(uint32_t code) {
-  switch (code) {
-  case AEROGPU_ERROR_NONE:
-    return L"NONE";
-  case AEROGPU_ERROR_CMD_DECODE:
-    return L"CMD_DECODE";
-  case AEROGPU_ERROR_OOB:
-    return L"OOB";
-  case AEROGPU_ERROR_BACKEND:
-    return L"BACKEND";
-  case AEROGPU_ERROR_INTERNAL:
-    return L"INTERNAL";
-  default:
-    return L"UNKNOWN";
-  }
-}
-
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   static const uint32_t kLegacyMmioMagic = 0x41524750u; // "ARGP" little-endian
   const auto DumpFenceSnapshot = [&]() {
@@ -1699,46 +1682,6 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     wprintf(L"Last error fence:     0x%I64x (%I64u)\n",
             (unsigned long long)qf.last_error_fence,
             (unsigned long long)qf.last_error_fence);
-  };
-
-  const auto DumpErrorInfoSnapshot = [&]() {
-    aerogpu_escape_query_error_out qe;
-    ZeroMemory(&qe, sizeof(qe));
-    qe.hdr.version = AEROGPU_ESCAPE_VERSION;
-    qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
-    qe.hdr.size = sizeof(qe);
-    qe.hdr.reserved0 = 0;
-
-    NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
-    if (!NT_SUCCESS(stErr)) {
-      if (stErr == STATUS_NOT_SUPPORTED) {
-        wprintf(L"Last error: (not supported)\n");
-      } else {
-        PrintNtStatus(L"D3DKMTEscape(query-error) failed", f, stErr);
-      }
-      return;
-    }
-
-    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) == 0 ||
-        (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) == 0) {
-      wprintf(L"Last error: (not supported)\n");
-      return;
-    }
-
-    if (qe.error_code == AEROGPU_ERROR_NONE) {
-      wprintf(L"Last error: none (count=%lu)\n", (unsigned long)qe.error_count);
-      return;
-    }
-
-    const bool latched = ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) &&
-                         ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
-    wprintf(L"Last error: latched=%s code=%lu (%s) fence=0x%I64x (%I64u) count=%lu\n",
-            latched ? L"true" : L"false",
-            (unsigned long)qe.error_code,
-            DeviceErrorCodeToString(qe.error_code),
-            (unsigned long long)qe.error_fence,
-            (unsigned long long)qe.error_fence,
-            (unsigned long)qe.error_count);
   };
 
   const auto DumpPerfSnapshot = [&]() {
@@ -2147,6 +2090,11 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       return;
     }
 
+    if (qe.error_code == AEROGPU_ERROR_NONE) {
+      wprintf(L"Last error: none (count=%lu)\n", (unsigned long)qe.error_count);
+      return;
+    }
+
     if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
       const bool latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
       wprintf(L"Last error: latched=%s code=%lu (%s) fence=0x%I64x count=%lu\n",
@@ -2219,9 +2167,8 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)q1.mmio_version,
             (unsigned long)major,
             (unsigned long)minor);
- 
+  
     DumpFenceSnapshot();
-    DumpErrorInfoSnapshot();
     DumpPerfSnapshot();
     DumpUmdPrivateSummary();
     DumpSegmentBudgetSummary();
@@ -2261,7 +2208,6 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   wprintf(L"  decoded: %s\n", decoded.c_str());
 
   DumpFenceSnapshot();
-  DumpErrorInfoSnapshot();
   DumpPerfSnapshot();
   DumpUmdPrivateSummary();
   DumpSegmentBudgetSummary();
