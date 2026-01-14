@@ -66,7 +66,21 @@ class VirtioBlkResizeHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|disk=1|old_bytes=512|last_bytes=512|err=1460|reason=timeout",
         )
 
+    def test_accepts_explicit_marker_line(self) -> None:
+        h = self.harness
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            h._emit_virtio_blk_resize_host_marker(
+                b"",
+                blk_resize_line=(
+                    "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=3|old_bytes=1|new_bytes=2|elapsed_ms=9"
+                ),
+            )
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS|disk=3|old_bytes=1|new_bytes=2|elapsed_ms=9",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
