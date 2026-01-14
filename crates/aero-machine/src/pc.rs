@@ -693,7 +693,7 @@ impl PcMachine {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::PcMachine;
+    use super::{PcMachine, PcMachineConfig};
     use crate::RunExit;
     use aero_cpu_core::state::CpuMode;
     use aero_cpu_core::state::RFLAGS_IF;
@@ -1054,5 +1054,33 @@ mod tests {
 
         // The NIC must not have been polled while handling the pending reset request.
         assert!(!e1000.borrow().irq_level());
+    }
+
+    #[test]
+    fn pc_machine_cpu_count_is_propagated_to_platform_interrupts_lapics() {
+        let pc = PcMachine::new_with_config(PcMachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            cpu_count: 2,
+            smbios_uuid_seed: 0,
+            enable_hda: false,
+            enable_e1000: false,
+        })
+        .expect("PcMachineConfig should be valid");
+
+        let mut buf = [0u8; 4];
+
+        pc.bus
+            .platform
+            .interrupts
+            .borrow()
+            .lapic_mmio_read_for_apic(0, 0x20, &mut buf);
+        assert_eq!(u32::from_le_bytes(buf) >> 24, 0);
+
+        pc.bus
+            .platform
+            .interrupts
+            .borrow()
+            .lapic_mmio_read_for_apic(1, 0x20, &mut buf);
+        assert_eq!(u32::from_le_bytes(buf) >> 24, 1);
     }
 }
