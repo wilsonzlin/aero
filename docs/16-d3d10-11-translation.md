@@ -782,8 +782,10 @@ For non-patch topologies, the number of *input primitives* (`input_prim_count`) 
 Rules:
 
 - Any leftover vertices that don’t form a full primitive are ignored (matching D3D behavior).
-- `*_ADJ` topologies require a GS that consumes adjacency (`lineadj`/`triadj`); otherwise the draw is
-  invalid.
+- `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
+  `lineadj`/`triadj`). Until adjacency emulation is implemented, the runtime MUST NOT reinterpret
+  them as non-adjacency topologies; it should either route through emulation-path scaffolding or
+  reject the draw with a clear error.
 - **Primitive restart (indexed strip topologies):** for `LINESTRIP`/`TRIANGLESTRIP` with indexed
   draws, D3D11 uses a special index value to restart the strip (`0xFFFF` for u16 indices,
   `0xFFFFFFFF` for u32 indices). The simple formulas above assume there are no restart indices. For
