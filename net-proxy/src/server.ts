@@ -304,6 +304,18 @@ function setDohCorsHeaders(
   // Always allow Content-Type for RFC8484 POST, even if the client didn't send a preflight header.
   const allowHeaders = requestedHeadersValue ? `Content-Type, ${requestedHeadersValue}` : "Content-Type";
   res.setHeader("Access-Control-Allow-Headers", allowHeaders);
+
+  // Cache preflight results in the browser to avoid an extra roundtrip for each DNS query during
+  // local development.
+  res.setHeader("Access-Control-Max-Age", "600");
+
+  // Private Network Access (PNA) support: some browsers require an explicit opt-in response when a
+  // secure context fetches a private-network target (e.g. localhost).
+  const reqPrivateNetwork = req.headers["access-control-request-private-network"];
+  const privateNetworkValue = typeof reqPrivateNetwork === "string" ? reqPrivateNetwork : "";
+  if (privateNetworkValue.trim().toLowerCase() === "true") {
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+  }
 }
 
 function maxBase64UrlLenForBytes(byteLength: number): number {

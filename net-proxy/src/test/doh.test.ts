@@ -346,13 +346,16 @@ test("DoH endpoints support optional CORS allowlist (preflight + response header
       headers: {
         Origin: "http://localhost:5173",
         "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "content-type"
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true"
       }
     });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-origin"), "http://localhost:5173");
     assert.ok((preflight.headers.get("access-control-allow-methods") ?? "").includes("POST"));
     assert.ok((preflight.headers.get("access-control-allow-headers") ?? "").toLowerCase().includes("content-type"));
+    assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
+    assert.equal(preflight.headers.get("access-control-max-age"), "600");
 
     const id = 0x9999;
     const query = encodeDnsQuery("localhost", 1, id);
