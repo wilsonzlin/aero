@@ -104,7 +104,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for non-indexed point-list draws when supported):
       - Input primitives: `point` and `triangle` (non-adjacency)
       - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
-      - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
+      - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`/`min`/`max` + immediate constants + `v#[]` inputs + `emit`/`cut`)
     - Design notes: [`docs/graphics/geometry-shader-emulation.md`](../../../../docs/graphics/geometry-shader-emulation.md)
   - Known unsupported / not yet implemented:
     - Stream-output (SO):

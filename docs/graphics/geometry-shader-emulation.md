@@ -178,7 +178,7 @@ The GS instruction set surface is large; initial emulation focuses on the opcode
   - `EmitVertex` (`emit`)
   - `CutVertex` (`cut`)
 - **Arithmetic subset**
-  - `mov`, `add` (plus immediate constants and basic register operands)
+  - `mov`, `movc`, `add`, `mul`, `mad`, `dp3`, `dp4`, `min`, `max` (plus immediate constants and basic register operands)
 
 Anything outside this subset is expected to be rejected by translation (or will remain unsupported
 until implemented).

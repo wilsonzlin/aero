@@ -17,9 +17,9 @@
 //! (`GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL`) used for bring-up and as a
 //! fallback for unsupported topologies/opcodes.
 //!
-//! The initial implementation is intentionally minimal and only supports the instructions/operands
-//! required by the Win7 GS tests (mov/add + immediate constants + `v#[]` inputs + `emit`/`cut` on
-//! stream 0).
+//! The initial implementation is intentionally minimal and focuses on the instructions/operands
+//! required by the in-tree GS tests (float ALU ops such as `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`
+//!/`min`/`max`, plus immediate constants + `v#[]` inputs + `emit`/`cut` on stream 0).
 
 use core::fmt;
 use std::collections::HashMap;
