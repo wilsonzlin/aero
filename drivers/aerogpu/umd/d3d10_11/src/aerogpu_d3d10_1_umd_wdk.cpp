@@ -5250,6 +5250,24 @@ static HRESULT ValidateFullResourceRtvDesc(const AeroGpuResource* res,
     return E_NOTIMPL;
   }
 
+  // If the header exposes MSAA RTV union variants but does not expose a view
+  // dimension discriminator, we cannot safely determine which union member is
+  // active. Reject to avoid accidentally accepting a subresource/MSAA view and
+  // silently binding the whole resource.
+  if (!have_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      if (reason_out) {
+        *reason_out = "missing view dimension discriminator";
+      }
+      return E_NOTIMPL;
+    }
+  }
+
   uint32_t mip_slice = 0;
   bool have_mip_slice = false;
   __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
@@ -5483,6 +5501,24 @@ static HRESULT ValidateFullResourceDsvDesc(const AeroGpuResource* res,
       *reason_out = "missing view dimension for array resource";
     }
     return E_NOTIMPL;
+  }
+
+  // If the header exposes MSAA DSV union variants but does not expose a view
+  // dimension discriminator, we cannot safely determine which union member is
+  // active. Reject to avoid accidentally accepting a subresource/MSAA view and
+  // silently binding the whole resource.
+  if (!have_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      if (reason_out) {
+        *reason_out = "missing view dimension discriminator";
+      }
+      return E_NOTIMPL;
+    }
   }
 
   uint32_t mip_slice = 0;
@@ -5766,6 +5802,24 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
       *reason_out = "missing view dimension for array resource";
     }
     return E_NOTIMPL;
+  }
+
+  // If the header exposes MSAA SRV union variants but does not expose a view
+  // dimension discriminator, we cannot safely determine which union member is
+  // active. Reject to avoid accidentally accepting a subresource/MSAA view and
+  // silently binding the whole resource.
+  if (!have_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      if (reason_out) {
+        *reason_out = "missing view dimension discriminator";
+      }
+      return E_NOTIMPL;
+    }
   }
 
   uint32_t most_detailed_mip = 0;
