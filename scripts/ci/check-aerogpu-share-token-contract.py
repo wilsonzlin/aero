@@ -250,6 +250,7 @@ def main() -> int:
 
     check_no_pool_alloc_under_allocations_lock(errors)
     check_track_allocation_share_token_order(errors)
+    check_track_allocation_returns_boolean(errors)
     check_track_allocation_return_value_checked(errors)
 
     if errors:
@@ -334,6 +335,35 @@ def check_track_allocation_return_value_checked(errors: list[str]) -> None:
             errors.append(
                 f"{kmd_path.relative_to(ROOT)}:{idx}: AeroGpuTrackAllocation return value must be checked (do not ignore it)"
             )
+
+
+def check_track_allocation_returns_boolean(errors: list[str]) -> None:
+    """
+    Guardrail: `AeroGpuTrackAllocation` must return `BOOLEAN`.
+
+    The KMD must be able to fail CreateAllocation/OpenAllocation when share-token
+    tracking cannot be established (OOM). Keeping this function's boolean return
+    type makes it hard for future refactors to accidentally ignore that failure
+    mode.
+    """
+
+    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+    if not kmd_path.exists():
+        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate AeroGpuTrackAllocation signature)")
+        return
+
+    text = read_text(kmd_path)
+    m = re.search(r"(?m)^\s*static\b[^\n;]*\bAeroGpuTrackAllocation\s*\(", text)
+    if m is None:
+        errors.append(f"{kmd_path.relative_to(ROOT)}: AeroGpuTrackAllocation not found (cannot validate return type)")
+        return
+
+    sig = m.group(0)
+    if "BOOLEAN" not in sig or "VOID" in sig:
+        line_no = text[: m.start()].count("\n") + 1
+        errors.append(
+            f"{kmd_path.relative_to(ROOT)}:{line_no}: AeroGpuTrackAllocation must return BOOLEAN (found signature: {sig.strip()})"
+        )
 
 
 if __name__ == "__main__":
