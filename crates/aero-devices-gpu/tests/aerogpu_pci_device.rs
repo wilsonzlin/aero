@@ -16,7 +16,9 @@ use aero_devices_gpu::ring::{
     SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::AeroGpuPciDevice;
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{
+    codec::Encoder, IoSnapshot, SnapshotError, SnapshotReader, SnapshotWriter,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_PRESENT_FLAG_VSYNC,
@@ -1204,4 +1206,79 @@ fn drain_pending_submissions_returns_completed_fences_as_well() {
     dev.complete_fence(&mut mem, 2);
     assert_eq!(dev.regs.completed_fence, 2);
     assert!(dev.drain_pending_submissions().is_empty());
+}
+
+#[test]
+fn snapshot_restore_rejects_executor_state_with_too_many_pending_fences() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_EXECUTOR: u16 = 2;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Craft a malicious executor field that declares an extreme number of pending fences.
+    let exec_bytes = Encoder::new().u32(65_537).finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_EXECUTOR, exec_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("pending_fences"));
+}
+
+#[test]
+fn snapshot_restore_rejects_pending_submissions_with_too_many_entries() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_PENDING_SUBMISSIONS: u16 = 9;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+            ..Default::default()
+        },
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Declared pending submission count exceeds the executor's defensive cap.
+    let pending_bytes = Encoder::new().u32(65_537).finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_PENDING_SUBMISSIONS, pending_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("pending_submissions"));
 }
