@@ -825,4 +825,27 @@ mod tests {
 
         assert_eq!(data.len(), 4, "response must be truncated to allocation length");
     }
+
+    fn read_capacity_10_packet() -> [u8; 12] {
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x25;
+        pkt
+    }
+
+    #[test]
+    fn read_capacity_is_not_ready_without_media() {
+        let mut dev = AtapiCdrom::new(None);
+
+        let pkt = read_capacity_10_packet();
+        let res = dev.handle_packet(&pkt, false);
+
+        assert!(matches!(
+            res,
+            PacketResult::Error {
+                sense_key: SENSE_NOT_READY,
+                asc: ASC_MEDIUM_NOT_PRESENT,
+                ascq: 0
+            }
+        ));
+    }
 }
