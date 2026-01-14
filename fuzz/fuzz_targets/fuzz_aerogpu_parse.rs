@@ -86,6 +86,14 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     // Treat the slice as a candidate command stream. All errors are acceptable.
     let _ = aero_gpu::parse_cmd_stream(cmd_bytes);
 
+    // Deterministic stage_ex resolution edge cases (independent of packet bytes).
+    //
+    // These are cheap and ensure we always exercise the error branches in `resolve_stage` even if
+    // the current input doesn't happen to encode them.
+    let _ = cmd::resolve_stage(cmd::AerogpuShaderStage::Compute as u32, 1); // InvalidStageEx
+    let _ = cmd::resolve_stage(cmd::AerogpuShaderStage::Compute as u32, 6); // UnknownStageEx
+    let _ = cmd::resolve_stage(u32::MAX, 0); // UnknownShaderStage
+
     // Also exercise the canonical protocol-level command stream parser + typed packet decoders.
     //
     // This avoids wgpu device creation and stays in pure parsing/bounds-checking code.
