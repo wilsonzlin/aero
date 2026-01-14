@@ -8,7 +8,8 @@ use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuConstantBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuConstantBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -145,7 +146,10 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
             })
         };
 
-        assert_eq!(bindings.stage(ShaderStage::Vertex).constant_buffer(1), expect_cb(101));
+        assert_eq!(
+            bindings.stage(ShaderStage::Vertex).constant_buffer(1),
+            expect_cb(101)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Vertex).sampler(0),
             Some(BoundSampler { sampler: 201 })
@@ -155,7 +159,10 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
             Some(BoundTexture { texture: 301 })
         );
 
-        assert_eq!(bindings.stage(ShaderStage::Pixel).constant_buffer(1), expect_cb(102));
+        assert_eq!(
+            bindings.stage(ShaderStage::Pixel).constant_buffer(1),
+            expect_cb(102)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Pixel).sampler(0),
             Some(BoundSampler { sampler: 202 })
@@ -165,7 +172,10 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
             Some(BoundTexture { texture: 302 })
         );
 
-        assert_eq!(bindings.stage(ShaderStage::Hull).constant_buffer(1), expect_cb(104));
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).constant_buffer(1),
+            expect_cb(104)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Hull).sampler(0),
             Some(BoundSampler { sampler: 204 })
@@ -175,7 +185,10 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
             Some(BoundTexture { texture: 304 })
         );
 
-        assert_eq!(bindings.stage(ShaderStage::Domain).constant_buffer(1), expect_cb(105));
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).constant_buffer(1),
+            expect_cb(105)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Domain).sampler(0),
             Some(BoundSampler { sampler: 205 })
@@ -186,7 +199,10 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
         );
 
         // CS state must remain separate from stage_ex HS/DS updates.
-        assert_eq!(bindings.stage(ShaderStage::Compute).constant_buffer(1), expect_cb(106));
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).constant_buffer(1),
+            expect_cb(106)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Compute).sampler(0),
             Some(BoundSampler { sampler: 206 })
