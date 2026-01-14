@@ -270,16 +270,6 @@ fn aerogpu_cmd_geometry_shader_point_output_pointlist() {
         if !common::require_gs_prepass_or_skip(&exec, test_name) {
             return;
         }
-        // The GS compute-prepass path currently binds 5 storage buffers (expanded vertices, indices,
-        // indirect args, counters, gs_inputs). Some downlevel adapters (notably wgpu-GL/WebGL2) cap
-        // storage buffers per stage at 4, so skip rather than panic on validation errors.
-        if exec.device().limits().max_storage_buffers_per_shader_stage < 5 {
-            common::skip_or_panic(
-                test_name,
-                "max_storage_buffers_per_shader_stage < 5 (GS prepass requires 5 storage buffers)",
-            );
-            return;
-        }
 
         const VB: u32 = 1;
         const RT: u32 = 2;
