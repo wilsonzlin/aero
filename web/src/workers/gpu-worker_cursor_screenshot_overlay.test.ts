@@ -73,9 +73,18 @@ async function waitForWorkerMessage(
 }
 
 function firstPixelU32(rgba8: ArrayBuffer): number {
+  return pixelU32At(rgba8, 1, 0, 0);
+}
+
+function pixelU32At(rgba8: ArrayBuffer, width: number, x: number, y: number): number {
   const px = new Uint8Array(rgba8);
-  if (px.byteLength < 4) return 0;
-  return (((px[0] ?? 0) | ((px[1] ?? 0) << 8) | ((px[2] ?? 0) << 16) | ((px[3] ?? 0) << 24)) >>> 0);
+  const w = Math.max(0, width | 0);
+  const xx = x | 0;
+  const yy = y | 0;
+  if (w <= 0 || xx < 0 || yy < 0) return 0;
+  const off = (yy * w + xx) * 4;
+  if (off < 0 || off + 3 >= px.byteLength) return 0;
+  return (((px[off + 0] ?? 0) | ((px[off + 1] ?? 0) << 8) | ((px[off + 2] ?? 0) << 16) | ((px[off + 3] ?? 0) << 24)) >>> 0);
 }
 
 async function initHeadlessGpuWorker(worker: Worker, initMsg: WorkerInitMessage): Promise<void> {
@@ -417,6 +426,144 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       const shotWithCursor = await requestScreenshot(worker, 2, true);
       // Cursor pixel: BGRX [01 02 03 00] -> RGBA [03 02 01 ff] => 0xff010203.
       expect(firstPixelU32(shotWithCursor.rgba8)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
+  it("alpha-blends partially transparent cursor pixels", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+    // Background pixel: BGRX all zeros -> RGBA [0,0,0,0xff].
+    views.guestU8.set([0x00, 0x00, 0x00, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor pixel: BGRA with 50% alpha (A=0x80), red channel at 0xff.
+    // BGRA [00 00 ff 80] -> RGBA [ff 00 00 80].
+    views.guestU8.set([0x00, 0x00, 0xff, 0x80], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8A8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      // 50% red over black: R = round(255*128/255) = 128 => 0xff000080.
+      expect(firstPixelU32(shot.rgba8)).toBe(0xff000080);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
+  it("applies cursor hotX offsets when compositing screenshots", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+
+    // Scanout: 2x1 BGRX pixels.
+    // pixel0: BGRX [10 20 30 00] -> RGBA [30 20 10 ff] => 0xff102030
+    // pixel1: BGRX [01 02 03 00] -> RGBA [03 02 01 ff] => 0xff010203
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00, 0x01, 0x02, 0x03, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 2,
+      height: 1,
+      pitchBytes: 8,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor pixel: BGRX [04 05 06 00] -> RGBA [06 05 04 ff] => 0xff040506.
+    views.guestU8.set([0x04, 0x05, 0x06, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 1,
+      y: 0,
+      hotX: 1,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(2);
+      expect(shot.height).toBe(1);
+
+      // x=1, hotX=1 -> originX=0, so cursor lands on pixel0.
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff040506);
+      expect(pixelU32At(shot.rgba8, shot.width, 1, 0)).toBe(0xff010203);
     } finally {
       await worker.terminate();
     }
