@@ -812,6 +812,23 @@ static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS
   fwprintf(stderr, L"%s: NTSTATUS=0x%08lx\n", prefix, (unsigned long)st);
 }
 
+static void PrintReadGpaNotSupportedHint(const wchar_t *label) {
+  if (label && *label) {
+    fwprintf(stderr, L"%s: ", label);
+  }
+  fwprintf(stderr,
+           L"hint: READ_GPA is disabled (or not supported by this KMD build). To enable, set:\n"
+           L"  HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1 (REG_DWORD)\n"
+           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n");
+}
+
+static void PrintMapSharedHandleNotSupportedHint() {
+  fwprintf(stderr,
+           L"hint: MAP_SHARED_HANDLE is disabled (or not supported by this KMD build). To enable, set:\n"
+           L"  HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1 (REG_DWORD)\n"
+           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n");
+}
+
 static DWORD NtStatusToWin32(const D3DKMT_FUNCS *f, NTSTATUS st) {
   if (!f || !f->RtlNtStatusToDosError) {
     return 0;
@@ -3766,7 +3783,7 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
       if (!NT_SUCCESS(rst)) {
         PrintNtStatus(L"read-gpa failed", f, rst);
         if (rst == STATUS_NOT_SUPPORTED) {
-          fwprintf(stderr, L"%s: hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n", label);
+          PrintReadGpaNotSupportedHint(label);
         }
         fwprintf(stderr, L"%s: failed to read row %ld (offset %Iu, size %lu)\n", label, (long)y, done, (unsigned long)chunk);
         HeapFree(GetProcessHeap(), 0, escapeBuf);
@@ -4206,7 +4223,7 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
       if (!NT_SUCCESS(rst)) {
         PrintNtStatus(L"read-gpa failed", f, rst);
         if (rst == STATUS_NOT_SUPPORTED) {
-          fwprintf(stderr, L"%s: hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n", label);
+          PrintReadGpaNotSupportedHint(label);
         }
         fwprintf(stderr,
                  L"%s: failed to read row %lu (offset %Iu, size %lu)\n",
@@ -4720,6 +4737,9 @@ static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTEscape(map-shared-handle) failed", f, st);
+    if (st == STATUS_NOT_SUPPORTED) {
+      PrintMapSharedHandleNotSupportedHint();
+    }
     return 2;
   }
 
@@ -5277,7 +5297,7 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"read-gpa failed", f, st);
       if (st == STATUS_NOT_SUPPORTED) {
-        fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+        PrintReadGpaNotSupportedHint(NULL);
       }
       rc = 2;
       goto cleanup;
@@ -5295,7 +5315,7 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
     if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
       PrintNtStatus(L"read-gpa operation failed", f, op);
       if (op == STATUS_NOT_SUPPORTED) {
-        fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+        PrintReadGpaNotSupportedHint(NULL);
       }
       rc = 2;
       goto cleanup;
@@ -6462,7 +6482,7 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"read-gpa failed", f, st);
     if (st == STATUS_NOT_SUPPORTED) {
-      fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+      PrintReadGpaNotSupportedHint(NULL);
     }
     return 2;
   }
@@ -6483,7 +6503,7 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
   if (!NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY) {
     PrintNtStatus(L"read-gpa operation failed", f, op);
     if (op == STATUS_NOT_SUPPORTED) {
-      fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
+      PrintReadGpaNotSupportedHint(NULL);
     }
   } else if (op == STATUS_PARTIAL_COPY) {
     PrintNtStatus(L"read-gpa partial copy", f, op);
