@@ -511,14 +511,14 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
-  the UMD reads vertices from **stream 0**, applies a CPU-side **World/View/Projection + viewport** transform, and writes
-  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`:
-  - for `D3DFVF_XYZ*` inputs: applies WVP + viewport and writes `XYZRHW` (screen space)
-  - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space)
+  the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into the destination layout
+  described by `hVertexDecl`:
+  - for `D3DFVF_XYZ*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce `XYZRHW`, and
+  - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
 
-  When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills
-  it with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when
-  present in both the source and destination layouts.
+  When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills it
+  with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when present
+  in both the source and destination layouts.
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
