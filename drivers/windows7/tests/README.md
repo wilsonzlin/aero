@@ -142,6 +142,8 @@ can’t accidentally pass.
 
 When the harness is run with:
 - `-WithVirtioSnd` / `--with-virtio-snd`, `virtio-snd`, `virtio-snd-capture`, and `virtio-snd-duplex` must `PASS` (not `SKIP`).
+  - If the guest fails virtio-snd due to the bring-up toggle `ForceNullBackend=1`, the host harness emits a deterministic token:
+    `FAIL: VIRTIO_SND_FORCE_NULL_BACKEND: ...` (clear `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` to `0`).
 - `-WithSndBufferLimits` / `--with-snd-buffer-limits`, `virtio-snd-buffer-limits` must `PASS` (and a guest `SKIP|flag_not_set`
   or missing marker is treated as a hard failure).
 - `-WithBlkResize` / `--with-blk-resize`, `virtio-blk-resize` must `PASS` (and a guest `SKIP|flag_not_set` or missing marker
