@@ -2968,6 +2968,9 @@ where
 ///   `docs/05-storage-topology-win7.md`
 /// - E1000 NIC + UHCI (USB 1.1) + VGA (current browser runtime expectations)
 ///
+/// To request more than one vCPU (SMP), use [`Machine::new_with_cpu_count`] or pass `cpu_count` to
+/// [`Machine::new_with_config`].
+///
 /// Storage attachment points are identified by stable `disk_id` values exposed via
 /// [`Machine::disk_id_primary_hdd`], [`Machine::disk_id_install_media`], and
 /// [`Machine::disk_id_ide_primary_master`].
