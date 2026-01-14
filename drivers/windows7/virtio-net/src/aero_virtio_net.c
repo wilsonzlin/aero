@@ -3354,6 +3354,13 @@ static NDIS_STATUS AerovNetMiniportPause(_In_ NDIS_HANDLE MiniportAdapterContext
   Adapter->State = AerovNetAdapterPaused;
   NdisReleaseSpinLock(&Adapter->Lock);
 
+  // Ensure no NDIS SG mapping callbacks are still in flight when Pause returns.
+  // This avoids a race where Pause/Restart is complete but a late SG callback
+  // still tries to enqueue/complete a TX request.
+  if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+    (VOID)KeWaitForSingleObject(&Adapter->OutstandingSgEvent, Executive, KernelMode, FALSE, NULL);
+  }
+
   return NDIS_STATUS_SUCCESS;
 }
 
