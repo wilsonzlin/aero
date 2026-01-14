@@ -218,11 +218,13 @@ Ops/features referenced by the scratchpad tasks:
 - `9f3c546f8` — `docs(graphics): link task-489 audit from SM3 translation notes`
 - `5fb505938` — `docs(graphics): shorten SM3 shader translation status table`
 - `e8523a8f9` — `test(sm3): assert default sampler texture types in bind layout`
+- `de317d81a` — `test(sm3): cover translate_to_wgsl wrapper`
 - `b0ccdf25e` — `docs(graphics): document default Texture2D sampler type`
 - `cb9001d34` — `docs(graphics): note SM3 software sampler is 2D-only`
 
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `sm3_translate_to_wgsl_wrapper_produces_bind_layout`
   - `wgsl_texld_emits_texture_sample`
   - `wgsl_texldp_emits_projective_divide`
   - `wgsl_texldd_emits_texture_sample_grad`
