@@ -21,7 +21,9 @@ server {
         # Expose headers that the streaming client needs to read from JS (`Content-Range`, `ETag`, etc).
         add_header 'Access-Control-Expose-Headers' 'Accept-Ranges,Content-Range,Content-Length,Content-Encoding,ETag,Last-Modified,Cache-Control,Content-Type' always;
         add_header 'Access-Control-Max-Age' 86400 always;
-        add_header 'Vary' 'Origin' always;
+        # If CORS responses vary by Origin (or by requested preflight headers), Vary is important
+        # for correctness under intermediary caching.
+        add_header 'Vary' 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers' always;
 
         # Handle preflight directly at the proxy.
         if ($request_method = OPTIONS) {
@@ -50,5 +52,6 @@ server {
         proxy_hide_header Access-Control-Allow-Methods;
         proxy_hide_header Access-Control-Expose-Headers;
         proxy_hide_header Access-Control-Max-Age;
+        proxy_hide_header Vary;
     }
 }
