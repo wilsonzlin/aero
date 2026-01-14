@@ -43,25 +43,25 @@ jobs:
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bios_interrupt_dispatch -- -max_total_time=10
 
       - name: fuzz_aerogpu_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse -- -max_total_time=10
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse --features aerogpu -- -max_total_time=10
 
       - name: fuzz_aerogpu_trace_read (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_trace_read -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerogpu_trace_read.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_trace_read --features aerogpu-trace -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerogpu_trace_read.dict
 
       - name: fuzz_dxbc_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_parse --features d3d11 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
 
       - name: fuzz_dxbc_sm4_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_sm4_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_sm4_parse --features dxbc -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
 
       - name: fuzz_d3d11_sm4_translate (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d11_sm4_translate -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d11_sm4_translate.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d11_sm4_translate --features d3d11 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d11_sm4_translate.dict
 
       - name: fuzz_d3d9_sm3_decode (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_decode -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_decode --features d3d9 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 
       - name: fuzz_d3d9_sm3_wgsl (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_wgsl -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_wgsl --features d3d9 -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_d3d9_sm3.dict
 
       - name: fuzz_aerosparse_open (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
