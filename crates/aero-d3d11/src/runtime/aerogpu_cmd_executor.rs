@@ -14021,6 +14021,98 @@ fn main() {
     }
 
     #[test]
+    fn set_shader_resource_buffers_clears_any_texture_bound_to_same_t_slot() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Seed a texture binding at t0, then bind an SRV buffer at the same slot.
+            exec.bindings
+                .stage_mut(ShaderStage::Vertex)
+                .set_texture(0, Some(0x1000));
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Vertex)
+                    .texture(0)
+                    .is_some(),
+                "texture should be bound before SET_SHADER_RESOURCE_BUFFERS"
+            );
+
+            let mut cmd = Vec::new();
+            cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetShaderResourceBuffers as u32).to_le_bytes(),
+            );
+            cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            cmd.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex / reserved0
+            cmd.extend_from_slice(&0x2000u32.to_le_bytes()); // buffer
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full)
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+
+            exec.exec_set_shader_resource_buffers(&cmd)
+                .expect("SET_SHADER_RESOURCE_BUFFERS should succeed");
+
+            let stage = exec.bindings.stage(ShaderStage::Vertex);
+            assert!(
+                stage.texture(0).is_none(),
+                "binding an SRV buffer must unbind any texture in the same t-slot"
+            );
+            assert_eq!(
+                stage.srv_buffer(0),
+                Some(BoundBuffer {
+                    buffer: 0x2000,
+                    offset: 0,
+                    size: None
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn set_unordered_access_buffers_rejects_non_compute_stage() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // SET_UNORDERED_ACCESS_BUFFERS must reject non-compute stages for now.
+            let mut cmd = Vec::new();
+            cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
+            );
+            cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex (invalid)
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex / reserved0
+            cmd.extend_from_slice(&0x3000u32.to_le_bytes()); // buffer
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full)
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count (ignored)
+
+            let err = exec
+                .exec_set_unordered_access_buffers(&cmd)
+                .expect_err("SET_UNORDERED_ACCESS_BUFFERS should reject non-compute stage");
+            assert!(
+                err.to_string().contains("compute"),
+                "unexpected error: {err:#}"
+            );
+        });
+    }
+
+    #[test]
     fn dispatch_smoke_encodes_compute_pass() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
