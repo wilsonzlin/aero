@@ -132,6 +132,19 @@ Rule of thumb:
   `VirtualDisk` and (if it needs a resizable backing store) be generic over `StorageBackend`.
 - Do **not** introduce new format-specific “disk traits” in other crates.
 
+#### Backing layers / explicit parent disks
+
+Some disk image formats can reference an external base layer:
+
+- QCOW2 backing files
+- VHD differencing disks
+
+For these images, `DiskImage::open_auto` intentionally **rejects** them unless you explicitly supply
+the parent/base disk. To open them, use:
+
+- `aero_storage::DiskImage::open_with_parent` / `aero_storage::DiskImage::open_auto_with_parent`, or
+- format-specific helpers: `aero_storage::{Qcow2Disk, VhdDisk}::open_with_parent`.
+
 #### Read-only wrappers (when and why)
 
 Aero frequently attaches media that is **semantically immutable**:
