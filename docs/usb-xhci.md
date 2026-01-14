@@ -23,9 +23,10 @@ Status:
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
-  root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, snapshot/restore), but it
-  does not yet drive full command/transfer ring execution (command ring doorbell + non-control
-  transfer scheduling), so treat it as bring-up quality and incomplete.
+  root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
+  and some host-side topology/WebUSB hooks), but it does not yet implement full driver-facing command
+  ring execution (doorbell 0) or transfer scheduling (non-control transfers are still missing), so
+  treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -85,7 +86,7 @@ Web runtime integration:
 - Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`)
 - Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`)
 - WASM bridge export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`)
-- WebHID guest-topology manager (planned xHCI attachment path): `web/src/hid/xhci_hid_topology.ts`
+- WebHID guest-topology manager (xHCI attachment path): `web/src/hid/xhci_hid_topology.ts`
   (`XhciHidTopologyManager`)
 
 Native integration (not yet wired into the canonical `Machine` by default):
@@ -97,10 +98,11 @@ Native integration (not yet wired into the canonical `Machine` by default):
 Notes:
 
 - `crates/devices/src/usb/xhci.rs` is the canonical native PCI/MMIO wrapper around
-  `aero_usb::xhci::XhciController` (BAR sizing, PCI COMMAND gating for MMIO/DMA/INTx, optional MSI,
+  `aero_usb::xhci::XhciController` (BAR sizing, PCI `COMMAND` gating for MMIO/DMA/INTx, optional MSI,
   and snapshot/restore).
-- The canonical Rust xHCI controller model (`aero_usb::xhci::XhciController`) is exercised via Rust
-  tests, the web/WASM bridge (`aero_wasm::XhciControllerBridge`), and native wrappers/integrations.
+- `aero_machine::Machine` does not yet expose xHCI by default, but the shared controller model
+  (`aero_usb::xhci::XhciController`) is exercised via Rust tests, the web/WASM bridge
+  (`aero_wasm::XhciControllerBridge`), and native wrappers/integrations.
 
 ### PCI identity (canonical)
 
@@ -138,26 +140,25 @@ Notes:
     - MMIO reads/writes,
     - PCI command gating (DMA gated on Bus Master Enable via `set_pci_command()`),
     - a non-time-advancing poll hook (`poll()`) that drains queued event TRBs into the guest event ring,
-    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()`), and
-    - deterministic snapshot/restore (controller state + a tick counter).
+    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()` / USBSTS.EINT), and
+    - deterministic snapshot/restore (controller state + a tick counter, plus optional WebUSB
+      passthrough device state).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
   USB). Treat the native PCI profile as an intended contract for future wiring.
-- WebHID attachment behind xHCI is planned via `XhciHidTopologyManager` (`web/src/hid/xhci_hid_topology.ts`),
-  but `XhciControllerBridge` does not yet expose the required topology mutation APIs
-  (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
-  expected to attach via UHCI in the current web runtime.
-- WebUSB passthrough exists today primarily via UHCI; xHCI attachment/plumbing exists in the web
-  runtime (and is preferred when available), but full doorbell-driven xHCI ring execution is still
-  bring-up. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
-- The I/O worker has plumbing to *prefer* xHCI for guest-visible WebUSB passthrough when an xHCI
-  bridge implements the WebUSB hotplug/action API (`set_connected`, `drain_actions`, `push_completion`,
-  `reset`). `aero_wasm::XhciControllerBridge` exposes this interface, so WebUSB guest selection will
-  choose xHCI when it is available (still bring-up quality until doorbell-driven ring execution is
-  implemented).
-- Similarly, the web runtime has a code path to attach synthetic USB HID devices behind xHCI for
-  WASM builds that omit UHCI, but it relies on the same missing topology APIs. Today, synthetic USB
-  HID devices are expected to attach behind UHCI.
+- WebHID passthrough attachment behind xHCI is managed via `XhciHidTopologyManager`
+  (`web/src/hid/xhci_hid_topology.ts`) and the optional topology APIs exported by
+  `XhciControllerBridge` (`attach_hub`, `detach_at_path`, `attach_webhid_device`,
+  `attach_usb_hid_passthrough_device`). The I/O worker routes WebHID passthrough devices to xHCI
+  when these exports are present (falling back to UHCI otherwise).
+- WebUSB passthrough exists today primarily via UHCI; it can also be routed via xHCI in the web
+  runtime when `XhciControllerBridge` exports the WebUSB hotplug/action API (`set_connected`,
+  `drain_actions`, `push_completion`, `reset`). The I/O worker prefers xHCI deterministically when
+  available, but it remains bring-up quality until doorbell-driven xHCI ring execution is
+  implemented. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
+- Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are still expected to attach
+  behind UHCI when available (Windows 7 compatibility), with xHCI used as a fallback for WASM builds
+  that omit UHCI.
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
@@ -185,7 +186,7 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
     - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
-      executor (Setup/Data/Status TRBs)
+      executor (Setup/Data/Status TRBs) when the controller is ticked
     - command ring doorbell (doorbell 0) is not modeled yet.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `poll()`).
@@ -203,16 +204,23 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
   - Wraps `XhciController` (shared Rust model) and forwards MMIO reads/writes from the TS PCI device.
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
     disabled (the controller still updates register state, but must not touch guest RAM).
-  - `step_frames()` advances controller/port timers (`XhciController::tick_1ms`) and increments a tick counter.
+  - `step_frames()` advances controller/port timers (`XhciController::tick_1ms`) and increments a tick
+    counter. (It does not yet run a full xHCI transfer scheduler.)
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough hooks (`set_connected`, `drain_actions`, `push_completion`, `reset`) used by the
     web I/O worker to attach/detach a passthrough device behind a fixed xHCI root port.
   - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
-  - Deterministic snapshot/restore of the controller state + tick counter.
+  - Optional host-side topology mutation APIs for passthrough HID/hubs (`attach_hub`,
+    `detach_at_path`, `attach_webhid_device`, `attach_usb_hid_passthrough_device`).
+  - Optional WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`,
+    `reset`, `pending_summary`). The passthrough device is attached to a reserved xHCI root port
+    (currently root port index `1`).
+  - Deterministic snapshot/restore of the controller state + tick counter (+ optional WebUSB device
+    state when connected).
 
-These are **not** full xHCI implementations. In particular, full command ring integration and
-guest-visible transfer execution for non-control endpoints are not implemented yet.
+These are **not** full xHCI implementations. In particular, command ring doorbell/command execution
+and transfer execution for non-control endpoints are not implemented yet.
 
 #### TRB + ring building blocks
 
@@ -271,8 +279,10 @@ guest transfer ring:
 - Emits Transfer Event TRBs into a simple contiguous event ring (used by unit tests).
 
 This engine is currently a standalone transfer-plane component used by tests; `XhciController` has
-its own minimal doorbell-driven endpoint-0 executor, so `Ep0TransferEngine` is not wired into the
-guest-visible MMIO model.
+its own minimal doorbell-driven endpoint-0 executor (driven by slot doorbells +
+`XhciController::tick()`), so `Ep0TransferEngine` is not wired into the guest-visible MMIO model.
+Note: the web/WASM bridge does not yet run a full transfer tick loop (it only advances `tick_1ms`
+and drains the event ring).
 
 ### Device model layer
 
@@ -303,12 +313,17 @@ Dedicated EP0 unit tests also exist:
 ### Still MVP-relevant but not implemented yet
 
 - Full root hub model (USB3 ports, additional link states, full port register/event coverage).
+- Automatic event ring servicing as part of the main controller tick/PCI wrapper (today, some
+  integrations must call `service_event_ring()` explicitly; in the web runtime this is done via the
+  WASM bridge `poll()` hook).
 - Delivery of command completion events via the guest event ring/interrupter (Port Status Change +
   endpoint-0 Transfer Events exist today).
 - Command ring doorbell (doorbell 0) and full command ring processing.
 - Full command ring + event ring integration (today, command-ring processing exists as standalone
   helpers/tests, but the controller MMIO surface does not yet expose the full model).
 - Bulk/interrupt transfer engine (Normal TRBs) wired into the controller (beyond the test harness).
+- Integrating transfer execution into the main controller stepping loop (`XhciController::tick()`
+  alongside `tick_1ms`) so doorbelled endpoints make forward progress in real integrations.
 - Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
 ---
@@ -318,13 +333,15 @@ Dedicated EP0 unit tests also exist:
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
 - **Root hub / port model** beyond the current USB2-only PORTSC subset + reset timer scaffolding (no USB3 ports/link states yet).
-- **Doorbell-driven command ring + non-control transfer execution** (the doorbell array is partially
-  implemented, but command ring processing and non-control transfers are still missing).
+- **Doorbell-driven command ring + non-control transfer execution**: the doorbell array is partially
+  implemented (endpoint doorbells latch, and endpoint-0 can run when ticked), but command ring
+  processing (doorbell 0) and non-control transfers are still missing from the MMIO model.
 - **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
   helpers exist for tests, but they are not yet exposed as a guest-visible controller.
 - **Non-control transfer execution via Normal TRBs** (bulk/interrupt endpoints) integrated into the
-  guest-visible controller.
+  guest-visible controller and driven by a transfer tick loop (the web/WASM bridge does not yet run
+  this loop).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
@@ -349,9 +366,10 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
   - Current limitations: the `XHCI` snapshot does **not** yet capture per-port state, pending event
     TRBs, or slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather
     than a bit-perfect resume of an in-flight xHCI driver.
-- The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.0`) and currently stores:
-  - the underlying `aero_usb::xhci::XhciController` snapshot bytes, and
-  - a tick counter (used for deterministic stepping in future scheduling work).
+- The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.1`) and currently stores:
+  - the underlying `aero_usb::xhci::XhciController` snapshot bytes,
+  - a tick counter (used for deterministic stepping in future scheduling work), and
+  - (when connected) the `UsbWebUsbPassthroughDevice` snapshot bytes.
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
