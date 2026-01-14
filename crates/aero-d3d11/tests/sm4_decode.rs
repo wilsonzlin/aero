@@ -2964,7 +2964,7 @@ fn decodes_atomic_add_via_structural_fallback() {
     // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
     // decoding path.
     // Note: this value must not collide with any opcode we explicitly support (e.g. integer ops).
-    const OPCODE_UNKNOWN_ATOMIC_IADD: u32 = 0x74;
+    const OPCODE_UNKNOWN_ATOMIC_IADD: u32 = 0x7b;
 
     let mut body = Vec::<u32>::new();
 
