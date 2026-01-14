@@ -210,6 +210,15 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a3 = pack_u32_u32(VertexCount, DestStride)` (`DestStride` may be 0 depending on header/runtime)
   - Note: `pProcessVertices->Flags` (D3DPV_* bits) is not currently logged; `D3DPV_DONOTCOPYDATA` is bit 0 (`0x1`).
 
+- `Device::WaitForVBlank`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = swap chain index` (`swap_chain_index`)
+
+- `Device::GetRasterStatus`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = hSwapChain.pDrvPrivate` (or swap chain pointer, depending on header/runtime)
+  - `a2 = pRasterStatus` (output struct pointer)
+
 - `Device::CreateStateBlock`
   - `a0 = hDevice.pDrvPrivate`
   - `a1 = state block type` (`D3DSBT_ALL=1`, `D3DSBT_PIXELSTATE=2`, `D3DSBT_VERTEXSTATE=3`)
