@@ -180,6 +180,34 @@ const PS_2_0_TEX_SAMPLE: [u32; 15] = [
     0x0000_FFFF,
 ];
 
+const PS_2_0_LRP: [u32; 19] = [
+    0xFFFF_0200, // ps_2_0
+    // dcl_texcoord0 v0
+    0x0200_001F,
+    0x8000_0005,
+    0x900F_0000,
+    // dcl_texcoord1 v1
+    0x0200_001F,
+    0x8001_0005,
+    0x900F_0001,
+    // dcl_texcoord2 v2
+    0x0200_001F,
+    0x8002_0005,
+    0x900F_0002,
+    // lrp r0, v0, v1, v2
+    0x0400_0012,
+    0x800F_0000,
+    0x90E4_0000,
+    0x90E4_0001,
+    0x90E4_0002,
+    // mov oC0, r0
+    0x0200_0001,
+    0x800F_0800,
+    0x80E4_0000,
+    // end
+    0x0000_FFFF,
+];
+
 const VS_3_0_IF: [u32; 30] = [
     0xFFFE_0300, // vs_3_0
     // dcl_position v0
@@ -290,6 +318,26 @@ fn parse_ps_2_0_texture_sample() {
     assert!(dis.contains("dcl_2d s0"));
     assert!(dis.contains("texld r0, v0, s0"));
     assert!(dis.contains("mov oC0, r0"));
+}
+
+#[test]
+fn parse_ps_2_0_lrp() {
+    let shader = D3d9Shader::parse(&words_to_bytes(&PS_2_0_LRP)).unwrap();
+    assert_eq!(shader.stage, ShaderStage::Pixel);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.declarations.len(), 3);
+    assert_eq!(shader.instructions.len(), 2);
+    assert!(matches!(
+        shader.instructions[0],
+        Instruction::Op {
+            opcode: Opcode::Lrp,
+            ..
+        }
+    ));
+
+    let dis = shader.disassemble();
+    assert!(dis.contains("ps_2_0"));
+    assert!(dis.contains("lrp r0, v0, v1, v2"));
 }
 
 #[test]

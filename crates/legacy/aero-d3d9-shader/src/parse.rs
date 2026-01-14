@@ -176,6 +176,7 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                     | crate::Opcode::Add
                     | crate::Opcode::Mul
                     | crate::Opcode::Mad
+                    | crate::Opcode::Lrp
                     | crate::Opcode::Dp3
                     | crate::Opcode::Dp4
                     | crate::Opcode::Min
