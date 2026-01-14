@@ -95,7 +95,7 @@ impl XhciPciDevice {
 
         // Interrupt pin/line: mirror the UHCI pattern (INTA on a conventional routed line).
         let pin = PciInterruptPin::IntA;
-        config.write(0x3d, 1, u32::from(pin.to_config_u8()));
+        config.set_u8(0x3d, pin.to_config_u8());
 
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
         let gsi = router.gsi_for_intx(Self::BDF, pin);

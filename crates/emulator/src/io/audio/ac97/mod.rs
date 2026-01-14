@@ -377,7 +377,7 @@ impl Ac97PciDevice {
         config.set_u32(0x14, u32::from(nabm_base) | 0x1);
 
         // INTA#
-        config.write(0x3d, 1, 1);
+        config.set_u8(0x3d, 1);
 
         Self {
             config,

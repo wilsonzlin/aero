@@ -151,7 +151,7 @@ impl AeroGpuPciDevice {
         config_space.set_u32(0x14, bar1 | (1 << 3));
 
         // Interrupt pin INTA#.
-        config_space.write(0x3d, 1, 1);
+        config_space.set_u8(0x3d, 1);
 
         let vblank_interval_ns = period_ns_from_hz(cfg.vblank_hz);
 

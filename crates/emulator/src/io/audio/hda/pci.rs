@@ -44,7 +44,7 @@ impl HdaPciDevice {
         config.set_u32(0x10, bar0);
 
         // Interrupt pin INTA#.
-        config.write(0x3d, 1, 1);
+        config.set_u8(0x3d, 1);
 
         Self {
             config,

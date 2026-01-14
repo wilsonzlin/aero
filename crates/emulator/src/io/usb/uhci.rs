@@ -69,7 +69,7 @@ impl UhciPciDevice {
         let pin = USB_UHCI_PIIX3
             .interrupt_pin
             .expect("UHCI profile should provide interrupt pin");
-        config.write(0x3d, 1, u32::from(pin.to_config_u8()));
+        config.set_u8(0x3d, pin.to_config_u8());
 
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
         let gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, pin);

@@ -300,7 +300,7 @@ impl AhciPciDevice {
         config.write(0x09, 1, u32::from(pci_profile.class.prog_if));
         config.write(0x0a, 1, u32::from(pci_profile.class.sub_class));
         config.write(0x0b, 1, u32::from(pci_profile.class.base_class));
-        config.write(0x0e, 1, u32::from(pci_profile.header_type));
+        config.set_u8(0x0e, pci_profile.header_type);
 
         config.write(0x2c, 2, u32::from(pci_profile.subsystem_vendor_id));
         config.write(0x2e, 2, u32::from(pci_profile.subsystem_id));
@@ -313,7 +313,7 @@ impl AhciPciDevice {
             .interrupt_pin
             .map(|p| p.to_config_u8())
             .unwrap_or(0);
-        config.write(0x3d, 1, u32::from(int_pin));
+        config.set_u8(0x3d, int_pin);
 
         Self {
             config,

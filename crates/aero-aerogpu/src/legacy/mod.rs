@@ -192,6 +192,10 @@ impl PciConfigSpace {
         Self { data: [0; 256] }
     }
 
+    fn set_u8(&mut self, offset: usize, value: u8) {
+        self.data[offset] = value;
+    }
+
     fn set_u16(&mut self, offset: usize, value: u16) {
         self.data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
     }
@@ -238,10 +242,15 @@ impl PciConfigSpace {
         // Keep this legacy config-space model conservative and hardware-like by ignoring writes to
         // the Status bytes.
         let status_range = 0x06..0x08;
+        // Header Type (0x0E) and Interrupt Pin (0x3D) are read-only. Guests may issue wider writes
+        // that overlap these bytes (e.g. dword stores at 0x0C or 0x3C); those writes must not
+        // clobber device-reported values.
+        let header_type = 0x0e;
+        let interrupt_pin = 0x3d;
 
         for i in 0..size {
             let addr = offset + i;
-            if status_range.contains(&addr) {
+            if status_range.contains(&addr) || addr == header_type || addr == interrupt_pin {
                 continue;
             }
             self.data[addr] = ((value >> (8 * i)) & 0xFF) as u8;
@@ -361,7 +370,7 @@ impl AeroGpuLegacyPciDevice {
         config_space.set_u32(0x10, bar0);
 
         // Interrupt pin INTA#.
-        config_space.write(0x3d, 1, 1);
+        config_space.set_u8(0x3d, 1);
 
         let vblank_interval = cfg.vblank_hz.and_then(|hz| {
             if hz == 0 {
@@ -824,6 +833,32 @@ mod tests {
 
         assert_eq!(cfg.read(0x06, 2), 0x1234);
         assert_eq!(cfg.read(0x04, 2), 0x0006);
+    }
+
+    #[test]
+    fn dword_interrupt_line_write_does_not_clobber_interrupt_pin() {
+        let mut cfg = PciConfigSpace::new();
+        cfg.set_u8(0x3d, 1);
+
+        // Common pattern: 32-bit write at 0x3C with upper bytes (Interrupt Pin and reserved) = 0.
+        cfg.write(0x3c, 4, 0x0000_000a);
+
+        assert_eq!(cfg.read(0x3d, 1), 1);
+        assert_eq!(cfg.read(0x3c, 1), 0x0a);
+    }
+
+    #[test]
+    fn dword_cache_line_write_does_not_clobber_header_type() {
+        let mut cfg = PciConfigSpace::new();
+        cfg.set_u8(0x0e, 0x80);
+
+        // Dword store at 0x0C spans cache-line/latency/header-type/bist. Header Type is read-only.
+        cfg.write(0x0c, 4, 0x12_00_11_22);
+
+        assert_eq!(cfg.read(0x0e, 1), 0x80);
+        assert_eq!(cfg.read(0x0c, 1), 0x22);
+        assert_eq!(cfg.read(0x0d, 1), 0x11);
+        assert_eq!(cfg.read(0x0f, 1), 0x12);
     }
 
     #[test]

@@ -72,7 +72,7 @@ impl EhciPciDevice {
 
         // Interrupt pin/line match the canonical PCI INTx router configuration.
         let pin = PciInterruptPin::IntA;
-        config.write(0x3d, 1, u32::from(pin.to_config_u8()));
+        config.set_u8(0x3d, pin.to_config_u8());
 
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
         let gsi = router.gsi_for_intx(Self::BDF, pin);
