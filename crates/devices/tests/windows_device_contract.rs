@@ -829,9 +829,11 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
     );
 
     // Tablet binding is intentionally SUBSYS-only: it must not also include the no-SUBSYS strict
-    // fallback HWID (`...&REV_01`), since that fallback is provided by the keyboard/mouse INF.
-    // The tablet HWID is more specific, so it wins over the fallback when both packages are
-    // present.
+    // fallback HWID (`...&REV_01`), since that fallback is provided only by the opt-in legacy
+    // filename alias INF (`virtio-input.inf{,.disabled}`).
+    //
+    // When both packages are installed and the tablet subsystem ID is present, the tablet HWID is
+    // more specific, so it wins over the fallback.
     let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
     let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
