@@ -7,16 +7,15 @@ moving forward lives in:
 
 - `crates/aero-d3d9/src/sm3`
 
-The crate is kept around as a reference/debugging aid, but is excluded from the workspace to avoid
-adding maintenance burden to workspace-wide builds.
+The crate is kept around as a reference/debugging aid.
 
 ## Building/tests
 
-Because it is excluded from the workspace, build it directly:
+This crate is a **workspace member** so it can be exercised by unit tests:
 
 ```sh
-cargo test --manifest-path crates/legacy/aero-d3d9-shader/Cargo.toml
+cargo test -p aero-d3d9-shader --locked
 ```
 
-Note: Cargo may generate a local `crates/legacy/aero-d3d9-shader/Cargo.lock` when building this crate
-standalone.
+When building it standalone via `--manifest-path`, Cargo may generate a local
+`crates/legacy/aero-d3d9-shader/Cargo.lock`; this file is ignored by default.
