@@ -1587,7 +1587,17 @@ fn emit_op_line(
                     }
                     let uv = format!("({coord_e}).{swz}");
                     let bias = format!("({coord_e}).w");
-                    format!("textureSampleBias({tex}, {samp}, {uv}, {bias})")
+                    // WGSL does not support `textureSampleBias` for 1D textures.
+                    // Approximate bias by scaling the implicit derivatives and using
+                    // `textureSampleGrad`, which accepts explicit gradients for 1D.
+                    if tex_ty == TextureType::Texture1D {
+                        let scale = format!("exp2({bias})");
+                        let ddx = format!("(dpdx({uv}) * {scale})");
+                        let ddy = format!("(dpdy({uv}) * {scale})");
+                        format!("textureSampleGrad({tex}, {samp}, {uv}, {ddx}, {ddy})")
+                    } else {
+                        format!("textureSampleBias({tex}, {samp}, {uv}, {bias})")
+                    }
                 }
                 crate::sm3::ir::TexSampleKind::ExplicitLod => {
                     let uv = format!("({coord_e}).{swz}");
@@ -1889,7 +1899,14 @@ fn emit_stmt(
                         let samp = format!("samp{sampler}");
                         let coord = format!("({coord_e}).{swz}");
                         let bias = format!("({coord_e}).w");
-                        let sample = format!("textureSampleBias({tex}, {samp}, {coord}, {bias})");
+                        let sample = if tex_ty == TextureType::Texture1D {
+                            let scale = format!("exp2({bias})");
+                            let ddx = format!("(dpdx({coord}) * {scale})");
+                            let ddy = format!("(dpdy({coord}) * {scale})");
+                            format!("textureSampleGrad({tex}, {samp}, {coord}, {ddx}, {ddy})")
+                        } else {
+                            format!("textureSampleBias({tex}, {samp}, {coord}, {bias})")
+                        };
                         let sample = apply_float_result_modifiers(sample, modifiers)?;
 
                         let dst_name = reg_var_name(&dst.reg)?;

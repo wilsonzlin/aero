@@ -268,7 +268,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
 **See also:** `docs/graphics/d3d9-sm2-sm3-shader-translation.md` (short “don’t duplicate work” status note for SM2/SM3 shader translation).
 
 **Implemented:**
-- WGSL lowering for `texld`/`texldp`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
+- WGSL lowering for `texld`/`texldp`/`texldb`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
 - `texkill` lowers to D3D9 semantics: `discard` when **any component** of the operand is `< 0`, and preserves predication nesting.
 - Sampler declarations map texture types to WGSL texture bindings and coordinate dimensionality:
   - `dcl_1d` → `texture_1d<f32>` (`x`)
@@ -305,20 +305,24 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
   - `sm3_translate_to_wgsl_wrapper_produces_bind_layout`
   - `wgsl_texld_emits_texture_sample`
   - `wgsl_texldp_emits_projective_divide`
+  - `wgsl_texldb_emits_texture_sample_bias`
   - `wgsl_texldd_emits_texture_sample_grad`
   - `wgsl_vs_texld_emits_texture_sample_level`
   - `wgsl_texldl_emits_texture_sample_level_explicit_lod`
   - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
   - `wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x`
+  - `wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias`
   - `wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x`
   - `wgsl_dcl_1d_sampler_texldl_emits_texture_sample_level_x_lod`
   - `wgsl_dcl_cube_sampler_emits_texture_cube_and_xyz_coords`
   - `wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords`
   - `wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz`
+  - `wgsl_dcl_cube_sampler_texldb_emits_texture_sample_bias_xyz`
   - `wgsl_dcl_volume_sampler_texldp_emits_projective_divide_xyz`
   - `wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz`
   - `wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz`
   - `wgsl_dcl_cube_sampler_texldl_emits_texture_sample_level_xyz_lod`
+  - `wgsl_dcl_volume_sampler_texldb_emits_texture_sample_bias_xyz`
   - `wgsl_dcl_volume_sampler_texldl_emits_texture_sample_level_xyz_lod`
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`

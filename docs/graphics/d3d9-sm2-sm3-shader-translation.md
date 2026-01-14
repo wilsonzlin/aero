@@ -27,7 +27,7 @@ predication-safe lowering for derivatives (avoid non-uniform control flow).
   - `wgsl_predicated_derivative_avoids_non_uniform_control_flow`
 - `crates/aero-d3d9/tests/sm3_wgsl_dp2.rs`
 
-### Task 401 — Texture sampling lowering (`texld`/`texldp`/`texldd`/`texldl`)
+### Task 401 — Texture sampling lowering (`texld`/`texldp`/`texldb`/`texldd`/`texldl`)
 
 **Status:** ✅ Done
 
@@ -38,7 +38,7 @@ Sampler texture types come from `dcl_* s#` when present; when absent, samplers d
 (and this default is recorded in `bind_group_layout.sampler_texture_types`).
 
 Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate dimensionality
-`x`/`xy`/`xyz` (including for `texldp`/`texldd`/`texldl`).
+`x`/`xy`/`xyz` (including for `texldp`/`texldb`/`texldd`/`texldl`).
 
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
