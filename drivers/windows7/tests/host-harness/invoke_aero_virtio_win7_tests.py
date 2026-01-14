@@ -4655,6 +4655,8 @@ def main() -> int:
             virtio_input_binding_marker_carry = b""
             selftest_config_marker_line: Optional[str] = None
             selftest_config_marker_carry = b""
+            selftest_result_marker_line: Optional[str] = None
+            selftest_result_marker_carry = b""
             expect_blk_msi_config: Optional[str] = None
             udp_port_config: Optional[str] = None
             saw_virtio_blk_pass = False
@@ -4957,6 +4959,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|CONFIG|",
                         carry=selftest_config_marker_carry,
+                    )
+                    selftest_result_marker_line, selftest_result_marker_carry = _update_last_marker_line_from_chunk(
+                        selftest_result_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|RESULT|",
+                        carry=selftest_result_marker_carry,
                     )
                     tail = _append_serial_tail(tail, chunk)
                     if expect_blk_msi_config is None:
@@ -5853,7 +5861,16 @@ def main() -> int:
                                 result_code = 1
                                 break
 
-                    if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                    result_status: Optional[str] = None
+                    if selftest_result_marker_line is not None:
+                        result_status = _try_extract_marker_status(selftest_result_marker_line)
+                    if result_status is None:
+                        if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                            result_status = "PASS"
+                        elif b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                            result_status = "FAIL"
+
+                    if result_status == "PASS":
                         if args.require_expect_blk_msi:
                             expect_blk_msi_config, msg = _require_expect_blk_msi_config(
                                 tail, expect_blk_msi_config=expect_blk_msi_config
@@ -6895,7 +6912,7 @@ def main() -> int:
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
-                    if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                    if result_status == "FAIL":
                         if args.require_expect_blk_msi:
                             expect_blk_msi_config, msg = _require_expect_blk_msi_config(
                                 tail, expect_blk_msi_config=expect_blk_msi_config
@@ -7439,6 +7456,12 @@ def main() -> int:
                             chunk2,
                             prefix=b"AERO_VIRTIO_SELFTEST|CONFIG|",
                             carry=selftest_config_marker_carry,
+                        )
+                        selftest_result_marker_line, selftest_result_marker_carry = _update_last_marker_line_from_chunk(
+                            selftest_result_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|RESULT|",
+                            carry=selftest_result_marker_carry,
                         )
                         tail = _append_serial_tail(tail, chunk2)
                         if expect_blk_msi_config is None:
@@ -8027,7 +8050,16 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail
                         ):
                             saw_virtio_net_link_flap_skip = True
-                        if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                        result_status: Optional[str] = None
+                        if selftest_result_marker_line is not None:
+                            result_status = _try_extract_marker_status(selftest_result_marker_line)
+                        if result_status is None:
+                            if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                                result_status = "PASS"
+                            elif b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                                result_status = "FAIL"
+
+                        if result_status == "PASS":
                             if args.require_expect_blk_msi:
                                 expect_blk_msi_config, msg = _require_expect_blk_msi_config(
                                     tail, expect_blk_msi_config=expect_blk_msi_config
@@ -8874,7 +8906,7 @@ def main() -> int:
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break
-                        if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                        if result_status == "FAIL":
                             if args.require_expect_blk_msi:
                                 expect_blk_msi_config, msg = _require_expect_blk_msi_config(
                                     tail, expect_blk_msi_config=expect_blk_msi_config
@@ -9221,6 +9253,14 @@ def main() -> int:
             if raw2.startswith(b"AERO_VIRTIO_SELFTEST|CONFIG|"):
                 try:
                     selftest_config_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if selftest_result_marker_carry:
+            raw = selftest_result_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|RESULT|"):
+                try:
+                    selftest_result_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
 
