@@ -445,7 +445,11 @@ Remaining gaps (planned follow-ups) include:
   - Fence-only variants (no thread-group sync) do **not** have a perfect WGSL/WebGPU mapping today:
     WGSL `storageBarrier()` is validated/implemented as a workgroup-level barrier in WebGPU/Naga and
     therefore comes with uniform-control-flow requirements that are not necessarily present in the
-    original DXBC semantics.
+    original DXBC semantics. The translator therefore conservatively rejects fence-only `sync` in
+    potentially divergent control flow (e.g. inside structured `if`/`loop`/`switch`, after conditional
+    returns, or under instruction predication).
+  - `sync` instructions that set unknown `D3D11_SB_SYNC_FLAGS` bits are rejected (to avoid silently
+    dropping ordering semantics).
 
 ---
 
