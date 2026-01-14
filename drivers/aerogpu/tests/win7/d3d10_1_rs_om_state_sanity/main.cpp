@@ -1132,6 +1132,73 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     }
   }
 
+  // Subtest 6: ClearState resets RS/OM state (no scissor, no blending).
+  //
+  // This specifically validates the UMD ClearState path: if the driver does not
+  // emit default RS/OM state packets, host-side state would "stick" across the
+  // ClearState call, causing clipped/incorrect rendering.
+  {
+    // Deliberately set a non-default scissor-enabled rasterizer state and enable
+    // alpha blending.
+    device->OMSetRenderTargets(1, rtvs, NULL);
+    device->RSSetState(rs_scissor.get());
+    const D3D10_RECT small_scissor = {16, 16, 48, 48};
+    device->RSSetScissorRects(1, &small_scissor);
+    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
+    SetVb(vb_fs.get());
+
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->Draw(3, 0);
+
+    // ClearState unbinds most pipeline state; rebind only the minimum needed to
+    // draw, but DO NOT explicitly reset rasterizer/blend state. The output
+    // should reflect the D3D10 defaults: scissor disabled + blending disabled.
+    device->ClearState();
+
+    device->OMSetRenderTargets(1, rtvs, NULL);
+    device->RSSetViewports(1, &vp);
+    device->IASetInputLayout(input_layout.get());
+    device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    SetVb(vb_fs.get());
+    device->VSSetShader(vs.get());
+    device->PSSetShader(ps.get());
+
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->Draw(3, 0);
+
+    uint32_t center = 0;
+    uint32_t corner = 0;
+    int rb = Readback(NULL,
+                      L"d3d10_1_rs_om_state_sanity_clear_state.bmp",
+                      L"d3d10_1_rs_om_state_sanity_clear_state.bin",
+                      &center,
+                      &corner);
+    if (rb != 0) {
+      return rb;
+    }
+
+    const uint32_t expected_green = 0x8000FF00u;
+    if ((center & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        (corner & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail(
+          "ClearState failed: expected no scissor + no blending, but got center=0x%08lX corner=0x%08lX (expected ~0x%08lX)",
+          (unsigned long)center,
+          (unsigned long)corner,
+          (unsigned long)expected_green);
+    }
+    const uint8_t center_a = (uint8_t)((center >> 24) & 0xFFu);
+    const uint8_t corner_a = (uint8_t)((corner >> 24) & 0xFFu);
+    if ((center_a < kExpectedAlphaHalf - kAlphaTol || center_a > kExpectedAlphaHalf + kAlphaTol) ||
+        (corner_a < kExpectedAlphaHalf - kAlphaTol || corner_a > kExpectedAlphaHalf + kAlphaTol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState alpha mismatch: center_a=%u corner_a=%u expected ~%u",
+                           (unsigned)center_a,
+                           (unsigned)corner_a,
+                           (unsigned)kExpectedAlphaHalf);
+    }
+  }
+
   return reporter.Pass();
 }
 
