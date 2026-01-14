@@ -518,6 +518,33 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
     code_version_table_len: u32,
     prefill_tlbs: &[(u64, u64)],
 ) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
+    run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+        block,
+        cpu,
+        ram,
+        ram_size,
+        options,
+        code_version_table_len,
+        prefill_tlbs,
+        &[],
+    )
+}
+
+fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+    block: &aero_jit_x86::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    options: Tier1WasmOptions,
+    code_version_table_len: u32,
+    prefill_tlbs: &[(u64, u64)],
+    initial_table: &[u32],
+) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
+    assert!(
+        initial_table.len() <= code_version_table_len as usize,
+        "initial_table longer than code_version_table_len"
+    );
+
     let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
     validate_wasm(&wasm);
 
@@ -563,6 +590,12 @@ fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
     mem[jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize
         ..jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize + 4]
         .copy_from_slice(&code_version_table_len.to_le_bytes());
+
+    // Initialize code-version entries (defaults to all-zero when `initial_table` is empty).
+    for (i, v) in initial_table.iter().enumerate() {
+        let off = table_ptr as usize + i * 4;
+        mem[off..off + 4].copy_from_slice(&v.to_le_bytes());
+    }
 
     // RAM backing store.
     mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
@@ -2708,6 +2741,96 @@ fn tier1_inline_tlb_store_bumps_code_page_version() {
 }
 
 #[test]
+fn tier1_inline_tlb_store_code_version_bump_wraps_u32() {
+    // Version bumps are wrapping arithmetic: u32::MAX + 1 == 0.
+    let addr = 0x0u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W8, 0xAB);
+    b.store(Width::W8, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+            &block,
+            cpu,
+            ram,
+            0x1000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                ..Default::default()
+            },
+            1,
+            &[],
+            &[u32::MAX],
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram[0], 0xAB);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![0]);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_code_version_bump_wraps_u32() {
+    // Ensure wrapping bump semantics hold even when the store spans two pages (each bumped once).
+    let addr = 0xFF9u64;
+    let value = 0x1122_3344_5566_7788u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, value);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+    let mut expected_ram = ram.clone();
+    expected_ram[addr as usize..addr as usize + 8].copy_from_slice(&value.to_le_bytes());
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+            2,
+            &[],
+            &[u32::MAX, u32::MAX],
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram, expected_ram);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![0, 0]);
+}
+
+#[test]
 fn tier1_inline_tlb_store_mmio_exit_does_not_bump_code_page_version() {
     // Ensure an MMIO exit does not bump the code-version table (even if the target physical page
     // index is in-bounds).
@@ -2790,6 +2913,108 @@ fn tier1_inline_tlb_cross_page_store_mmio_exit_does_not_bump_code_page_versions(
     assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_writes, 0);
     assert_eq!(table, vec![0, 0]);
+}
+
+#[test]
+fn tier1_inline_tlb_store_slow_helper_does_not_bump_code_page_version_when_inline_tlb_stores_disabled(
+) {
+    // When stores are configured to go through the slow helper, Tier-1 must not bump the
+    // code-version table (the runtime will handle invalidation if needed).
+    let addr = 0x1000u64;
+    let value = 0x1122_3344_5566_7788u64;
+    let initial_table = [5u32, 7u32];
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, value);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+    let mut expected_ram = ram.clone();
+    expected_ram[addr as usize..addr as usize + 8].copy_from_slice(&value.to_le_bytes());
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_stores: false,
+                ..Default::default()
+            },
+            2,
+            &[],
+            &initial_table,
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram, expected_ram);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+    assert_eq!(table, initial_table.to_vec());
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_slow_helper_does_not_bump_code_page_versions() {
+    // If either page is not backed by RAM and `inline_tlb_mmio_exit=false`, Tier-1 falls back to
+    // the slow helper and should not bump the code-version table.
+    let addr = 0xFF9u64;
+    let value = 0x1122_3344_5566_7788u64;
+    let initial_table = [5u32, 7u32];
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, value);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Backing RAM is large enough for the slow helper to write across both pages, but `ram_size`
+    // makes the second page non-RAM to force the slow path.
+    let ram = vec![0u8; 0x2000];
+    let mut expected_ram = ram.clone();
+    expected_ram[addr as usize..addr as usize + 8].copy_from_slice(&value.to_le_bytes());
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
+            &block,
+            cpu,
+            ram,
+            0x1000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                inline_tlb_mmio_exit: false,
+                ..Default::default()
+            },
+            2,
+            &[],
+            &initial_table,
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram, expected_ram);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_writes, 1);
+    assert_eq!(table, initial_table.to_vec());
 }
 
 #[test]
