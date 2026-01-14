@@ -56,6 +56,62 @@ fn translates_sync_with_group_sync_to_wgsl() {
 }
 
 #[test]
+fn translates_sync_uav_with_group_sync_to_wgsl() {
+    // Translator-only test: build the decoded IR directly.
+    //
+    // This corresponds to `DeviceMemoryBarrierWithGroupSync()`.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_UAV_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(translated.wgsl.contains("workgroupBarrier()"));
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn translates_sync_all_memory_with_group_sync_to_wgsl() {
+    // Translator-only test: build the decoded IR directly.
+    //
+    // This corresponds to `AllMemoryBarrierWithGroupSync()`.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_THREAD_GROUP_SYNC
+                    | SYNC_FLAG_UAV_MEMORY
+                    | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(translated.wgsl.contains("workgroupBarrier()"));
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
 fn translates_sync_uav_fence_only_to_wgsl() {
     // Translator-only test: build the decoded IR directly.
     //
