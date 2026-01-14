@@ -280,6 +280,26 @@ impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
             )),
         })
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> aero_storage::Result<()> {
+        if len == 0 {
+            if offset > self.backend.len() {
+                return Err(aero_storage::DiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.backend.len(),
+                });
+            }
+            return Ok(());
+        }
+
+        let len_usize = usize::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let capacity = self.backend.len();
+        self.check_bounds(offset, len_usize, capacity)?;
+        self.backend
+            .discard_range(offset, len)
+            .map_err(|e| self.map_backend_error(e, offset, len_usize, capacity))
+    }
 }
 
 fn map_device_io_error(err: io::Error) -> BlockBackendError {

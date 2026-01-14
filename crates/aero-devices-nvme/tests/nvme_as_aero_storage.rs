@@ -90,6 +90,35 @@ impl DiskBackend for MemDiskBackend {
     fn flush(&mut self) -> Result<(), DiskError> {
         Ok(())
     }
+
+    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> Result<(), DiskError> {
+        if sectors == 0 {
+            return Ok(());
+        }
+
+        let sector_size = self.sector_size as usize;
+        let len_bytes = sectors
+            .checked_mul(u64::from(self.sector_size))
+            .ok_or(DiskError::Io)? as usize;
+        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let cap = self.total_sectors();
+        if end_lba > cap {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: cap,
+            });
+        }
+
+        let start = (lba as usize) * sector_size;
+        let end = start + len_bytes;
+        self.data[start..end].fill(0);
+        Ok(())
+    }
 }
 
 #[test]
@@ -162,3 +191,20 @@ fn nvme_backend_as_aero_virtual_disk_maps_out_of_range_to_out_of_bounds() {
     ));
 }
 
+#[test]
+fn nvme_backend_as_aero_virtual_disk_discard_range_forwards_to_backend() {
+    let backend = Box::new(MemDiskBackend::new(512, 4));
+    let mut disk = NvmeBackendAsAeroVirtualDisk::new(backend).unwrap();
+
+    let payload = vec![0x5Au8; 512];
+    disk.write_at(0, &payload).unwrap();
+
+    let mut out = vec![0u8; 512];
+    disk.read_at(0, &mut out).unwrap();
+    assert_eq!(out, payload);
+
+    disk.discard_range(0, 512).unwrap();
+
+    disk.read_at(0, &mut out).unwrap();
+    assert_eq!(out, vec![0u8; 512]);
+}

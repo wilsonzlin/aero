@@ -116,5 +116,46 @@ impl VirtualDisk for NvmeBackendAsAeroVirtualDisk {
             .flush()
             .map_err(|e| self.map_backend_error(e, 0, 0))
     }
-}
 
+    fn discard_range(&mut self, offset: u64, len: u64) -> StorageResult<()> {
+        if len == 0 {
+            if offset > self.capacity_bytes {
+                return Err(StorageDiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.capacity_bytes,
+                });
+            }
+            return Ok(());
+        }
+
+        let sector_size = u64::from(self.sector_size);
+        let alignment = self.sector_size as usize;
+
+        // Enforce sector alignment (matches read/write paths).
+        if !offset.is_multiple_of(sector_size) {
+            let len = usize::try_from(offset).map_err(|_| StorageDiskError::OffsetOverflow)?;
+            return Err(StorageDiskError::UnalignedLength { len, alignment });
+        }
+        if !len.is_multiple_of(sector_size) {
+            let len = usize::try_from(len).map_err(|_| StorageDiskError::OffsetOverflow)?;
+            return Err(StorageDiskError::UnalignedLength { len, alignment });
+        }
+
+        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        let len_usize = usize::try_from(len).unwrap_or(usize::MAX);
+        if end > self.capacity_bytes {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: len_usize,
+                capacity: self.capacity_bytes,
+            });
+        }
+
+        let lba = offset / sector_size;
+        let sectors = len / sector_size;
+        self.backend
+            .discard_sectors(lba, sectors)
+            .map_err(|e| self.map_backend_error(e, offset, len_usize))
+    }
+}
