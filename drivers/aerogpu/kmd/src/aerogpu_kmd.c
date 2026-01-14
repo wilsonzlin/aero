@@ -439,9 +439,13 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
      *   bits 7-6: aspect ratio
      *   bits 5-0: refresh_rate - 60
      *
-     * For EDID 1.3/1.4, aspect ratio encoding:
-     *   00 = 16:10, 01 = 4:3, 10 = 5:4, 11 = 16:9
+     * Aspect ratio encoding:
+     *   - EDID 1.4:   00 = 16:10, 01 = 4:3, 10 = 5:4, 11 = 16:9
+     *   - EDID <=1.3: 00 = 1:1,   01 = 4:3, 10 = 5:4, 11 = 16:9
      */
+    const UCHAR edidVersion = Edid[18];
+    const UCHAR edidRevision = Edid[19];
+    const BOOLEAN isEdid14OrLater = (edidVersion > 1) || (edidVersion == 1 && edidRevision >= 4);
     for (UINT i = 0; i < 8; ++i) {
         const UCHAR b0 = Edid[38 + i * 2];
         const UCHAR b1 = Edid[38 + i * 2 + 1];
@@ -464,9 +468,9 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
         ULONGLONG num = 0;
         ULONGLONG den = 0;
         switch (aspect) {
-        case 0: /* 16:10 */
-            num = 10;
-            den = 16;
+        case 0: /* EDID 1.4: 16:10, EDID <=1.3: 1:1 */
+            num = isEdid14OrLater ? 10 : 1;
+            den = isEdid14OrLater ? 16 : 1;
             break;
         case 1: /* 4:3 */
             num = 3;
