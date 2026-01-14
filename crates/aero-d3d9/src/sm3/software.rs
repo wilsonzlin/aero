@@ -2006,6 +2006,41 @@ mod tests {
     }
 
     #[test]
+    fn collect_used_pixel_inputs_includes_dp2add_predicate() {
+        // Regression test: ensure the dp2add path still visits instruction modifiers.
+        let op = IrOp::Dp2Add {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_temp(0),
+            src1: src_temp(1),
+            src2: src_temp(2),
+            modifiers: InstModifiers {
+                predicate: Some(PredicateRef {
+                    reg: RegRef {
+                        file: RegFile::Input,
+                        index: 7,
+                        relative: None,
+                    },
+                    component: SwizzleComponent::X,
+                    negate: false,
+                }),
+                ..InstModifiers::none()
+            },
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert_eq!(used.len(), 1);
+        assert!(used.contains(&(RegFile::Input, 7)));
+    }
+
+    #[test]
     fn exec_dp2add_matches_sm3_definition() {
         let op = IrOp::Dp2Add {
             dst: Dst {
