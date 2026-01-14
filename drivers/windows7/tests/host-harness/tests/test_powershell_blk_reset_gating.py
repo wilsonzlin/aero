@@ -35,7 +35,7 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
 
     def test_skip_reason_is_parsed_from_marker(self) -> None:
         # Ensure we parse `reason=` from the guest marker so CI logs surface *why* it was skipped.
-        self.assertIn(r"virtio-blk-reset\\|SKIP\\|reason=", self.text)
+        self.assertIn(r"virtio-blk-reset\|SKIP\|reason=", self.text)
 
 
 if __name__ == "__main__":

@@ -6880,7 +6880,7 @@ try {
     }
     "VIRTIO_BLK_RESET_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|SKIP\\|reason=([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|SKIP\|reason=([^|\r\n]+)") {
         $reason = $Matches[1]
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
