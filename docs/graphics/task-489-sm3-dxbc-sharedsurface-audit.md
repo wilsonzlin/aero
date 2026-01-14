@@ -291,6 +291,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
 - `1dcec36ab` — `test(sm3): add 1D sampler dcl coverage`
 - `0516665f7` — `test(sm3): cover non-2D texldp/texldd swizzles`
 - `b6b6bec11` — `test(sm3): cover 1D texldp/texldd and clean up software matcher`
+- `362261e8d` — `test(sm3): cover texldl swizzles for 1D/3D/cube samplers`
+- `02e042470` — `fix(sm3): support texldb bias for 1D textures in WGSL`
 - `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
 - `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
 - `9f3c546f8` — `docs(graphics): link task-489 audit from SM3 translation notes`
@@ -339,6 +341,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
 
 **Notes / follow-ups:**
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
+- WGSL does not support `textureSampleBias` for `texture_1d`; `texldb` for 1D samplers is lowered via
+  `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
 - The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) is currently a 2D-only
   texture sampler model; it does not emulate 1D/3D/cube sampling.
 - The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.

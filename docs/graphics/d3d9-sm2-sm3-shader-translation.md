@@ -40,6 +40,9 @@ Sampler texture types come from `dcl_* s#` when present; when absent, samplers d
 Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate dimensionality
 `x`/`xy`/`xyz` (including for `texldp`/`texldb`/`texldd`/`texldl`).
 
+Note: WGSL does not support `textureSampleBias` for `texture_1d`, so SM3 `texldb` with a 1D sampler is
+lowered via `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
+
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
