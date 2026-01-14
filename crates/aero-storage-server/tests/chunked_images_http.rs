@@ -270,6 +270,7 @@ async fn chunked_manifest_alias_endpoint_works() {
     let (app, _dir, expected_manifest) = setup_app(None).await;
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/manifest")
@@ -282,6 +283,24 @@ async fn chunked_manifest_alias_endpoint_works() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/manifest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        expected_manifest.as_bytes().len().to_string()
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -525,6 +544,7 @@ async fn versioned_chunked_manifest_alias_endpoint_works() {
     let (app, _dir, expected_manifest) = setup_versioned_app().await;
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/v1/manifest")
@@ -537,6 +557,24 @@ async fn versioned_chunked_manifest_alias_endpoint_works() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/chunked/v1/manifest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        expected_manifest.as_bytes().len().to_string()
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
