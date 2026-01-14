@@ -3483,15 +3483,17 @@ impl XhciController {
                 Some(start) => Some(start),
                 None => Some(ring),
             };
-            if halt_endpoint {
-                let mut ctx = slot.endpoint_contexts[0];
-                ctx.set_endpoint_state(EP_STATE_HALTED);
-                slot.endpoint_contexts[0] = ctx;
-                if slot.device_context_ptr != 0 {
-                    let dev_ctx = DeviceContext32::new(slot.device_context_ptr);
-                    let _ = dev_ctx.write_endpoint_context(mem, endpoint_id, &ctx);
-                }
-            }
+        }
+        if halt_endpoint {
+            // Keep the guest endpoint context and controller-local shadow state in sync. Use the
+            // shared helper so we don't overwrite unrelated fields (e.g. TR Dequeue Pointer) when
+            // snapshot/restore or test harnesses mutate the guest context directly.
+            self.write_endpoint_state_to_context(
+                mem,
+                slot_id,
+                endpoint_id,
+                context::EndpointState::Halted,
+            );
         }
         if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
             if control_td.td_start.is_some() {
