@@ -119,6 +119,47 @@ fn xhci_step_1ms_does_not_dma_after_host_controller_error() {
 }
 
 #[test]
+fn xhci_step_1ms_does_not_dma_after_host_controller_error_even_with_pending_command_ring_work() {
+    let mut mem = CountingMem::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // Enable RUN so command-ring execution is possible.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    // Clear the deferred dma-on-RUN probe so any subsequent DMA reads come from command-ring
+    // execution (not the RUN edge probe).
+    xhci.tick_1ms_with_dma(&mut mem);
+
+    // Configure a host-side command ring with a runnable TRB and ring doorbell 0 so `step_1ms`
+    // would normally DMA-read the TRB from guest memory.
+    let cmd_ring = 0x3000u64;
+    xhci.set_command_ring(cmd_ring, true);
+    let mut cmd = Trb::new(0, 0, 0);
+    cmd.set_trb_type(TrbType::NoOpCommand);
+    cmd.set_cycle(true);
+    cmd.write_to(&mut mem, cmd_ring);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+
+    mem.reset_counts();
+    xhci.step_1ms(&mut mem);
+    assert!(
+        mem.reads > 0,
+        "expected command-ring processing to DMA-read guest memory before HCE is latched"
+    );
+
+    // Re-ring doorbell 0 so there is still pending command-ring work when we enter HCE.
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+
+    force_hce(&mut xhci, &mut mem);
+
+    // With HCE latched, the controller must not touch guest memory even if the command ring is
+    // kicked and runnable.
+    mem.reset_counts();
+    xhci.step_1ms(&mut mem);
+    assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
+    assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
+}
+
+#[test]
 fn xhci_tick_1ms_with_dma_does_not_dma_after_host_controller_error_even_with_run_set() {
     let mut mem = CountingMem::new(0x20_000);
     let mut xhci = XhciController::new();
