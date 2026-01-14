@@ -1125,7 +1125,7 @@ jobs:
           {
             echo "### Win7 virtio host harness"
             echo ""
-            echo "- Harness step: ${{ steps.harness.outcome }}"
+            echo "- Harness step: ${{ steps.harness.outcome || 'skipped' }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
             if [[ -n "${runner_line}" ]]; then
               echo "- ${runner_line}"
