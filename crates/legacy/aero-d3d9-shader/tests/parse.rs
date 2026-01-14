@@ -658,6 +658,30 @@ fn malformed_predicated_missing_predicate_token_errors() {
 }
 
 #[test]
+fn malformed_predicated_relative_predicate_token_errors() {
+    // Predicate token uses the same encoding as a source parameter and may technically set the
+    // relative-addressing bit. However, the predicate is always the *last* operand token, so a
+    // relative predicate encoding cannot provide the required extra token.
+    let words = [
+        0xFFFE_0200,
+        0x1300_0001, // mov len=3 + predicated
+        0x800F_0000, // r0
+        0xB000_3000, // p0.x with RELATIVE bit set (missing relative token)
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_mov_missing_dst_token_errors() {
     // mov with an empty operand list should be rejected.
     let words = [0xFFFE_0200, 0x0000_0001, 0x0000_FFFF];
