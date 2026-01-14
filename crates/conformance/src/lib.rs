@@ -12,9 +12,18 @@
 //! When running via [`run_from_env`], the following environment variables are recognised:
 //!
 //! - `AERO_CONFORMANCE_CASES` (default: `512`): total number of generated test cases to execute.
+//!   `_` separators are allowed (e.g. `10_000`).
 //! - `AERO_CONFORMANCE_SEED` (default: `0x52c6_71d9_a4f2_31b9`): RNG seed for deterministic runs.
-//! - `AERO_CONFORMANCE_FILTER` (optional): only run templates whose `name` or `coverage_key`
-//!   contains this substring (case-insensitive).
+//!   Supports decimal or `0x...` hex, and `_` separators.
+//! - `AERO_CONFORMANCE_FILTER` (optional): template filter. Terms are split on commas, semicolons,
+//!   and whitespace.
+//!   - `key:<coverage_key>` / `coverage:<coverage_key>` / `coverage_key:<coverage_key>`: exact
+//!     match on `coverage_key`
+//!   - `name:<substring>`: substring match on template name (case-insensitive)
+//!   - unprefixed: if it matches a known `coverage_key`, it selects that key exactly; otherwise it
+//!     is treated as a case-insensitive substring match on template name.
+//! - `AERO_CONFORMANCE_REFERENCE_ISOLATE` (default: `1`): run the host reference backend in a
+//!   forked child process for isolation. Some templates intentionally fault and require isolation.
 //! - `AERO_CONFORMANCE_REPORT_PATH` (optional): write a JSON conformance report to this path
 //!   (on first failure and again at the end of the run).
 
