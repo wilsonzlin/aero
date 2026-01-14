@@ -178,9 +178,10 @@ const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 =
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = DrawIndexedIndirectArgs::SIZE_BYTES;
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
-                                                     // `vec4<f32>` color + `vec4<u32>` counts.
+                                                      // `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 
+#[allow(dead_code)]
 fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
     // Keep ordering consistent with `VertexPullingLayout::bind_group_layout_entries()`:
     // - vertex buffers in pulling-slot order
