@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::tier1::ir::{GuestReg, IrInst, IrTerminator, SideEffects};
+use crate::tier1::ir::{IrInst, IrTerminator, SideEffects};
 use crate::tier1::{
     discover_block_mode, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
 };
@@ -95,17 +95,10 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     if matches!(
         &ir.terminator,
         IrTerminator::ExitToInterpreter { next_rip } if *next_rip == entry_rip
-    ) && ir.insts.iter().all(|inst| {
-        // Tier-1 may emit per-instruction RIP maintenance writes (e.g. `write.rip <next_rip>`)
-        // even for blocks that don't end up executing any guest instruction (unsupported first
-        // instruction -> immediate `ExitToInterpreter { next_rip: entry }`).
-        //
-        // These blocks still make zero architectural progress and should be rejected to avoid JIT
-        // thrash, so treat RIP writes as non-meaningful side effects for the purposes of this
-        // "bailout-at-entry" detection.
-        matches!(inst, IrInst::WriteReg { reg: GuestReg::Rip, .. })
-            || inst.side_effects() == SideEffects::NONE
-    })
+    ) && ir
+        .insts
+        .iter()
+        .all(|inst| inst.side_effects() == SideEffects::NONE)
     {
         return Err(Tier1CompileError::BailoutAtEntry { entry_rip });
     }
