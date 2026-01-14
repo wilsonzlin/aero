@@ -230,11 +230,21 @@ impl PciConfigSpace {
         {
             return;
         }
-        match size {
-            1 => self.data[offset] = value as u8,
-            2 => self.data[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes()),
-            4 => self.data[offset..offset + 4].copy_from_slice(&value.to_le_bytes()),
-            _ => {}
+
+        // PCI Status register bytes (0x06..=0x07) are read-only / RW1C on real hardware. Guests
+        // commonly write the Command register using a 32-bit store at 0x04 with zeros in the upper
+        // 16 bits; such writes must not clobber device-managed status bits.
+        //
+        // Keep this legacy config-space model conservative and hardware-like by ignoring writes to
+        // the Status bytes.
+        let status_range = 0x06..0x08;
+
+        for i in 0..size {
+            let addr = offset + i;
+            if status_range.contains(&addr) {
+                continue;
+            }
+            self.data[addr] = ((value >> (8 * i)) & 0xFF) as u8;
         }
     }
 }
@@ -802,6 +812,18 @@ mod tests {
         cfg.write(0xff, 2, 0x1234);
         cfg.write(0xfe, 4, 0x1234_5678);
         cfg.write(0, 3, 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn dword_command_write_does_not_clobber_status_register() {
+        let mut cfg = PciConfigSpace::new();
+        cfg.set_u16(0x06, 0x1234);
+
+        // Common pattern: 32-bit write at 0x04 with upper half (Status) = 0.
+        cfg.write(0x04, 4, 0x0000_0006);
+
+        assert_eq!(cfg.read(0x06, 2), 0x1234);
+        assert_eq!(cfg.read(0x04, 2), 0x0006);
     }
 
     #[test]
