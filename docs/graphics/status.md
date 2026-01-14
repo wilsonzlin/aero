@@ -401,6 +401,7 @@ Representative test pointers:
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs)
+  - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
 - Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see e.g. `d3d10_*`, `d3d11_*`)
