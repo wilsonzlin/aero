@@ -2419,7 +2419,7 @@ mod tests {
         assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[2]));
 
         // Enable CRTC byte mode (0x17 bit6); now start=1 shifts by 1 byte (1 pixel).
-        dev.crtc[0x17] = dev.crtc[0x17] | 0x40;
+        dev.crtc[0x17] |= 0x40;
         dev.dirty = true;
         dev.present();
         assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
