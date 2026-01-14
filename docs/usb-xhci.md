@@ -61,6 +61,9 @@ Regression tests:
 - `crates/aero-machine/tests/xhci_snapshot.rs` asserts machine-level snapshot/restore semantics for
   xHCI (restores controller state, re-drives PCI INTx into the platform interrupt sink, preserves
   host-attached device handles, and clears passthrough host async state).
+- `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` asserts that detaching a device clears
+  any pending endpoint activations/doorbells so re-attaching at the same topology path does not
+  spuriously consume TRBs without a new doorbell.
 
 ---
 
@@ -521,6 +524,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_extcaps.rs`
 - `crates/aero-usb/tests/xhci_supported_protocol.rs`
 - `crates/aero-usb/tests/xhci_ports.rs`
+- `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` (detach clears pending doorbell work)
 - `crates/aero-usb/tests/xhci_snapshot_*.rs` (snapshot/restore, legacy compatibility, determinism)
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
 - `crates/aero-usb/tests/xhci_control_*.rs` (EP0 control transfer behavior)
