@@ -518,6 +518,9 @@ When `AUTH_MODE=jwt`, the relay uses the JWT `sid` claim as the per-session quot
 key and currently enforces **at most one active relay session per `sid` at a
 time**.
 
+This is keyed by the `sid` claim (not by the raw JWT string), so minting multiple
+different JWTs with the same `sid` does not allow concurrent sessions.
+
 If another session already exists for the same `sid`, attempts to create a new
 session are rejected with `session_already_active`:
 

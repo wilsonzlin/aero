@@ -192,10 +192,11 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
     the relay enforces per-session quotas using the JWT `sid` claim internally (not the
     returned `sessionId`) and rejects concurrent sessions with the same `sid` with
     `409 Conflict` (`code: "session_already_active"`).
+    Minting a different JWT with the same `sid` does not allow a second concurrent session.
     Recovery: close the existing WebRTC session (or wait for it to end) before retrying, or mint a JWT with a different `sid` for a separate concurrent session.
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
   - guarded by the same origin policy as signaling endpoints
- 
+
 ## L2 tunnel bridging (optional)
 
 The relay can also bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
