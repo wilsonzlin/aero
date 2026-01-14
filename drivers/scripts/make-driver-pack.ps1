@@ -452,6 +452,13 @@ try {
         $msg = $_.Exception.Message
         $missingTargets += $t.Id
         $targetErrors[$t.Id] = $msg
+
+        # Copy-VirtioWinDriver may have created the destination directory before failing (e.g. if
+        # the source exists but contains no files, or a copy error occurs). Ensure the staged tree
+        # matches the recorded "missing" state by deleting any partial/empty directory.
+        if (Test-Path -LiteralPath $t.DestDir -PathType Container) {
+          Remove-Item -LiteralPath $t.DestDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
       }
     }
 
