@@ -58,12 +58,18 @@ It:
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
 
-For convenience when scraping CI logs, the harness may also emit a host-side virtio-net marker when the guest
-includes large-transfer fields:
+For convenience when scraping CI logs, the harness may also emit stable host-side summary markers (best-effort;
+do not affect PASS/FAIL):
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...`
-  - also mirrors best-effort interrupt allocation fields when present:
-    `msi=...|msi_messages=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS/FAIL/INFO|write_ok=...|write_bytes=...|write_mbps=...|flush_ok=...|read_ok=...|read_bytes=...|read_mbps=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS/FAIL/SKIP|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|PASS/FAIL/SKIP|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|PASS/FAIL/SKIP|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|PASS/FAIL/SKIP|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=...|capture=...`
 
 It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
 
@@ -72,8 +78,6 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=...|capture=...`
 - `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1/transitional|vendor=1af4|devices=...`
 
 It also mirrors the standalone guest IRQ diagnostic lines (when present):
