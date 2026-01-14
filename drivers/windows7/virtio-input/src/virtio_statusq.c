@@ -738,7 +738,9 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
 
         UNREFERENCED_PARAMETER(len);
 
-        if (cookie != NULL) {
+        if (cookie == NULL) {
+            VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq completion cookie NULL\n");
+        } else {
             UINT16 idx;
             if (VirtioStatusQCookieToIndex(q->TxVa, (size_t)q->TxBufferStride, q->TxBufferCount, cookie, &idx)) {
                 VirtioStatusQPushFreeTxBuffer(q, idx);
