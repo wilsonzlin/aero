@@ -14,20 +14,22 @@ export interface PresenterScreenshot {
    *
    * This type is returned by two different capture paths:
    *
-   * - `Presenter.screenshot()` (**deterministic source framebuffer readback**):
-   *   - Returns the same RGBA8 pixels most recently passed to `present()` (or uploaded
-   *     into the backend's source texture).
-   *   - The buffer is **tight-packed**: `byteLength === width * height * 4` and each row
-   *     is exactly `width * 4` bytes (no per-row padding/stride).
-   *   - `width/height` are the **source** framebuffer dimensions.
-   *   - Callers should NOT expect the result to include:
-   *     - scaling / filtering / integer-fit logic
-   *     - letterboxing / clearColor
-   *     - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
-   *     - sRGB encode / browser color management
-   *     - cursor composition or other overlays
-   *   - Hash-based tests rely on this contract being stable. Do not “fix” this to read back
-   *     the presented canvas output.
+    * - `Presenter.screenshot()` (**deterministic source framebuffer readback**):
+    *   - Returns the same RGBA8 pixels most recently passed to `present()` (or uploaded
+    *     into the backend's source texture).
+    *   - Color space is whatever the caller provided to `present()` (in the main runtime this
+    *     is treated as **linear** RGBA8; sRGB encode happens during presentation, not here).
+    *   - The buffer is **tight-packed**: `byteLength === width * height * 4` and each row
+    *     is exactly `width * 4` bytes (no per-row padding/stride).
+    *   - `width/height` are the **source** framebuffer dimensions.
+    *   - Callers should NOT expect the result to include:
+    *     - scaling / filtering / integer-fit logic
+    *     - letterboxing / clearColor
+    *     - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
+    *     - sRGB encode / browser color management
+    *     - cursor composition or other overlays
+    *   - Hash-based tests rely on this contract being stable. Do not “fix” this to read back
+    *     the presented canvas output.
    *
    * - `Presenter.screenshotPresented()` (**debug-only presented output readback**; optional):
    *   - Reads back the final pixels rendered to the canvas/surface **after** presentation

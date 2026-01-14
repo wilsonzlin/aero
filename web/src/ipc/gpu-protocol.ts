@@ -211,6 +211,12 @@ export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
    * Screenshot data is defined as a readback of the *source framebuffer* pixels
    * (deterministic bytes for hashing/tests), not a capture of the presented canvas.
    *
+   * Note: the returned `rgba8` bytes are in **linear** RGBA8 space (the same space
+   * used internally by the presenter before sRGB encode / browser color management).
+   * If the active scanout/cursor surface is an `*_SRGB` format, the worker decodes
+   * sRGB→linear before returning bytes so cursor blending and screenshot semantics
+   * match the presentation path.
+   *
    * When `true`, the worker will composite the current cursor image over the source
    * framebuffer in the returned RGBA8 buffer (best-effort).
    *
@@ -375,8 +381,12 @@ export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
    * RGBA8 bytes in row-major order with a top-left origin.
    *
    * Semantics: deterministic readback of the *source framebuffer* content (pre-scaling,
-   * pre-sRGB/color-management, etc). This is intentionally not a capture of "what the
-   * user sees" on the canvas.
+   * pre-sRGB encode / browser color management, etc). This is intentionally not a capture
+   * of "what the user sees" on the canvas.
+   *
+   * Color space: **linear** RGBA8. The GPU worker treats scanout/cursor `*_SRGB` formats
+   * as sRGB-encoded bytes and decodes them to linear before returning `rgba8` so the
+   * screenshot buffer matches the presenter's linear blending semantics.
    *
    * If requested with `includeCursor: true`, the cursor overlay is composited over
    * the source framebuffer (best-effort).
