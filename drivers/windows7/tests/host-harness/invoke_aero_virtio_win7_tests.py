@@ -43,7 +43,8 @@ It:
   - inject deterministic virtio-input events:
     - keyboard + relative mouse: `--with-input-events` / `--with-virtio-input-events`
       - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
-    - mouse wheel: `--with-input-wheel` / `--with-virtio-input-wheel` (requires QMP `input-send-event`)
+    - mouse wheel: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`)
+      (requires QMP `input-send-event`)
     - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys` (requires QMP `input-send-event`)
     - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events` (requires QMP `input-send-event`)
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
@@ -1572,7 +1573,9 @@ def _try_qmp_input_inject_virtio_input_events(
 
             if want_wheel:
                 raise RuntimeError(
-                    "QMP command 'input-send-event' is required for --with-input-wheel/--with-input-events-extended "
+                    "QMP command 'input-send-event' is required for "
+                    "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel or "
+                    "--with-input-events-extended/--with-input-events-extra "
                     "(scroll/extra input injection), but this QEMU build does not support it. "
                     "Upgrade QEMU or omit those flags."
                 ) from e
