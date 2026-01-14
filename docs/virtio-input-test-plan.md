@@ -461,6 +461,34 @@ may be multiples of the injected values.
 If the running QEMU build rejects all tested axis name combinations (`wheel`/`vscroll` × `hscroll`/`hwheel`), the harness
 fails with a clear error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
+### 4.3.2 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+
+The base `virtio-input-events` marker validates basic keyboard + mouse motion/click delivery, and `virtio-input-wheel`
+validates scrolling. To also validate additional HID report paths deterministically, the guest selftest can emit three
+extra markers:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS/FAIL/SKIP|...` (Shift/Ctrl/Alt + F1)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS/FAIL/SKIP|...` (mouse side/extra buttons)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS/FAIL/SKIP|...` (wheel + horizontal wheel)
+
+Guest image requirement:
+
+- Provision the guest selftest to run with `--test-input-events-extended` or set guest env var
+  `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`.
+  - This is in addition to enabling the base `--test-input-events` flow; the harness will fail if `virtio-input-events`
+    is skipped.
+
+Host harness flags:
+
+- PowerShell: `-WithInputEventsExtended` (alias: `-WithInputEventsExtra`)
+- Python: `--with-input-events-extended` (alias: `--with-input-events-extra`)
+
+When enabled, the harness:
+
+1. Enables the base input-events injection (as if `-WithInputEvents` / `--with-input-events` were set)
+2. Injects an extended deterministic sequence via QMP `input-send-event` (modifiers + side/extra buttons + wheel)
+3. Requires all three `virtio-input-events-*` markers above to PASS
+
 ### 4.4 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 
 This is the tablet/absolute-pointer companion to `virtio-input-events` (keyboard + relative mouse).

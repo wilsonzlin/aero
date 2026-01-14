@@ -336,6 +336,35 @@ marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harnes
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
+#### Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+
+The base `virtio-input-events` marker validates that basic keyboard + mouse motion/click reports are delivered end-to-end.
+To also validate additional HID report paths deterministically, the guest selftest can emit three extra markers:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS|...` (Shift/Ctrl/Alt + F1)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS|...` (mouse side/extra buttons)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS|...` (wheel + horizontal wheel)
+
+To enable and require these extended markers, run the harness with:
+
+- PowerShell: `-WithInputEventsExtended` (alias: `-WithInputEventsExtra`)
+- Python: `--with-input-events-extended` (alias: `--with-input-events-extra`)
+
+This:
+
+- **implies** `-WithInputEvents` / `--with-input-events`
+- injects an extended deterministic sequence via QMP `input-send-event`
+- requires all three `virtio-input-events-*` markers above to PASS
+
+Guest requirement:
+
+- Provision the guest selftest to run with `--test-input-events-extended` (or env var
+  `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`). This is in addition to the base `--test-input-events` flag; the
+  harness will fail if `virtio-input-events` is skipped.
+
+Note: This is separate from `-WithInputWheel` / `--with-input-wheel`, which instead requires the aggregate marker
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`.
+
 ### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
 
 When a virtio tablet device (`virtio-tablet-pci`) is attached, the guest selftest can optionally validate **absolute

@@ -89,6 +89,13 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       timing flakiness. In that case the guest may observe multiple injected scroll events; the wheel selftest is
       designed to handle this, and totals may be multiples of the injected values.
     - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS/FAIL/SKIP|...`.
+  - Optional end-to-end **extended virtio-input events** smoke tests (`virtio-input-events-modifiers`, `virtio-input-events-buttons`, `virtio-input-events-wheel`):
+    - Disabled by default.
+    - Enable with `--test-input-events-extended` or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`.
+    - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
+      - PowerShell: `-WithInputEventsExtended` (alias: `-WithInputEventsExtra`)
+      - Python: `--with-input-events-extended` (alias: `--with-input-events-extra`)
+    - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-<subtest>|PASS/FAIL/SKIP|...` markers for each enabled subtest.
   - Optional end-to-end **tablet (absolute pointer)** event delivery smoke test (`virtio-input-tablet-events`):
     - Disabled by default (requires host-side QMP injection).
     - Enable with `--test-input-tablet-events` (alias: `--test-tablet-events`) or env var
