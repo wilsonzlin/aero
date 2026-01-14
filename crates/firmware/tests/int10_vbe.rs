@@ -204,7 +204,8 @@ fn int10_vbe_set_mode_clears_framebuffer_and_reports_current_mode() {
     cpu.set_ax(0x4F03);
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(cpu.ax(), 0x004F);
-    assert_eq!(cpu.bx(), 0x118);
+    // Many BIOSes include the LFB-enabled flag (bit 14) when reporting the current mode.
+    assert_eq!(cpu.bx(), 0x118 | 0x4000);
 
     // INT 10h AH=0F should report "VESA mode active" via AL=0x6F.
     cpu.set_ax(0x0F00);

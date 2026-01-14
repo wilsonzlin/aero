@@ -43,7 +43,17 @@ impl Bios {
                 }
             }
             0x4F03 => {
-                cpu.set_bx(self.video.vbe.current_mode.unwrap_or(0));
+                // Report the current VBE mode.
+                //
+                // Per common VBE conventions, include bit 14 ("linear framebuffer enabled") when a
+                // VBE mode is active. Some boot code will call 4F03 and then pass the returned BX
+                // straight back into 4F01/4F02; our 4F01 implementation already masks off the
+                // high bits for this reason.
+                let mut mode = self.video.vbe.current_mode.unwrap_or(0);
+                if mode != 0 {
+                    mode |= 0x4000;
+                }
+                cpu.set_bx(mode);
                 vbe_success(cpu);
             }
             0x4F05 => {
