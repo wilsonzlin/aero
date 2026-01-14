@@ -29,6 +29,9 @@ constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+// D3DFVF_TEXCOORDSIZE3(1): `TEXCOORD1` is float3. For TEX1 FVFs, set 1 is unused,
+// but some runtimes may leave garbage bits in the unused D3DFVF_TEXCOORDSIZE range.
+constexpr uint32_t kD3dFvfTexCoordSize3_1 = 0x00040000u;
 
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
@@ -3991,6 +3994,169 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
   return true;
 }
 
+bool TestSetTextureStageStateUpdatesPsForLitTex1Fvfs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  dev->cmd.reset();
+
+  // SetFVF should ignore garbage D3DFVF_TEXCOORDSIZE bits for unused texcoord sets.
+  const uint32_t fvf = kFvfXyzNormalDiffuseTex1 | kD3dFvfTexCoordSize3_1;
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE|TEX1 + garbage TEXCOORDSIZE bits)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssColorOp,
+                            kD3dTopModulate,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(COLOROP=MODULATE) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssColorArg1,
+                            kD3dTaTexture,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(COLORARG1=TEXTURE) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssColorArg2,
+                            kD3dTaDiffuse,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(COLORARG2=DIFFUSE) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssAlphaOp,
+                            kD3dTopSelectArg1,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssAlphaArg1,
+                            kD3dTaTexture,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(ALPHAARG1=TEXTURE) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssAlphaArg2,
+                            kD3dTaDiffuse,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(ALPHAARG2=DIFFUSE) succeeds")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz normal diffuse tex1)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1: PS bound after draw")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|NORMAL|DIFFUSE|TEX1: PS contains texld")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|NORMAL|DIFFUSE|TEX1: PS contains mul")) {
+      return false;
+    }
+  }
+
+  // Validate SetTexture(stage0) hot-swaps the internal fixed-function PS variant
+  // when fixed-function is active (no user shaders bound).
+  {
+    D3DDDI_HRESOURCE null_tex{};
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, null_tex);
+    if (!Check(hr == S_OK, "XYZ|NORMAL|DIFFUSE|TEX1: SetTexture(stage0=null) succeeds")) {
+      return false;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1: PS still bound after SetTexture(null)")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|NORMAL|DIFFUSE|TEX1: passthrough PS does not contain texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|NORMAL|DIFFUSE|TEX1: passthrough PS does not contain mul")) {
+      return false;
+    }
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "XYZ|NORMAL|DIFFUSE|TEX1: SetTexture(stage0=texture) succeeds")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1: PS still bound after SetTexture(texture)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|NORMAL|DIFFUSE|TEX1: restored PS contains texld")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|NORMAL|DIFFUSE|TEX1: restored PS contains mul")) {
+      return false;
+    }
+  }
+
+  if (!SetTextureStageState(/*stage=*/0,
+                            kD3dTssColorOp,
+                            kD3dTopDisable,
+                            "XYZ|NORMAL|DIFFUSE|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1: PS still bound after SetTextureStageState")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|NORMAL|DIFFUSE|TEX1: disable PS does not contain texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|NORMAL|DIFFUSE|TEX1: disable PS does not contain mul")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestPsOnlyInteropXyzrhwTex1SynthesizesVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6011,6 +6177,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetTextureStageStateUpdatesPsForLitTex1Fvfs()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzrhwTex1SynthesizesVs()) {

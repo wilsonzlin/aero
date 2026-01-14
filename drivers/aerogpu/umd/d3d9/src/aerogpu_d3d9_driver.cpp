@@ -3024,6 +3024,7 @@ constexpr uint32_t kFixedfuncLightingVec4Count = 10u;
 constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
+
 constexpr uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
   const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
   switch (base) {
@@ -13594,7 +13595,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
       // Full fixed-function path: select the cache slot based on the active FVF.
-      switch (dev->fvf) {
+      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
         case kSupportedFvfXyzNormalDiffuse:
@@ -15567,6 +15569,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
         case kSupportedFvfXyzrhwDiffuseTex1:
@@ -15575,6 +15578,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
         default:
@@ -16071,9 +16075,11 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
     if (dev->user_vs) {
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      switch (dev->fvf) {
+      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
         case kSupportedFvfXyzrhwDiffuseTex1:
@@ -16082,6 +16088,7 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
         default:
@@ -26356,9 +26363,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
     if (dev->user_vs) {
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      switch (dev->fvf) {
+      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
         case kSupportedFvfXyzrhwDiffuseTex1:
@@ -26367,6 +26376,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
         default:
@@ -26378,9 +26388,14 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
       }
     }
     if (ps_slot) {
-      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-      if (FAILED(ps_hr)) {
-        return ps_hr;
+      // Guard stage0 PS selection (same as the DDI paths): unsupported stage-state
+      // combinations must not make SetTextureStageState fail.
+      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+      if (stage0_key.supported) {
+        const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+        if (FAILED(ps_hr)) {
+          return ps_hr;
+        }
       }
     }
   }
