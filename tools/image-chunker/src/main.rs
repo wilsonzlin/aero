@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -1856,10 +1856,11 @@ async fn verify_chunks(
         )?
         .progress_chars("##-"),
     );
-    pb.set_message(format!("0/{total_chunks_to_verify} chunks (0 failures)"));
+    pb.set_message(format!("0/{total_chunks_to_verify} chunks"));
 
     let chunks_checked = Arc::new(AtomicU64::new(0));
-    let failures = Arc::new(AtomicU64::new(0));
+    let bytes_checked = Arc::new(AtomicU64::new(0));
+    let cancelled = Arc::new(AtomicBool::new(false));
     let chunk_index_width: usize = manifest.chunk_index_width.try_into().map_err(|_| {
         anyhow!(
             "manifest chunkIndexWidth {} does not fit into usize",
@@ -1867,100 +1868,125 @@ async fn verify_chunks(
         )
     })?;
 
-    #[derive(Debug, Clone)]
-    struct VerifyChunkJob {
-        index: u64,
-    }
-
-    #[derive(Debug)]
-    struct VerifyChunkFailure {
-        index: u64,
-        key: String,
-        message: String,
-    }
-
     let work_cap = concurrency.saturating_mul(2).max(1);
-    let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(work_cap);
-    let (failure_tx, mut failure_rx) = tokio::sync::mpsc::unbounded_channel::<VerifyChunkFailure>();
-
-    // Only keep details for the first few failures (avoid unbounded memory usage).
-    const FAILURE_SAMPLE_LIMIT: u64 = 10;
+    let (work_tx, work_rx) = async_channel::bounded::<u64>(work_cap);
+    let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
 
     let mut workers = Vec::with_capacity(concurrency);
     for _ in 0..concurrency {
         let work_rx = work_rx.clone();
-        let failure_tx = failure_tx.clone();
+        let err_tx = err_tx.clone();
         let s3 = s3.clone();
         let bucket = bucket.to_string();
         let version_prefix = version_prefix.to_string();
         let manifest = Arc::clone(&manifest);
         let pb = pb.clone();
         let chunks_checked = Arc::clone(&chunks_checked);
-        let failures = Arc::clone(&failures);
+        let bytes_checked = Arc::clone(&bytes_checked);
+        let cancelled = Arc::clone(&cancelled);
         workers.push(tokio::spawn(async move {
-            while let Ok(job) = work_rx.recv().await {
-                let key = format!(
-                    "{version_prefix}{}",
-                    chunk_object_key_with_width(job.index, chunk_index_width)?
-                );
-                let expected_size = expected_chunk_size(manifest.as_ref(), job.index)?;
-                let expected_sha256 = expected_chunk_sha256(manifest.as_ref(), job.index)?;
-
-                if let Err(err) = verify_chunk_with_retry(
-                    &s3,
-                    &bucket,
-                    &key,
-                    expected_size,
-                    expected_sha256,
-                    retries,
-                )
-                .await
-                {
-                    let failure_no = failures.fetch_add(1, Ordering::SeqCst) + 1;
-                    if failure_no <= FAILURE_SAMPLE_LIMIT {
-                        let _ = failure_tx.send(VerifyChunkFailure {
-                            index: job.index,
-                            key: key.clone(),
-                            message: error_chain_summary(&err),
-                        });
-                    }
+            while let Ok(index) = work_rx.recv().await {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
                 }
 
-                pb.inc(expected_size);
-                let checked = chunks_checked.fetch_add(1, Ordering::SeqCst) + 1;
-                let failure_count = failures.load(Ordering::SeqCst);
-                pb.set_message(format!(
-                    "{checked}/{total_chunks_to_verify} chunks ({failure_count} failures)"
-                ));
+                let result: Result<u64> = async {
+                    let key = format!(
+                        "{version_prefix}{}",
+                        chunk_object_key_with_width(index, chunk_index_width)?
+                    );
+                    let expected_size = expected_chunk_size(manifest.as_ref(), index)?;
+                    let expected_sha256 = expected_chunk_sha256(manifest.as_ref(), index)?;
+                    verify_chunk_with_retry(
+                        &s3,
+                        &bucket,
+                        &key,
+                        expected_size,
+                        expected_sha256,
+                        retries,
+                    )
+                    .await?;
+                    Ok(expected_size)
+                }
+                .await;
+
+                match result {
+                    Ok(bytes) => {
+                        bytes_checked.fetch_add(bytes, Ordering::SeqCst);
+                        pb.inc(bytes);
+                        let checked = chunks_checked.fetch_add(1, Ordering::SeqCst) + 1;
+                        pb.set_message(format!("{checked}/{total_chunks_to_verify} chunks"));
+                    }
+                    Err(err) => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        let _ = err_tx.send(err);
+                        break;
+                    }
+                }
             }
             Ok::<(), anyhow::Error>(())
         }));
     }
-    drop(failure_tx);
-    // Drop the unused receiver handle so if all workers exit early (e.g. due to an internal error),
-    // the producer will observe the channel closing instead of deadlocking on a full queue.
+    drop(err_tx);
+    // Drop the unused receiver handle so if all workers exit early (e.g. due to an internal
+    // error), the producer will observe the channel closing instead of deadlocking on a full queue.
     drop(work_rx);
 
-    let send_result = if let Some(indices) = indices {
-        for index in indices {
-            work_tx
-                .send(VerifyChunkJob { index })
-                .await
-                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+    let send_jobs = async {
+        if let Some(indices) = indices {
+            for index in indices {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::select! {
+                    res = work_tx.send(index) => {
+                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+                    }
+                    Some(err) = err_rx.recv() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        return Err(err);
+                    }
+                }
+            }
+        } else {
+            for index in 0..chunk_count {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::select! {
+                    res = work_tx.send(index) => {
+                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+                    }
+                    Some(err) = err_rx.recv() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        return Err(err);
+                    }
+                }
+            }
         }
-        Ok(())
-    } else {
-        for index in 0..chunk_count {
-            work_tx
-                .send(VerifyChunkJob { index })
-                .await
-                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-        }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     };
+    let send_result = send_jobs.await;
     drop(work_tx);
 
     if let Err(err) = send_result {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
+        pb.finish_and_clear();
+        return Err(err);
+    }
+
+    if let Some(err) = err_rx.recv().await {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
         pb.finish_and_clear();
         return Err(err);
     }
@@ -1971,40 +1997,21 @@ async fn verify_chunks(
             .map_err(|err| anyhow!("verify worker panicked: {err}"))??;
     }
 
-    let checked = chunks_checked.load(Ordering::SeqCst);
-    let failure_count = failures.load(Ordering::SeqCst);
-
-    let mut samples: Vec<VerifyChunkFailure> = Vec::new();
-    while let Some(failure) = failure_rx.recv().await {
-        samples.push(failure);
-    }
-
     pb.finish_and_clear();
 
+    let checked = chunks_checked.load(Ordering::SeqCst);
+    let checked_bytes = bytes_checked.load(Ordering::SeqCst);
     let elapsed = started_at.elapsed();
 
     if checked != total_chunks_to_verify {
         bail!("internal error: only checked {checked}/{total_chunks_to_verify} chunks");
     }
-
-    if failure_count > 0 {
-        eprintln!(
-            "Chunk verification summary: checked {checked} chunks ({total_bytes_to_verify} bytes), failures: {failure_count} (elapsed {elapsed:.2?})"
-        );
-        if !samples.is_empty() {
-            eprintln!("First {} failures:", samples.len());
-            for failure in samples {
-                eprintln!(
-                    "  - chunk {} (s3://{bucket}/{}): {}",
-                    failure.index, failure.key, failure.message
-                );
-            }
-        }
-        bail!("chunk verification failed with {failure_count} failures");
+    if checked_bytes != total_bytes_to_verify {
+        bail!("internal error: only checked {checked_bytes}/{total_bytes_to_verify} bytes");
     }
 
     println!(
-        "Verified {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?}"
+        "Verified {checked}/{total_chunks_to_verify} chunks ({checked_bytes} bytes) in {elapsed:.2?}"
     );
     Ok(())
 }
