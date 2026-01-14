@@ -40,7 +40,7 @@ Default run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\drivers\windows7\virtio-snd\scripts\run-host-tests.ps1
 ```
 
-Replace `pwsh` with `powershell` if you are using Windows PowerShell.
+Replace `pwsh` with `powershell.exe` if you are using Windows PowerShell.
 
 Clean rebuild:
 
