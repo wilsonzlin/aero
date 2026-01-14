@@ -111,8 +111,11 @@ Notes:
 - Web implementation: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
 - Web init wiring: `web/src/workers/io_xhci_init.ts` (attempts to initialize `XhciControllerBridge` if present in the WASM build).
 - WASM export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`). Today this
-  is a **stub** register file (byte-addressed MMIO window) with a tick counter and snapshot helpers;
-  `irq_asserted()` currently always returns `false`.
+  wraps the Rust controller model (`aero_usb::xhci::XhciController`) and exposes:
+  - MMIO reads/writes,
+  - PCI command gating (e.g. DMA is gated on Bus Master Enable),
+  - INTx IRQ level (`irq_asserted()`), and
+  - deterministic snapshot/restore (controller state + a tick counter).
 - WebHID attachment behind xHCI is planned via `XhciHidTopologyManager` (`web/src/hid/xhci_hid_topology.ts`),
   but `XhciControllerBridge` does not yet expose the required topology mutation APIs
   (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
@@ -141,17 +144,26 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
 #### Minimal controller MMIO surfaces
 
 - Native/shared Rust: `aero_usb::xhci::XhciController`
-  - Minimal MMIO register file (CAPLENGTH/HCIVERSION, HCSPARAMS/HCCPARAMS, USBCMD, USBSTS, CRCR, DCBAAP) with basic unaligned access handling.
+  - Minimal MMIO register file with basic unaligned access handling:
+    - Capability registers: CAPLENGTH/HCIVERSION, HCSPARAMS1 (port count), HCCPARAMS1 (xECP), DBOFF, RTSOFF.
+    - A small Supported Protocol xECP list (USB 2.0 + speed IDs) sized to `port_count`.
+    - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
+  - DBOFF/RTSOFF report realistic offsets, but the doorbell array + runtime register blocks are not
+    implemented yet.
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
+  - A tiny **host-side** USB2-only root hub/port model (`attach_device`, `read_portsc`, reset timer,
+    Port Status Change Event TRBs). This is primarily used by tests; it is not yet wired through the
+    guest-visible MMIO port register block or a real guest event ring.
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Forwards MMIO reads/writes into the canonical Rust controller model (`aero_usb::xhci::XhciController`).
   - `step_frames()` / `tick()` counter only (no scheduling yet).
   - Deterministic snapshot/restore of the controller state + tick count.
   - IRQ level surfaced via `irq_asserted()` (level-triggered INTx semantics).
 
-These are **not** full xHCI implementations (no doorbells, no event ring, no port state machine; slot/context support is partial).
+These are **not** full xHCI implementations. In particular, the guest-visible doorbell array,
+runtime interrupter registers, and guest event ring model are not implemented yet.
 
 #### TRB + ring building blocks
 
@@ -196,8 +208,12 @@ MMIO controller stubs.
 
 ### Still MVP-relevant but not implemented yet
 
-- Root hub + per-port register model (connect/reset/change bits, timers).
-- Doorbells, command ring + event ring, interrupters, and slot/endpoint context state machines.
+- Guest-visible port register block + delivery of port-change events via a real guest event ring
+  (today, ports/events exist primarily as host-side helpers for tests).
+- Doorbell array + runtime interrupter registers (ERST/ERDP, IMAN/IMOD, etc) and wiring them into
+  the controller core.
+- Full command ring + event ring integration (today, command-ring processing exists as standalone
+  helpers/tests, but the controller MMIO surface does not yet expose the full model).
 - Endpoint 0 control transfer engine wired into the controller (beyond the test harness).
 - Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
@@ -207,8 +223,12 @@ MMIO controller stubs.
 
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
-- **Root hub / port model** (connect/disconnect/reset/change events) at the xHCI level.
-- **Command ring** and xHCI slot/endpoint context state machines (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc).
+- **Guest-visible root hub / port model** (PORTSC operational registers + change-event delivery via
+  a real guest event ring). A small host-side USB2 port model exists, but it is not yet wired into
+  the MMIO register model.
+- **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
+  (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
+  helpers exist for tests, but they are not yet exposed as a guest-visible controller.
 - **Setup TRBs / full endpoint 0 control transfer engine** (control requests are handled at the USB device-model layer, but not yet via xHCI-style TRBs).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
@@ -230,8 +250,8 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`, `CRCR`, `PORT_COUNT`, `DCBAAP`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
 - The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.0`) and currently stores:
-  - its in-memory register byte array, and
-  - a tick counter.
+  - the underlying `aero_usb::xhci::XhciController` snapshot bytes, and
+  - a tick counter (used for deterministic stepping in future scheduling work).
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
