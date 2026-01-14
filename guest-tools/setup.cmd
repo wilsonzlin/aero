@@ -468,6 +468,8 @@ if not "!ROOT:~-1!"=="\" set "ROOT=!ROOT!\"
 set /a TOTAL=0
 set /a MISSING=0
 set /a MISMATCH=0
+set "IN_FILES=0"
+set "SEEN_FILES_KEY=0"
 set "CUR_PATH="
 set "CUR_SHA="
 set "CUR_SIZE="
@@ -475,6 +477,33 @@ set "CUR_SIZE="
 for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
   set "LINE=%%L"
 
+  rem Only validate entries under the manifest's files[] array. Modern manifests also include
+  rem other objects containing path/sha256 keys (e.g. packager inputs/provenance) which should
+  rem not be treated as media file entries.
+  if "!IN_FILES!"=="0" (
+    echo(!LINE!| "%SYS32%\findstr.exe" /i "\"files\"" >nul 2>&1 && set "SEEN_FILES_KEY=1"
+    if "!SEEN_FILES_KEY!"=="1" (
+      echo(!LINE!| "%SYS32%\findstr.exe" /c:"[" >nul 2>&1 && (
+        set "IN_FILES=1"
+        set "SEEN_FILES_KEY=0"
+        set "CUR_PATH="
+        set "CUR_SHA="
+        set "CUR_SIZE="
+      )
+    )
+  ) else (
+    rem End of files[] array.
+    echo(!LINE!| "%SYS32%\findstr.exe" /r /c:"^[ ]*][ ]*,*[ ]*$" >nul 2>&1 && (
+      set "IN_FILES=0"
+      set "CUR_PATH="
+      set "CUR_SHA="
+      set "CUR_SIZE="
+    )
+  )
+
+  if not "!IN_FILES!"=="1" (
+    rem Not currently within files[]; ignore this line.
+  ) else (
   echo(!LINE!| "%SYS32%\findstr.exe" /i "\"path\"" >nul 2>&1
   if not errorlevel 1 (
     set "VAL="
@@ -525,6 +554,7 @@ for /f "usebackq delims=" %%L in ("!MANIFEST!") do (
       set "CUR_SHA="
       set "CUR_SIZE="
     )
+  )
   )
 )
 
