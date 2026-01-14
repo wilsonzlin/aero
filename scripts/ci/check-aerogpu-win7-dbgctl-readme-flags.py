@@ -144,8 +144,9 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     - only consider lines that mention `aerogpu_dbgctl` (or `aerogpu_dbgctl.exe`)
     - additionally, in files that mention `aerogpu_dbgctl` anywhere, also scan
       lines that reference dbgctl's "command selector" flags (e.g. `--dump-*`,
-      `--watch-*`, `--read-*`, `--map-*`, `--list-*`) even if the line omits the
-      `aerogpu_dbgctl` prefix (many docs mention flags in prose / tables).
+      `--watch-*`, `--query-*`, `--read-*`, `--map-*`, `--list-*`) even if the
+      line omits the `aerogpu_dbgctl` prefix (many docs mention flags in prose /
+      tables).
     - skip lines that mention `--dbgctl` (test-runner flags that reference the
       dbgctl binary by path, but are not dbgctl CLI flags)
     """
