@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <type_traits>
+#include <utility>
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
@@ -179,6 +181,42 @@ GUID make_aerogpu_adapter_guid() {
   return g;
 }
 
+template <typename T, typename = void>
+struct caps_has_blend_op_caps : std::false_type {};
+template <typename T>
+struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpCaps)>> : std::true_type {};
+
+#ifndef D3DBLENDOPCAPS_ADD
+  #define D3DBLENDOPCAPS_ADD 0x00000001u
+#endif
+#ifndef D3DBLENDOPCAPS_SUBTRACT
+  #define D3DBLENDOPCAPS_SUBTRACT 0x00000002u
+#endif
+#ifndef D3DBLENDOPCAPS_REVSUBTRACT
+  #define D3DBLENDOPCAPS_REVSUBTRACT 0x00000004u
+#endif
+#ifndef D3DBLENDOPCAPS_MIN
+  #define D3DBLENDOPCAPS_MIN 0x00000008u
+#endif
+#ifndef D3DBLENDOPCAPS_MAX
+  #define D3DBLENDOPCAPS_MAX 0x00000010u
+#endif
+
+template <typename CapsT>
+void maybe_set_blend_op_caps(CapsT* out) {
+  if (!out) {
+    return;
+  }
+  if constexpr (caps_has_blend_op_caps<CapsT>::value) {
+    out->BlendOpCaps =
+        D3DBLENDOPCAPS_ADD |
+        D3DBLENDOPCAPS_SUBTRACT |
+        D3DBLENDOPCAPS_REVSUBTRACT |
+        D3DBLENDOPCAPS_MIN |
+        D3DBLENDOPCAPS_MAX;
+  }
+}
+
 void fill_d3d9_caps(D3DCAPS9* out) {
   if (!out) {
     return;
@@ -241,6 +279,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                       D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA |
                       D3DPBLENDCAPS_BLENDFACTOR | D3DPBLENDCAPS_INVBLENDFACTOR;
   out->DestBlendCaps = out->SrcBlendCaps;
+  maybe_set_blend_op_caps(out);
 
   out->StencilCaps = D3DSTENCILCAPS_KEEP |
                      D3DSTENCILCAPS_ZERO |
@@ -359,10 +398,18 @@ void log_caps_once(const D3DCAPS9& caps) {
   logf("aerogpu-d3d9: caps texfilt: TextureFilterCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
        (unsigned long)caps.TextureFilterCaps,
        (unsigned long)caps.StretchRectFilterCaps);
-  logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX BlendOpCaps=0x%08lX\n",
-       (unsigned long)caps.SrcBlendCaps,
-       (unsigned long)caps.DestBlendCaps,
-       (unsigned long)caps.BlendOpCaps);
+  if constexpr (caps_has_blend_op_caps<D3DCAPS9>::value) {
+    logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX BlendOpCaps=0x%08lX\n",
+         (unsigned long)caps.SrcBlendCaps,
+         (unsigned long)caps.DestBlendCaps,
+         (unsigned long)caps.BlendOpCaps);
+  } else {
+    // Some header vintages may not expose BlendOpCaps on D3DCAPS9; keep the log stable.
+    logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
+         (unsigned long)caps.SrcBlendCaps,
+         (unsigned long)caps.DestBlendCaps,
+         (unsigned long)caps.StretchRectFilterCaps);
+  }
 }
 
 void fill_adapter_identifier(D3DADAPTER_IDENTIFIER9* out) {
