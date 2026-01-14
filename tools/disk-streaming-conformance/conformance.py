@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Disk streaming endpoint conformance checks (Range + CORS + auth).
+Disk streaming endpoint conformance checks (Range + chunked + CORS + auth).
 
-This tool is designed to be pointed at any deployment of the "disk image streaming"
-endpoint (local server, staging CDN, prod) and validate it matches what the Aero
+This tool is designed to be pointed at any deployment of the disk image delivery
+endpoints (local server, staging CDN, prod) and validate it matches what the Aero
 emulator expects from a browser `fetch()` client.
+
+Supported modes:
+
+- Range mode (`--mode range`, default): one large object served via HTTP Range.
+- Chunked mode (`--mode chunked`): `manifest.json` + chunk objects under `chunks/`
+  (see `docs/18-chunked-disk-image-format.md`).
 
 No third-party dependencies; Python stdlib only.
 """
