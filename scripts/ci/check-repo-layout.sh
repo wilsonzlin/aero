@@ -376,6 +376,7 @@ if command -v python3 >/dev/null 2>&1; then
   python3 - <<'PY'
 import json
 import posixpath
+import subprocess
 from pathlib import Path
 
 driver_root = Path("drivers/windows7/virtio-snd")
@@ -404,9 +405,11 @@ additional_set = {p for x in additional if isinstance(x, str) for p in [normaliz
 
 helper_exts = {".md", ".sh", ".ps1", ".cmd", ".py"}
 helper_files = set()
-for p in driver_root.rglob("*"):
-    if not p.is_file():
-        continue
+# Use git-tracked files so local untracked scratch files (e.g. `notes.md`) don't cause
+# spurious failures when developers run this script outside CI.
+tracked = subprocess.check_output(["git", "ls-files", "--", str(driver_root)], text=True).splitlines()
+for path_str in tracked:
+    p = Path(path_str)
     if p.suffix.lower() not in helper_exts:
         continue
     helper_files.add(p.relative_to(driver_root).as_posix())
