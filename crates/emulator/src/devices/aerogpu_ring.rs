@@ -6,7 +6,6 @@ pub use aero_devices_gpu::ring::{
     FENCE_PAGE_ABI_VERSION_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
     RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
-
 #[cfg(test)]
 mod tests {
     use super::*;

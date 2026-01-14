@@ -1523,7 +1523,10 @@ impl AeroGpuMmioDevice {
                     self.ring_gpa.checked_add(RING_TAIL_OFFSET),
                     self.ring_gpa.checked_add(RING_HEAD_OFFSET),
                 ) {
-                    (Some(tail_addr), Some(head_addr)) => {
+                    (Some(tail_addr), Some(head_addr))
+                        if tail_addr.checked_add(4).is_some()
+                            && head_addr.checked_add(4).is_some() =>
+                    {
                         let tail = mem.read_u32(tail_addr);
                         mem.write_u32(head_addr, tail);
                     }
@@ -1577,8 +1580,12 @@ impl AeroGpuMmioDevice {
                         self.ring_gpa.checked_add(RING_TAIL_OFFSET),
                         self.ring_gpa.checked_add(RING_HEAD_OFFSET),
                     ) {
-                        let tail = mem.read_u32(tail_addr);
-                        mem.write_u32(head_addr, tail);
+                        // Ensure 32-bit accesses do not wrap the u64 address space.
+                        if tail_addr.checked_add(4).is_some() && head_addr.checked_add(4).is_some()
+                        {
+                            let tail = mem.read_u32(tail_addr);
+                            mem.write_u32(head_addr, tail);
+                        }
                     }
                     self.record_error(pci::AerogpuErrorCode::Oob, 0);
                     break 'doorbell;
@@ -3334,6 +3341,112 @@ mod tests {
             out,
             vec![0x0000_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]
         );
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct WrapDetectMemory {
+        bytes: std::collections::BTreeMap<u64, u8>,
+    }
+
+    impl MemoryBus for WrapDetectMemory {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            paddr
+                .checked_add(buf.len() as u64)
+                .expect("physical address wrap");
+            for (idx, dst) in buf.iter_mut().enumerate() {
+                let addr = paddr + idx as u64;
+                *dst = *self.bytes.get(&addr).unwrap_or(&0);
+            }
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            paddr
+                .checked_add(buf.len() as u64)
+                .expect("physical address wrap");
+            for (idx, src) in buf.iter().copied().enumerate() {
+                let addr = paddr + idx as u64;
+                self.bytes.insert(addr, src);
+            }
+        }
+    }
+
+    #[test]
+    fn doorbell_with_ring_gpa_that_wraps_u32_access_records_oob_error_without_wrapping_dma() {
+        let mut mem = WrapDetectMemory::default();
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.config_mut().set_command((1 << 1) | (1 << 2));
+
+        // Pick a ring GPA where `ring_gpa + RING_TAIL_OFFSET` is in-range but the implied 32-bit read
+        // would wrap the u64 address space (e.g. `tail_addr = u64::MAX`).
+        let ring_gpa = u64::MAX - RING_TAIL_OFFSET;
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64,
+            8,
+            ring_gpa,
+        );
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES as u64,
+            4,
+            0x1000,
+        );
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_RING_CONTROL as u64,
+            4,
+            pci::AEROGPU_RING_CONTROL_ENABLE as u64,
+        );
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64,
+            4,
+            pci::AEROGPU_IRQ_ERROR as u64,
+        );
+
+        PciBarMmioHandler::write(&mut dev, pci::AEROGPU_MMIO_REG_DOORBELL as u64, 4, 1);
+        dev.process(&mut mem);
+
+        assert_eq!(dev.error_code, pci::AerogpuErrorCode::Oob as u32);
+        assert_eq!(dev.error_count, 1);
+        assert_ne!(dev.irq_status & pci::AEROGPU_IRQ_ERROR, 0);
+        assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn ring_reset_with_ring_gpa_that_wraps_u32_access_records_oob_error_without_wrapping_dma() {
+        let mut mem = WrapDetectMemory::default();
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.config_mut().set_command((1 << 1) | (1 << 2));
+
+        let ring_gpa = u64::MAX - RING_TAIL_OFFSET;
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64,
+            8,
+            ring_gpa,
+        );
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64,
+            4,
+            pci::AEROGPU_IRQ_ERROR as u64,
+        );
+
+        // Trigger ring reset. This must not perform wrapping DMA even with a pathological GPA.
+        PciBarMmioHandler::write(
+            &mut dev,
+            pci::AEROGPU_MMIO_REG_RING_CONTROL as u64,
+            4,
+            pci::AEROGPU_RING_CONTROL_RESET as u64,
+        );
+        dev.process(&mut mem);
+
+        assert_eq!(dev.error_code, pci::AerogpuErrorCode::Oob as u32);
+        assert_eq!(dev.error_fence, 0);
+        assert_eq!(dev.error_count, 1);
+        assert_ne!(dev.irq_status & pci::AEROGPU_IRQ_ERROR, 0);
+        assert!(dev.irq_level());
     }
 }
 

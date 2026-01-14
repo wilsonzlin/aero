@@ -105,6 +105,33 @@ impl MemoryBus for VecMemory {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct WrapDetectMemory {
+    bytes: std::collections::BTreeMap<u64, u8>,
+}
+
+impl MemoryBus for WrapDetectMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        paddr
+            .checked_add(buf.len() as u64)
+            .expect("physical address wrap");
+        for (idx, dst) in buf.iter_mut().enumerate() {
+            let addr = paddr + idx as u64;
+            *dst = *self.bytes.get(&addr).unwrap_or(&0);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        paddr
+            .checked_add(buf.len() as u64)
+            .expect("physical address wrap");
+        for (idx, src) in buf.iter().copied().enumerate() {
+            let addr = paddr + idx as u64;
+            self.bytes.insert(addr, src);
+        }
+    }
+}
+
 fn new_test_device(cfg: AeroGpuDeviceConfig) -> AeroGpuPciDevice {
     let mut cfg = cfg;
     // Unit tests don't need a huge VRAM backing allocation; keep it small to avoid blowing out
@@ -205,6 +232,29 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
 }
 
 #[test]
+fn doorbell_with_ring_gpa_that_wraps_u32_access_records_oob_error_without_wrapping_dma() {
+    let mut mem = WrapDetectMemory::default();
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Pick a ring GPA where `ring_gpa + RING_TAIL_OFFSET` is in-range but the implied 32-bit read
+    // would wrap the u64 address space (e.g. `tail_addr = u64::MAX`).
+    let ring_gpa = u64::MAX - RING_TAIL_OFFSET;
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, 0x1000);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::ERROR);
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(dev.regs.error_count, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+}
+
+#[test]
 fn ring_reset_drops_pending_doorbell_while_dma_is_disabled() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = AeroGpuPciDevice::new(
@@ -268,6 +318,26 @@ fn ring_reset_drops_pending_doorbell_while_dma_is_disabled() {
         dev.regs.completed_fence, 0,
         "ring reset must drop any pending doorbell notification"
     );
+}
+
+#[test]
+fn ring_reset_with_ring_gpa_that_wraps_u32_access_records_oob_error_without_wrapping_dma() {
+    let mut mem = WrapDetectMemory::default();
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    let ring_gpa = u64::MAX - RING_TAIL_OFFSET;
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::ERROR);
+
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::RESET);
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(dev.regs.error_fence, 0);
+    assert_eq!(dev.regs.error_count, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
 }
 
 #[test]

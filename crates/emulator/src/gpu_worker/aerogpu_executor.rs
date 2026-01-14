@@ -455,7 +455,11 @@ impl AeroGpuExecutor {
             let tail = regs
                 .ring_gpa
                 .checked_add(crate::devices::aerogpu_ring::RING_TAIL_OFFSET)
-                .map(|addr| mem.read_u32(addr))
+                .and_then(|addr| {
+                    // Ensure a 32-bit access at `addr` does not wrap the u64 address space.
+                    addr.checked_add(4)?;
+                    Some(mem.read_u32(addr))
+                })
                 .unwrap_or(0);
             AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
