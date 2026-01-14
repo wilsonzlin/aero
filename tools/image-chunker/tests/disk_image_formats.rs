@@ -593,3 +593,94 @@ fn chunking_rejects_non_sector_aligned_chunk_size() {
         "unexpected error: {err:?}"
     );
 }
+
+#[test]
+fn chunking_auto_rejects_invalid_qcow2_even_when_sector_aligned() {
+    // Construct a qcow2-looking header with a valid version so `open_auto` will not fall back to
+    // raw, but keep the file too small to contain the referenced metadata tables.
+    let virtual_size = SECTOR_SIZE as u64;
+    let cluster_bits = 9u32; // 512-byte clusters (smallest allowed)
+
+    let l1_table_offset = SECTOR_SIZE as u64; // points to EOF -> truncated
+    let refcount_table_offset = SECTOR_SIZE as u64;
+
+    let mut header = [0u8; 72];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 2); // version 2
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, l1_table_offset);
+    write_be_u64(&mut header, 48, refcount_table_offset);
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &header).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        SECTOR_SIZE as u64,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    // If the file were treated as raw, it would succeed (sector-aligned). Ensure we actually tried
+    // qcow2 parsing instead.
+    assert!(
+        err.to_string().contains("qcow2"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn chunking_auto_rejects_invalid_aerosparse_even_when_sector_aligned() {
+    // Create a sector-aligned file with the aerosparse magic + version, but an invalid header.
+    let mut header = [0u8; 64];
+    header[0..8].copy_from_slice(b"AEROSPAR");
+    header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &header).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        SECTOR_SIZE as u64,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    // If the file were treated as raw, it would succeed; ensure we attempted aerosparse parsing.
+    assert!(
+        err.to_string().contains("sparse"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn chunking_auto_rejects_invalid_vhd_even_when_sector_aligned() {
+    // Create a sector-aligned file whose first sector is a valid dynamic VHD footer copy, but omit
+    // the required EOF footer. Auto-detection should select VHD and then fail to open.
+    let virtual_size = SECTOR_SIZE as u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let footer_copy = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DYNAMIC, dyn_header_offset);
+
+    // Size is `data_offset + 1024`, enough to look like a VHD but missing the trailing footer.
+    let mut backend = MemBackend::with_len((SECTOR_SIZE as u64) * 3).unwrap();
+    backend.write_at(0, &footer_copy).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        SECTOR_SIZE as u64,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    // If the file were treated as raw, it would succeed; ensure we attempted vhd parsing.
+    assert!(err.to_string().contains("vhd"), "unexpected error: {err:?}");
+}
