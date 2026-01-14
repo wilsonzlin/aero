@@ -35,6 +35,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       a capture endpoint is registered
     - when the guest is provisioned with `--test-snd-capture`, the selftest also runs a full-duplex regression test
       (`virtio-snd-duplex`) that runs render + capture concurrently
+    - the guest selftest also includes an optional WASAPI buffer sizing stress test (`virtio-snd-buffer-limits`) that can be
+      enabled via `--test-snd-buffer-limits` (and required by the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`)
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
     - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
       do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (capture is required)
@@ -528,6 +530,23 @@ The duplex test runs only when the guest selftest is provisioned with `--test-sn
 If your image was provisioned without capture smoke testing enabled, the guest will emit
 `virtio-snd-duplex|SKIP|flag_not_set` and the host harness will fail with a `...DUPLEX_SKIPPED` reason.
 
+#### virtio-snd buffer limits stress test
+
+The guest selftest includes an opt-in WASAPI buffer sizing stress test (`virtio-snd-buffer-limits`).
+This is disabled by default and must be enabled in the guest command line.
+
+To enable it end-to-end:
+
+1. Provision the guest scheduled task with `--test-snd-buffer-limits` (for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
+2. Run the host harness with:
+   - PowerShell: `-WithVirtioSnd -WithSndBufferLimits`
+   - Python: `--with-virtio-snd --with-snd-buffer-limits`
+
+When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness requires the guest marker:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|...`.
+If the guest reports `SKIP|flag_not_set` (or does not emit the marker at all), the harness treats it as a hard failure
+so older selftest binaries or mis-provisioned images cannot accidentally pass.
+
 On success, the script returns exit code `0` and prints:
 
 ```
@@ -748,6 +767,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
+    - (only when `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
 
 The Python/PowerShell harnesses also emit an additional host-side marker after the run for log scraping:
@@ -981,6 +1001,8 @@ To run the virtio-snd **capture** smoke test (and enable the full-duplex regress
 
 - Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.
 - Add `-RequireNonSilence` to fail the smoke test if only silence is captured.
+- Add `-TestSndBufferLimits` to provision the guest scheduled task with `--test-snd-buffer-limits`
+  (required when running the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`).
 - Add `-AllowVirtioSndTransitional` to accept a transitional virtio-snd PCI ID (typically `PCI\VEN_1AF4&DEV_1018`) in the guest selftest
   (intended for debugging/backcompat outside the strict harness setup).
   - Tip: when using this mode, also stage/install the QEMU compatibility driver package

@@ -184,6 +184,14 @@ param(
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
 
+  # If set, require the guest virtio-snd-buffer-limits marker to PASS.
+  #
+  # Note: this requires:
+  # - a guest image provisioned with `--test-snd-buffer-limits` (for example via New-AeroWin7TestImage.ps1 -TestSndBufferLimits), and
+  # - -WithVirtioSnd (so a virtio-snd device is attached).
+  [Parameter(Mandatory = $false)]
+  [switch]$WithSndBufferLimits,
+
   # NOTE: `-WithVirtioInputEvents` / `-EnableVirtioInputEvents` are accepted as aliases for `-WithInputEvents`
   # for backwards compatibility.
 
@@ -236,6 +244,10 @@ if ($VerifyVirtioSndWav) {
 
 if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
   throw "-RequireVirtioSndMsix requires -WithVirtioSnd."
+}
+
+if ($WithSndBufferLimits -and (-not $WithVirtioSnd)) {
+  throw "-WithSndBufferLimits requires -WithVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
 }
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
@@ -580,6 +592,9 @@ function Wait-AeroSelftestResult {
     # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
     # (not be skipped via --disable-snd).
     [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass,
+    # If true, require the optional virtio-snd-buffer-limits stress test marker to PASS.
+    # This is intended to be paired with provisioning the guest with `--test-snd-buffer-limits`.
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioSndBufferLimitsPass = $false,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -659,6 +674,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioSndDuplexPass = $false
   $sawVirtioSndDuplexSkip = $false
   $sawVirtioSndDuplexFail = $false
+  $sawVirtioSndBufferLimitsPass = $false
+  $sawVirtioSndBufferLimitsSkip = $false
+  $sawVirtioSndBufferLimitsFail = $false
   $sawVirtioNetPass = $false
   $sawVirtioNetFail = $false
 
@@ -846,11 +864,25 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioSndDuplexFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|FAIL") {
         $sawVirtioSndDuplexFail = $true
       }
+      if (-not $sawVirtioSndBufferLimitsPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-buffer-limits\|PASS") {
+        $sawVirtioSndBufferLimitsPass = $true
+      }
+      if (-not $sawVirtioSndBufferLimitsSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-buffer-limits\|SKIP") {
+        $sawVirtioSndBufferLimitsSkip = $true
+      }
+      if (-not $sawVirtioSndBufferLimitsFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-buffer-limits\|FAIL") {
+        $sawVirtioSndBufferLimitsFail = $true
+      }
       if (-not $sawVirtioNetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net\|PASS") {
         $sawVirtioNetPass = $true
       }
       if (-not $sawVirtioNetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net\|FAIL") {
         $sawVirtioNetFail = $true
+      }
+
+      if ($RequireVirtioSndBufferLimitsPass) {
+        if ($sawVirtioSndBufferLimitsSkip) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioSndBufferLimitsFail) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_FAILED"; Tail = $tail } }
       }
 
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
@@ -899,6 +931,18 @@ function Wait-AeroSelftestResult {
           }
           if ($RequireVirtioSndPass -and (-not $sawVirtioSndDuplexPass)) {
             return @{ Result = "VIRTIO_SND_DUPLEX_SKIPPED"; Tail = $tail }
+          }
+
+          if ($RequireVirtioSndBufferLimitsPass) {
+            if ($sawVirtioSndBufferLimitsFail) {
+              return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_FAILED"; Tail = $tail }
+            }
+            if (-not $sawVirtioSndBufferLimitsPass) {
+              if ($sawVirtioSndBufferLimitsSkip) {
+                return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail }
+              }
+              return @{ Result = "MISSING_VIRTIO_SND_BUFFER_LIMITS"; Tail = $tail }
+            }
           }
 
           if ($sawVirtioNetFail) {
@@ -970,6 +1014,13 @@ function Wait-AeroSelftestResult {
             if ($sawVirtioSndDuplexFail) { return @{ Result = "VIRTIO_SND_DUPLEX_FAILED"; Tail = $tail } }
             if ($sawVirtioSndCapturePass) {
               if ($sawVirtioSndDuplexPass) {
+                if ($RequireVirtioSndBufferLimitsPass) {
+                  if ($sawVirtioSndBufferLimitsFail) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioSndBufferLimitsPass) {
+                    if ($sawVirtioSndBufferLimitsSkip) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_SND_BUFFER_LIMITS"; Tail = $tail }
+                  }
+                }
                 if ($RequireVirtioInputEventsPass) {
                   if ($sawVirtioInputEventsFail) { return @{ Result = "VIRTIO_INPUT_EVENTS_FAILED"; Tail = $tail } }
                   if (-not $sawVirtioInputEventsPass) {
@@ -3182,6 +3233,7 @@ try {
       -FollowSerial ([bool]$FollowSerial) `
       -RequirePerTestMarkers (-not $VirtioTransitional) `
       -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
+      -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
       -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
       -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
       -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
@@ -3536,6 +3588,22 @@ try {
       }
       $scriptExitCode = 1
     }
+    "VIRTIO_SND_BUFFER_LIMITS_FAILED" {
+      Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: selftest RESULT=PASS but virtio-snd-buffer-limits test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_SND_BUFFER_LIMITS" {
+      Write-Host "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: selftest RESULT=PASS but did not emit virtio-snd-buffer-limits test marker (provision the guest with --test-snd-buffer-limits)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "MISSING_VIRTIO_NET" {
       Write-Host "FAIL: MISSING_VIRTIO_NET: selftest RESULT=PASS but did not emit virtio-net test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -3666,6 +3734,23 @@ try {
       }
 
       Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
+    }
+    "VIRTIO_SND_BUFFER_LIMITS_SKIPPED" {
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|SKIP\\|([^\\|\\r\\n]+)") {
+        $reason = $Matches[1]
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but -WithSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits)"
+      } else {
+        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ($reason) but -WithSndBufferLimits was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -57,6 +57,8 @@ drivers/windows7/tests/
       only accepts it when `--allow-virtio-snd-transitional` is set. In that mode, install the opt-in legacy package
       (`drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
+- When run with `--test-snd-buffer-limits`, also runs a WASAPI buffer sizing stress test and emits the marker
+  `virtio-snd-buffer-limits` (PASS/FAIL).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
@@ -97,8 +99,12 @@ The guest may also emit optional interrupt-mode diagnostics markers (information
 
  The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
 (virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net) were emitted so older selftest binaries
-can’t accidentally pass. When the harness is run with `-WithVirtioSnd` / `--with-virtio-snd`, both `virtio-snd` and
-`virtio-snd-capture` must `PASS` (not `SKIP`).
+can’t accidentally pass.
+
+When the harness is run with:
+- `-WithVirtioSnd` / `--with-virtio-snd`, `virtio-snd`, `virtio-snd-capture`, and `virtio-snd-duplex` must `PASS` (not `SKIP`).
+- `-WithSndBufferLimits` / `--with-snd-buffer-limits`, `virtio-snd-buffer-limits` must `PASS` (and a guest `SKIP|flag_not_set`
+  or missing marker is treated as a hard failure).
 
 Note:
 - The guest selftest also emits standalone IRQ diagnostic lines for `virtio-net` / `virtio-snd` / `virtio-input`:
@@ -247,11 +253,13 @@ testing enable the driver's ID_NAME compatibility mode:
 The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) sets this automatically.
 
 - COM1 redirected to a host log file
-  - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
-    virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
-    - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
-      is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
-      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+- Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
+  virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
+  - When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness also requires the guest marker
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS` (provision the guest with `--test-snd-buffer-limits`).
+  - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
+    is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
     - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
       When `-WithInputEvents` / `--with-input-events` is enabled, that SKIP causes the harness to fail

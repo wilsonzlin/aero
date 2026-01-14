@@ -1633,6 +1633,55 @@ def _virtio_snd_duplex_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped but --with-virtio-snd was enabled"
 
 
+def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes) -> str:
+    # Buffer limits stress test marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL/SKIP|...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|"
+
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set" in tail:
+        return (
+            "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but "
+            "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits)"
+        )
+
+    # Fallback: extract the skip reason token from the marker itself.
+    idx = tail.rfind(prefix)
+    if idx != -1:
+        end = tail.find(b"\n", idx)
+        if end == -1:
+            end = len(tail)
+        reason = tail[idx + len(prefix) : end].strip()
+        if reason:
+            reason_str = reason.decode("utf-8", errors="replace").strip()
+            return (
+                f"FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ({reason_str}) "
+                "but --with-snd-buffer-limits was enabled"
+            )
+    return "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped but --with-snd-buffer-limits was enabled"
+
+
+def _virtio_snd_buffer_limits_required_failure_message(tail: bytes) -> Optional[str]:
+    """
+    Enforce that virtio-snd-buffer-limits ran and PASSed.
+
+    Returns:
+        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+    """
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail:
+        return None
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail:
+        return (
+            "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: virtio-snd-buffer-limits test reported FAIL while "
+            "--with-snd-buffer-limits was enabled"
+        )
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail:
+        return _virtio_snd_buffer_limits_skip_failure_message(tail)
+    return (
+        "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: did not observe virtio-snd-buffer-limits PASS marker while "
+        "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits)"
+    )
+
+
 @lru_cache(maxsize=None)
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
@@ -1978,6 +2027,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-snd-buffer-limits",
+        "--with-virtio-snd-buffer-limits",
+        "--enable-snd-buffer-limits",
+        dest="with_snd_buffer_limits",
+        action="store_true",
+        help=(
+            "Require the guest virtio-snd-buffer-limits stress test marker to PASS. "
+            "This requires a guest image provisioned with --test-snd-buffer-limits and also requires "
+            "--with-virtio-snd/--enable-virtio-snd so a virtio-snd device is attached."
+        ),
+    )
+    parser.add_argument(
         "--virtio-snd-audio-backend",
         choices=["none", "wav"],
         default="none",
@@ -2116,6 +2177,8 @@ def main() -> int:
         parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
 
     if not args.enable_virtio_snd:
+        if args.with_snd_buffer_limits:
+            parser.error("--with-snd-buffer-limits requires --with-virtio-snd/--enable-virtio-snd")
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
             parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
@@ -2681,6 +2744,9 @@ def main() -> int:
             saw_virtio_snd_duplex_pass = False
             saw_virtio_snd_duplex_skip = False
             saw_virtio_snd_duplex_fail = False
+            saw_virtio_snd_buffer_limits_pass = False
+            saw_virtio_snd_buffer_limits_skip = False
+            saw_virtio_snd_buffer_limits_fail = False
             saw_virtio_net_pass = False
             saw_virtio_net_fail = False
             msix_checked = False
@@ -3042,6 +3108,21 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL" in tail
                     ):
                         saw_virtio_snd_duplex_fail = True
+                    if (
+                        not saw_virtio_snd_buffer_limits_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail
+                    ):
+                        saw_virtio_snd_buffer_limits_pass = True
+                    if (
+                        not saw_virtio_snd_buffer_limits_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail
+                    ):
+                        saw_virtio_snd_buffer_limits_skip = True
+                    if (
+                        not saw_virtio_snd_buffer_limits_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail
+                    ):
+                        saw_virtio_snd_buffer_limits_fail = True
                     if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                         saw_virtio_net_pass = True
                     if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
@@ -3353,6 +3434,14 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+
+                                if args.with_snd_buffer_limits:
+                                    msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                    if msg is not None:
+                                        print(msg, file=sys.stderr)
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             else:
                                 # Even when virtio-snd isn't attached, require the markers so older selftest binaries
                                 # (that predate virtio-snd playback/capture coverage) cannot accidentally pass.
@@ -3466,6 +3555,14 @@ def main() -> int:
                                         "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
                                         "while --with-virtio-snd was enabled"
                                     )
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if args.with_snd_buffer_limits:
+                                msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
@@ -4148,6 +4245,21 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL" in tail
                         ):
                             saw_virtio_snd_duplex_fail = True
+                        if (
+                            not saw_virtio_snd_buffer_limits_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail
+                        ):
+                            saw_virtio_snd_buffer_limits_pass = True
+                        if (
+                            not saw_virtio_snd_buffer_limits_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail
+                        ):
+                            saw_virtio_snd_buffer_limits_skip = True
+                        if (
+                            not saw_virtio_snd_buffer_limits_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail
+                        ):
+                            saw_virtio_snd_buffer_limits_fail = True
                         if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                             saw_virtio_net_pass = True
                         if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
@@ -4267,6 +4379,14 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+
+                                    if args.with_snd_buffer_limits:
+                                        msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                        if msg is not None:
+                                            print(msg, file=sys.stderr)
+                                            _print_tail(serial_log)
+                                            result_code = 1
+                                            break
                                 else:
                                     if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                         print(
@@ -4378,6 +4498,14 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+
+                                if args.with_snd_buffer_limits:
+                                    msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                    if msg is not None:
+                                        print(msg, file=sys.stderr)
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(

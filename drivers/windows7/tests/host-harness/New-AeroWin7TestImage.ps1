@@ -89,6 +89,13 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireNonSilence,
 
+  # If set, run the guest selftest's virtio-snd buffer limits stress test
+  # (adds `--test-snd-buffer-limits` to the scheduled task).
+  #
+  # This is required when running the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`.
+  [Parameter(Mandatory = $false)]
+  [switch]$TestSndBufferLimits,
+
   # If set, accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest.
   # This adds `--allow-virtio-snd-transitional` to the scheduled task.
   #
@@ -139,7 +146,7 @@ $ErrorActionPreference = "Stop"
 #
 # To keep provisioning media compatible with both behaviors, default `-TestSndCapture` to on when
 # virtio-snd is being required/tested, unless the caller explicitly disabled capture.
-if (-not $TestSndCapture -and -not $DisableSnd -and -not $DisableSndCapture -and ($RequireSnd -or $RequireSndCapture -or $RequireNonSilence)) {
+if (-not $TestSndCapture -and -not $DisableSnd -and -not $DisableSndCapture -and ($RequireSnd -or $RequireSndCapture -or $RequireNonSilence -or $TestSndBufferLimits)) {
   $TestSndCapture = $true
 }
 
@@ -392,8 +399,8 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
 if ($RequireSnd -and $DisableSnd) {
   throw "RequireSnd and DisableSnd cannot both be set."
 }
-if ($DisableSnd -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence)) {
-  throw "DisableSnd cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence."
+if ($DisableSnd -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence -or $TestSndBufferLimits)) {
+  throw "DisableSnd cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence/TestSndBufferLimits."
 }
 if ($DisableSndCapture -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence)) {
   throw "DisableSndCapture cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence."
@@ -430,6 +437,11 @@ if ($RequireSndCapture) {
 $requireNonSilenceArg = ""
 if ($RequireNonSilence) {
   $requireNonSilenceArg = " --require-non-silence"
+}
+
+$testSndBufferLimitsArg = ""
+if ($TestSndBufferLimits) {
+  $testSndBufferLimitsArg = " --test-snd-buffer-limits"
 }
 
 $allowVirtioSndTransitionalArg = ""
@@ -513,7 +525,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -568,11 +580,14 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
      - Newer `aero-virtio-selftest.exe` binaries run capture/duplex automatically whenever virtio-snd is present.
      - For older selftest binaries, generate this media with `-TestSndCapture` (adds `--test-snd-capture`). This script also
        defaults `-TestSndCapture` on when virtio-snd is being required/tested, unless capture is explicitly disabled.
-      - Use `-RequireSndCapture` to fail if no capture endpoint exists.
-      - Use `-RequireNonSilence` to fail if only silence is captured.
- - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
-   `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
- - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
+       - Use `-RequireSndCapture` to fail if no capture endpoint exists.
+       - Use `-RequireNonSilence` to fail if only silence is captured.
+   - To run the virtio-snd buffer limits stress test (required when running the host harness with
+     `-WithSndBufferLimits` / `--with-snd-buffer-limits`), generate this media with `-TestSndBufferLimits`
+     (adds `--test-snd-buffer-limits` to the scheduled task).
+  - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
+    `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
+  - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
 Write-TextFileUtf8NoBom -Path (Join-Path $OutputDir "README.txt") -Content $readme

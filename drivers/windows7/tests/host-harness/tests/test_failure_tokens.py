@@ -87,7 +87,21 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_DUPLEX_SKIPPED:"))
 
+    def test_virtio_snd_buffer_limits_skip_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_snd_buffer_limits_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED:"))
+
+        msg = h._virtio_snd_buffer_limits_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|disabled\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED:"))
+
 
 if __name__ == "__main__":
     unittest.main()
-
