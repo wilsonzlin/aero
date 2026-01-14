@@ -334,6 +334,8 @@ For quick guest-side sanity checks:
   * Mode set roundtrip (switch to an alternate reported mode and back): `drivers/aerogpu/tests/win7/modeset_roundtrip_sanity`
   * Cursor MMIO state (`AEROGPU_ESCAPE_OP_QUERY_CURSOR`): `drivers/aerogpu/tests/win7/cursor_state_sanity`
   * CreateAllocation trace dump (`AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`): `drivers/aerogpu/tests/win7/dump_createalloc_sanity`
+  * Debug-only shared-handle mapping escape stress (`AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE`): `drivers/aerogpu/tests/win7/map_shared_handle_stress` (skips when unsupported or gated off)
+  * Dbgctl escape security gating (negative coverage for `READ_GPA` / `MAP_SHARED_HANDLE`): `drivers/aerogpu/tests/win7/dbgctl_escape_security_sanity` (skips when unsupported or gated off)
   * UMDRIVERPRIVATE discovery blob (`D3DKMTQueryAdapterInfo`): `drivers/aerogpu/tests/win7/umd_private_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
   * D3D9 fixed-function bring-up (legacy apps + DWM fixed-function paths): `drivers/aerogpu/tests/win7/d3d9_fixedfunc_wvp_triangle`, `drivers/aerogpu/tests/win7/d3d9_fixedfunc_textured_wvp`, and `drivers/aerogpu/tests/win7/d3d9_fixedfunc_lighting_directional`
