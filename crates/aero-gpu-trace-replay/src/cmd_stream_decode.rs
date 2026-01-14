@@ -1,6 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdDecodeError, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
     AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -603,19 +604,33 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             }
-            out.insert("enable".into(), json!(read_u32_le(pkt.payload, 0).unwrap()));
+            let enable = read_u32_le(pkt.payload, 0).unwrap();
+            let src_factor = read_u32_le(pkt.payload, 4).unwrap();
+            let dst_factor = read_u32_le(pkt.payload, 8).unwrap();
+            let blend_op = read_u32_le(pkt.payload, 12).unwrap();
+
+            out.insert("enable".into(), json!(enable));
             out.insert(
                 "src_factor".into(),
-                json!(read_u32_le(pkt.payload, 4).unwrap()),
+                json!(src_factor),
             );
+            if let Some(name) = decode_blend_factor_name(src_factor) {
+                out.insert("src_factor_name".into(), Value::String(name));
+            }
             out.insert(
                 "dst_factor".into(),
-                json!(read_u32_le(pkt.payload, 8).unwrap()),
+                json!(dst_factor),
             );
+            if let Some(name) = decode_blend_factor_name(dst_factor) {
+                out.insert("dst_factor_name".into(), Value::String(name));
+            }
             out.insert(
                 "blend_op".into(),
-                json!(read_u32_le(pkt.payload, 12).unwrap()),
+                json!(blend_op),
             );
+            if let Some(name) = decode_blend_op_name(blend_op) {
+                out.insert("blend_op_name".into(), Value::String(name));
+            }
             out.insert("color_write_mask".into(), json!(pkt.payload[16]));
             // blend_constant_rgba_f32[4] at payload offset 32.
             let mut rgba = Vec::new();
@@ -633,6 +648,7 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             }
+            let depth_func = read_u32_le(pkt.payload, 8).unwrap();
             out.insert(
                 "depth_enable".into(),
                 json!(read_u32_le(pkt.payload, 0).unwrap()),
@@ -641,10 +657,10 @@ fn decode_known_fields(
                 "depth_write_enable".into(),
                 json!(read_u32_le(pkt.payload, 4).unwrap()),
             );
-            out.insert(
-                "depth_func".into(),
-                json!(read_u32_le(pkt.payload, 8).unwrap()),
-            );
+            out.insert("depth_func".into(), json!(depth_func));
+            if let Some(name) = decode_compare_func_name(depth_func) {
+                out.insert("depth_func_name".into(), Value::String(name));
+            }
             out.insert(
                 "stencil_enable".into(),
                 json!(read_u32_le(pkt.payload, 12).unwrap()),
@@ -657,14 +673,22 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             }
+            let fill_mode = read_u32_le(pkt.payload, 0).unwrap();
+            let cull_mode = read_u32_le(pkt.payload, 4).unwrap();
             out.insert(
                 "fill_mode".into(),
-                json!(read_u32_le(pkt.payload, 0).unwrap()),
+                json!(fill_mode),
             );
+            if let Some(name) = decode_fill_mode_name(fill_mode) {
+                out.insert("fill_mode_name".into(), Value::String(name));
+            }
             out.insert(
                 "cull_mode".into(),
-                json!(read_u32_le(pkt.payload, 4).unwrap()),
+                json!(cull_mode),
             );
+            if let Some(name) = decode_cull_mode_name(cull_mode) {
+                out.insert("cull_mode_name".into(), Value::String(name));
+            }
             out.insert(
                 "front_ccw".into(),
                 json!(read_u32_le(pkt.payload, 8).unwrap()),
@@ -1209,6 +1233,26 @@ fn decode_topology_name(topology: u32) -> Option<String> {
 
 fn decode_index_format_name(format: u32) -> Option<String> {
     AerogpuIndexFormat::from_u32(format).map(|f| format!("{f:?}"))
+}
+
+fn decode_blend_factor_name(factor: u32) -> Option<String> {
+    AerogpuBlendFactor::from_u32(factor).map(|f| format!("{f:?}"))
+}
+
+fn decode_blend_op_name(op: u32) -> Option<String> {
+    AerogpuBlendOp::from_u32(op).map(|o| format!("{o:?}"))
+}
+
+fn decode_compare_func_name(func: u32) -> Option<String> {
+    AerogpuCompareFunc::from_u32(func).map(|f| format!("{f:?}"))
+}
+
+fn decode_fill_mode_name(mode: u32) -> Option<String> {
+    AerogpuFillMode::from_u32(mode).map(|m| format!("{m:?}"))
+}
+
+fn decode_cull_mode_name(mode: u32) -> Option<String> {
+    AerogpuCullMode::from_u32(mode).map(|m| format!("{m:?}"))
 }
 
 fn decode_format_name(format: u32) -> Option<&'static str> {

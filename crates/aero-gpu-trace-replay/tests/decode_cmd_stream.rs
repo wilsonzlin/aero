@@ -616,14 +616,20 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     assert!(listing.contains("SetBlendState"));
     assert!(listing.contains("enable=1"));
+    assert!(listing.contains("src_factor_name=SrcAlpha"));
+    assert!(listing.contains("dst_factor_name=InvSrcAlpha"));
+    assert!(listing.contains("blend_op_name=Max"));
     assert!(listing.contains("color_write_mask=0x0F"));
     assert!(listing.contains("sample_mask=0xFFFFFFFF"));
 
     assert!(listing.contains("SetDepthStencilState"));
+    assert!(listing.contains("depth_func_name=Equal"));
     assert!(listing.contains("stencil_read_mask=0xAA"));
     assert!(listing.contains("stencil_write_mask=0x55"));
 
     assert!(listing.contains("SetRasterizerState"));
+    assert!(listing.contains("fill_mode_name=Wireframe"));
+    assert!(listing.contains("cull_mode_name=Back"));
     assert!(listing.contains("depth_bias=-1"));
     assert!(listing.contains("flags=0x00000001"));
 
@@ -987,6 +993,12 @@ fn json_listing_decodes_new_opcodes() {
 
     let blend = find_packet("SetBlendState");
     assert_eq!(blend["decoded"]["enable"], 1);
+    assert_eq!(blend["decoded"]["src_factor"], 2);
+    assert_eq!(blend["decoded"]["src_factor_name"], "SrcAlpha");
+    assert_eq!(blend["decoded"]["dst_factor"], 3);
+    assert_eq!(blend["decoded"]["dst_factor_name"], "InvSrcAlpha");
+    assert_eq!(blend["decoded"]["blend_op"], 4);
+    assert_eq!(blend["decoded"]["blend_op_name"], "Max");
     assert_eq!(blend["decoded"]["color_write_mask"], 0x0F);
     assert_eq!(blend["decoded"]["sample_mask"], 0xFFFF_FFFFu64);
     assert_eq!(
@@ -999,11 +1011,16 @@ fn json_listing_decodes_new_opcodes() {
     let depth_stencil = find_packet("SetDepthStencilState");
     assert_eq!(depth_stencil["decoded"]["depth_enable"], 1);
     assert_eq!(depth_stencil["decoded"]["depth_write_enable"], 0);
+    assert_eq!(depth_stencil["decoded"]["depth_func"], 2);
+    assert_eq!(depth_stencil["decoded"]["depth_func_name"], "Equal");
     assert_eq!(depth_stencil["decoded"]["stencil_read_mask"], 0xAA);
     assert_eq!(depth_stencil["decoded"]["stencil_write_mask"], 0x55);
 
     let raster = find_packet("SetRasterizerState");
     assert_eq!(raster["decoded"]["fill_mode"], 1);
+    assert_eq!(raster["decoded"]["fill_mode_name"], "Wireframe");
+    assert_eq!(raster["decoded"]["cull_mode"], 2);
+    assert_eq!(raster["decoded"]["cull_mode_name"], "Back");
     assert_eq!(raster["decoded"]["depth_bias"], -1);
     assert_eq!(raster["decoded"]["flags"], 1);
 

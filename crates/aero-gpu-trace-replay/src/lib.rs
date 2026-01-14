@@ -1,8 +1,9 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdDecodeError, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -886,6 +887,26 @@ fn index_format_name(format: u32) -> Option<String> {
     AerogpuIndexFormat::from_u32(format).map(|f| format!("{f:?}"))
 }
 
+fn blend_factor_name(factor: u32) -> Option<String> {
+    AerogpuBlendFactor::from_u32(factor).map(|f| format!("{f:?}"))
+}
+
+fn blend_op_name(op: u32) -> Option<String> {
+    AerogpuBlendOp::from_u32(op).map(|o| format!("{o:?}"))
+}
+
+fn compare_func_name(func: u32) -> Option<String> {
+    AerogpuCompareFunc::from_u32(func).map(|f| format!("{f:?}"))
+}
+
+fn fill_mode_name(mode: u32) -> Option<String> {
+    AerogpuFillMode::from_u32(mode).map(|m| format!("{m:?}"))
+}
+
+fn cull_mode_name(mode: u32) -> Option<String> {
+    AerogpuCullMode::from_u32(mode).map(|m| format!("{m:?}"))
+}
+
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
 /// stable, grep-friendly opcode listing.
 ///
@@ -1380,9 +1401,21 @@ pub fn decode_cmd_stream_listing(
                         let blend_op = u32_le_at(pkt.payload, 12).unwrap();
                         let color_write_mask = pkt.payload[16];
                         let sample_mask = u32_le_at(pkt.payload, 48).unwrap();
+                        let _ = write!(line, " enable={enable} src_factor={src_factor}");
+                        if let Some(name) = blend_factor_name(src_factor) {
+                            let _ = write!(line, " src_factor_name={name}");
+                        }
+                        let _ = write!(line, " dst_factor={dst_factor}");
+                        if let Some(name) = blend_factor_name(dst_factor) {
+                            let _ = write!(line, " dst_factor_name={name}");
+                        }
+                        let _ = write!(line, " blend_op={blend_op}");
+                        if let Some(name) = blend_op_name(blend_op) {
+                            let _ = write!(line, " blend_op_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " enable={enable} src_factor={src_factor} dst_factor={dst_factor} blend_op={blend_op} color_write_mask=0x{color_write_mask:02X} sample_mask=0x{sample_mask:08X}"
+                            " color_write_mask=0x{color_write_mask:02X} sample_mask=0x{sample_mask:08X}"
                         );
                     }
                     AerogpuCmdOpcode::SetDepthStencilState => {
@@ -1401,7 +1434,14 @@ pub fn decode_cmd_stream_listing(
                         let stencil_write_mask = pkt.payload[17];
                         let _ = write!(
                             line,
-                            " depth_enable={depth_enable} depth_write_enable={depth_write_enable} depth_func={depth_func} stencil_enable={stencil_enable} stencil_read_mask=0x{stencil_read_mask:02X} stencil_write_mask=0x{stencil_write_mask:02X}"
+                            " depth_enable={depth_enable} depth_write_enable={depth_write_enable} depth_func={depth_func}"
+                        );
+                        if let Some(name) = compare_func_name(depth_func) {
+                            let _ = write!(line, " depth_func_name={name}");
+                        }
+                        let _ = write!(
+                            line,
+                            " stencil_enable={stencil_enable} stencil_read_mask=0x{stencil_read_mask:02X} stencil_write_mask=0x{stencil_write_mask:02X}"
                         );
                     }
                     AerogpuCmdOpcode::SetRasterizerState => {
@@ -1418,9 +1458,17 @@ pub fn decode_cmd_stream_listing(
                         let scissor_enable = u32_le_at(pkt.payload, 12).unwrap();
                         let depth_bias = i32_le_at(pkt.payload, 16).unwrap();
                         let flags = u32_le_at(pkt.payload, 20).unwrap();
+                        let _ = write!(line, " fill_mode={fill_mode}");
+                        if let Some(name) = fill_mode_name(fill_mode) {
+                            let _ = write!(line, " fill_mode_name={name}");
+                        }
+                        let _ = write!(line, " cull_mode={cull_mode}");
+                        if let Some(name) = cull_mode_name(cull_mode) {
+                            let _ = write!(line, " cull_mode_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " fill_mode={fill_mode} cull_mode={cull_mode} front_ccw={front_ccw} scissor_enable={scissor_enable} depth_bias={depth_bias} flags=0x{flags:08X}"
+                            " front_ccw={front_ccw} scissor_enable={scissor_enable} depth_bias={depth_bias} flags=0x{flags:08X}"
                         );
                     }
 

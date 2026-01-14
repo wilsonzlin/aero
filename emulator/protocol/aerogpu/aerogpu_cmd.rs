@@ -1019,6 +1019,22 @@ pub enum AerogpuBlendFactor {
     InvConstant = 7,
 }
 
+impl AerogpuBlendFactor {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Zero),
+            1 => Some(Self::One),
+            2 => Some(Self::SrcAlpha),
+            3 => Some(Self::InvSrcAlpha),
+            4 => Some(Self::DestAlpha),
+            5 => Some(Self::InvDestAlpha),
+            6 => Some(Self::Constant),
+            7 => Some(Self::InvConstant),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuBlendOp {
@@ -1027,6 +1043,19 @@ pub enum AerogpuBlendOp {
     RevSubtract = 2,
     Min = 3,
     Max = 4,
+}
+
+impl AerogpuBlendOp {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Add),
+            1 => Some(Self::Subtract),
+            2 => Some(Self::RevSubtract),
+            3 => Some(Self::Min),
+            4 => Some(Self::Max),
+            _ => None,
+        }
+    }
 }
 
 #[repr(C, packed)]
@@ -1073,6 +1102,22 @@ pub enum AerogpuCompareFunc {
     Always = 7,
 }
 
+impl AerogpuCompareFunc {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Never),
+            1 => Some(Self::Less),
+            2 => Some(Self::Equal),
+            3 => Some(Self::LessEqual),
+            4 => Some(Self::Greater),
+            5 => Some(Self::NotEqual),
+            6 => Some(Self::GreaterEqual),
+            7 => Some(Self::Always),
+            _ => None,
+        }
+    }
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuDepthStencilState {
@@ -1107,12 +1152,33 @@ pub enum AerogpuFillMode {
     Wireframe = 1,
 }
 
+impl AerogpuFillMode {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Solid),
+            1 => Some(Self::Wireframe),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuCullMode {
     None = 0,
     Front = 1,
     Back = 2,
+}
+
+impl AerogpuCullMode {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::None),
+            1 => Some(Self::Front),
+            2 => Some(Self::Back),
+            _ => None,
+        }
+    }
 }
 
 // AerogpuRasterizerState.flags bits.
