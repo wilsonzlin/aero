@@ -1,14 +1,14 @@
-use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_PRESENT_FLAG_VSYNC;
-use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-use emulator::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs};
-use emulator::devices::aerogpu_ring::{
-    AeroGpuSubmitDesc, AeroGpuRingHeader, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
-    AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET,
-    RING_TAIL_OFFSET,
-};
-use emulator::gpu_worker::aerogpu_executor::{
+use aero_devices_gpu::executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
 };
+use aero_devices_gpu::regs::{irq_bits, ring_control, AeroGpuRegs};
+use aero_devices_gpu::ring::{
+    AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
+    RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+};
+use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_PRESENT_FLAG_VSYNC;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use memory::{Bus, MemoryBus};
 
 fn write_ring_header(
@@ -20,8 +20,10 @@ fn write_ring_header(
     abi_version: u32,
 ) -> u32 {
     let stride = AeroGpuSubmitDesc::SIZE_BYTES;
-    let size_bytes = u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride))
-        .expect("ring size fits u32");
+    let size_bytes = u32::try_from(
+        AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride),
+    )
+    .expect("ring size fits u32");
 
     mem.write_u32(gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(gpa + 4, abi_version);
@@ -90,14 +92,13 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
 
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
-    // Note: intentionally omit `AEROGPU_SUBMIT_FLAG_PRESENT` and rely on command stream parsing.
     write_submit_desc(
         &mut mem,
         desc_gpa,
         cmd_gpa,
         cmd_stream.len() as u32,
         signal_fence,
-        0,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
     );
 
     let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
@@ -171,7 +172,7 @@ fn pending_vsync_fence_is_flushed_when_scanout_is_disabled() {
         cmd_gpa,
         cmd_stream.len() as u32,
         signal_fence,
-        0,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
     );
 
     let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
@@ -227,7 +228,14 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
 
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
-    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, cmd_stream.len() as u32, 1, 0);
+    write_submit_desc(
+        &mut mem,
+        desc0_gpa,
+        cmd_gpa,
+        cmd_stream.len() as u32,
+        1,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    );
 
     let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
     // Empty submission (no cmd stream) should be treated as immediate.
@@ -286,10 +294,24 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick() {
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
 
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
-    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, cmd_stream.len() as u32, 1, 0);
+    write_submit_desc(
+        &mut mem,
+        desc0_gpa,
+        cmd_gpa,
+        cmd_stream.len() as u32,
+        1,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    );
 
     let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
-    write_submit_desc(&mut mem, desc1_gpa, cmd_gpa, cmd_stream.len() as u32, 2, 0);
+    write_submit_desc(
+        &mut mem,
+        desc1_gpa,
+        cmd_gpa,
+        cmd_stream.len() as u32,
+        2,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    );
 
     let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
         verbose: false,

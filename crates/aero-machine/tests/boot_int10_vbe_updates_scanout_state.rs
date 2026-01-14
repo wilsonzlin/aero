@@ -1,3 +1,8 @@
+#![cfg(any(
+    not(target_arch = "wasm32"),
+    all(target_arch = "wasm32", target_feature = "atomics")
+))]
+
 use std::sync::Arc;
 
 use aero_gpu_vga::SVGA_LFB_BASE;

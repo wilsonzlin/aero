@@ -42,5 +42,4 @@ aero-shared = { path = "../aero-shared" }
 [dev-dependencies]
 pretty_assertions = "1"
 aero-edid = { path = "../aero-edid" }
-emulator = { path = "../emulator" }
 aero-protocol = { path = "../../emulator/protocol" }
