@@ -309,6 +309,50 @@ fn jwt_rejects_non_base64url_header_even_if_signature_matches() {
 }
 
 #[test]
+fn session_token_rejects_base64url_length_mod4_eq_1_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    // Allowed base64url characters, but impossible length for base64-without-padding.
+    let payload_b64 = "AAAAA"; // len=5 => mod 4 == 1
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_payload_base64url_length_mod4_eq_1_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+
+    let payload_b64 = "AAAAA"; // len=5 => mod 4 == 1
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_header_base64url_length_mod4_eq_1_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    let header_b64 = "AAAAA"; // len=5 => mod 4 == 1
+    let payload = br#"{"sid":"abc","exp":1,"iat":0}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
 fn session_token_rejects_deeply_nested_json_payload_without_panicking() {
     let secret = b"unit-test-secret";
 
