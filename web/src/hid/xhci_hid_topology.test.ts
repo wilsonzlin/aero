@@ -91,6 +91,28 @@ describe("hid/xhci_hid_topology", () => {
     expect(xhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev);
   });
 
+  it("keeps existing devices attached when re-attaching with an invalid path", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
+    const xhci = createFakeXhci();
+    const dev = { kind: "device" };
+    const invalidPort = 20; // >15 is not representable in the xHCI Route String.
+
+    mgr.setXhciBridge(xhci);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "webhid", dev);
+    expect(xhci.detach_at_path).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
+
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, invalidPort], "webhid", dev);
+
+    // Invalid reattach attempts should not disconnect the previously attached device.
+    expect(xhci.detach_at_path).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
+
+    mgr.detachDevice(1);
+    expect(xhci.detach_at_path).toHaveBeenCalledTimes(2);
+    expect(xhci.detach_at_path).toHaveBeenLastCalledWith([EXTERNAL_HUB_ROOT_PORT, 1]);
+  });
+
   it("ignores device attachments with invalid downstream port numbers (>15)", () => {
     const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
     const xhci = createFakeXhci();

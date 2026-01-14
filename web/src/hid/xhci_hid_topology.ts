@@ -160,13 +160,12 @@ export class XhciHidTopologyManager {
 
   attachDevice(deviceId: number, path: GuestUsbPath, kind: XhciHidPassthroughDeviceKind, device: unknown): void {
     const normalizedPath = this.#normalizeDevicePath(path.slice());
+    if (!isValidDevicePath(normalizedPath)) return;
     // Treat (re-)attach as a new session for this deviceId.
     const prev = this.#devices.get(deviceId);
     if (prev) {
       this.#maybeDetachPath(prev.path);
     }
-    this.#devices.delete(deviceId);
-    if (!isValidDevicePath(normalizedPath)) return;
     this.#devices.set(deviceId, { path: normalizedPath, kind, device });
     this.#maybeAttachDevice(deviceId);
   }
