@@ -176,6 +176,11 @@ fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() 
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
+    let time_tsc = cpu.cpu.time.read_tsc();
+    assert_eq!(
+        time_tsc, cpu.cpu.state.msr.tsc,
+        "committed blocks must keep internal time and architectural MSR.TSC in sync"
+    );
 
     // The next step must run the interpreter once, even though `next_rip` is compiled.
     match dispatcher.step(&mut cpu) {
@@ -194,6 +199,11 @@ fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() 
     }
     // No extra retirement/time advancement from the no-op interpreter.
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
+    let time_tsc = cpu.cpu.time.read_tsc();
+    assert_eq!(
+        time_tsc, cpu.cpu.state.msr.tsc,
+        "forced interpreter step must not desync internal time from MSR.TSC"
+    );
 }
 
 #[test]
@@ -415,6 +425,11 @@ fn rollback_does_not_create_interrupt_shadow_even_if_meta_requests_it() {
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc);
+    let time_tsc = cpu.cpu.time.read_tsc();
+    assert_eq!(
+        time_tsc, cpu.cpu.state.msr.tsc,
+        "rollback must not desync internal time from MSR.TSC"
+    );
     assert_eq!(
         cpu.cpu.pending.interrupt_inhibit(),
         0,
@@ -484,6 +499,11 @@ fn tsc_advances_on_committed_jit_blocks() {
     }
 
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
+    let time_tsc = cpu.cpu.time.read_tsc();
+    assert_eq!(
+        time_tsc, cpu.cpu.state.msr.tsc,
+        "committed blocks must keep internal time and architectural MSR.TSC in sync"
+    );
 }
 
 #[test]
@@ -618,6 +638,11 @@ fn rollback_jit_exits_do_not_advance_time_or_age_interrupt_shadow() {
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc);
+    let time_tsc = cpu.cpu.time.read_tsc();
+    assert_eq!(
+        time_tsc, cpu.cpu.state.msr.tsc,
+        "rollback must not desync internal time from MSR.TSC"
+    );
 
     // Interrupt shadow should still be active (so delivery is still inhibited).
     assert!(!cpu.maybe_deliver_interrupt());
