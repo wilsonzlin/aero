@@ -237,18 +237,20 @@ The list will also include more specific forms, e.g.:
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
 - Keyboard/mouse: `aero_virtio_input.inf`
-  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**SUBSYS-gated only**).
-- Optional legacy alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
-  - includes a revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not expose Aero subsystem IDs.
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names
+  - includes a strict generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no SUBSYS)
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
+- Optional legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+  - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
+  - from `[Version]` onward, byte-for-byte identical to `aero_virtio_input.inf`
+  - do **not** ship/install it alongside `aero_virtio_input.inf` (overlapping INF binding can be confusing)
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical keyboard/mouse
-INF; it can bind via the legacy alias INF's fallback entry (it will appear with the generic **Aero VirtIO Input Device**
-name). Tablet devices without the Aero tablet subsystem ID may also bind via the fallback entry if `aero_virtio_tablet.inf`
-does not match.
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind via the strict generic fallback
+entry (it will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet subsystem ID
+may also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
 
-Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they overlap on the keyboard/mouse
-SUBSYS IDs, which can lead to confusing PnP driver selection.
+Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match the same HWIDs, which can
+lead to confusing PnP driver selection.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
