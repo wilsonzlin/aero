@@ -1144,7 +1144,18 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         buffer.set(bytes.subarray(srcStart, srcStart + len), dstStart);
       }
     } else {
-      await this.ensureOpen().readSectors(lba, buffer);
+      try {
+        await this.ensureOpen().readSectors(lba, buffer);
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          // Some sparse cache implementations can surface quota errors even on read paths (e.g.
+          // eviction writes dirty blocks). Reads must remain correct: disable persistence and retry
+          // via network + in-memory chunks.
+          this.disablePersistentCacheWrites();
+          return await this.readSectors(lba, buffer);
+        }
+        throw err;
+      }
     }
     this.touchMetaAfterRead(generation);
     this.scheduleReadAhead(offset, buffer.byteLength, endChunk);

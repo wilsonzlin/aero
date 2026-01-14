@@ -1865,6 +1865,113 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("drops persistent caching if sparse cache readSectors hits quota (and continues serving reads)", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 2);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    class ReadQuotaDisk extends MemorySparseDisk {
+      writeCalls = 0;
+      readCalls = 0;
+
+      override async writeBlock(blockIndex: number, bytes: Uint8Array): Promise<void> {
+        this.writeCalls += 1;
+        await super.writeBlock(blockIndex, bytes);
+      }
+
+      override async readSectors(_lba: number, _buffer: Uint8Array): Promise<void> {
+        this.readCalls += 1;
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      }
+    }
+
+    class ReadQuotaFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: ReadQuotaDisk | null = null;
+
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new ReadQuotaDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new ReadQuotaFactory();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "quota-drop-read", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxConcurrentFetches: 1,
+      readAheadChunks: 0,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      fetchFn,
+    });
+
+    const buf = new Uint8Array(chunkSize * 2);
+    await expect(disk.readSectors(0, buf)).resolves.toBeUndefined();
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+
+    // First attempt downloads+persists, then the sparse cache read path hits quota and forces a
+    // retry in memory/network mode (re-download).
+    expect(factory.lastCreated?.writeCalls).toBe(2);
+    expect(factory.lastCreated?.readCalls).toBe(1);
+    expect(rangeGets).toBe(4);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    // Once in memory mode, subsequent reads should not touch the sparse cache or re-download.
+    const before = rangeGets;
+    const again = new Uint8Array(chunkSize * 2);
+    await disk.readSectors(0, again);
+    expect(again).toEqual(data.subarray(0, again.byteLength));
+    expect(rangeGets).toBe(before);
+    expect(factory.lastCreated?.readCalls).toBe(1);
+
+    await disk.close();
+  });
+
   it("handles quota errors mid-read after some chunks were cached and restarts safely", async () => {
     const chunkSize = 512;
     const data = makeTestData(chunkSize * 4);

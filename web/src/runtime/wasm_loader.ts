@@ -1368,7 +1368,7 @@ export interface WasmApi {
          */
         webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
         /**
-         * Complete a pending `GET_REPORT (Feature)` request.
+         * Complete (or fail) a pending `GET_REPORT (Feature)` request.
          *
          * Newer builds accept an explicit success flag and return whether the completion was
          * accepted by the guest-visible UHCI model.
