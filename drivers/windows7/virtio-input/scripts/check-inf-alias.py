@@ -207,6 +207,13 @@ def main() -> int:
 
     alias_enabled = inf_dir / "virtio-input.inf"
     alias_disabled = inf_dir / "virtio-input.inf.disabled"
+
+    if alias_enabled.exists() and alias_disabled.exists():
+        sys.stderr.write(
+            f"virtio-input INF alias drift check: both {alias_enabled} and {alias_disabled} exist; keep only one to avoid overlapping INFs.\n"
+        )
+        return 1
+
     if alias_enabled.exists():
         alias = alias_enabled
     elif alias_disabled.exists():
@@ -276,4 +283,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
