@@ -3,7 +3,8 @@
 use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_virtio::devices::input::{
-    BTN_LEFT, EV_KEY, EV_REL, EV_SYN, KEY_A, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
+    VirtioInput, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, LED_CAPSL, REL_HWHEEL, REL_WHEEL,
+    REL_X, REL_Y, SYN_REPORT,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
@@ -288,4 +289,139 @@ fn virtio_input_mouse_init_then_host_injects_rel_button_and_wheel2_events() {
         let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
         assert_eq!((type_, code_, value_), (ty, code, val));
     }
+}
+
+#[test]
+fn virtio_input_keyboard_statusq_updates_leds_mask() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let virtio_kb = m
+        .virtio_input_keyboard()
+        .expect("virtio-input keyboard enabled");
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let bar0 = bar0_base(&mut m, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+
+    // Enable PCI BAR0 MMIO decoding + bus mastering (virtio DMA).
+    let mut cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
+
+    let common = bar0;
+    let notify = bar0 + 0x1000;
+
+    // Feature negotiation (modern virtio-pci).
+    m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features (low/high dwords) and accept them as-is.
+    m.write_physical_u32(common, 0);
+    let f0 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 0);
+    m.write_physical_u32(common + 0x0c, f0);
+
+    m.write_physical_u32(common, 1);
+    let f1 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 1);
+    m.write_physical_u32(common + 0x0c, f1);
+
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    assert_ne!(
+        m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0
+    );
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure virtqueue 1 (statusq). The guest uses this to report output events such as LEDs.
+    let desc = 0x20000u64;
+    let avail = 0x21000u64;
+    let used = 0x22000u64;
+
+    m.write_physical_u16(common + 0x16, 1); // queue_select
+    m.write_physical_u64(common + 0x20, desc);
+    m.write_physical_u64(common + 0x28, avail);
+    m.write_physical_u64(common + 0x30, used);
+    m.write_physical_u16(common + 0x1c, 1); // queue_enable
+
+    let buf0 = 0x23000u64;
+    let buf1 = 0x23020u64;
+
+    // statusq payload: [EV_LED, LED_CAPSL, 1] + [EV_SYN, SYN_REPORT, 0]
+    let mut payload0 = [0u8; 16];
+    payload0[0..2].copy_from_slice(&EV_LED.to_le_bytes());
+    payload0[2..4].copy_from_slice(&LED_CAPSL.to_le_bytes());
+    payload0[4..8].copy_from_slice(&1i32.to_le_bytes());
+    payload0[8..10].copy_from_slice(&EV_SYN.to_le_bytes());
+    payload0[10..12].copy_from_slice(&SYN_REPORT.to_le_bytes());
+    payload0[12..16].copy_from_slice(&0i32.to_le_bytes());
+
+    // statusq payload: clear caps lock.
+    let mut payload1 = payload0;
+    payload1[4..8].copy_from_slice(&0i32.to_le_bytes());
+
+    m.write_physical(buf0, &payload0);
+    m.write_physical(buf1, &payload1);
+    write_desc(&mut m, desc, 0, buf0, payload0.len() as u32, 0);
+    write_desc(&mut m, desc, 1, buf1, payload1.len() as u32, 0);
+
+    // avail ring: flags=0, idx=1, ring[0]=0.
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, 1);
+    m.write_physical_u16(avail + 4, 0);
+
+    // used ring: flags=0, idx=0.
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 1 and allow the device to consume the chain.
+    let notify_off = m.read_physical_u16(common + 0x1e);
+    let notify_addr = notify
+        + u64::from(notify_off) * u64::from(profile::VIRTIO_NOTIFY_OFF_MULTIPLIER);
+    m.write_physical_u16(notify_addr, 0);
+    m.process_virtio_input();
+
+    assert_eq!(m.read_physical_u16(used + 2), 1, "expected 1 used entry");
+    let leds = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .leds_mask();
+    assert_eq!(leds, 0x02, "expected Caps Lock LED bit to be set");
+
+    // Post a second statusq buffer to clear the Caps Lock LED.
+    m.write_physical_u16(avail + 2, 2); // idx
+    m.write_physical_u16(avail + 6, 1); // ring[1]=1
+    m.write_physical_u16(notify_addr, 0);
+    m.process_virtio_input();
+
+    assert_eq!(m.read_physical_u16(used + 2), 2, "expected 2 used entries");
+    let leds = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .leds_mask();
+    assert_eq!(leds, 0x00, "expected Caps Lock LED bit to be cleared");
 }
