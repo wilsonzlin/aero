@@ -1048,9 +1048,12 @@ async fn verify_http_chunk(
             manifest_url,
             client,
         } => {
-            let url = manifest_url.join(&chunk_key).with_context(|| {
+            let mut url = manifest_url.join(&chunk_key).with_context(|| {
                 format!("resolve chunk url {chunk_key:?} relative to {manifest_url}")
             })?;
+            // Preserve querystring auth material from the manifest URL (e.g. signed URLs).
+            url.set_query(manifest_url.query());
+            url.set_fragment(None);
             verify_chunk_http_with_retry(
                 index,
                 client,
@@ -3597,6 +3600,66 @@ mod tests {
         let _ = server_handle.await;
 
         result
+    }
+
+    #[tokio::test]
+    async fn verify_http_preserves_manifest_query_for_chunks() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let token = "token=abc";
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            // The query must be present on both manifest and chunk requests.
+            "/manifest.json?token=abc" => (200, Vec::new(), manifest_bytes.clone()),
+            "/chunks/00000000.bin?token=abc" => (200, Vec::new(), chunk0.clone()),
+            "/chunks/00000001.bin?token=abc" => (200, Vec::new(), chunk1.clone()),
+            // If the query is missing, make it a hard failure so the test would fail without
+            // query preservation logic.
+            "/chunks/00000000.bin" | "/chunks/00000001.bin" => (401, Vec::new(), b"missing token".to_vec()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json?{token}")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+        Ok(())
     }
 
     #[tokio::test]
