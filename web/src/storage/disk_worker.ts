@@ -218,6 +218,7 @@ async function opfsReadLruChunkCacheBytes(
 ): Promise<number> {
   // Keep in sync with `OpfsLruChunkCache`'s index bounds.
   const MAX_LRU_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+  const MAX_LRU_INDEX_CHUNK_ENTRIES = 1_000_000;
   const scanChunksFallback = opts.scanChunksFallback ?? true;
 
   try {
@@ -240,9 +241,15 @@ async function opfsReadLruChunkCacheBytes(
             if (chunks && typeof chunks === "object") {
               let total = 0;
               const obj = chunks as Record<string, unknown>;
+              let entries = 0;
               for (const key in obj) {
                 const meta = obj[key];
                 if (!meta || typeof meta !== "object") continue;
+                entries += 1;
+                if (entries > MAX_LRU_INDEX_CHUNK_ENTRIES) {
+                  // Treat pathological indices as corrupt and fall back to scanning.
+                  throw new Error("index.json chunk entries too large");
+                }
                 const byteLength = (meta as { byteLength?: unknown }).byteLength;
                 if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) total += byteLength;
               }
@@ -277,6 +284,46 @@ async function opfsReadLruChunkCacheBytes(
      // cache directory missing or OPFS unavailable
    }
   return 0;
+}
+
+async function opfsReadLruChunkCacheIndexStats(
+  remoteCacheDir: FileSystemDirectoryHandle,
+  cacheKey: string,
+): Promise<{ totalBytes: number; chunkCount: number } | null> {
+  // Keep in sync with `OpfsLruChunkCache`'s index bounds.
+  const MAX_LRU_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+  const MAX_LRU_INDEX_CHUNK_ENTRIES = 1_000_000;
+
+  try {
+    const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
+    const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
+    const file = await indexHandle.getFile();
+    if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_LRU_INDEX_JSON_BYTES) return null;
+    const raw = await file.text();
+    if (!raw.trim()) return null;
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const chunks = (parsed as { chunks?: unknown }).chunks;
+    if (!chunks || typeof chunks !== "object") return null;
+
+    let totalBytes = 0;
+    let chunkCount = 0;
+    const obj = chunks as Record<string, unknown>;
+    for (const key in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const meta = obj[key];
+      if (!meta || typeof meta !== "object") continue;
+      chunkCount += 1;
+      if (chunkCount > MAX_LRU_INDEX_CHUNK_ENTRIES) return null;
+      const byteLength = (meta as { byteLength?: unknown }).byteLength;
+      if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) totalBytes += byteLength;
+    }
+
+    return { totalBytes, chunkCount };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1357,12 +1404,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           // derive a better estimate from the LRU index without walking the chunk directory.
           if (status.cachedBytes === 0) {
             try {
-              const lruBytes = await opfsReadLruChunkCacheBytes(remoteCacheDir, name, { scanChunksFallback: false });
-              if (lruBytes > status.cachedBytes) {
-                status.cachedBytes = lruBytes;
-                // Approximate: LRU chunk caches store per-chunk files, so chunk count is roughly
-                // bytes / chunkSize. Keep cachedRanges as-is (may be empty for LRU caches).
-                status.cachedChunks = Math.max(status.cachedChunks, Math.ceil(lruBytes / status.chunkSizeBytes));
+              const stats = await opfsReadLruChunkCacheIndexStats(remoteCacheDir, name);
+              if (stats && stats.totalBytes > status.cachedBytes) {
+                status.cachedBytes = stats.totalBytes;
+                status.cachedChunks = Math.max(status.cachedChunks, stats.chunkCount);
               }
             } catch {
               // best-effort

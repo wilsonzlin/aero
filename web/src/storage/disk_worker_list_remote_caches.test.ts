@@ -76,7 +76,8 @@ describe("disk_worker list_remote_caches", () => {
         JSON.stringify({
           chunks: {
             "0": { byteLength: 1024, lastAccess: nowMs },
-            "1": { byteLength: 2048, lastAccess: nowMs },
+            // Simulate a partial final chunk (end-of-file), which can be smaller than chunkSize.
+            "1": { byteLength: 512, lastAccess: nowMs },
           },
         }),
       );
@@ -123,8 +124,9 @@ describe("disk_worker list_remote_caches", () => {
     const fromIndex = list.caches.find((c) => c.cacheKey === openedLru.cacheKey);
     expect(fromIndex).toMatchObject({
       cacheKey: openedLru.cacheKey,
-      cachedBytes: 3072,
+      cachedBytes: 1536,
       lastAccessedAtMs: nowMs,
+      cachedChunks: 2,
     });
   });
 });
