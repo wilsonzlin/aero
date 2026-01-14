@@ -344,6 +344,10 @@ impl UsbDeviceModel for UsbHidPassthroughHandle {
         self.inner.borrow_mut().reset();
     }
 
+    fn cancel_control_transfer(&mut self) {
+        self.inner.borrow_mut().cancel_control_transfer();
+    }
+
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
@@ -650,6 +654,16 @@ impl UsbHidPassthrough {
         self.feature_report_request_queue
             .retain(|req| req.request_id != request_id);
         true
+    }
+
+    fn cancel_control_transfer(&mut self) {
+        // Feature report reads are serviced asynchronously by the host runtime (e.g. WebHID). When
+        // the guest aborts a control transfer (by issuing a new SETUP) we should drop any queued or
+        // in-flight requests so stale host completions cannot leak and unblock a future unrelated
+        // transfer.
+        self.feature_report_request_queue.clear();
+        self.feature_report_requests_pending.clear();
+        self.feature_report_requests_failed.clear();
     }
 
     fn set_max_pending_input_reports(&mut self, max: usize) {
