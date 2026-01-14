@@ -819,11 +819,10 @@ void TestNonIndexedTriangleStripInstancedDivisorSkipsUploads() {
   vb1.storage.resize(sizeof(inst_elems));
   std::memcpy(vb1.storage.data(), inst_elems, sizeof(inst_elems));
 
-  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
-  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
-
-  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 3u;
-  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 2u;
+  SetStreamSourceOrDie(hDevice, 0, &vb0, 0, sizeof(Vec4));
+  SetStreamSourceOrDie(hDevice, 1, &vb1, 0, sizeof(InstanceData));
+  SetStreamSourceFreqOrDie(hDevice, 0, kD3DStreamSourceIndexedData | 3u);
+  SetStreamSourceFreqOrDie(hDevice, 1, kD3DStreamSourceInstanceData | 2u);
 
   const HRESULT hr = aerogpu::device_draw_primitive(
       hDevice,
@@ -914,11 +913,10 @@ void TestNonIndexedTriangleStripStartVertexRebindsOffset() {
 
   // Bind stream0 with a non-zero base offset so the instancing path must add
   // `start_vertex * stride` to it.
-  dev.streams[0] = {&vb0, sizeof(Vec4), sizeof(Vec4)};
-  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
-
-  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
-  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+  SetStreamSourceOrDie(hDevice, 0, &vb0, sizeof(Vec4), sizeof(Vec4));
+  SetStreamSourceOrDie(hDevice, 1, &vb1, 0, sizeof(InstanceData));
+  SetStreamSourceFreqOrDie(hDevice, 0, kD3DStreamSourceIndexedData | 2u);
+  SetStreamSourceFreqOrDie(hDevice, 1, kD3DStreamSourceInstanceData | 1u);
 
   const HRESULT hr = aerogpu::device_draw_primitive(
       hDevice,
@@ -947,13 +945,14 @@ void TestNonIndexedTriangleStripStartVertexRebindsOffset() {
       vb0_cmds.push_back(cmd);
     }
   }
-  assert(vb0_cmds.size() == 2);
-  const auto* bind0 =
-      reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(vb0_cmds[0]) +
-                                                            sizeof(*vb0_cmds[0]));
-  const auto* bind1 =
-      reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(vb0_cmds[1]) +
-                                                            sizeof(*vb0_cmds[1]));
+  // The instancing path emits a rebind + restore pair, but earlier setup via the
+  // SetStreamSource wrapper also emits an initial SET_VERTEX_BUFFERS packet.
+  // Inspect the last two bindings to focus on the instancing offset fixup.
+  assert(vb0_cmds.size() >= 2);
+  const auto* bind0 = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(vb0_cmds[vb0_cmds.size() - 2]) + sizeof(*vb0_cmds[vb0_cmds.size() - 2]));
+  const auto* bind1 = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(vb0_cmds[vb0_cmds.size() - 1]) + sizeof(*vb0_cmds[vb0_cmds.size() - 1]));
   assert(bind0->buffer == vb0.handle);
   assert(bind0->offset_bytes == sizeof(Vec4) * 2);
   assert(bind1->buffer == vb0.handle);
@@ -997,11 +996,10 @@ void TestNonIndexedLineStripDrawsPerInstance() {
   vb1.storage.resize(sizeof(instances));
   std::memcpy(vb1.storage.data(), instances, sizeof(instances));
 
-  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
-  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
-
-  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
-  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+  SetStreamSourceOrDie(hDevice, 0, &vb0, 0, sizeof(Vec4));
+  SetStreamSourceOrDie(hDevice, 1, &vb1, 0, sizeof(InstanceData));
+  SetStreamSourceFreqOrDie(hDevice, 0, kD3DStreamSourceIndexedData | 2u);
+  SetStreamSourceFreqOrDie(hDevice, 1, kD3DStreamSourceInstanceData | 1u);
 
   const HRESULT hr = aerogpu::device_draw_primitive(
       hDevice,
@@ -1086,11 +1084,10 @@ void TestNonIndexedTriangleFanDrawsPerInstance() {
   vb1.storage.resize(sizeof(instances));
   std::memcpy(vb1.storage.data(), instances, sizeof(instances));
 
-  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
-  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
-
-  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
-  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+  SetStreamSourceOrDie(hDevice, 0, &vb0, 0, sizeof(Vec4));
+  SetStreamSourceOrDie(hDevice, 1, &vb1, 0, sizeof(InstanceData));
+  SetStreamSourceFreqOrDie(hDevice, 0, kD3DStreamSourceIndexedData | 2u);
+  SetStreamSourceFreqOrDie(hDevice, 1, kD3DStreamSourceInstanceData | 1u);
 
   const HRESULT hr = aerogpu::device_draw_primitive(
       hDevice,
@@ -1750,14 +1747,11 @@ void TestIndexedTriangleFanUsesBaseVertexNoIndexExpansion() {
   ib.storage.resize(sizeof(indices_u16));
   std::memcpy(ib.storage.data(), indices_u16, sizeof(indices_u16));
 
-  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
-  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
-  dev.index_buffer = &ib;
-  dev.index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
-  dev.index_offset_bytes = 0;
-
-  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
-  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+  SetStreamSourceOrDie(hDevice, 0, &vb0, 0, sizeof(Vec4));
+  SetStreamSourceOrDie(hDevice, 1, &vb1, 0, sizeof(InstanceData));
+  SetIndicesOrDie(hDevice, &ib, static_cast<D3DDDIFORMAT>(101) /*D3DFMT_INDEX16*/, 0);
+  SetStreamSourceFreqOrDie(hDevice, 0, kD3DStreamSourceIndexedData | 2u);
+  SetStreamSourceFreqOrDie(hDevice, 1, kD3DStreamSourceInstanceData | 1u);
 
   const HRESULT hr = aerogpu::device_draw_indexed_primitive(
       hDevice,
