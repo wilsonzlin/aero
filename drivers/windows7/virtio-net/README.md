@@ -34,6 +34,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
     - `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_GUEST_CSUM` (checksum offloads / RX checksum reporting)
     - `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6` (TSO/LSO)
     - `VIRTIO_NET_F_HOST_ECN` (ECN/CWR semantics for TSO; uses `virtio_net_hdr.gso_type` ECN bit)
+    - `VIRTIO_NET_F_MRG_RXBUF` (mergeable receive buffers; use 12-byte RX/TX header and allow RX frames to span multiple buffers)
     - `VIRTIO_NET_F_CTRL_VQ` + `VIRTIO_NET_F_CTRL_MAC_ADDR` / `VIRTIO_NET_F_CTRL_VLAN` (optional control virtqueue for runtime MAC/VLAN commands)
 - Virtqueues:
   - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
@@ -77,6 +78,17 @@ How to validate (in-tree harness):
   `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...` (and the mirrored host marker `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`).
 - The marker includes deterministic large transfer diagnostics (`large_*`, `upload_*`) which can be used to compare
   throughput and integrity across configurations.
+
+### Mergeable receive buffers (MRG_RXBUF)
+
+Contract v1 Aero device models MUST NOT offer `VIRTIO_NET_F_MRG_RXBUF` (§3.2.3), but other virtio-net implementations
+(notably QEMU) may.
+
+When `VIRTIO_NET_F_MRG_RXBUF` is offered, this driver can negotiate it and will:
+
+- Switch to the 12-byte `struct virtio_net_hdr_mrg_rxbuf` on **both RX and TX**.
+- Read `num_buffers` from the first RX header and support a single received frame spanning multiple posted RX buffers
+  (reassembled via a chained MDL into one indicated NBL).
 
 ### MSI / MSI-X interrupts
 
