@@ -582,6 +582,56 @@ mod tests {
         assert_eq!(offset_of!(VirtioNetHdr, num_buffers), 10);
     }
 
+    #[test]
+    fn virtio_net_hdr_from_slice_le_base_len_sets_num_buffers_zero() {
+        let bytes: [u8; VirtioNetHdr::BASE_LEN] = [
+            0x12, 0x34, // flags, gso_type
+            0x78, 0x56, // hdr_len = 0x5678
+            0xab, 0x9a, // gso_size = 0x9aab
+            0xef, 0xcd, // csum_start = 0xcdef
+            0x11, 0x00, // csum_offset = 0x0011
+        ];
+        let hdr = VirtioNetHdr::from_slice_le(&bytes).expect("parse base header");
+        assert_eq!(
+            hdr,
+            VirtioNetHdr {
+                flags: 0x12,
+                gso_type: 0x34,
+                hdr_len: 0x5678,
+                gso_size: 0x9aab,
+                csum_start: 0xcdef,
+                csum_offset: 0x0011,
+                num_buffers: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn virtio_net_hdr_from_slice_le_mergeable_len_reads_num_buffers() {
+        let bytes: [u8; VirtioNetHdr::LEN] = [
+            0x01, 0x02, // flags, gso_type
+            0x04, 0x03, // hdr_len = 0x0304
+            0x06, 0x05, // gso_size = 0x0506
+            0x08, 0x07, // csum_start = 0x0708
+            0x0a, 0x09, // csum_offset = 0x090a
+            0x0c, 0x0b, // num_buffers = 0x0b0c
+        ];
+        let hdr = VirtioNetHdr::from_slice_le(&bytes).expect("parse mergeable header");
+        assert_eq!(hdr.num_buffers, 0x0b0c);
+        // Spot-check a few other fields.
+        assert_eq!(hdr.flags, 0x01);
+        assert_eq!(hdr.gso_type, 0x02);
+        assert_eq!(hdr.hdr_len, 0x0304);
+    }
+
+    #[test]
+    fn virtio_net_hdr_from_slice_le_rejects_other_lengths() {
+        assert!(VirtioNetHdr::from_slice_le(&[]).is_none());
+        assert!(VirtioNetHdr::from_slice_le(&[0u8; 9]).is_none());
+        assert!(VirtioNetHdr::from_slice_le(&[0u8; 11]).is_none());
+        assert!(VirtioNetHdr::from_slice_le(&[0u8; 13]).is_none());
+    }
+
     fn udp_pseudo_header_sum_ipv4(src: [u8; 4], dst: [u8; 4], udp_len: u16) -> u16 {
         let mut sum: u32 = 0;
         sum = checksum_sum_u16_words(&src, sum);
