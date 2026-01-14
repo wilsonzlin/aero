@@ -895,8 +895,11 @@ jobs:
           input_binding_host_marker=""
           input_bind_host_marker=""
           input_events_modifiers_marker=""
+          input_events_modifiers_marker_line=""
           input_events_buttons_marker=""
+          input_events_buttons_marker_line=""
           input_events_wheel_marker=""
+          input_events_wheel_marker_line=""
           input_tablet_marker=""
           input_tablet_marker_line=""
            input_inject_marker=""
@@ -990,8 +993,17 @@ jobs:
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             input_events_modifiers_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-modifiers\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_modifiers_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_events_buttons_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-buttons\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_buttons_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_events_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_wheel_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_tablet_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-tablet-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_tablet_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
@@ -1262,11 +1274,20 @@ jobs:
             if [[ -n "${input_events_modifiers_marker}" ]]; then
               echo "- Guest virtio-input-events-modifiers marker: \`${input_events_modifiers_marker}\`"
             fi
+            if [[ -n "${input_events_modifiers_marker_line}" ]]; then
+              echo "- Guest virtio-input-events-modifiers marker line: \`${input_events_modifiers_marker_line}\`"
+            fi
             if [[ -n "${input_events_buttons_marker}" ]]; then
               echo "- Guest virtio-input-events-buttons marker: \`${input_events_buttons_marker}\`"
             fi
+            if [[ -n "${input_events_buttons_marker_line}" ]]; then
+              echo "- Guest virtio-input-events-buttons marker line: \`${input_events_buttons_marker_line}\`"
+            fi
             if [[ -n "${input_events_wheel_marker}" ]]; then
               echo "- Guest virtio-input-events-wheel marker: \`${input_events_wheel_marker}\`"
+            fi
+            if [[ -n "${input_events_wheel_marker_line}" ]]; then
+              echo "- Guest virtio-input-events-wheel marker line: \`${input_events_wheel_marker_line}\`"
             fi
             if [[ -n "${input_inject_marker}" ]]; then
               echo "- Host virtio-input injection marker: \`${input_inject_marker}\`"

@@ -46,7 +46,30 @@ class Win7VirtioHarnessWorkflowInputMarkerLineTests(unittest.TestCase):
         )
         self.assertIn("Guest virtio-input-tablet-events marker line", self.text)
 
+    def test_workflow_extracts_input_events_modifiers_marker_line(self) -> None:
+        self.assertIn('input_events_modifiers_marker_line="$(', self.text)
+        self.assertIn(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|",
+            self.text,
+        )
+        self.assertIn("Guest virtio-input-events-modifiers marker line", self.text)
+
+    def test_workflow_extracts_input_events_buttons_marker_line(self) -> None:
+        self.assertIn('input_events_buttons_marker_line="$(', self.text)
+        self.assertIn(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|",
+            self.text,
+        )
+        self.assertIn("Guest virtio-input-events-buttons marker line", self.text)
+
+    def test_workflow_extracts_input_events_wheel_marker_line(self) -> None:
+        self.assertIn('input_events_wheel_marker_line="$(', self.text)
+        self.assertIn(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|",
+            self.text,
+        )
+        self.assertIn("Guest virtio-input-events-wheel marker line", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
-
