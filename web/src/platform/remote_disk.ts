@@ -211,6 +211,7 @@ export async function probeRemoteDisk(
   url: string,
   opts: { credentials?: RequestCredentials } = {},
 ): Promise<RemoteDiskProbeResult> {
+  const safeOpts = nullProtoCopy<{ credentials?: RequestCredentials }>(opts);
   let acceptRanges = "";
   let size: number | null = null;
   let etag: string | null = null;
@@ -219,7 +220,7 @@ export async function probeRemoteDisk(
   // Prefer HEAD for a cheap size probe, but fall back to a Range GET for servers that
   // disallow HEAD (or omit Content-Length from HEAD).
   try {
-    const head = await fetch(url, { method: "HEAD", credentials: opts.credentials });
+    const head = await fetch(url, { method: "HEAD", credentials: safeOpts.credentials });
     if (head.ok) {
       const headSize = Number(head.headers.get("content-length") ?? "NaN");
       // Only trust sizes that are representable as safe integers. The remote disk stack uses
@@ -235,7 +236,7 @@ export async function probeRemoteDisk(
     // ignore; fall back to GET probe
   }
 
-  const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, credentials: opts.credentials });
+  const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, credentials: safeOpts.credentials });
   try {
     const contentRange = probe.headers.get("content-range") ?? "";
     const partialOk = probe.status === 206;
@@ -455,6 +456,21 @@ function stableImageIdFromUrl(url: string): string {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nullProto<T extends object>(): T {
+  return Object.create(null) as T;
+}
+
+function nullProtoCopy<T extends object>(value: unknown): T {
+  if (!isRecord(value)) return nullProto<T>();
+  // Copy only own enumerable properties into a null-prototype object so callers never observe
+  // inherited fields (prototype pollution).
+  return Object.assign(nullProto<T>(), value as object);
+}
+
 function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions, blockSize: number): RemoteCacheKeyParts {
   const imageId = (options.cacheImageId ?? stableImageIdFromUrl(url)).trim();
   if (!imageId) {
@@ -552,8 +568,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   static async open(url: string, options: RemoteDiskOptions = {}): Promise<RemoteStreamingDisk> {
-    const lease = staticDiskLease(url, normalizeCredentials(options.credentials));
-    return await RemoteStreamingDisk.openWithLease({ sourceId: url, lease }, options);
+    const safeOptions = nullProtoCopy<RemoteDiskOptions>(options);
+    const lease = staticDiskLease(url, normalizeCredentials(safeOptions.credentials));
+    return await RemoteStreamingDisk.openWithLease({ sourceId: url, lease }, safeOptions);
   }
 
   static async openWithLease(
@@ -562,15 +579,16 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   ): Promise<RemoteStreamingDisk> {
     if (!params.sourceId) throw new Error("sourceId must not be empty");
 
+    const safeOptions = nullProtoCopy<RemoteDiskOptions>(options);
     const resolvedCacheLimitBytes =
-      options.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : options.cacheLimitBytes;
+      safeOptions.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : safeOptions.cacheLimitBytes;
 
     const resolved: ResolvedRemoteDiskOptions = {
-      blockSize: options.blockSize ?? RANGE_STREAM_CHUNK_SIZE,
+      blockSize: safeOptions.blockSize ?? RANGE_STREAM_CHUNK_SIZE,
       cacheLimitBytes: resolvedCacheLimitBytes,
-      prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
-      cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
-      leaseRefreshMarginMs: options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
+      prefetchSequentialBlocks: safeOptions.prefetchSequentialBlocks ?? 2,
+      cacheBackend: safeOptions.cacheBackend ?? pickDefaultBackend(),
+      leaseRefreshMarginMs: safeOptions.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
     };
 
     if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
@@ -607,7 +625,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       throw new Error(`Invalid leaseRefreshMarginMs=${resolved.leaseRefreshMarginMs}`);
     }
 
-    const expectedSizeBytes = options.expectedSizeBytes;
+    const expectedSizeBytes = safeOptions.expectedSizeBytes;
     if (expectedSizeBytes !== undefined) {
       if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes <= 0) {
         throw new Error(`Invalid expectedSizeBytes=${expectedSizeBytes}`);
@@ -627,7 +645,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
     }
 
-    const parts = cacheKeyPartsFromUrl(params.sourceId, options, resolved.blockSize);
+    const parts = cacheKeyPartsFromUrl(params.sourceId, safeOptions, resolved.blockSize);
     // Cache disabled: do not touch OPFS / IndexedDB at all (use direct Range fetches only).
     // Note: `cacheLimitBytes: null` means "unlimited cache", so `0` is the explicit disable signal.
     if (resolved.cacheLimitBytes === 0) {
@@ -638,7 +656,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return disk;
     }
     const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
-    const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : params.etag ?? probe.etag;
+    const resolvedEtag = safeOptions.cacheEtag !== undefined ? safeOptions.cacheEtag : params.etag ?? probe.etag;
     const validators = { sizeBytes: probe.size, etag: resolvedEtag, lastModified: probe.lastModified };
 
     if (resolved.cacheBackend === "idb") {
@@ -1437,8 +1455,9 @@ function staticDiskLease(url: string, credentialsMode: RequestCredentials): Disk
 }
 
 export async function stableCacheKey(url: string, options: RemoteDiskOptions = {}): Promise<string> {
-  const blockSize = options.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
-  return await RemoteCacheManager.deriveCacheKey(cacheKeyPartsFromUrl(url, options, blockSize));
+  const safeOptions = nullProtoCopy<RemoteDiskOptions>(options);
+  const blockSize = safeOptions.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
+  return await RemoteCacheManager.deriveCacheKey(cacheKeyPartsFromUrl(url, safeOptions, blockSize));
 }
 
 // Backwards-compatible alias: this disk implementation uses HTTP Range requests.

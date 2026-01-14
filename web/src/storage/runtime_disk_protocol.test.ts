@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { RuntimeDiskClient } from "./runtime_disk_client";
 import { RuntimeDiskWorker, type OpenDiskFn } from "./runtime_disk_worker_impl";
 import type { DiskImageMetadata } from "./metadata";
-import type { DiskOpenSpec } from "./runtime_disk_protocol";
+import { normalizeDiskOpenSpec, type DiskOpenSpec } from "./runtime_disk_protocol";
 
 class StubWorker {
   lastMessage: any;
@@ -36,6 +36,23 @@ describe("runtime disk worker protocol", () => {
     sizeBytes: 2 * 1024 * 1024,
     createdAtMs: 0,
   };
+
+  it("does not treat inherited kind as a DiskOpenSpec (prototype pollution)", () => {
+    const kindExisting = Object.getOwnPropertyDescriptor(Object.prototype, "kind");
+    if (kindExisting && kindExisting.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "kind", { value: "remote", configurable: true, writable: true });
+      const normalized = normalizeDiskOpenSpec({} as any);
+      expect(normalized.kind).toBe("local");
+    } finally {
+      if (kindExisting) Object.defineProperty(Object.prototype, "kind", kindExisting);
+      else delete (Object.prototype as any).kind;
+    }
+  });
 
   it("serializes local open() as DiskOpenSpec(kind=local)", async () => {
     const meta = dummyLocalMeta;

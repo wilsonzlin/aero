@@ -648,6 +648,42 @@ describe("RemoteChunkedDisk", () => {
     }
   });
 
+  it("ignores inherited credentials option (prototype pollution)", async () => {
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize: 512,
+      chunkSize: 512,
+      chunkCount: 1,
+      chunkIndexWidth: 1,
+    };
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "credentials");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockImplementation(async (_input, init) => {
+      expect(init?.credentials).toBe("same-origin");
+      return new Response(JSON.stringify(manifest), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = fetchFn as unknown as typeof fetch;
+    try {
+      Object.defineProperty(Object.prototype, "credentials", { value: "include", configurable: true, writable: true });
+      const disk = await RemoteChunkedDisk.open("https://example.invalid/manifest.json", { store: new TestMemoryStore() });
+      await disk.close();
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (existing) Object.defineProperty(Object.prototype, "credentials", existing);
+      else delete (Object.prototype as any).credentials;
+    }
+  });
+
   it("rejects excessive prefetchSequentialChunks", async () => {
     await expect(
       RemoteChunkedDisk.open("https://example.invalid/manifest.json", {

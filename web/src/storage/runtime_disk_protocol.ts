@@ -150,8 +150,13 @@ export type OpenResult = {
 };
 
 export function normalizeDiskOpenSpec(specOrMeta: DiskOpenSpec | DiskImageMetadata): DiskOpenSpec {
-  if ((specOrMeta as DiskOpenSpec).kind === "local" || (specOrMeta as DiskOpenSpec).kind === "remote") {
-    return specOrMeta as DiskOpenSpec;
+  // Treat inputs as untrusted: ignore inherited `kind` (prototype pollution).
+  if (specOrMeta && typeof specOrMeta === "object") {
+    const rec = specOrMeta as Record<string, unknown>;
+    const kind = Object.prototype.hasOwnProperty.call(rec, "kind") ? rec.kind : undefined;
+    if (kind === "local" || kind === "remote") {
+      return specOrMeta as DiskOpenSpec;
+    }
   }
   return { kind: "local", meta: specOrMeta as DiskImageMetadata };
 }

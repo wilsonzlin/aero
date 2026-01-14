@@ -566,6 +566,21 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nullProto<T extends object>(): T {
+  return Object.create(null) as T;
+}
+
+function nullProtoCopy<T extends object>(value: unknown): T {
+  if (!isRecord(value)) return nullProto<T>();
+  // Copy only own enumerable properties into a null-prototype object so callers never observe
+  // inherited fields (prototype pollution).
+  return Object.assign(nullProto<T>(), value as object);
+}
+
 function emptyChunkLastAccessMap(): Record<string, number> {
   // Use a null prototype so corrupted/polluted `Object.prototype["0"]` etc cannot affect LRU bookkeeping.
   return Object.create(null) as Record<string, number>;
@@ -1182,14 +1197,16 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   static async open(manifestUrl: string, options: RemoteChunkedDiskOptions = {}): Promise<RemoteChunkedDisk> {
     if (!manifestUrl) throw new Error("manifestUrl must not be empty");
-    const lease = staticDiskLease(manifestUrl, options.credentials ?? "same-origin");
-    return await RemoteChunkedDisk.openWithLease({ sourceId: manifestUrl, lease }, options);
+    const safeOptions = nullProtoCopy<RemoteChunkedDiskOptions>(options);
+    const lease = staticDiskLease(manifestUrl, safeOptions.credentials ?? "same-origin");
+    return await RemoteChunkedDisk.openWithLease({ sourceId: manifestUrl, lease }, safeOptions);
   }
   static async openWithLease(
     params: { sourceId: string; lease: DiskAccessLease },
     options: RemoteChunkedDiskOptions = {},
   ): Promise<RemoteChunkedDisk> {
     if (!params.sourceId) throw new Error("sourceId must not be empty");
+    const safeOptions = nullProtoCopy<RemoteChunkedDiskOptions>(options);
 
     type ResolvedRemoteChunkedDiskOptions =
       Required<Omit<RemoteChunkedDiskOptions, "credentials" | "cacheImageId" | "cacheVersion">> &
@@ -1198,19 +1215,19 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     // Preserve `null` to mean "no eviction" (unbounded cache), while `undefined`
     // selects the default bounded cache size.
     const resolvedCacheLimitBytes =
-      options.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : options.cacheLimitBytes;
+      safeOptions.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : safeOptions.cacheLimitBytes;
 
     const resolved: ResolvedRemoteChunkedDiskOptions = {
       cacheLimitBytes: resolvedCacheLimitBytes,
-      maxConcurrentFetches: options.maxConcurrentFetches ?? 4,
-      prefetchSequentialChunks: options.prefetchSequentialChunks ?? 2,
-      maxAttempts: options.maxAttempts ?? 3,
-      retryBaseDelayMs: options.retryBaseDelayMs ?? 200,
-      store: options.store ?? (hasOpfsRoot() ? new OpfsStore() : new MemoryStore()),
-      cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
-      cacheImageId: options.cacheImageId,
-      cacheVersion: options.cacheVersion,
-      leaseRefreshMarginMs: options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
+      maxConcurrentFetches: safeOptions.maxConcurrentFetches ?? 4,
+      prefetchSequentialChunks: safeOptions.prefetchSequentialChunks ?? 2,
+      maxAttempts: safeOptions.maxAttempts ?? 3,
+      retryBaseDelayMs: safeOptions.retryBaseDelayMs ?? 200,
+      store: safeOptions.store ?? (hasOpfsRoot() ? new OpfsStore() : new MemoryStore()),
+      cacheBackend: safeOptions.cacheBackend ?? pickDefaultBackend(),
+      cacheImageId: safeOptions.cacheImageId,
+      cacheVersion: safeOptions.cacheVersion,
+      leaseRefreshMarginMs: safeOptions.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
     };
 
     if (resolved.cacheLimitBytes !== null) {
@@ -1344,11 +1361,12 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       return out;
     };
 
+    const injectedStore = hasOwn(safeOptions, "store") ? safeOptions.store : undefined;
     if (resolved.cacheLimitBytes === 0) {
       // cacheLimitBytes=0 is defined as "disable caching entirely". Ensure we do not open or
       // read/write any persistent cache backend (OPFS or IndexedDB).
       cache = new NoopChunkCache();
-    } else if (options.store) {
+    } else if (injectedStore) {
       // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
       cache = await openRemoteChunkCache(resolved.store);
     } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {

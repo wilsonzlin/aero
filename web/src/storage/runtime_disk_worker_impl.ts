@@ -161,17 +161,20 @@ async function bestEffortDeleteLegacyRemoteRangeCache(imageId: string, version: 
 }
 
 async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<AsyncSectorDisk> {
-  const cacheBackend: DiskBackend = options?.cacheBackend ?? pickDefaultBackend();
-  const cacheLimitBytes = options?.cacheLimitBytes;
+  // Treat `options` as untrusted (postMessage payload). Copy into a null-prototype object so
+  // `Object.prototype.cacheBackend`/etc pollution cannot affect option resolution.
+  const optionsSafe = isRecord(options) ? (Object.assign(Object.create(null), options) as RemoteDiskOptions) : (Object.create(null) as RemoteDiskOptions);
+  const cacheBackend: DiskBackend = optionsSafe.cacheBackend ?? pickDefaultBackend();
+  const cacheLimitBytes = optionsSafe.cacheLimitBytes;
   // `RemoteRangeDisk` uses OPFS sparse files (requires SyncAccessHandle) and does not
   // implement cache eviction. Only select it when OPFS is requested *and* the caller
   // explicitly opts into an unbounded cache (`cacheLimitBytes: null`). Otherwise fall
   // back to `RemoteStreamingDisk`, which implements bounded eviction (default 512 MiB).
   if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
-    const chunkSize = options?.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
+    const chunkSize = typeof optionsSafe.blockSize === "number" ? optionsSafe.blockSize : RANGE_STREAM_CHUNK_SIZE;
     const cacheKeyParts = {
-      imageId: (options?.cacheImageId ?? stableImageIdFromUrl(url)).trim(),
-      version: (options?.cacheVersion ?? "1").trim(),
+      imageId: (optionsSafe.cacheImageId ?? stableImageIdFromUrl(url)).trim(),
+      version: (optionsSafe.cacheVersion ?? "1").trim(),
       deliveryType: remoteRangeDeliveryType(chunkSize),
     };
     if (!cacheKeyParts.imageId) throw new Error("cacheImageId must not be empty");
@@ -182,13 +185,14 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
     await bestEffortDeleteLegacyRemoteRangeCache(cacheKeyParts.imageId, cacheKeyParts.version);
     return await RemoteRangeDisk.open(url, {
       cacheKeyParts,
-      credentials: options?.credentials,
+      credentials: optionsSafe.credentials,
       chunkSize,
-      readAheadChunks: options?.prefetchSequentialBlocks,
+      readAheadChunks: optionsSafe.prefetchSequentialBlocks,
     });
   }
 
-  return await RemoteStreamingDisk.open(url, { ...(options ?? {}), cacheBackend });
+  optionsSafe.cacheBackend = cacheBackend;
+  return await RemoteStreamingDisk.open(url, optionsSafe);
 }
 
 function safeOpfsNameComponent(input: string): string {
@@ -1146,66 +1150,156 @@ async function openRemoteBackedDisk(
   mode: OpenMode,
   overlayBlockSizeBytes?: number,
 ): Promise<DiskEntry> {
-  const remote = remoteSpec.remote;
-  const readOnlyBase = remote.kind === "cd" || remote.format === "iso";
+  // Treat remote open specs as untrusted (postMessage). Never observe inherited fields.
+  const remoteRaw = (remoteSpec as unknown as { remote?: unknown }).remote;
+  if (!isRecord(remoteRaw)) {
+    throw new Error("invalid remote disk spec (expected object)");
+  }
+  const remote = remoteRaw as Record<string, unknown>;
 
-  const credentials = remote.credentials ?? "same-origin";
+  const delivery = hasOwn(remote, "delivery") ? remote.delivery : undefined;
+  if (delivery !== "range" && delivery !== "chunked") {
+    throw new Error(`invalid remote delivery=${String(delivery)}`);
+  }
+
+  const diskKind = hasOwn(remote, "kind") ? remote.kind : undefined;
+  if (diskKind !== "hdd" && diskKind !== "cd") {
+    throw new Error(`invalid remote kind=${String(diskKind)}`);
+  }
+
+  const format = hasOwn(remote, "format") ? remote.format : undefined;
+  if (format !== "raw" && format !== "iso") {
+    throw new Error(`invalid remote format=${String(format)}`);
+  }
+
+  const cacheKeyRaw = hasOwn(remote, "cacheKey") ? remote.cacheKey : undefined;
+  if (typeof cacheKeyRaw !== "string" || !cacheKeyRaw.trim()) {
+    throw new Error("remote cacheKey must not be empty");
+  }
+  const cacheKey = cacheKeyRaw;
+
+  const readOnlyBase = diskKind === "cd" || format === "iso";
+
+  const credentialsRaw = hasOwn(remote, "credentials") ? remote.credentials : undefined;
+  const credentials = credentialsRaw === undefined ? "same-origin" : credentialsRaw;
+  if (credentials !== "same-origin" && credentials !== "include" && credentials !== "omit") {
+    throw new Error(`invalid remote credentials=${String(credentialsRaw)}`);
+  }
   const fetchFn: typeof fetch = (input, init = {}) => fetch(input, { ...init, credentials: init.credentials ?? credentials });
 
-  const cacheImageId = (remote.imageId ?? remote.cacheKey).trim();
+  const imageIdRaw = hasOwn(remote, "imageId") ? remote.imageId : undefined;
+  const imageId = typeof imageIdRaw === "string" ? imageIdRaw : undefined;
+  const cacheImageId = (imageId ?? cacheKey).trim();
   if (!cacheImageId) throw new Error("remote cacheKey must not be empty");
-  const rangeCacheVersion = (remote.version ?? "1").trim();
+
+  const versionRaw = hasOwn(remote, "version") ? remote.version : undefined;
+  const version = typeof versionRaw === "string" ? versionRaw : undefined;
+  const rangeCacheVersion = (version ?? "1").trim();
   if (!rangeCacheVersion) throw new Error("remote version must not be empty");
 
-  const cacheBackend: DiskBackend = remote.cacheBackend ?? pickDefaultBackend();
-  const cacheLimitBytes = remote.cacheLimitBytes;
+  const cacheBackendRaw = hasOwn(remote, "cacheBackend") ? remote.cacheBackend : undefined;
+  const cacheBackend = (cacheBackendRaw ?? pickDefaultBackend()) as DiskBackend;
+  if (cacheBackend !== "opfs" && cacheBackend !== "idb") {
+    throw new Error(`invalid remote cacheBackend=${String(cacheBackendRaw)}`);
+  }
 
-  const base: AsyncSectorDisk =
-    remote.delivery === "range"
-      ? await (async () => {
-          const chunkSize = remote.chunkSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
+  const cacheLimitBytes = hasOwn(remote, "cacheLimitBytes") ? remote.cacheLimitBytes : undefined;
+  if (cacheLimitBytes !== undefined && cacheLimitBytes !== null) {
+    if (typeof cacheLimitBytes !== "number" || !Number.isSafeInteger(cacheLimitBytes) || cacheLimitBytes < 0) {
+      throw new Error(`invalid remote cacheLimitBytes=${String(cacheLimitBytes)}`);
+    }
+  }
 
-          // `RemoteRangeDisk` uses an unbounded sparse OPFS cache (no eviction); only select it
-          // when the caller explicitly requested an unbounded OPFS cache.
-          if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
-            // Backward-compat cleanup: older clients keyed range caches as `deliveryType: "range"`,
-            // which collides across different chunkSize values.
-            await bestEffortDeleteLegacyRemoteRangeCache(cacheImageId, rangeCacheVersion);
+  let integrity: RemoteDiskIntegritySpec | undefined = undefined;
+  if (hasOwn(remote, "integrity")) {
+    const rawIntegrity = remote.integrity;
+    if (rawIntegrity !== undefined && rawIntegrity !== null) {
+      if (!isRecord(rawIntegrity)) {
+        throw new Error("invalid integrity spec (expected object)");
+      }
+      const rec = rawIntegrity as Record<string, unknown>;
+      const kind = hasOwn(rec, "kind") ? rec.kind : undefined;
+      if (kind === "sha256") {
+        const shaRaw = hasOwn(rec, "sha256") ? rec.sha256 : undefined;
+        if (!Array.isArray(shaRaw)) {
+          throw new Error("invalid sha256 integrity spec (expected sha256: string[])");
+        }
+        integrity = { kind: "sha256", sha256: shaRaw.map((v) => String(v)) };
+      } else if (kind === "manifest") {
+        const manifestUrl = hasOwn(rec, "manifestUrl") ? rec.manifestUrl : undefined;
+        if (typeof manifestUrl !== "string" || !manifestUrl.trim()) {
+          throw new Error("invalid integrity manifestUrl");
+        }
+        integrity = { kind: "manifest", manifestUrl };
+      } else {
+        throw new Error(`invalid integrity kind=${String(kind)}`);
+      }
+    }
+  }
 
-            return await RemoteRangeDisk.open(remote.url, {
-              cacheKeyParts: {
-                imageId: cacheImageId,
-                version: rangeCacheVersion,
-                deliveryType: remoteRangeDeliveryType(chunkSize),
-              },
-              credentials,
-              chunkSize,
-              sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
-              fetchFn,
-            });
-          }
+  let base: AsyncSectorDisk;
+  if (delivery === "range") {
+    const urlRaw = hasOwn(remote, "url") ? remote.url : undefined;
+    if (typeof urlRaw !== "string" || !urlRaw.trim()) {
+      throw new Error("invalid remote url");
+    }
+    const url = urlRaw;
 
-          return await RemoteStreamingDisk.open(remote.url, {
-            credentials,
-            cacheBackend,
-            cacheLimitBytes,
-            cacheImageId,
-            cacheVersion: rangeCacheVersion,
-            blockSize: chunkSize,
-          });
-        })()
-      : await RemoteChunkedDisk.open(remote.manifestUrl, {
-          credentials,
-          cacheBackend,
-          cacheLimitBytes,
-          cacheImageId,
-          cacheVersion: remote.version,
-        });
+    const chunkSizeRaw = hasOwn(remote, "chunkSizeBytes") ? remote.chunkSizeBytes : undefined;
+    const chunkSize =
+      typeof chunkSizeRaw === "number" && Number.isSafeInteger(chunkSizeRaw) && chunkSizeRaw > 0
+        ? chunkSizeRaw
+        : RANGE_STREAM_CHUNK_SIZE;
+
+    // `RemoteRangeDisk` uses an unbounded sparse OPFS cache (no eviction); only select it
+    // when the caller explicitly requested an unbounded OPFS cache.
+    if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
+      // Backward-compat cleanup: older clients keyed range caches as `deliveryType: "range"`,
+      // which collides across different chunkSize values.
+      await bestEffortDeleteLegacyRemoteRangeCache(cacheImageId, rangeCacheVersion);
+
+      base = await RemoteRangeDisk.open(url, {
+        cacheKeyParts: {
+          imageId: cacheImageId,
+          version: rangeCacheVersion,
+          deliveryType: remoteRangeDeliveryType(chunkSize),
+        },
+        credentials,
+        chunkSize,
+        sha256Manifest: await loadSha256Manifest(integrity, fetchFn),
+        fetchFn,
+      });
+    } else {
+      // Use a null-prototype options bag so remote disk option reads can never observe inherited
+      // values (e.g. `Object.prototype.cacheLimitBytes`).
+      const opts = Object.create(null) as RemoteDiskOptions;
+      opts.credentials = credentials;
+      opts.cacheBackend = cacheBackend;
+      // Preserve `null` semantics for unbounded cache; `undefined` selects defaults.
+      opts.cacheLimitBytes = cacheLimitBytes as any;
+      opts.cacheImageId = cacheImageId;
+      opts.cacheVersion = rangeCacheVersion;
+      opts.blockSize = chunkSize;
+      base = await RemoteStreamingDisk.open(url, opts);
+    }
+  } else {
+    const manifestUrlRaw = hasOwn(remote, "manifestUrl") ? remote.manifestUrl : undefined;
+    if (typeof manifestUrlRaw !== "string" || !manifestUrlRaw.trim()) {
+      throw new Error("invalid remote manifestUrl");
+    }
+    const opts = Object.create(null) as RemoteChunkedDiskOpenOptions;
+    (opts as any).credentials = credentials;
+    (opts as any).cacheBackend = cacheBackend;
+    (opts as any).cacheLimitBytes = cacheLimitBytes as any;
+    (opts as any).cacheImageId = cacheImageId;
+    (opts as any).cacheVersion = version;
+    base = await RemoteChunkedDisk.open(manifestUrlRaw, opts);
+  }
 
   // Remote base images are always treated as read-only. For HDDs, default to a local
   // COW overlay so the guest can write without mutating the base.
-  if (mode === "cow" && !readOnlyBase && remote.kind === "hdd") {
-    const key = safeOpfsNameComponent(remote.cacheKey);
+  if (mode === "cow" && !readOnlyBase && diskKind === "hdd") {
+    const key = safeOpfsNameComponent(cacheKey);
     const overlayName = `${key}.overlay.aerospar`;
     let overlay: OpfsAeroSparseDisk | null = null;
     try {
