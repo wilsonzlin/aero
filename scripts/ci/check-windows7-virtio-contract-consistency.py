@@ -243,6 +243,7 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         + "".join(diff)
     )
 
+
 def parse_contract_major_version(md: str) -> int:
     m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
     if not m:
@@ -4002,7 +4003,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
@@ -4026,8 +4027,8 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name. It may opt into the strict fallback HWID (no SUBSYS),
-        # but must otherwise stay in sync with the canonical INF outside the models sections.
+        # legacy `virtio-input.inf` name. From [Version] onward it must remain byte-for-byte
+        # identical to the canonical INF so behavior cannot drift.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4036,12 +4037,11 @@ def main() -> None:
             errors=errors,
         )
 
-        drift = check_inf_alias_drift_excluding_sections(
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)
