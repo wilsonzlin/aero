@@ -102,7 +102,7 @@ Test pointers:
   - VBE active:
     - `0xA0000..0xAFFFF` becomes the VBE banked window into `VRAM[VBE_LFB_OFFSET + bank*64KiB + off]`
     - `0xB0000..0xBFFFF` remains `VRAM[0x10000..0x1FFFF]`
-- [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x40000`)
+- [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x20000`)
 - [x] host-side presentation fallback when VGA is disabled:
   - WDDM scanout0 if claimed (`SCANOUT0_ENABLE`), otherwise
   - VBE LFB (from BIOS state), otherwise
