@@ -89,8 +89,12 @@ Test pointers:
 `MachineConfig::enable_aerogpu=true` disables the standalone VGA device and instead provides:
 
 - [x] BAR1-backed VRAM
-- [x] legacy VGA window aliasing (`0xA0000..0xC0000` → first 128KiB of VRAM)
-- [x] BIOS VBE LFB base moved into BAR1 (so `INT 10h` VBE mode sets target VRAM)
+- [x] legacy VGA window decode (`0xA0000..0xBFFFF`) backed by BAR1 VRAM (mode-dependent aliasing):
+  - VBE inactive: `0xA0000..0xBFFFF` ↔ `VRAM[0x00000..0x1FFFF]`
+  - VBE active:
+    - `0xA0000..0xAFFFF` becomes the VBE banked window into `VRAM[VBE_LFB_OFFSET + bank*64KiB + off]`
+    - `0xB0000..0xBFFFF` remains `VRAM[0x10000..0x1FFFF]`
+- [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x20000`)
 - [x] host-side presentation fallback when VGA is disabled:
   - WDDM scanout0 if claimed (`SCANOUT0_ENABLE`), otherwise
   - VBE LFB (from BIOS state), otherwise
@@ -369,17 +373,20 @@ Impact:
 
 - The in-tree Win7 driver can plausibly *detect/init* the device and use vblank pacing, but it cannot get accelerated D3D rendering via ACMD execution on the canonical machine yet.
 
-### WDDM scanout publication into `ScanoutState` is not device-model-owned
+### WDDM scanout publication into `ScanoutState` exists (MVP) but needs end-to-end validation
 
-- `aero-machine` publishes **legacy** scanout transitions (text ↔ VBE LFB) to `ScanoutState`, but it does not publish WDDM scanout state.
-  - See: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`Machine::set_scanout_state`, INT 10h publishing)
+- `aero-machine` publishes **legacy** scanout transitions (text ↔ VBE LFB) to `ScanoutState`, and can also publish WDDM scanout state from BAR0 scanout0 registers when `Machine::process_aerogpu()` runs (atomic builds).
+  - Code: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`process_aerogpu`, INT 10h scanout publishing)
+  - Code: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (`take_scanout0_state_update`)
+  - Tests: [`crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs`](../../crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs)
 - The GPU worker can present WDDM scanout from guest RAM when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
   - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadWddmScanoutFrame`)
   - E2E test: [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
+- Current limitation: `ScanoutState` is currently used as a compact "scanout pointer" and only publishes `B8G8R8X8` (BGRA is treated as compatible); unsupported scanout formats publish a deterministic disabled descriptor.
 
 Impact:
 
-- The missing integration step is for the canonical machine/device model to publish a real WDDM scanout descriptor (base_paddr/geometry/format) into `ScanoutState` when the Win7 driver claims scanout.
+- End-to-end validation is still required that the Win7 driver + browser runtime converge on supported scanout formats + update cadence (see docs below).
 
 Owning docs:
 
