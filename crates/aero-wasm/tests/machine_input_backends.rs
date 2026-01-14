@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_io_snapshot::io::state::IoSnapshot as _;
 use aero_virtio::devices::input::{VirtioInput, BTN_LEFT, KEY_A};
 
@@ -87,4 +89,3 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         "virtio-input mouse should queue events after injection"
     );
 }
-
