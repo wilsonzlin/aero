@@ -26319,12 +26319,12 @@ bool TestGuestBackedUpdateSurface16BitEmitsDirtyRangeNotUpload() {
   }
 
   RECT src_rect{};
-  src_rect.left = 0;
+  src_rect.left = 1;
   src_rect.top = 0;
   src_rect.right = 4;
   src_rect.bottom = 2;
   POINT dst_point{};
-  dst_point.x = 0;
+  dst_point.x = 1;
   dst_point.y = 1;
 
   D3D9DDIARG_UPDATESURFACE update{};
@@ -26356,7 +26356,8 @@ bool TestGuestBackedUpdateSurface16BitEmitsDirtyRangeNotUpload() {
     return false;
   }
 
-  const uint64_t expected_offset = static_cast<uint64_t>(dst_point.y) * dst_res->row_pitch;
+  const uint64_t expected_offset =
+      static_cast<uint64_t>(dst_point.y) * dst_res->row_pitch + static_cast<uint64_t>(dst_point.x) * bpp;
   const uint64_t expected_row_bytes =
       static_cast<uint64_t>(src_rect.right - src_rect.left) * static_cast<uint64_t>(bpp);
   const uint64_t expected_size = static_cast<uint64_t>(src_rect.bottom - src_rect.top - 1) * dst_res->row_pitch + expected_row_bytes;
@@ -26556,12 +26557,12 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
   std::fill(dst_res->storage.begin(), dst_res->storage.end(), 0x00);
 
   RECT src_rect{};
-  src_rect.left = 0;
+  src_rect.left = 1;
   src_rect.top = 0;
   src_rect.right = 4;
   src_rect.bottom = 2;
   POINT dst_point{};
-  dst_point.x = 0;
+  dst_point.x = 1;
   dst_point.y = 1;
 
   D3D9DDIARG_UPDATESURFACE update{};
@@ -26584,8 +26585,10 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
   const uint32_t row_pitch = dst_res->row_pitch;
   const uint32_t row_bytes = static_cast<uint32_t>(src_rect.right - src_rect.left) * bpp;
   for (uint32_t row = 0; row < 2; ++row) {
-    const size_t dst_off = static_cast<size_t>(dst_point.y + row) * row_pitch;
-    const size_t src_off = static_cast<size_t>(row) * src_res->row_pitch;
+    const size_t dst_off =
+        static_cast<size_t>(dst_point.y + row) * row_pitch + static_cast<size_t>(dst_point.x) * bpp;
+    const size_t src_off =
+        static_cast<size_t>(src_rect.top + row) * src_res->row_pitch + static_cast<size_t>(src_rect.left) * bpp;
     if (!Check(std::memcmp(dst_res->storage.data() + dst_off, src_res->storage.data() + src_off, row_bytes) == 0,
                "dst storage row matches src bytes")) {
       return false;
@@ -26617,15 +26620,17 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
     return false;
   }
 
-  // Validate both row uploads (offsets dst_row_pitch and 2*dst_row_pitch).
+  // Validate both row uploads.
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   uint32_t upload_idx = 0;
   while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
       const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      const uint64_t expected_off = static_cast<uint64_t>(dst_point.y + upload_idx) * row_pitch;
-      const uint64_t expected_src_off = static_cast<uint64_t>(upload_idx) * src_res->row_pitch;
+      const uint64_t expected_off =
+          static_cast<uint64_t>(dst_point.y + upload_idx) * row_pitch + static_cast<uint64_t>(dst_point.x) * bpp;
+      const uint64_t expected_src_off = static_cast<uint64_t>(src_rect.top + upload_idx) * src_res->row_pitch +
+                                        static_cast<uint64_t>(src_rect.left) * bpp;
       if (!Check(cmd->resource_handle == dst_res->handle, "UPLOAD_RESOURCE dst handle")) {
         return false;
       }
@@ -26941,7 +26946,7 @@ bool TestGuestBackedUpdateTexture16BitEmitsDirtyRangeNotUpload() {
 
   // Source: system-memory pool surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = kD3dRTypeSurface;
+  create_src.type = kD3dRTypeTexture;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
