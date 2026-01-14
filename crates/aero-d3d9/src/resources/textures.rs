@@ -1075,6 +1075,18 @@ mod tests {
     }
 
     #[test]
+    fn expands_r5g6b5_uses_bit_replication_not_scaling() {
+        // Use values where bit replication differs from simple `v * 255 / max` scaling:
+        // - r5=4 expands to 33 (not 32)
+        // - g6=16 expands to 65 (not 64)
+        // - b5=2 expands to 16 (same either way, but included for completeness)
+        let pixel: u16 = (4u16 << 11) | (16u16 << 5) | 2u16;
+        let src = pixel.to_le_bytes();
+        let out = convert_to_bgra8(D3DFormat::R5G6B5, 1, 1, &src).unwrap();
+        assert_eq!(out, vec![16, 65, 33, 255]);
+    }
+
+    #[test]
     fn expands_a1r5g5b5_alpha_bit() {
         // 1x2: opaque white, transparent white.
         let pixels: [u16; 2] = [0xFFFF, 0x7FFF];
@@ -1093,6 +1105,16 @@ mod tests {
     }
 
     #[test]
+    fn expands_a1r5g5b5_uses_bit_replication_not_scaling() {
+        // Same idea as the R5G6B5 test: pick 5-bit values where replication differs.
+        // a=1, r5=4, g5=4, b5=2.
+        let pixel: u16 = (1u16 << 15) | (4u16 << 10) | (4u16 << 5) | 2u16;
+        let src = pixel.to_le_bytes();
+        let out = convert_to_bgra8(D3DFormat::A1R5G5B5, 1, 1, &src).unwrap();
+        assert_eq!(out, vec![16, 33, 33, 255]);
+    }
+
+    #[test]
     fn expands_x1r5g5b5_forces_opaque_alpha() {
         // Both values have different top bits, but alpha must always be 255.
         let pixels: [u16; 2] = [0xFFFF, 0x7FFF];
@@ -1102,6 +1124,16 @@ mod tests {
         }
         let out = convert_to_bgra8(D3DFormat::X1R5G5B5, 1, 2, &src).unwrap();
         assert_eq!(out, vec![255, 255, 255, 255, 255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn expands_x1r5g5b5_uses_bit_replication_not_scaling() {
+        // X1R5G5B5 treats alpha as 1.0 and should still expand color channels via bit replication.
+        // r5=4, g5=4, b5=2; top bit deliberately cleared.
+        let pixel: u16 = (4u16 << 10) | (4u16 << 5) | 2u16;
+        let src = pixel.to_le_bytes();
+        let out = convert_to_bgra8(D3DFormat::X1R5G5B5, 1, 1, &src).unwrap();
+        assert_eq!(out, vec![16, 33, 33, 255]);
     }
 
     #[test]
