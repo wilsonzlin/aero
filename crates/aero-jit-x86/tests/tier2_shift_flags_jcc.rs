@@ -440,6 +440,119 @@ fn tier2_shift_count_gt_operand_width_leaves_cf_unchanged_16bit() {
 }
 
 #[test]
+fn tier2_shr_count_gt_operand_width_leaves_cf_unchanged() {
+    // mov al, 1
+    // shr al, 9
+    // jc +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For 8-bit shifts, x86 masks the count to 5 bits, so 9 is not reduced.
+    // CF is undefined for counts > operand width, so we conservatively leave it unchanged.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE8, 0x09, // shr al, 9
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar_count_gt_operand_width_leaves_cf_unchanged() {
+    // mov al, 1
+    // sar al, 9
+    // jc +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // CF is undefined for counts > operand width; conservatively leave it unchanged.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xF8, 0x09, // sar al, 9
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr_count_gt_operand_width_leaves_cf_unchanged_16bit() {
+    // 66 mov ax, 1
+    // 66 shr ax, 17
+    // jc +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // CF is undefined for counts > operand width; conservatively leave it unchanged.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xC1, 0xE8, 0x11, // shr ax, 17
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar_count_gt_operand_width_leaves_cf_unchanged_16bit() {
+    // 66 mov ax, 1
+    // 66 sar ax, 17
+    // jc +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // CF is undefined for counts > operand width; conservatively leave it unchanged.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xC1, 0xF8, 0x11, // sar ax, 17
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_sar_count_1_sets_of_to_0() {
     // mov al, 0x81
     // sar al, 1
