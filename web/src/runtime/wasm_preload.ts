@@ -51,18 +51,42 @@ async function resolveWasmBinaryUrl(variant: WasmVariant): Promise<string> {
 
 const precompilePromises: Partial<Record<WasmVariant, Promise<PrecompiledWasm>>> = {};
 
+function isNodeEnv(): boolean {
+  // Avoid referencing `process` directly so this module can be imported in browser builds without polyfills.
+  const p = (globalThis as unknown as { process?: unknown }).process as { versions?: { node?: unknown } } | undefined;
+  return typeof p?.versions?.node === "string";
+}
+
 export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledWasm> {
   const existing = precompilePromises[variant];
   if (existing) return existing;
 
   const promise = (async () => {
     const url = await resolveWasmBinaryUrl(variant);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch WASM binary (${variant}): ${response.status} ${response.statusText}`);
-    }
-
     const module = await perf.spanAsync("wasm:compile", async () => {
+      // In Node (Vitest), the Vite `?url` import typically yields a dev-server style path
+      // (`/web/src/...`) which `fetch()` cannot resolve (no base URL). Prefer reading the
+      // bytes from disk.
+      //
+      // Note: this intentionally bypasses `compileStreaming` in Node since we are not
+      // working with a real HTTP Response.
+      if (isNodeEnv() && !/^https?:/i.test(url)) {
+        // Keep the dynamic imports opaque to Vite/Rollup so browser builds don't try to resolve Node builtins.
+        const fsPromises = "node:fs/promises";
+        const nodeUrl = "node:url";
+        const { readFile } = await import(/* @vite-ignore */ fsPromises);
+        const { fileURLToPath } = await import(/* @vite-ignore */ nodeUrl);
+
+        const fileUrl = url.startsWith("file:") ? new URL(url) : new URL(WASM_BINARY_PATH[variant], import.meta.url);
+        const bytes = await readFile(fileURLToPath(fileUrl));
+        return await WebAssembly.compile(bytes);
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch WASM binary (${variant}): ${response.status} ${response.statusText}`);
+      }
+
       if (typeof WebAssembly.compileStreaming === "function") {
         try {
           return await WebAssembly.compileStreaming(response.clone());
