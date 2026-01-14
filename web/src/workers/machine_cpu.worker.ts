@@ -7,7 +7,7 @@ import { UART_COM1 } from "../io/devices/uart16550";
 import { InputEventType } from "../input/event_queue";
 import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
 import { encodeInputBackendStatus } from "../input/input_backend_status";
-import { hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
+import { hidConsumerUsageToLinuxKeyCode, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
 import {
   DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
   normalizeSetBootDisksMessage,
@@ -327,6 +327,8 @@ const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Ar
 // input diagnostics panel can detect stuck keys/buttons in machine runtime.
 const pressedKeyboardHidUsages = new Uint8Array(256);
 let pressedKeyboardHidUsageCount = 0;
+const pressedConsumerUsages = new Uint8Array(0x0400);
+let pressedConsumerUsageCount = 0;
 let mouseButtonsMask = 0;
 let virtioMouseButtonsInjectedMask = 0;
 
@@ -364,6 +366,23 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
   }
 }
 
+function updatePressedConsumerUsage(usageId: number, pressed: boolean): void {
+  const u = usageId & 0xffff;
+  if (u >= pressedConsumerUsages.length) return;
+  const prev = pressedConsumerUsages[u] !== 0;
+  if (pressed) {
+    if (!prev) {
+      pressedConsumerUsages[u] = 1;
+      pressedConsumerUsageCount = Math.min(pressedConsumerUsages.length, pressedConsumerUsageCount + 1);
+    }
+    return;
+  }
+  if (prev) {
+    pressedConsumerUsages[u] = 0;
+    pressedConsumerUsageCount = Math.max(0, pressedConsumerUsageCount - 1);
+  }
+}
+
 function initInputDiagnosticsTelemetry(): void {
   // The legacy IO worker publishes "current input backend + held state" telemetry into the shared
   // status SAB for the input diagnostics panel. In `vmRuntime="machine"` mode, the IO worker runs
@@ -373,6 +392,8 @@ function initInputDiagnosticsTelemetry(): void {
   // stores fail for any reason.
   pressedKeyboardHidUsages.fill(0);
   pressedKeyboardHidUsageCount = 0;
+  pressedConsumerUsages.fill(0);
+  pressedConsumerUsageCount = 0;
   mouseButtonsMask = 0;
   virtioMouseButtonsInjectedMask = 0;
   keyboardInputBackend = "ps2";
@@ -506,7 +527,7 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
   const prevBackend = keyboardInputBackend;
   const nextBackend = chooseKeyboardInputBackend({
     current: keyboardInputBackend,
-    keysHeld: pressedKeyboardHidUsageCount !== 0,
+    keysHeld: pressedKeyboardHidUsageCount !== 0 || pressedConsumerUsageCount !== 0,
     virtioOk,
     usbOk,
     force,
@@ -1323,8 +1344,31 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const usagePage = a & 0xffff;
       const pressed = ((a >>> 16) & 1) !== 0;
       const usageId = words[off + 3] & 0xffff;
-      // Consumer Control (0x0C) is only modeled via a dedicated synthetic USB HID device.
+      // Consumer Control (0x0C) can be delivered either via:
+      // - virtio-input keyboard (media keys subset, exposed by the Win7 virtio-input driver as a Consumer Control collection), or
+      // - a dedicated synthetic USB HID consumer-control device (supports the full usage ID range).
       if (usagePage !== 0x0c) continue;
+
+      updatePressedConsumerUsage(usageId, pressed);
+
+      // Prefer virtio-input when the virtio keyboard backend is active and the usage is representable as a Linux key code.
+      if (keyboardInputBackend === "virtio" && virtioKeyboardOk) {
+        const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
+        if (keyCode !== null) {
+          const injectKey = (m as unknown as { inject_virtio_key?: unknown }).inject_virtio_key;
+          if (typeof injectKey === "function") {
+            try {
+              (injectKey as (linuxKey: number, pressed: boolean) => void).call(m, keyCode >>> 0, pressed);
+            } catch {
+              // ignore
+            }
+          }
+          continue;
+        }
+      }
+
+      // Otherwise fall back to the synthetic USB consumer-control device. This handles browser navigation keys (AC Back/Forward/etc.)
+      // which are not currently modeled by the virtio-input keyboard.
       try {
         const inject = (m as unknown as { inject_usb_hid_consumer_usage?: unknown }).inject_usb_hid_consumer_usage;
         if (typeof inject === "function") {
