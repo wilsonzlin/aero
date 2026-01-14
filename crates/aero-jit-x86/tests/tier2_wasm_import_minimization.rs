@@ -197,3 +197,48 @@ fn tier2_trace_reuses_i64_return_type_between_mem_read_u64_and_code_page_version
         "expected mem_read_u64 and code_page_version to share the (i32,i64)->i64 type plus the trace signature"
     );
 }
+
+#[test]
+fn tier2_trace_with_multiple_store_widths_reuses_mem_write_type() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::StoreMem {
+                addr: Operand::Const(0x1000),
+                src: Operand::Const(0x12),
+                width: Width::W8,
+            },
+            Instr::StoreMem {
+                addr: Operand::Const(0x1002),
+                src: Operand::Const(0x1234),
+                width: Width::W16,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &RegAllocPlan::default());
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .expect("generated wasm should validate");
+
+    let imports = env_import_names(&wasm);
+    assert!(
+        imports.contains(IMPORT_MEM_WRITE_U8),
+        "expected {IMPORT_MEM_WRITE_U8} import"
+    );
+    assert!(
+        imports.contains(IMPORT_MEM_WRITE_U16),
+        "expected {IMPORT_MEM_WRITE_U16} import"
+    );
+    assert!(
+        !imports.contains(IMPORT_MEM_READ_U8),
+        "did not expect {IMPORT_MEM_READ_U8} import for store-only trace"
+    );
+
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected mem_write_u8/u16 to reuse a single (i32,i64,i32)->() type plus the trace signature"
+    );
+}

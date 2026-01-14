@@ -1,7 +1,8 @@
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
 use aero_jit_x86::wasm::{
-    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16,
+    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
+    IMPORT_MEM_WRITE_U16,
     IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MODULE,
 };
@@ -174,6 +175,45 @@ fn tier1_block_with_store_imports_mem_write_helpers() {
 }
 
 #[test]
+fn tier1_block_with_multiple_store_widths_reuses_mem_write_type() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let src8 = b.const_int(Width::W8, 0x12);
+    b.store(Width::W8, addr, src8);
+    let src16 = b.const_int(Width::W16, 0x1234);
+    b.store(Width::W16, addr, src16);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    let mut found_u8 = false;
+    let mut found_u16 = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U8 {
+            found_u8 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U16 {
+            found_u16 = true;
+        }
+        // Sanity: a pure store block shouldn't need any read helpers.
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+        assert_ne!(name, IMPORT_MEM_READ_U16);
+        assert_ne!(name, IMPORT_MEM_READ_U64);
+    }
+
+    assert!(found_u8, "expected env.mem_write_u8 import");
+    assert!(found_u16, "expected env.mem_write_u16 import");
+
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected mem_write_u8/u16 to reuse a single (i32,i64,i32)->() type plus the block signature"
+    );
+}
+
+#[test]
 fn tier1_block_with_call_helper_imports_jit_exit() {
     let mut b = IrBuilder::new(0x1000);
     b.call_helper("dummy", Vec::new(), None);
@@ -203,5 +243,43 @@ fn tier1_block_with_call_helper_imports_jit_exit() {
         type_count(&wasm),
         2,
         "expected Tier-1 CallHelper-only block to define only the jit_exit and block function types"
+    );
+}
+
+#[test]
+fn tier1_block_with_u64_load_and_call_helper_reuses_i64_return_type() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _value = b.load(Width::W64, addr);
+    b.call_helper("dummy", Vec::new(), None);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    let mut found_mem_read_u64 = false;
+    let mut found_jit_exit = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U64 {
+            found_mem_read_u64 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT {
+            found_jit_exit = true;
+        }
+        // Sanity: this block shouldn't need any write helpers.
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U16);
+        assert_ne!(name, IMPORT_MEM_WRITE_U32);
+        assert_ne!(name, IMPORT_MEM_WRITE_U64);
+    }
+
+    assert!(found_mem_read_u64, "expected env.mem_read_u64 import");
+    assert!(found_jit_exit, "expected env.jit_exit import");
+
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected mem_read_u64 and jit_exit to share the (i32,i64)->i64 type plus the block signature"
     );
 }
