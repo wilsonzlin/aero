@@ -90,6 +90,7 @@ fn nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
     let is_64bit = (ctrl & (1 << 7)) != 0;
     let per_vector_masking = (ctrl & (1 << 8)) != 0;
     assert!(per_vector_masking, "expected per-vector masking support");
+    let pending_off = if is_64bit { base + 0x14 } else { base + 0x10 };
 
     let vector: u8 = 0x69;
     cfg_write(&mut m, bdf, base + 0x04, 4, 0xfee0_0000);
@@ -134,6 +135,11 @@ fn nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         None
     );
+    assert_ne!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible via canonical PCI config space reads"
+    );
 
     // Now unmask MSI in canonical config space. The machine mirrors canonical PCI config into the
     // NVMe model on each `process_nvme()` call; this must not clobber device-managed pending bits.
@@ -149,6 +155,11 @@ fn nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector)
+    );
+    assert_eq!(
+        cfg_read(&mut m, bdf, pending_off, 4) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
     );
 }
 
