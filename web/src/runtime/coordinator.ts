@@ -512,7 +512,12 @@ export class WorkerCoordinator {
     // - machine-mode-only behaviours (e.g. IO worker device/disk initialization policies).
     //
     // It cannot be safely hot-swapped while workers are running, so force a full restart.
-    if (prevConfig && prevConfig.vmRuntime !== config.vmRuntime) {
+    //
+    // Note: treat `undefined` as the default legacy runtime so older configs that don't specify
+    // `vmRuntime` don't cause unnecessary restarts when the default becomes explicit.
+    const prevVmRuntime = prevConfig?.vmRuntime ?? "legacy";
+    const nextVmRuntime = config.vmRuntime ?? "legacy";
+    if (prevConfig && prevVmRuntime !== nextVmRuntime) {
       this.restart();
       return;
     }

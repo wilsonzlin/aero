@@ -241,6 +241,39 @@ describe("runtime/coordinator", () => {
     expect(restartSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("does not restart when vmRuntime becomes explicit legacy (undefined → legacy) during other config updates", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    // Older/compat configs may omit vmRuntime; treat that as legacy.
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    // Apply an unrelated update that happens to include an explicit legacy vmRuntime value.
+    coordinator.updateConfig({
+      vmRuntime: "legacy",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "debug",
+    });
+
+    expect(restartSpy).not.toHaveBeenCalled();
+  });
+
   it("allows VM start when activeDiskImage is set even without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
