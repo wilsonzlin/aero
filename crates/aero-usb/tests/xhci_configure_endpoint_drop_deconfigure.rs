@@ -1,6 +1,7 @@
 mod util;
 
 use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
+use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
@@ -115,6 +116,7 @@ fn configure_endpoint_drop_flags_disables_endpoint_and_blocks_transfers() {
     xhci.set_command_ring(cmd_ring, true);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot (TRB0).
     {
@@ -253,6 +255,7 @@ fn configure_endpoint_deconfigure_disables_all_non_ep0_endpoints() {
     xhci.set_command_ring(cmd_ring, true);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     {

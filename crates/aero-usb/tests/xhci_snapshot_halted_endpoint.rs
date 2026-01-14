@@ -2,7 +2,7 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{
     ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult,
     UsbWebUsbPassthroughDevice,
@@ -104,6 +104,7 @@ fn xhci_snapshot_roundtrip_preserves_halted_endpoint_via_endpoint_context_state(
     while ctrl.pop_pending_event().is_some() {}
 
     ctrl.set_dcbaap(dcbaa);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -201,6 +202,7 @@ fn xhci_snapshot_restore_reconstructs_webusb_device_and_preserves_halted_bulk_en
     while ctrl.pop_pending_event().is_some() {}
 
     ctrl.set_dcbaap(dcbaa);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;

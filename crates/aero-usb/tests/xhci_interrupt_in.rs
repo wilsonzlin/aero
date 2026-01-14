@@ -325,6 +325,9 @@ fn xhci_interrupt_in_nak_is_retried_on_tick_without_additional_doorbells() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
+    // Transfers are only executed when the controller is running.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Interrupt IN endpoint 1 uses DCI=3.
     const ENDPOINT_ID: u8 = 3;
     xhci.set_endpoint_ring(slot_id, ENDPOINT_ID, transfer_ring_base, true);
@@ -413,6 +416,9 @@ fn xhci_tick_has_bounded_work_budget_for_large_transfer_backlogs() {
     xhci.attach_device(0, Box::new(AlwaysData));
 
     while xhci.pop_pending_event().is_some() {}
+
+    // Transfers are only executed when the controller is running.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);

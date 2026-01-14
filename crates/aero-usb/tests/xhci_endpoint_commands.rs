@@ -3,7 +3,7 @@ mod util;
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::context::{EndpointContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
 use util::{Alloc, TestMemory};
@@ -266,6 +266,7 @@ fn stop_endpoint_gates_transfer_execution_until_reset() {
     xhci.set_dcbaap(dcbaa);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);

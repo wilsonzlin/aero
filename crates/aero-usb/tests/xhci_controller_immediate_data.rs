@@ -97,6 +97,7 @@ fn setup_controller_with_transfer_ring(
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 

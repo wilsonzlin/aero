@@ -113,6 +113,7 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Endpoint 0 uses DCI=1.
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);

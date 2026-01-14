@@ -176,6 +176,7 @@ fn xhci_controller_interrupt_in_dmas_and_emits_transfer_event_trb() {
     let erstba = alloc.alloc(0x40, 0x10) as u64;
     let event_ring = alloc.alloc((TRB_LEN * 16) as u32, 0x10) as u64;
     configure_event_ring(&mut xhci, &mut mem, erstba, event_ring, 16);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let ring_base = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
     let buf = alloc.alloc(8, 0x10) as u64;
@@ -253,6 +254,7 @@ fn xhci_controller_transfer_event_sets_ed_bit_and_copies_event_data_parameter() 
     let erstba = alloc.alloc(0x40, 0x10) as u64;
     let event_ring = alloc.alloc((TRB_LEN * 16) as u32, 0x10) as u64;
     configure_event_ring(&mut xhci, &mut mem, erstba, event_ring, 16);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
     let buf = alloc.alloc(4, 0x10) as u64;
@@ -315,6 +317,7 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
     let erstba = alloc.alloc(0x40, 0x10) as u64;
     let event_ring = alloc.alloc((TRB_LEN * 16) as u32, 0x10) as u64;
     configure_event_ring(&mut xhci, &mut mem, erstba, event_ring, 16);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // --- Bulk OUT (endpoint 1 OUT, endpoint id 2) ---
     const BULK_OUT_ID: u8 = 2;

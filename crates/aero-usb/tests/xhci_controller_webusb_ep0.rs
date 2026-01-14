@@ -81,6 +81,7 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // EP0 control-IN GET_DESCRIPTOR via Setup/Data/Status stage TRBs.
     let setup = SetupPacket {

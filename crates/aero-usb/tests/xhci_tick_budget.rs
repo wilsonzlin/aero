@@ -170,6 +170,8 @@ fn xhci_step_1ms_coalesces_redundant_endpoint_doorbells() {
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
 
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Configure a controller-local transfer ring cursor (without populating a full guest Device
     // Context) so the transfer executor can make progress.
     let tr_ring = 0x2000u64;

@@ -675,6 +675,7 @@ fn xhci_doorbell_ignores_halted_endpoint_without_device_context() {
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(DummyDevice));
     while ctrl.pop_pending_event().is_some() {}
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let mut mem = CountingMem::new(0x4000);
 
