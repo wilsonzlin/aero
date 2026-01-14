@@ -3557,24 +3557,26 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
   // Verify the miniport IOCTL query still works after the forced reset.
   AerovblkQueryInfoResult after{};
   bool after_ok = false;
-  DWORD last_open_err = ERROR_SUCCESS;
-  DWORD last_query_err = ERROR_SUCCESS;
+  DWORD last_err = ERROR_SUCCESS;
   for (int attempt = 0; attempt < 5; attempt++) {
     DWORD err = ERROR_SUCCESS;
     HANDLE pd2 = TryOpenPhysicalDriveForIoctl(target.disk_number, &err);
-    last_open_err = err;
     if (pd2 == INVALID_HANDLE_VALUE) {
+      last_err = err;
       Sleep(200);
       continue;
     }
     const auto q = QueryAerovblkMiniportInfo(log, pd2);
-    if (!q.has_value()) last_query_err = GetLastError();
     CloseHandle(pd2);
     if (!q.has_value()) {
+      last_err = GetLastError();
       Sleep(200);
       continue;
     }
     if (!ValidateAerovblkMiniportInfo(log, *q)) {
+      // Validation failure is not represented via GetLastError(), but callers (virtio-blk-reset marker) depend on
+      // win32_error being non-zero for diagnosability.
+      last_err = ERROR_INVALID_DATA;
       Sleep(200);
       continue;
     }
@@ -3583,9 +3585,9 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
     break;
   }
   if (!after_ok) {
-    log.Logf("virtio-blk-reset: miniport query after reset failed err=%lu", static_cast<unsigned long>(last_open_err));
+    log.Logf("virtio-blk-reset: miniport query after reset failed err=%lu", static_cast<unsigned long>(last_err));
     out.fail_reason = "miniport_query_after_failed";
-    out.win32_error = last_query_err != ERROR_SUCCESS ? last_query_err : last_open_err;
+    out.win32_error = last_err;
     return out;
   }
 
