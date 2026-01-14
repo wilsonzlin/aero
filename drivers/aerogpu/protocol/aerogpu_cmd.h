@@ -753,7 +753,13 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_i) == 24);
  *
  * Payload format:
  *   struct aerogpu_cmd_set_shader_constants_b
- *   uint32_t data[bool_count] where each element is 0 or 1.
+ *   uint32_t data[bool_count * 4] (little-endian), where `bool_count` counts registers
+ *
+ * Each bool register is encoded as a `vec4<u32>` (16 bytes per register). Writers should
+ * replicate the scalar bool value across all 4 lanes (canonical writer behavior).
+ *
+ * Readers MUST treat any non-zero lane value as "true". Writers SHOULD normalize to
+ * 0/1 to preserve canonical encoding.
  *   padding to 4-byte alignment
  *
  * Forward-compat: Readers MUST treat `hdr.size_bytes` as a minimum and ignore any trailing bytes
