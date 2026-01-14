@@ -1469,4 +1469,83 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       await worker.terminate();
     }
   }, 25_000);
+
+  it("clips cursors when hotY causes a negative origin", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+
+    // Scanout: 1x2 BGRX pixels.
+    // pixel(0,0): 0xff102030, pixel(0,1): 0xff010203.
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00, 0x01, 0x02, 0x03, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 2,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor: 1x2 BGRX pixels. Place cursor at y=0 with hotY=1 so originY=-1.
+    // cursor row0 would land at y=-1 (clipped), row1 lands at y=0 (visible).
+    // row0: [0a 0b 0c 00] -> 0xff0a0b0c
+    // row1: [0d 0e 0f 00] -> 0xff0d0e0f
+    views.guestU8.set([0x0a, 0x0b, 0x0c, 0x00, 0x0d, 0x0e, 0x0f, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 1,
+      width: 1,
+      height: 2,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(2);
+
+      // pixel(0,0) becomes cursor row1, pixel(0,1) stays scanout.
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff0d0e0f);
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 1)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
 });
