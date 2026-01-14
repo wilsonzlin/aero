@@ -193,7 +193,8 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
     assert_eq!(interrupts.borrow().get_pending(), None);
 
     // Doorbell queue 1 (notify_off=1), then allow the device to process.
-    m.write_physical_u16(bar0_base + NOTIFY + 1 * NOTIFY_MULT, 0);
+    let notify_off = m.read_physical_u16(bar0_base + COMMON + 0x1e);
+    m.write_physical_u16(bar0_base + NOTIFY + u64::from(notify_off) * NOTIFY_MULT, 0);
     m.poll_network();
 
     assert_eq!(m.read_physical_u16(used + 2), 1);
