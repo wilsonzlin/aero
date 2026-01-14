@@ -482,10 +482,10 @@ impl XhciControllerBridge {
 
     /// Attach a USB hub device to a root port.
     ///
-    /// `port_count` is the number of downstream ports on the hub.
+    /// `port_count` is the number of downstream ports on the hub (must be 1..=15).
     ///
-    /// This is clamped to `1..=15` to preserve xHCI route-string constraints (hub port numbers are
-    /// encoded as 4-bit nibbles).
+    /// Values above 15 are clamped down to 15 to preserve xHCI route-string constraints (hub port
+    /// numbers are encoded as 4-bit nibbles).
     pub fn attach_hub(&mut self, root_port: u8, port_count: u8) -> Result<(), JsValue> {
         let ctrl_ports = self.ctrl.port_count();
         let reserved_port = self.webusb_root_port();

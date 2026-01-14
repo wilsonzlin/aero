@@ -38,6 +38,11 @@ fn xhci_controller_bridge_topology_attach_and_detach_are_wired() {
 
     let mut bridge = XhciControllerBridge::new(guest_base, guest_size).expect("new xHCI bridge");
 
+    assert!(
+        bridge.attach_hub(0, 0).is_err(),
+        "attach_hub should reject port_count=0"
+    );
+
     // Attach an external hub to root port 0 with the maximum port count representable in xHCI
     // route strings (4-bit port numbers).
     bridge.attach_hub(0, 15).expect("attach_hub ok");
