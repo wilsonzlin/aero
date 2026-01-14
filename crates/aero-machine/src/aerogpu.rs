@@ -3101,6 +3101,24 @@ mod tests {
     }
 
     #[test]
+    fn cursor_read_rgba8888_is_capped_to_avoid_unbounded_allocations() {
+        // Cursor readback is capped at 4MiB (1,048,576 pixels). Use a configuration just above
+        // that limit so we return `None` without attempting to allocate a huge buffer.
+        let cursor = AeroGpuCursorConfig {
+            enable: true,
+            width: 1024,
+            height: 1025,
+            format: pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+            pitch_bytes: 1024 * 4,
+            fb_gpa: 0x1000,
+            ..Default::default()
+        };
+
+        let mut mem = TestMem::default();
+        assert_eq!(cursor.read_rgba8888(&mut mem), None);
+    }
+
+    #[test]
     fn scanout_read_rgba8888_converts_32bpp_formats_and_pitch() {
         #[derive(Clone, Copy)]
         enum SrcKind {
