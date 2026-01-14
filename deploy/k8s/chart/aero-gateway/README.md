@@ -23,6 +23,8 @@ helm upgrade --install aero-gateway ./deploy/k8s/chart/aero-gateway \
 - `gateway.image.repository` / `gateway.image.tag`
 - `l2Proxy.enabled` / `l2Proxy.image.repository` / `l2Proxy.image.tag` (Option C)
 - `l2Tunnel.maxFramePayloadBytes` / `l2Tunnel.maxControlPayloadBytes` (L2 tunnel payload limits)
+- `l2Proxy.capture.dir` / `l2Proxy.capture.maxBytes` / `l2Proxy.capture.flushIntervalMs` (optional PCAPNG capture)
+- `l2Proxy.extraVolumes` / `l2Proxy.extraVolumeMounts` (optional capture persistence / extra mounts)
 - `ingress.host`
 - `ingress.tls.enabled` / `ingress.tls.secretName` (or `certManager.enabled=true`)
 - `ingress.coopCoep.enabled` (or `gateway.crossOriginIsolation.enabled=true`)

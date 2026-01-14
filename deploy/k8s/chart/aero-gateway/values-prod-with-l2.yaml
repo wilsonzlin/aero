@@ -37,9 +37,16 @@ l2Proxy:
   #capture:
   #  # Note: capture files are written into the pod filesystem unless you mount a volume at this path.
   #  # For persistence, use l2Proxy.extraVolumes + l2Proxy.extraVolumeMounts and set dir to the mountPath.
-  #  dir: /tmp/aero-l2-captures
+  #  dir: /captures
   #  maxBytes: 67108864 # 64 MiB per capture file (includes PCAPNG overhead; 0 disables the cap)
   #  flushIntervalMs: 1000 # 0 disables periodic flushing (capture is flushed on close)
+  #extraVolumeMounts:
+  #  - name: captures
+  #    mountPath: /captures
+  #extraVolumes:
+  #  - name: captures
+  #    persistentVolumeClaim:
+  #      claimName: my-capture-pvc
 
 # Optional: override L2 tunnel payload limits (bytes).
 # These are enforced by `aero-l2-proxy` and surfaced to clients via `POST /session` `limits.l2.*`.
