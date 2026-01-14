@@ -43,12 +43,13 @@ Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked
   3. (unless --rust-only) npm -w web run test:unit -- src/input
-  4. (optional, unless --rust-only) npm run test:e2e -- <input-related specs...>
+  4. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
+  -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
 Examples:
