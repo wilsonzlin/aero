@@ -814,10 +814,16 @@ A draw uses compute expansion when **any** of the following are true:
 In the fully-general design, adjacency and patchlist topologies also route through this path even
 if GS/HS/DS are unbound (so the runtime can surface deterministic validation/errors and implement
 fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
-`SET_PRIMITIVE_TOPOLOGY`. Until the adjacency/patch emulation kernels land, the runtime MUST NOT
-silently reinterpret them as non-adjacency/list/strip topologies; acceptable behaviors are to route
-through the emulation path (which may still be bring-up scaffolding / synthetic expansion when no
-real kernel exists) or to reject with a clear error (see topology extension notes above).
+`SET_PRIMITIVE_TOPOLOGY` and are routed through the emulation path:
+
+- adjacency-list topologies (`*_LIST_ADJ`) can execute the translated GS prepass when a compatible GS
+  is bound, and
+- patchlist-only and unsupported topology cases (e.g. strip and strip-adjacency) may still use
+  bring-up scaffolding / synthetic expansion.
+
+The runtime MUST NOT silently reinterpret these topologies as non-adjacency/list/strip topologies;
+acceptable behaviors are to route through the emulation/scaffolding path or to reject with a clear
+error (see topology extension notes above).
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
@@ -858,9 +864,10 @@ Rules:
     `0..input_prim_count_total` for compute expansion (see GS pass sequence and `gs_inputs` packing).
 - `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
   `lineadj`/`triadj`). The in-tree translated-GS prepass supports adjacency **list** topologies
-  (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`); strip-adjacency (`*_STRIP_ADJ`) remains future work. The
-  runtime MUST NOT reinterpret adjacency topologies as non-adjacency; it should either route through
-  an adjacency-aware path or reject the draw with a clear error.
+  (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`); strip-adjacency (`*_STRIP_ADJ`) remains future work.
+  The runtime MUST NOT reinterpret adjacency topologies as non-adjacency; acceptable behaviors are
+  to route through the emulation path (executing a supported GS when possible; otherwise using
+  scaffolding/synthetic expansion) or to reject the draw with a clear error.
 - **Primitive restart (indexed strip topologies):** for indexed `LINESTRIP`/`TRIANGLESTRIP` (and
   their adjacency variants `LINESTRIP_ADJ`/`TRIANGLESTRIP_ADJ`), D3D11 uses a special index value to
   restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices).
