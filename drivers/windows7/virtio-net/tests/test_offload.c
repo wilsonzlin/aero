@@ -168,6 +168,23 @@ static void build_ipv6_hopbyhop_tcp(uint8_t *dst, size_t payload_len)
     dst[41] = 0;  /* 8 bytes */
 }
 
+static void build_ipv6_hopbyhop_udp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with Hop-by-Hop extension header before UDP. */
+    const uint16_t payload = (uint16_t)(8 + 8 + payload_len); /* ext + UDP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 0;  /* Hop-by-Hop */
+    dst[7] = 64; /* hop limit */
+
+    /* Hop-by-Hop extension header: NextHeader=UDP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 17; /* next = UDP */
+    dst[41] = 0;  /* 8 bytes */
+}
+
 static void build_tcp_header(uint8_t *dst)
 {
     memset(dst, 0, 20);
@@ -316,6 +333,32 @@ static void test_ipv6_udp_checksum_only(void)
     assert(hdr.HdrLen == 0);
     assert(hdr.GsoSize == 0);
     assert(hdr.CsumStart == (uint16_t)(14 + 40));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 17);
+}
+
+static void test_ipv6_hopbyhop_udp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_hopbyhop_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
     assert(hdr.CsumOffset == 6);
     assert(info.IpVersion == 6);
     assert(info.L4Protocol == 17);
@@ -596,6 +639,7 @@ int main(void)
     test_no_offload();
     test_ipv6_tcp_checksum_only();
     test_ipv6_udp_checksum_only();
+    test_ipv6_hopbyhop_udp_checksum_only();
     test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_vlan_udp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();
