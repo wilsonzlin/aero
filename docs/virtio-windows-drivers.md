@@ -435,7 +435,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default, the wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present; best-effort).
+By default, the wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present for **both** x86 and amd64; best-effort).
 
 To build storage+network-only Guest Tools media, use:
 
@@ -481,8 +481,8 @@ This wrapper:
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
 3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
    - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
-     - required: `viostor` + `netkvm`
-     - optional (included if present): `vioinput` + `viosnd`
+      - required: `viostor` + `netkvm`
+      - optional (included only if present for **both** x86 and amd64): `vioinput` + `viosnd`
    - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
 Advanced overrides:
