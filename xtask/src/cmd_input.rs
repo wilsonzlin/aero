@@ -89,6 +89,8 @@ const WASM_PACK_TESTS: &[&str] = &[
     "xhci_webusb_snapshot",
     "machine_input_injection_wasm",
     "usb_hid_bridge_mouse_reports_wasm",
+    "webhid_interrupt_out_policy_wasm",
+    "webhid_report_descriptor_synthesis_wasm",
 ];
 
 const AERO_WASM_INPUT_TESTS: &[&str] = &[

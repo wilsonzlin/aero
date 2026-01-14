@@ -143,6 +143,18 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
             .any(|arg| arg == "usb_hid_bridge_mouse_reports_wasm"),
         "expected wasm-pack to include usb_hid_bridge_mouse_reports_wasm, argv={wasm_pack:?}"
     );
+    assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "webhid_interrupt_out_policy_wasm"),
+        "expected wasm-pack to include webhid_interrupt_out_policy_wasm, argv={wasm_pack:?}"
+    );
+    assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "webhid_report_descriptor_synthesis_wasm"),
+        "expected wasm-pack to include webhid_report_descriptor_synthesis_wasm, argv={wasm_pack:?}"
+    );
 
     Ok(())
 }
