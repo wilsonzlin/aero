@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
@@ -107,6 +108,7 @@ pub struct AeroGpuPciDevice {
     ring_reset_pending: bool,
     ring_reset_pending_dma: bool,
     doorbell_pending: bool,
+    pending_fence_completions: VecDeque<u64>,
 }
 
 impl AeroGpuPciDevice {
@@ -192,6 +194,7 @@ impl AeroGpuPciDevice {
             ring_reset_pending: false,
             ring_reset_pending_dma: false,
             doorbell_pending: false,
+            pending_fence_completions: VecDeque::new(),
         }
     }
 
@@ -452,6 +455,7 @@ impl AeroGpuPciDevice {
         self.ring_reset_pending = false;
         self.ring_reset_pending_dma = false;
         self.doorbell_pending = false;
+        self.pending_fence_completions.clear();
 
         // Reset scanout-state publish bookkeeping. If a reset occurs mid-framebuffer-address update,
         // we must not leave the scanout state publisher permanently blocked on a stale LO write.
@@ -503,6 +507,9 @@ impl AeroGpuPciDevice {
         // When PCI bus mastering is disabled (COMMAND.BME=0), the device must not perform DMA.
         if dma_enabled {
             self.executor.poll_backend_completions(&mut self.regs, mem);
+            while let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.executor.complete_fence(&mut self.regs, mem, fence);
+            }
         }
         // `tick` has early-return paths (no vblank yet); update IRQ after polling completions.
         self.update_irq_level();
@@ -585,6 +592,9 @@ impl AeroGpuPciDevice {
 
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
         if !self.bus_master_enabled() {
+            if fence > self.regs.completed_fence {
+                self.pending_fence_completions.push_back(fence);
+            }
             return;
         }
         self.executor.complete_fence(&mut self.regs, mem, fence);
@@ -700,6 +710,7 @@ impl AeroGpuPciDevice {
         // A ring reset discards any pending doorbell notification. The guest is expected to
         // reinitialize ring state (including head/tail) before submitting more work.
         self.doorbell_pending = false;
+        self.pending_fence_completions.clear();
         // DMA portion (updating ring head + fence page) will run on the next tick if bus mastering
         // is enabled.
         self.ring_reset_pending_dma = true;
