@@ -396,6 +396,15 @@ export type XhciControllerBridgeHandle = {
  * frames via {@link step_frames}.
  */
 export type EhciControllerBridgeHandle = {
+    /**
+     * Guest RAM mapping base offset inside the module's linear memory.
+     */
+    readonly guest_base: number;
+    /**
+     * Guest RAM mapping size in bytes.
+     */
+    readonly guest_size: number;
+
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
 
@@ -436,6 +445,17 @@ export type EhciControllerBridgeHandle = {
     load_state?(bytes: Uint8Array): void;
     snapshot_state?: () => Uint8Array;
     restore_state?: (bytes: Uint8Array) => void;
+
+    /**
+     * USB topology helpers (host-side device attachment).
+     */
+    attach_hub(rootPort: number, portCount: number): void;
+    detach_at_path(path: number[]): void;
+    attach_webhid_device(path: number[], device: InstanceType<WasmApi["WebHidPassthroughBridge"]>): void;
+    attach_usb_hid_passthrough_device(
+        path: number[],
+        device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
+    ): void;
 
     free(): void;
 };
