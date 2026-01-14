@@ -50,6 +50,24 @@ fn set_address(dev: &mut impl DerefMut<Target = AttachedUsbDevice>, address: u8)
 }
 
 #[test]
+fn uhci_portsc_resume_detect_is_write_one_to_clear() {
+    // UHCI root hub PORTSC Resume Detect is a latched status bit; model it as write-1-to-clear.
+    const PORTSC_RD: u16 = 1 << 6;
+
+    let mut hub = RootHub::new();
+    hub.force_resume_detect_for_tests(0);
+    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
+
+    // Writing 0 does not clear the latched bit.
+    hub.write_portsc(0, 0);
+    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
+
+    // Writing 1 clears it.
+    hub.write_portsc(0, PORTSC_RD);
+    assert_eq!(hub.read_portsc(0) & PORTSC_RD, 0);
+}
+
+#[test]
 fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_LS_MASK: u16 = 0b11 << 4;
