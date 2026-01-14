@@ -80,14 +80,14 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
-    set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
+    set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint, baseFormat?: string): Promise<void>;
     /**
      * Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk, and set
      * the snapshot overlay reference (`DISKS` entry) for `disk_id=0`.
      *
      * Optional for older WASM builds.
      */
-    set_disk_opfs_and_set_overlay_ref?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
+    set_disk_opfs_and_set_overlay_ref?(path: string, create: boolean, sizeBytes: bigint, baseFormat?: string): Promise<void>;
     /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
      * reporting create/resize progress via a callback.
@@ -120,7 +120,7 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
-    set_disk_opfs_existing?(path: string): Promise<void>;
+    set_disk_opfs_existing?(path: string, baseFormat?: string, expectedSizeBytes?: bigint): Promise<void>;
     /**
      * Create an OPFS-backed copy-on-write disk: `base_path` (read-only, any supported format) +
      * `overlay_path` (writable Aero sparse overlay).
@@ -188,7 +188,11 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
-    set_disk_opfs_existing_and_set_overlay_ref?(path: string): Promise<void>;
+    set_disk_opfs_existing_and_set_overlay_ref?(
+        path: string,
+        baseFormat?: string,
+        expectedSizeBytes?: bigint,
+    ): Promise<void>;
     /**
      * Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
      * canonical disk.

@@ -36,6 +36,9 @@ pub use vm::WasmVm;
 #[cfg(any(target_arch = "wasm32", test))]
 mod jit_write_log;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod opfs_virtual_disk;
+
 #[cfg(target_arch = "wasm32")]
 mod tiered_vm;
 #[cfg(target_arch = "wasm32")]
@@ -3876,14 +3879,12 @@ impl Machine {
         })?;
         let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = Self::scanout_state_ref();
         Ok(Self {
             inner,
             mouse_buttons: 0,
             mouse_buttons_known: true,
-
             #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             scanout_state,
             #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
@@ -4027,7 +4028,46 @@ impl Machine {
         path: String,
         create: bool,
         size_bytes: u64,
+        base_format: Option<String>,
     ) -> Result<(), JsValue> {
+        let format = base_format.as_deref().unwrap_or("raw");
+
+        // Aerosparse images have an on-disk header + allocation table, so they must be opened via
+        // `aero_storage::AeroSparseDisk`. Treating the file as a raw sector stream would expose
+        // the sparse header bytes to the guest.
+        if format.eq_ignore_ascii_case("aerospar") || format.eq_ignore_ascii_case("aerosparse") {
+            let backend = aero_opfs::OpfsByteStorage::open(&path, create)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            let disk = if create {
+                // Use a conservative default allocation unit size (1 MiB) suitable for general use
+                // and aligned to sector boundaries.
+                let cfg = aero_storage::AeroSparseConfig {
+                    disk_size_bytes: size_bytes,
+                    block_size_bytes: 1024 * 1024,
+                };
+                aero_storage::AeroSparseDisk::create(backend, cfg)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+            } else {
+                let disk = aero_storage::AeroSparseDisk::open(backend)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                if size_bytes != 0 && disk.header().disk_size_bytes != size_bytes {
+                    return Err(JsValue::from_str(&format!(
+                        "aerosparse disk size mismatch: header={} expected={size_bytes}",
+                        disk.header().disk_size_bytes
+                    )));
+                }
+                disk
+            };
+
+            return self
+                .inner
+                .set_disk_backend(Box::new(disk))
+                .map_err(|e| JsValue::from_str(&e.to_string()));
+        }
+
+        // Default: raw disk image (flat sector file).
         let backend = aero_opfs::OpfsBackend::open(&path, create, size_bytes)
             .await
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs", &path, e))?;
@@ -4056,9 +4096,10 @@ impl Machine {
         path: String,
         create: bool,
         size_bytes: u64,
+        base_format: Option<String>,
     ) -> Result<(), JsValue> {
         let overlay_path = path.clone();
-        self.set_disk_opfs(path, create, size_bytes).await?;
+        self.set_disk_opfs(path, create, size_bytes, base_format).await?;
         self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
         Ok(())
     }
@@ -4119,12 +4160,26 @@ impl Machine {
     /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
     /// a dedicated worker (not the main thread).
     #[cfg(target_arch = "wasm32")]
-    pub async fn set_disk_opfs_existing(&mut self, path: String) -> Result<(), JsValue> {
-        let backend = aero_opfs::OpfsBackend::open_existing(&path)
-            .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs_existing", &path, e))?;
+    pub async fn set_disk_opfs_existing(
+        &mut self,
+        path: String,
+        base_format: Option<String>,
+        expected_size_bytes: Option<u64>,
+    ) -> Result<(), JsValue> {
+        let format = base_format.as_deref().unwrap_or("raw");
+        let disk = crate::opfs_virtual_disk::open_opfs_virtual_disk(&path, format).await?;
+
+        if let Some(expected) = expected_size_bytes {
+            let actual = disk.capacity_bytes();
+            if expected != 0 && actual != expected {
+                return Err(js_error(format!(
+                    "Machine.set_disk_opfs_existing failed for OPFS path \"{path}\": disk size mismatch (opened={actual} expected={expected})"
+                )));
+            }
+        }
+
         self.inner
-            .set_disk_backend(Box::new(backend))
+            .set_disk_backend(disk)
             .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs_existing", &path, e))
     }
 
@@ -4355,9 +4410,12 @@ impl Machine {
     pub async fn set_disk_opfs_existing_and_set_overlay_ref(
         &mut self,
         path: String,
+        base_format: Option<String>,
+        expected_size_bytes: Option<u64>,
     ) -> Result<(), JsValue> {
         let overlay_path = path.clone();
-        self.set_disk_opfs_existing(path).await?;
+        self.set_disk_opfs_existing(path, base_format, expected_size_bytes)
+            .await?;
         self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
         Ok(())
     }

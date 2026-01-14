@@ -8,6 +8,7 @@
 //
 // NOTE: This intentionally mirrors `crates/aero-d3d9/js/persistent_cache_shim.js` so both D3D9 and
 // D3D11 wasm-pack packages can depend on the same browser-side persistence API.
+
 function missingApiError() {
   return new Error(
     "AeroPersistentGpuCache is not installed on globalThis. " +
@@ -94,3 +95,4 @@ export class PersistentGpuCache {
 // the Rust type name (`JsPersistentGpuCache`) when the two differ. Export an alias so bundlers
 // (Vite/Rollup) can satisfy the import.
 export { PersistentGpuCache as JsPersistentGpuCache };
+

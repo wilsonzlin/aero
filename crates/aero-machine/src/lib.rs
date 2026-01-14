@@ -8993,7 +8993,6 @@ impl Machine {
                 cpu,
                 MAX_QUEUED_EXTERNAL_INTERRUPTS,
             );
-
             if cpu.state.halted {
                 continue;
             }

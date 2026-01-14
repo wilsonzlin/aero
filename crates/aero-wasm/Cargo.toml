@@ -18,6 +18,7 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-machine = { path = "../aero-machine" }
+aero-storage = { path = "../aero-storage" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-pump = { path = "../aero-net-pump" }
 aero-guest-phys = { path = "../aero-guest-phys" }
