@@ -486,6 +486,138 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_jit_runtime_install_handle(c: &mut Criterion) {
+    const OPS_PER_ITER: usize = 2048;
+
+    let mut group = c.benchmark_group("jit/runtime_install");
+    group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+
+    group.bench_function("install_handle_replace", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
+
+        let rip = 0x8000u64;
+        jit.install_handle(dummy_handle(rip, 0, 16));
+        let mut gen = 0u32;
+
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for _ in 0..OPS_PER_ITER {
+                gen = gen.wrapping_add(1);
+                let evicted = jit.install_handle(dummy_handle(rip, gen, 16));
+                checksum ^= evicted.len() as u64;
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("install_handle_evict", |b| {
+        const CACHE_SIZE: usize = 64;
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: CACHE_SIZE,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
+
+        for i in 0..CACHE_SIZE {
+            jit.install_handle(dummy_handle(i as u64, i as u32, 16));
+        }
+
+        let mut next_rip = CACHE_SIZE as u64;
+        let mut gen = 0u32;
+
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for _ in 0..OPS_PER_ITER {
+                gen = gen.wrapping_add(1);
+                let evicted = jit.install_handle(dummy_handle(next_rip, gen, 16));
+                checksum ^= evicted.first().copied().unwrap_or(0);
+                next_rip = next_rip.wrapping_add(1);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("install_handle_replace_metrics_sink", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let metrics = Arc::new(CountingMetricsSink::default());
+        let mut jit =
+            JitRuntime::new(config, NullBackend, NullCompileSink).with_metrics_sink(metrics.clone());
+
+        let rip = 0x9000u64;
+        jit.install_handle(dummy_handle(rip, 0, 16));
+        let mut gen = 0u32;
+
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for _ in 0..OPS_PER_ITER {
+                gen = gen.wrapping_add(1);
+                let evicted = jit.install_handle(dummy_handle(rip, gen, 16));
+                checksum ^= evicted.len() as u64;
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("install_handle_evict_metrics_sink", |b| {
+        const CACHE_SIZE: usize = 64;
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: CACHE_SIZE,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let metrics = Arc::new(CountingMetricsSink::default());
+        let mut jit =
+            JitRuntime::new(config, NullBackend, NullCompileSink).with_metrics_sink(metrics.clone());
+
+        for i in 0..CACHE_SIZE {
+            jit.install_handle(dummy_handle(i as u64, i as u32, 16));
+        }
+
+        let mut next_rip = CACHE_SIZE as u64;
+        let mut gen = 0u32;
+
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for _ in 0..OPS_PER_ITER {
+                gen = gen.wrapping_add(1);
+                let evicted = jit.install_handle(dummy_handle(next_rip, gen, 16));
+                checksum ^= evicted.first().copied().unwrap_or(0);
+                next_rip = next_rip.wrapping_add(1);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_page_version_tracker(c: &mut Criterion) {
     const OPS_PER_ITER: usize = 4096;
 
@@ -544,7 +676,7 @@ fn bench_page_version_tracker(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block, bench_page_version_tracker
+    targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block, bench_jit_runtime_install_handle, bench_page_version_tracker
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
