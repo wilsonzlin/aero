@@ -19,6 +19,8 @@ describe("io/devices/xhci", () => {
     // Canonical QEMU-style xHCI ("qemu-xhci") PCI identity: 1b36:000d.
     expect(dev.vendorId).toBe(0x1b36);
     expect(dev.deviceId).toBe(0x000d);
+    expect(dev.subsystemVendorId).toBe(0x1b36);
+    expect(dev.subsystemDeviceId).toBe(0x000d);
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x1_0000 }, null, null, null, null, null]);
     expect(dev.classCode).toBe(0x0c0330);
     expect(dev.revisionId).toBe(0x01);

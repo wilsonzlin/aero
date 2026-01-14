@@ -75,6 +75,12 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   // Match the native xHCI PCI identity (qemu-xhci).
   readonly vendorId = XHCI_VENDOR_ID;
   readonly deviceId = XHCI_DEVICE_ID;
+  // Match the canonical subsystem IDs used by QEMU's `qemu-xhci` device.
+  //
+  // `PciBus` currently defaults subsystem IDs to vendor/device IDs when omitted, but we set them
+  // explicitly so the xHCI identity stays stable even if `PciBus` defaults change in the future.
+  readonly subsystemVendorId = XHCI_VENDOR_ID;
+  readonly subsystemDeviceId = XHCI_DEVICE_ID;
   readonly classCode = XHCI_CLASS_CODE;
   readonly revisionId = XHCI_REVISION_ID;
   readonly irqLine = XHCI_IRQ_LINE;
