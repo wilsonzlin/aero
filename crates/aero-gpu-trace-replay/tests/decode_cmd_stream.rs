@@ -326,6 +326,40 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 }
 
 #[test]
+fn stage_ex_is_gated_by_cmd_stream_abi_minor_in_listings() {
+    // Build a stream that contains non-zero reserved0/stage_ex values in several packets, then
+    // force the stream ABI minor to 2 (pre-stage_ex). Decoders should treat those fields as
+    // reserved/ignored so garbage does not get misinterpreted as an extended stage.
+    let mut bytes = build_fixture_cmd_stream();
+    bytes[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes()); // ABI 1.2
+
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("abi=1.2"));
+    assert!(
+        !listing.contains("stage_ex="),
+        "stage_ex tags should be suppressed for ABI minor<3 (listing={listing})"
+    );
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+
+    let records = v["records"].as_array().expect("records array");
+    let create_shader = records
+        .iter()
+        .find(|r| r["type"] == "packet" && r["opcode"] == "CreateShaderDxbc")
+        .expect("missing CreateShaderDxbc packet");
+    assert!(
+        create_shader["decoded"].get("stage_ex").is_none(),
+        "stage_ex should be omitted from JSON decode for ABI minor<3"
+    );
+}
+
+#[test]
 fn strict_mode_fails_on_unknown_opcode() {
     let bytes = build_fixture_cmd_stream();
     let err = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, true)

@@ -1,6 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuPrimitiveTopology,
+    AerogpuPrimitiveTopology, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -188,6 +188,7 @@ impl CmdStreamDecodeReport {
 /// and the report will contain all packets successfully decoded up to the first error.
 pub fn decode_cmd_stream(bytes: &[u8]) -> Result<CmdStreamDecodeReport, AerogpuCmdDecodeError> {
     let iter = AerogpuCmdStreamIter::new(bytes)?;
+    let abi_minor = (iter.header().abi_version & 0xFFFF) as u16;
     let header: CmdStreamHeaderListing = (*iter.header()).into();
 
     let mut records = Vec::new();
@@ -196,7 +197,7 @@ pub fn decode_cmd_stream(bytes: &[u8]) -> Result<CmdStreamDecodeReport, AerogpuC
         match pkt {
             Ok(pkt) => {
                 let size_bytes = pkt.hdr.size_bytes;
-                let decoded = decode_known_fields(&pkt);
+                let decoded = decode_known_fields(&pkt, abi_minor);
                 records.push(CmdStreamListingRecord::Packet(CmdStreamPacketListing {
                     offset,
                     opcode_u32: pkt.hdr.opcode,
@@ -258,6 +259,7 @@ fn fourcc_le(v: u32) -> String {
 
 fn decode_known_fields(
     pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPacket<'_>,
+    abi_minor: u16,
 ) -> BTreeMap<String, Value> {
     let mut out: BTreeMap<String, Value> = BTreeMap::new();
 
@@ -406,7 +408,7 @@ fn decode_known_fields(
                 let dxbc_size_bytes = cmd.dxbc_size_bytes;
                 out.insert("shader_handle".into(), json!(shader_handle));
                 out.insert("stage".into(), json!(stage));
-                if stage == 2 && stage_ex != 0 {
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
@@ -504,7 +506,10 @@ fn decode_known_fields(
                 out.insert("shader_stage".into(), json!(shader_stage));
                 out.insert("slot".into(), json!(slot));
                 out.insert("texture".into(), json!(texture));
-                if shader_stage == 2 && stage_ex != 0 {
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                    && shader_stage == 2
+                    && stage_ex != 0
+                {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
@@ -521,7 +526,10 @@ fn decode_known_fields(
                 out.insert("shader_stage".into(), json!(shader_stage));
                 out.insert("start_slot".into(), json!(start_slot));
                 out.insert("sampler_count".into(), json!(sampler_count));
-                if shader_stage == 2 && stage_ex != 0 {
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                    && shader_stage == 2
+                    && stage_ex != 0
+                {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
@@ -553,7 +561,7 @@ fn decode_known_fields(
             out.insert("stage".into(), json!(stage));
             out.insert("start_register".into(), json!(start_register));
             out.insert("vec4_count".into(), json!(vec4_count));
-            if stage == 2 && stage_ex != 0 {
+            if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }
@@ -591,7 +599,10 @@ fn decode_known_fields(
                     out.insert("shader_stage".into(), json!(shader_stage));
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("buffer_count".into(), json!(buffer_count));
-                    if shader_stage == 2 && stage_ex != 0 {
+                    if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                        && shader_stage == 2
+                        && stage_ex != 0
+                    {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
@@ -619,7 +630,10 @@ fn decode_known_fields(
                     out.insert("shader_stage".into(), json!(shader_stage));
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("buffer_count".into(), json!(buffer_count));
-                    if shader_stage == 2 && stage_ex != 0 {
+                    if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                        && shader_stage == 2
+                        && stage_ex != 0
+                    {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
@@ -647,7 +661,10 @@ fn decode_known_fields(
                     out.insert("shader_stage".into(), json!(shader_stage));
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("uav_count".into(), json!(uav_count));
-                    if shader_stage == 2 && stage_ex != 0 {
+                    if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                        && shader_stage == 2
+                        && stage_ex != 0
+                    {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
