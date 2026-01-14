@@ -37,7 +37,7 @@ fn bind_shaders_decodes_base_packet() {
     let cs = cmd.cs;
     let reserved0 = cmd.reserved0;
     assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
-    assert_eq!(size_bytes, 24);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::SIZE_BYTES);
     assert_eq!(vs, 1);
     assert_eq!(ps, 2);
     assert_eq!(cs, 3);
@@ -118,7 +118,7 @@ fn bind_shaders_extended_packet_allows_trailing_bytes() {
 
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
     let size_bytes = cmd.hdr.size_bytes;
-    assert_eq!(size_bytes, 40);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES + 4);
     assert_eq!(
         ex,
         Some(BindShadersEx {
@@ -146,7 +146,7 @@ fn bind_shaders_base_packet_allows_trailing_bytes() {
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
     let size_bytes = cmd.hdr.size_bytes;
     let reserved0 = cmd.reserved0;
-    assert_eq!(size_bytes, 28);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::SIZE_BYTES + 4);
     assert_eq!(reserved0, 0xAABB_CCDD);
     assert_eq!(ex, None);
 }

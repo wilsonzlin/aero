@@ -1848,8 +1848,7 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
     let size_bytes = hdr.size_bytes;
     assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
 
-    let expected_size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<u32>();
-    assert_eq!(size_bytes as usize, expected_size);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
 
     assert_eq!(
         u32::from_le_bytes(
@@ -1889,7 +1888,7 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
         0
     );
 
-    let ext_base = pkt_base + size_of::<AerogpuCmdBindShaders>();
+    let ext_base = pkt_base + AerogpuCmdBindShaders::SIZE_BYTES;
     assert_eq!(
         u32::from_le_bytes(buf[ext_base..ext_base + 4].try_into().unwrap()),
         4

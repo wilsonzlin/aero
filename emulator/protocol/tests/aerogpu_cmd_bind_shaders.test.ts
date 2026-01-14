@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AerogpuCmdOpcode, decodeCmdBindShadersPayload } from "../aerogpu/aerogpu_cmd.ts";
+import {
+  AEROGPU_CMD_BIND_SHADERS_EX_SIZE,
+  AEROGPU_CMD_BIND_SHADERS_SIZE,
+  AerogpuCmdOpcode,
+  decodeCmdBindShadersPayload,
+} from "../aerogpu/aerogpu_cmd.ts";
 
 test("decodeCmdBindShadersPayload decodes base packet", () => {
-  const bytes = new Uint8Array(24);
+  const bytes = new Uint8Array(AEROGPU_CMD_BIND_SHADERS_SIZE);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
   view.setUint32(4, bytes.byteLength, true);
@@ -24,7 +29,7 @@ test("decodeCmdBindShadersPayload decodes base packet", () => {
 test("decodeCmdBindShadersPayload ignores unknown trailing bytes in base packets", () => {
   // Payload is 20 bytes: base 16 + 4 bytes of forward-compatible extension (not enough for the
   // `{gs,hs,ds}` extension table, so `ex` remains absent).
-  const bytes = new Uint8Array(28);
+  const bytes = new Uint8Array(AEROGPU_CMD_BIND_SHADERS_SIZE + 4);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
   view.setUint32(4, bytes.byteLength, true);
@@ -43,7 +48,7 @@ test("decodeCmdBindShadersPayload ignores unknown trailing bytes in base packets
 });
 
 test("decodeCmdBindShadersPayload decodes extended packet", () => {
-  const bytes = new Uint8Array(36);
+  const bytes = new Uint8Array(AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
   view.setUint32(4, bytes.byteLength, true);
@@ -62,7 +67,7 @@ test("decodeCmdBindShadersPayload decodes extended packet", () => {
 test("decodeCmdBindShadersPayload treats appended {gs,hs,ds} as authoritative even when reserved0 is non-zero", () => {
   // Some emitters may mirror legacy GS in reserved0 (or leave it non-zero) while still appending the
   // extended `{gs,hs,ds}` tail. The decoder must treat the appended values as authoritative.
-  const bytes = new Uint8Array(36);
+  const bytes = new Uint8Array(AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
   view.setUint32(4, bytes.byteLength, true);
@@ -80,7 +85,7 @@ test("decodeCmdBindShadersPayload treats appended {gs,hs,ds} as authoritative ev
 });
 
 test("decodeCmdBindShadersPayload ignores trailing bytes after extended handles", () => {
-  const bytes = new Uint8Array(40);
+  const bytes = new Uint8Array(AEROGPU_CMD_BIND_SHADERS_EX_SIZE + 4);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   view.setUint32(0, AerogpuCmdOpcode.BindShaders, true);
   view.setUint32(4, bytes.byteLength, true);

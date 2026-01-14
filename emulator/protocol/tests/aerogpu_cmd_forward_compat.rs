@@ -1,5 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, BindShadersEx,
+    AerogpuCmdBindShaders, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
+    BindShadersEx,
     AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
@@ -73,7 +74,7 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
     let (base_cmd, base_ex) = decode(&base);
     let base_size_bytes = base_cmd.hdr.size_bytes;
     let (base_vs, base_ps, base_cs) = (base_cmd.vs, base_cmd.ps, base_cmd.cs);
-    assert_eq!(base_size_bytes, 24);
+    assert_eq!(base_size_bytes as usize, AerogpuCmdBindShaders::SIZE_BYTES);
     assert_eq!((base_vs, base_ps, base_cs), (1, 2, 3));
     assert_eq!(base_ex, None);
 
@@ -84,7 +85,10 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
         base_trailing_cmd.ps,
         base_trailing_cmd.cs,
     );
-    assert_eq!(base_trailing_size_bytes, 28);
+    assert_eq!(
+        base_trailing_size_bytes as usize,
+        AerogpuCmdBindShaders::SIZE_BYTES + 4
+    );
     assert_eq!(
         (base_trailing_vs, base_trailing_ps, base_trailing_cs),
         (1, 2, 3)
@@ -94,7 +98,7 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
     let (ext_cmd, ext_ex) = decode(&extended);
     let ext_size_bytes = ext_cmd.hdr.size_bytes;
     let (ext_vs, ext_ps, ext_cs) = (ext_cmd.vs, ext_cmd.ps, ext_cmd.cs);
-    assert_eq!(ext_size_bytes, 36);
+    assert_eq!(ext_size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
     assert_eq!((ext_vs, ext_ps, ext_cs), (1, 2, 3));
     assert_eq!(
         ext_ex,
@@ -113,7 +117,10 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
         ext_trailing_cmd.ps,
         ext_trailing_cmd.cs,
     );
-    assert_eq!(ext_trailing_size_bytes, 40);
+    assert_eq!(
+        ext_trailing_size_bytes as usize,
+        AerogpuCmdBindShaders::EX_SIZE_BYTES + 4
+    );
     assert_eq!(
         (ext_trailing_vs, ext_trailing_ps, ext_trailing_cs),
         (1, 2, 3)
