@@ -17,9 +17,14 @@ wgpu-backend = ["aerogpu-native"]
 aero-devices = { path = "../devices" }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
-aero-gpu = { path = "../aero-gpu", optional = true }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Host-only wgpu-based backend wrapper. Kept out of wasm32 builds even if the feature is
+# accidentally enabled, so misconfigured wasm32 invocations fail quickly without compiling the
+# native GPU stack.
+aero-gpu = { path = "../aero-gpu", optional = true }
 pollster = { version = "0.3", optional = true }
 
 [dev-dependencies]
