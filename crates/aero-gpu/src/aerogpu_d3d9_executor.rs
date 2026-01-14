@@ -94,6 +94,9 @@ pub struct AerogpuD3d9Executor {
     /// When enabled, the shader translator emits an extra uniform bind group and nudges the final
     /// clip-space position by (-1/viewport_width, +1/viewport_height) * w to emulate D3D9's
     /// viewport transform bias.
+    ///
+    /// Binding contract: the uniform is declared as `@group(3) @binding(0) var<uniform> half_pixel`
+    /// in vertex shaders.
     half_pixel_center: bool,
     half_pixel_bind_group_layout: Option<wgpu::BindGroupLayout>,
     half_pixel_uniform_buffer: Option<wgpu::Buffer>,
@@ -1084,6 +1087,7 @@ fn create_samplers_bind_group_layout(
     // Matches `aero-d3d9` token stream shader translation binding contract:
     // - group(1): VS samplers
     // - group(2): PS samplers
+    // - group(3): optional half-pixel-center uniform (VS only)
     //
     // And bindings derived from sampler register index:
     //   texture binding = 2*s
@@ -1127,6 +1131,7 @@ fn create_samplers_bind_group_layout(
 }
 
 fn create_half_pixel_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    // Matches the translator's binding contract: `@group(3) @binding(0) var<uniform> half_pixel`.
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("aerogpu-d3d9.half_pixel.bind_group_layout"),
         entries: &[wgpu::BindGroupLayoutEntry {

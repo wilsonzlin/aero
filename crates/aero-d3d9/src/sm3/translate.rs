@@ -145,6 +145,7 @@ pub enum TranslateError {
 ///   - `@binding(2)`: bool constants (`b#`) as `array<vec4<u32>, 512>`
 /// - group(1): vertex shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 /// - group(2): pixel shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
+/// - group(3): optional half-pixel-center uniform buffer (VS only)
 pub fn translate_dxbc_to_wgsl(bytes: &[u8]) -> Result<TranslatedShader, TranslateError> {
     translate_dxbc_to_wgsl_with_options(bytes, wgsl::WgslOptions::default())
 }
