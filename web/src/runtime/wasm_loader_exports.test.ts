@@ -85,6 +85,66 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.storage_capabilities?.()).toEqual(caps);
   });
 
+  it("surfaces legacy shared-guest-memory Machine free-function factories when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const create_win7_machine_shared_guest_memory = (_guestBase: number, _guestSize: number) => ({});
+    const create_machine_win7_shared_guest_memory = (_guestBase: number, _guestSize: number) => ({});
+    const create_machine_shared_guest_memory_win7 = (_guestBase: number, _guestSize: number) => ({});
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        create_win7_machine_shared_guest_memory,
+        create_machine_win7_shared_guest_memory,
+        create_machine_shared_guest_memory_win7,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.create_win7_machine_shared_guest_memory).toBe(create_win7_machine_shared_guest_memory);
+    expect(api.create_machine_win7_shared_guest_memory).toBe(create_machine_win7_shared_guest_memory);
+    expect(api.create_machine_shared_guest_memory_win7).toBe(create_machine_shared_guest_memory_win7);
+  });
+
+  it("supports camelCase create*Machine*SharedGuestMemory naming (surfaced via create_* keys)", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const createWin7MachineSharedGuestMemory = (_guestBase: number, _guestSize: number) => ({});
+    const createMachineWin7SharedGuestMemory = (_guestBase: number, _guestSize: number) => ({});
+    const createMachineSharedGuestMemoryWin7 = (_guestBase: number, _guestSize: number) => ({});
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        createWin7MachineSharedGuestMemory,
+        createMachineWin7SharedGuestMemory,
+        createMachineSharedGuestMemoryWin7,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.create_win7_machine_shared_guest_memory).toBe(createWin7MachineSharedGuestMemory);
+    expect(api.create_machine_win7_shared_guest_memory).toBe(createMachineWin7SharedGuestMemory);
+    expect(api.create_machine_shared_guest_memory_win7).toBe(createMachineSharedGuestMemoryWin7);
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 

@@ -2564,6 +2564,12 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         storage_capabilities: mod.storage_capabilities,
+        create_win7_machine_shared_guest_memory:
+          mod.create_win7_machine_shared_guest_memory ?? mod.createWin7MachineSharedGuestMemory,
+        create_machine_win7_shared_guest_memory:
+          mod.create_machine_win7_shared_guest_memory ?? mod.createMachineWin7SharedGuestMemory,
+        create_machine_shared_guest_memory_win7:
+          mod.create_machine_shared_guest_memory_win7 ?? mod.createMachineSharedGuestMemoryWin7,
         tiered_vm_jit_abi_layout: mod.tiered_vm_jit_abi_layout,
         mem_load_u32: mod.mem_load_u32,
         jit_abi_constants: mod.jit_abi_constants,
