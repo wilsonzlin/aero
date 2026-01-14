@@ -85,6 +85,8 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out);
   PRINT_SIZE("aerogpu_escape_query_fence_out", aerogpu_escape_query_fence_out);
   PRINT_SIZE("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out);
+  PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
+  PRINT_SIZE("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout);
   PRINT_SIZE("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout);
   PRINT_SIZE("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout);
   PRINT_SIZE("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout);
@@ -566,6 +568,18 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, debug_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, share_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, reserved0);
+
+  PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, flags);
+  PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_code);
+  PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_fence);
+  PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_count);
+  PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, reserved0);
+
+  PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, gpa);
+  PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, size_bytes);
+  PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, status);
+  PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, bytes_copied);
+  PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, data);
 
   /* ------------------------------ Constants ------------------------------- */
   PRINT_CONST(AEROGPU_ABI_MAJOR);
