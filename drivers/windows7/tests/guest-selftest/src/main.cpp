@@ -5965,17 +5965,31 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
         out[2] = static_cast<BYTE>((v >> 16) & 0xFF);
       } else if (bytes_per_sample == 4) {
         const double clamped = std::max(-1.0, std::min(1.0, sample));
-        double scale = 2147483647.0;
-        if (valid_bits == 24) {
-          scale = 8388607.0;
-        } else if (valid_bits >= 32) {
-          scale = 2147483647.0;
-        } else if (valid_bits > 1) {
-          scale = std::pow(2.0, static_cast<int>(valid_bits) - 1) - 1.0;
-        } else {
+        if (valid_bits < 2) {
           return false;
         }
-        const int32_t v = static_cast<int32_t>(std::lround(clamped * scale));
+
+        // For integer PCM in WAVEFORMATEXTENSIBLE, valid bits are typically
+        // left-aligned within the container (with low-order padding bits set to
+        // zero). Keep the generated samples aligned to the MSBs so downstream
+        // WAV verification (which often treats 32-bit PCM as full-scale int32)
+        // sees the expected amplitude for 24-in-32.
+        const WORD container_bits = static_cast<WORD>(bytes_per_sample * 8u);
+        WORD shift = 0;
+        if (valid_bits < container_bits) {
+          shift = static_cast<WORD>(container_bits - valid_bits);
+          if (shift >= 32) return false;
+        }
+
+        // Scale using the valid-bit width and then shift into the container.
+        // Example: valid_bits=24 in a 32-bit container => scale to +/-8388607
+        // then shift left by 8 so the LSB byte is padding.
+        const double scale = (valid_bits >= 32) ? 2147483647.0 : (std::pow(2.0, static_cast<int>(valid_bits) - 1) - 1.0);
+        int64_t v64 = static_cast<int64_t>(std::llround(clamped * scale));
+        v64 <<= shift;
+        if (v64 > INT32_MAX) v64 = INT32_MAX;
+        if (v64 < INT32_MIN) v64 = INT32_MIN;
+        const int32_t v = static_cast<int32_t>(v64);
         memcpy(out, &v, sizeof(v));
       }
     }
