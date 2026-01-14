@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.13"
+         version = "2.5.14"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1422,7 +1422,7 @@ try {
             if ($signingPolicy) {
                 $sp = $signingPolicy.ToLower()
                 if (($sp -eq "testsigning") -or ($sp -eq "test-signing")) { $signingPolicy = "test" }
-                if ($sp -eq "nointegritychecks") { $signingPolicy = "none" }
+                if (($sp -eq "nointegritychecks") -or ($sp -eq "no-integrity-checks")) { $signingPolicy = "none" }
                 if (($sp -eq "prod") -or ($sp -eq "whql")) { $signingPolicy = "production" }
             }
 
