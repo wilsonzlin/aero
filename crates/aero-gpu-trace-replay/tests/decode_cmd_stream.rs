@@ -268,6 +268,146 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
+    // SET_INPUT_LAYOUT(input_layout_handle=0x9999).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x9999);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 8);
+    push_packet(&mut out, AerogpuCmdOpcode::SetInputLayout as u32, &payload);
+
+    // SET_VERTEX_BUFFERS(start_slot=0, buffer_count=1, binding0={buffer=0x4444, stride=16, offset=32}).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0); // start_slot
+    push_u32_le(&mut payload, 1); // buffer_count
+    push_u32_le(&mut payload, 0x4444); // binding[0].buffer
+    push_u32_le(&mut payload, 16); // binding[0].stride_bytes
+    push_u32_le(&mut payload, 32); // binding[0].offset_bytes
+    push_u32_le(&mut payload, 0); // binding[0].reserved0
+    assert_eq!(payload.len(), 24);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetVertexBuffers as u32,
+        &payload,
+    );
+
+    // SET_INDEX_BUFFER(buffer=0x5555, format=1, offset_bytes=64).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x5555);
+    push_u32_le(&mut payload, 1);
+    push_u32_le(&mut payload, 64);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut out, AerogpuCmdOpcode::SetIndexBuffer as u32, &payload);
+
+    // SET_PRIMITIVE_TOPOLOGY(topology=4).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 4);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 8);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetPrimitiveTopology as u32,
+        &payload,
+    );
+
+    // CREATE_SAMPLER(sampler_handle=0x6666, filter=1, address_u=2, address_v=3, address_w=4).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x6666);
+    push_u32_le(&mut payload, 1);
+    push_u32_le(&mut payload, 2);
+    push_u32_le(&mut payload, 3);
+    push_u32_le(&mut payload, 4);
+    assert_eq!(payload.len(), 20);
+    push_packet(&mut out, AerogpuCmdOpcode::CreateSampler as u32, &payload);
+
+    // SET_SAMPLER_STATE(shader_stage=Pixel, slot=0, state=5, value=0x7777).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1);
+    push_u32_le(&mut payload, 0);
+    push_u32_le(&mut payload, 5);
+    push_u32_le(&mut payload, 0x7777);
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut out, AerogpuCmdOpcode::SetSamplerState as u32, &payload);
+
+    // SET_RENDER_STATE(state=7, value=0x8888).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 7);
+    push_u32_le(&mut payload, 0x8888);
+    assert_eq!(payload.len(), 8);
+    push_packet(&mut out, AerogpuCmdOpcode::SetRenderState as u32, &payload);
+
+    // DESTROY_SAMPLER(sampler_handle=0x6666).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x6666);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 8);
+    push_packet(&mut out, AerogpuCmdOpcode::DestroySampler as u32, &payload);
+
+    // SET_BLEND_STATE(enable=1, src_factor=2, dst_factor=3, blend_op=4, color_write_mask=0x0F, sample_mask=0xFFFF_FFFF).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1); // enable
+    push_u32_le(&mut payload, 2); // src_factor
+    push_u32_le(&mut payload, 3); // dst_factor
+    push_u32_le(&mut payload, 4); // blend_op
+    push_u32_le(&mut payload, 0x0F); // color_write_mask + reserved0
+    push_u32_le(&mut payload, 5); // src_factor_alpha
+    push_u32_le(&mut payload, 6); // dst_factor_alpha
+    push_u32_le(&mut payload, 7); // blend_op_alpha
+    push_u32_le(&mut payload, 1.0f32.to_bits());
+    push_u32_le(&mut payload, 0.5f32.to_bits());
+    push_u32_le(&mut payload, 0.25f32.to_bits());
+    push_u32_le(&mut payload, 0.0f32.to_bits());
+    push_u32_le(&mut payload, 0xFFFF_FFFF); // sample_mask
+    assert_eq!(payload.len(), 52);
+    push_packet(&mut out, AerogpuCmdOpcode::SetBlendState as u32, &payload);
+
+    // SET_DEPTH_STENCIL_STATE(depth_enable=1, depth_write_enable=0, depth_func=2, stencil_enable=1, read_mask=0xAA, write_mask=0x55).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1); // depth_enable
+    push_u32_le(&mut payload, 0); // depth_write_enable
+    push_u32_le(&mut payload, 2); // depth_func
+    push_u32_le(&mut payload, 1); // stencil_enable
+    push_u32_le(&mut payload, 0x0000_55AA); // stencil_read_mask/stencil_write_mask + reserved0
+    assert_eq!(payload.len(), 20);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetDepthStencilState as u32,
+        &payload,
+    );
+
+    // SET_RASTERIZER_STATE(fill_mode=1, cull_mode=2, front_ccw=1, scissor_enable=1, depth_bias=-1, flags=1).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1); // fill_mode
+    push_u32_le(&mut payload, 2); // cull_mode
+    push_u32_le(&mut payload, 1); // front_ccw
+    push_u32_le(&mut payload, 1); // scissor_enable
+    push_u32_le(&mut payload, (-1i32) as u32); // depth_bias
+    push_u32_le(&mut payload, 1); // flags
+    assert_eq!(payload.len(), 24);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetRasterizerState as u32,
+        &payload,
+    );
+
+    // DESTROY_INPUT_LAYOUT(input_layout_handle=0x9999).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x9999);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 8);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::DestroyInputLayout as u32,
+        &payload,
+    );
+
+    // DESTROY_SHADER(shader_handle=0x1234).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x1234);
+    push_u32_le(&mut payload, 0);
+    assert_eq!(payload.len(), 8);
+    push_packet(&mut out, AerogpuCmdOpcode::DestroyShader as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -372,6 +512,56 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("texture_handle=8192"), "{listing}");
     assert!(listing.contains(&format_hex), "{listing}");
     assert!(listing.contains("DestroyTextureView"), "{listing}");
+
+    // Pipeline/state opcodes should decode their fields (not just payload_len).
+    assert!(listing.contains("SetInputLayout"));
+    assert!(listing.contains("input_layout_handle=39321")); // 0x9999
+
+    assert!(listing.contains("SetVertexBuffers"));
+    assert!(listing.contains("start_slot=0"));
+    assert!(listing.contains("vb0_buffer=17476")); // 0x4444
+    assert!(listing.contains("vb0_stride_bytes=16"));
+    assert!(listing.contains("vb0_offset_bytes=32"));
+
+    assert!(listing.contains("SetIndexBuffer"));
+    assert!(listing.contains("buffer=21845")); // 0x5555
+    assert!(listing.contains("format=1"));
+    assert!(listing.contains("offset_bytes=64"));
+
+    assert!(listing.contains("SetPrimitiveTopology"));
+    assert!(listing.contains("topology=4"));
+
+    assert!(listing.contains("CreateSampler"));
+    assert!(listing.contains("sampler_handle=26214")); // 0x6666
+    assert!(listing.contains("filter=1"));
+
+    assert!(listing.contains("SetSamplerState"));
+    assert!(listing.contains("shader_stage=1"));
+    assert!(listing.contains("state=5"));
+    assert!(listing.contains("value=0x00007777"));
+
+    assert!(listing.contains("SetRenderState"));
+    assert!(listing.contains("state=7"));
+    assert!(listing.contains("value=0x00008888"));
+
+    assert!(listing.contains("DestroySampler"));
+    assert!(listing.contains("sampler_handle=26214"));
+
+    assert!(listing.contains("SetBlendState"));
+    assert!(listing.contains("enable=1"));
+    assert!(listing.contains("color_write_mask=0x0F"));
+    assert!(listing.contains("sample_mask=0xFFFFFFFF"));
+
+    assert!(listing.contains("SetDepthStencilState"));
+    assert!(listing.contains("stencil_read_mask=0xAA"));
+    assert!(listing.contains("stencil_write_mask=0x55"));
+
+    assert!(listing.contains("SetRasterizerState"));
+    assert!(listing.contains("depth_bias=-1"));
+    assert!(listing.contains("flags=0x00000001"));
+
+    assert!(listing.contains("DestroyInputLayout"));
+    assert!(listing.contains("DestroyShader"));
 }
 
 #[test]
@@ -486,6 +676,10 @@ fn json_listing_decodes_new_opcodes() {
             .unwrap_or_else(|| panic!("missing packet {opcode}"))
     };
 
+    let upload = find_packet("UploadResource");
+    assert_eq!(upload["decoded"]["data_len"], 4);
+    assert_eq!(upload["decoded"]["data_prefix"], "deadbeef");
+
     let srv = find_packet("SetShaderResourceBuffers");
     assert_eq!(srv["decoded"]["shader_stage"], 2);
     assert_eq!(srv["decoded"]["buffer_count"], 1);
@@ -513,6 +707,7 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(create_shader["decoded"]["stage"], 2);
     assert_eq!(create_shader["decoded"]["stage_ex"], 3);
     assert_eq!(create_shader["decoded"]["stage_ex_name"], "Hull");
+    assert_eq!(create_shader["decoded"]["dxbc_prefix"], "44584243010203");
 
     let set_texture = find_packet("SetTexture");
     assert_eq!(set_texture["decoded"]["shader_stage"], 2);
@@ -570,6 +765,75 @@ fn json_listing_decodes_new_opcodes() {
 
     let destroy_view = find_packet("DestroyTextureView");
     assert_eq!(destroy_view["decoded"]["view_handle"], 0x1000);
+
+    let set_input_layout = find_packet("SetInputLayout");
+    assert_eq!(set_input_layout["decoded"]["input_layout_handle"], 0x9999);
+
+    let set_vertex_buffers = find_packet("SetVertexBuffers");
+    assert_eq!(set_vertex_buffers["decoded"]["start_slot"], 0);
+    assert_eq!(set_vertex_buffers["decoded"]["buffer_count"], 1);
+    assert_eq!(set_vertex_buffers["decoded"]["vb0_buffer"], 0x4444);
+    assert_eq!(set_vertex_buffers["decoded"]["vb0_stride_bytes"], 16);
+    assert_eq!(set_vertex_buffers["decoded"]["vb0_offset_bytes"], 32);
+
+    let set_index_buffer = find_packet("SetIndexBuffer");
+    assert_eq!(set_index_buffer["decoded"]["buffer"], 0x5555);
+    assert_eq!(set_index_buffer["decoded"]["format"], 1);
+    assert_eq!(set_index_buffer["decoded"]["offset_bytes"], 64);
+
+    let set_topology = find_packet("SetPrimitiveTopology");
+    assert_eq!(set_topology["decoded"]["topology"], 4);
+
+    let create_sampler = find_packet("CreateSampler");
+    assert_eq!(create_sampler["decoded"]["sampler_handle"], 0x6666);
+    assert_eq!(create_sampler["decoded"]["filter"], 1);
+    assert_eq!(create_sampler["decoded"]["address_u"], 2);
+    assert_eq!(create_sampler["decoded"]["address_v"], 3);
+    assert_eq!(create_sampler["decoded"]["address_w"], 4);
+
+    let sampler_state = find_packet("SetSamplerState");
+    assert_eq!(sampler_state["decoded"]["shader_stage"], 1);
+    assert_eq!(sampler_state["decoded"]["slot"], 0);
+    assert_eq!(sampler_state["decoded"]["state"], 5);
+    assert_eq!(sampler_state["decoded"]["value"], 0x7777);
+
+    let render_state = find_packet("SetRenderState");
+    assert_eq!(render_state["decoded"]["state"], 7);
+    assert_eq!(render_state["decoded"]["value"], 0x8888);
+
+    let destroy_sampler = find_packet("DestroySampler");
+    assert_eq!(destroy_sampler["decoded"]["sampler_handle"], 0x6666);
+
+    let blend = find_packet("SetBlendState");
+    assert_eq!(blend["decoded"]["enable"], 1);
+    assert_eq!(blend["decoded"]["color_write_mask"], 0x0F);
+    assert_eq!(blend["decoded"]["sample_mask"], 0xFFFF_FFFFu64);
+    assert_eq!(
+        blend["decoded"]["blend_constant_rgba"][0]
+            .as_f64()
+            .expect("blend_constant_rgba[0]"),
+        1.0
+    );
+
+    let depth_stencil = find_packet("SetDepthStencilState");
+    assert_eq!(depth_stencil["decoded"]["depth_enable"], 1);
+    assert_eq!(depth_stencil["decoded"]["depth_write_enable"], 0);
+    assert_eq!(depth_stencil["decoded"]["stencil_read_mask"], 0xAA);
+    assert_eq!(depth_stencil["decoded"]["stencil_write_mask"], 0x55);
+
+    let raster = find_packet("SetRasterizerState");
+    assert_eq!(raster["decoded"]["fill_mode"], 1);
+    assert_eq!(raster["decoded"]["depth_bias"], -1);
+    assert_eq!(raster["decoded"]["flags"], 1);
+
+    let destroy_input_layout = find_packet("DestroyInputLayout");
+    assert_eq!(
+        destroy_input_layout["decoded"]["input_layout_handle"],
+        0x9999
+    );
+
+    let destroy_shader = find_packet("DestroyShader");
+    assert_eq!(destroy_shader["decoded"]["shader_handle"], 0x1234);
 }
 
 #[test]

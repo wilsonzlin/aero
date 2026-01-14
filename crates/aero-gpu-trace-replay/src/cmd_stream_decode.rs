@@ -375,6 +375,7 @@ fn decode_known_fields(
                 out.insert("offset_bytes".into(), json!(offset_bytes.to_string()));
                 out.insert("size_bytes".into(), json!(size_bytes.to_string()));
                 out.insert("data_len".into(), json!(data.len()));
+                out.insert("data_prefix".into(), json!(hex_prefix(data, 16)));
             }
             Err(err) => {
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
@@ -414,11 +415,21 @@ fn decode_known_fields(
                 }
                 out.insert("dxbc_size_bytes".into(), json!(dxbc_size_bytes));
                 out.insert("dxbc_len".into(), json!(dxbc.len()));
+                out.insert("dxbc_prefix".into(), json!(hex_prefix(dxbc, 16)));
             }
             Err(err) => {
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
+        AerogpuCmdOpcode::DestroyShader => {
+            if let (Some(shader_handle), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("shader_handle".into(), json!(shader_handle));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
         AerogpuCmdOpcode::CreateInputLayout => match pkt.decode_create_input_layout_payload_le() {
             Ok((cmd, blob)) => {
                 let input_layout_handle = cmd.input_layout_handle;
@@ -431,6 +442,24 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
+        AerogpuCmdOpcode::DestroyInputLayout => {
+            if let (Some(input_layout_handle), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("input_layout_handle".into(), json!(input_layout_handle));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::SetInputLayout => {
+            if let (Some(input_layout_handle), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("input_layout_handle".into(), json!(input_layout_handle));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
         AerogpuCmdOpcode::SetRenderTargets => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
                 out.insert("color_count".into(), json!(v));
@@ -469,6 +498,87 @@ fn decode_known_fields(
                 out.insert("max_depth".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::SetBlendState => {
+            if pkt.payload.len() < 52 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            }
+            out.insert("enable".into(), json!(read_u32_le(pkt.payload, 0).unwrap()));
+            out.insert(
+                "src_factor".into(),
+                json!(read_u32_le(pkt.payload, 4).unwrap()),
+            );
+            out.insert(
+                "dst_factor".into(),
+                json!(read_u32_le(pkt.payload, 8).unwrap()),
+            );
+            out.insert(
+                "blend_op".into(),
+                json!(read_u32_le(pkt.payload, 12).unwrap()),
+            );
+            out.insert("color_write_mask".into(), json!(pkt.payload[16]));
+            // blend_constant_rgba_f32[4] at payload offset 32.
+            let mut rgba = Vec::new();
+            for i in 0..4 {
+                rgba.push(Value::from(read_f32_le(pkt.payload, 32 + i * 4).unwrap()));
+            }
+            out.insert("blend_constant_rgba".into(), Value::Array(rgba));
+            out.insert(
+                "sample_mask".into(),
+                json!(read_u32_le(pkt.payload, 48).unwrap()),
+            );
+        }
+        AerogpuCmdOpcode::SetDepthStencilState => {
+            if pkt.payload.len() < 20 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            }
+            out.insert(
+                "depth_enable".into(),
+                json!(read_u32_le(pkt.payload, 0).unwrap()),
+            );
+            out.insert(
+                "depth_write_enable".into(),
+                json!(read_u32_le(pkt.payload, 4).unwrap()),
+            );
+            out.insert(
+                "depth_func".into(),
+                json!(read_u32_le(pkt.payload, 8).unwrap()),
+            );
+            out.insert(
+                "stencil_enable".into(),
+                json!(read_u32_le(pkt.payload, 12).unwrap()),
+            );
+            out.insert("stencil_read_mask".into(), json!(pkt.payload[16]));
+            out.insert("stencil_write_mask".into(), json!(pkt.payload[17]));
+        }
+        AerogpuCmdOpcode::SetRasterizerState => {
+            if pkt.payload.len() < 24 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            }
+            out.insert(
+                "fill_mode".into(),
+                json!(read_u32_le(pkt.payload, 0).unwrap()),
+            );
+            out.insert(
+                "cull_mode".into(),
+                json!(read_u32_le(pkt.payload, 4).unwrap()),
+            );
+            out.insert(
+                "front_ccw".into(),
+                json!(read_u32_le(pkt.payload, 8).unwrap()),
+            );
+            out.insert(
+                "scissor_enable".into(),
+                json!(read_u32_le(pkt.payload, 12).unwrap()),
+            );
+            out.insert(
+                "depth_bias".into(),
+                json!(read_i32_le(pkt.payload, 16).unwrap()),
+            );
+            out.insert("flags".into(), json!(read_u32_le(pkt.payload, 20).unwrap()));
+        }
         AerogpuCmdOpcode::SetVertexBuffers => match pkt.decode_set_vertex_buffers_payload_le() {
             Ok((cmd, bindings)) => {
                 let start_slot = cmd.start_slot;
@@ -489,30 +599,35 @@ fn decode_known_fields(
             }
         },
         AerogpuCmdOpcode::SetIndexBuffer => {
-            if let Some(v) = read_u32_le(pkt.payload, 0) {
-                out.insert("buffer".into(), json!(v));
-            }
-            if let Some(v) = read_u32_le(pkt.payload, 4) {
-                out.insert("format".into(), json!(v));
-                if let Some(name) = decode_index_format_name(v) {
+            if let (Some(buffer), Some(format), Some(offset_bytes), Some(reserved0)) = (
+                read_u32_le(pkt.payload, 0),
+                read_u32_le(pkt.payload, 4),
+                read_u32_le(pkt.payload, 8),
+                read_u32_le(pkt.payload, 12),
+            ) {
+                out.insert("buffer".into(), json!(buffer));
+                out.insert("format".into(), json!(format));
+                if let Some(name) = decode_index_format_name(format) {
                     out.insert("format_name".into(), json!(name));
                 }
-            }
-            if let Some(v) = read_u32_le(pkt.payload, 8) {
-                out.insert("offset_bytes".into(), json!(v));
-            }
-            if let Some(v) = read_u32_le(pkt.payload, 12) {
-                if v != 0 {
-                    out.insert("reserved0".into(), json!(v));
+                out.insert("offset_bytes".into(), json!(offset_bytes));
+                if reserved0 != 0 {
+                    out.insert("reserved0".into(), json!(reserved0));
                 }
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
             }
         }
         AerogpuCmdOpcode::SetPrimitiveTopology => {
-            if let Some(v) = read_u32_le(pkt.payload, 0) {
-                out.insert("topology".into(), json!(v));
-                if let Some(name) = decode_topology_name(v) {
+            if let (Some(topology), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("topology".into(), json!(topology));
+                if let Some(name) = decode_topology_name(topology) {
                     out.insert("topology_name".into(), Value::String(name));
                 }
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
             }
         }
         AerogpuCmdOpcode::SetTexture => {
@@ -530,6 +645,63 @@ fn decode_known_fields(
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::SetSamplerState => {
+            if let (Some(shader_stage), Some(slot), Some(state), Some(value)) = (
+                read_u32_le(pkt.payload, 0),
+                read_u32_le(pkt.payload, 4),
+                read_u32_le(pkt.payload, 8),
+                read_u32_le(pkt.payload, 12),
+            ) {
+                out.insert("shader_stage".into(), json!(shader_stage));
+                out.insert("slot".into(), json!(slot));
+                out.insert("state".into(), json!(state));
+                out.insert("value".into(), json!(value));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::SetRenderState => {
+            if let (Some(state), Some(value)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("state".into(), json!(state));
+                out.insert("value".into(), json!(value));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::CreateSampler => {
+            if let (
+                Some(sampler_handle),
+                Some(filter),
+                Some(address_u),
+                Some(address_v),
+                Some(address_w),
+            ) = (
+                read_u32_le(pkt.payload, 0),
+                read_u32_le(pkt.payload, 4),
+                read_u32_le(pkt.payload, 8),
+                read_u32_le(pkt.payload, 12),
+                read_u32_le(pkt.payload, 16),
+            ) {
+                out.insert("sampler_handle".into(), json!(sampler_handle));
+                out.insert("filter".into(), json!(filter));
+                out.insert("address_u".into(), json!(address_u));
+                out.insert("address_v".into(), json!(address_v));
+                out.insert("address_w".into(), json!(address_w));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::DestroySampler => {
+            if let (Some(sampler_handle), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("sampler_handle".into(), json!(sampler_handle));
             } else {
                 out.insert("decode_error".into(), json!("truncated payload"));
             }
