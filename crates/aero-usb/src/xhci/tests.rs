@@ -21,6 +21,26 @@ impl UsbDeviceModel for DummyUsbDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct AlwaysInDevice;
+
+impl UsbDeviceModel for AlwaysInDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> crate::UsbInResult {
+        assert_eq!(ep_addr, 0x81);
+        let mut data = vec![0xaa, 0xbb, 0xcc, 0xdd];
+        data.truncate(max_len);
+        crate::UsbInResult::Data(data)
+    }
+}
+
 struct TestMem {
     data: Vec<u8>,
 }
@@ -1852,4 +1872,91 @@ fn port_remote_wakeup_resumes_u3_link_and_latches_plc() {
         .expect("expected Port Status Change Event TRB");
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
     assert_eq!(((ev.parameter >> 24) & 0xff) as u8, 1);
+}
+
+#[test]
+fn port_suspend_gates_transfer_execution_until_resumed() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let ring_base = 0x8000u64;
+    let buf_ptr = 0x9000u64;
+
+    let mut ctrl = XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+    ctrl.attach_device(0, Box::new(AlwaysInDevice));
+
+    // Reset so the port becomes enabled and supports link-state transitions (U0<->U3).
+    ctrl.write_portsc(0, PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms_no_dma();
+    }
+    while ctrl.pop_pending_event().is_some() {}
+
+    ctrl.usbcmd = regs::USBCMD_RUN;
+
+    // Enable a slot and bind it to root port 1.
+    let enable = ctrl.enable_slot(&mut mem);
+    assert_eq!(
+        enable.completion_code,
+        super::CommandCompletionCode::Success,
+        "enable slot"
+    );
+    let slot_id = enable.slot_id;
+
+    let mut slot_ctx = context::SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(
+        addr.completion_code,
+        super::CommandCompletionCode::Success,
+        "address device"
+    );
+
+    // Configure a single Normal TRB on EP1 IN (DCI=3).
+    let endpoint_id = 3u8;
+    let mut trb0 = Trb::new(buf_ptr, 4 & Trb::STATUS_TRANSFER_LEN_MASK, 0);
+    trb0.set_trb_type(TrbType::Normal);
+    trb0.set_cycle(true);
+    trb0.control |= Trb::CONTROL_IOC_BIT;
+    mem.write_trb(ring_base, trb0);
+
+    let mut stop_marker = Trb::default();
+    stop_marker.set_trb_type(TrbType::NoOp);
+    stop_marker.set_cycle(false);
+    mem.write_trb(ring_base + TRB_LEN as u64, stop_marker);
+
+    ctrl.set_endpoint_ring(slot_id, endpoint_id, ring_base, true);
+
+    // Suspend the port to U3.
+    ctrl.write_portsc(0, regs::PORTSC_LWS | (3u32 << regs::PORTSC_PLS_SHIFT));
+    while ctrl.pop_pending_event().is_some() {}
+
+    // Ring the endpoint doorbell while suspended: transfers should not execute, but the endpoint
+    // should remain scheduled so it can run once resumed.
+    ctrl.ring_doorbell(slot_id, endpoint_id);
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        &mem.data[buf_ptr as usize..buf_ptr as usize + 4],
+        &[0, 0, 0, 0]
+    );
+    assert!(
+        ctrl.pop_pending_event().is_none(),
+        "no transfer event expected while port is suspended"
+    );
+
+    // Resume the port back to U0 and tick again without ringing another doorbell: the pending
+    // transfer should complete.
+    ctrl.write_portsc(0, regs::PORTSC_LWS);
+    while ctrl.pop_pending_event().is_some() {}
+
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        &mem.data[buf_ptr as usize..buf_ptr as usize + 4],
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+
+    let ev = ctrl.pop_pending_event().expect("expected transfer event");
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.slot_id(), slot_id);
+    assert_eq!(ev.endpoint_id(), endpoint_id);
 }

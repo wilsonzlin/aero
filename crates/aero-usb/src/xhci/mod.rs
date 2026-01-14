@@ -3227,6 +3227,34 @@ impl XhciController {
             return EndpointOutcome::idle();
         }
 
+        // Respect xHCI port suspend semantics.
+        //
+        // This controller model keeps most port enable/power logic out of the transfer scheduler
+        // so unit tests and early bring-up can exercise ring processing without a full port-reset
+        // sequence. However, when the guest explicitly suspends a port by transitioning it into U3,
+        // transfers should stop making forward progress until the port resumes to U0.
+        //
+        // Keep the endpoint scheduled so transfers continue automatically once the port resumes
+        // (mirrors `USBCMD.RUN` gating behavior where doorbells are remembered while halted).
+        let root_port = slot.port_id.or_else(|| {
+            let port = slot.slot_context.root_hub_port_number();
+            (port != 0).then_some(port)
+        });
+        if let Some(root_port) = root_port {
+            let idx = usize::from(root_port.saturating_sub(1));
+            let Some(port) = self.ports.get(idx) else {
+                return EndpointOutcome::idle();
+            };
+            let portsc = port.read_portsc();
+            if (portsc & regs::PORTSC_CCS) == 0 {
+                return EndpointOutcome::idle();
+            }
+            let pls = (portsc & regs::PORTSC_PLS_MASK) >> regs::PORTSC_PLS_SHIFT;
+            if pls == 3 {
+                return EndpointOutcome::keep(0);
+            }
+        }
+
         // Stop/Reset Endpoint commands update the Endpoint Context "Endpoint State" field. Enforce
         // basic doorbell gating semantics: only Running endpoints execute transfers. If the Endpoint
         // Context cannot be read (e.g. test harnesses that only configure controller-local ring
