@@ -84,7 +84,9 @@ pub enum TextureOp {
     Modulate4x,
     Add,
     AddSigned,
+    AddSigned2x,
     Subtract,
+    AddSmooth,
     Lerp,
     DotProduct3,
 }

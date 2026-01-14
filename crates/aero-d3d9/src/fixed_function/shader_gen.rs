@@ -511,7 +511,12 @@ fn wgsl_op_expr(
             Component::Rgb => format!("(({}) + ({}) - vec3<f32>(0.5))", arg1, arg2),
             Component::Alpha => format!("(({}) + ({}) - 0.5)", arg1, arg2),
         },
+        TextureOp::AddSigned2x => match component {
+            Component::Rgb => format!("(2.0 * (({}) + ({}) - vec3<f32>(0.5)))", arg1, arg2),
+            Component::Alpha => format!("(2.0 * (({}) + ({}) - 0.5))", arg1, arg2),
+        },
         TextureOp::Subtract => format!("(({}) - ({}))", arg1, arg2),
+        TextureOp::AddSmooth => format!("(({}) + ({}) - (({}) * ({})))", arg1, arg2, arg1, arg2),
         TextureOp::Lerp => format!("mix(({}), ({}), ({}))", arg2, arg1, arg0),
         TextureOp::DotProduct3 => match component {
             Component::Rgb => {

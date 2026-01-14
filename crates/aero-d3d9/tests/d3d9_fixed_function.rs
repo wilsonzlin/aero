@@ -1774,7 +1774,12 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
 
     let cases = [
         (TextureOp::Modulate, [32, 32, 32, 255]),
+        (TextureOp::Modulate2x, [65, 65, 64, 255]),
+        (TextureOp::Modulate4x, [129, 129, 128, 255]),
         (TextureOp::Add, [192, 192, 255, 255]),
+        (TextureOp::AddSigned, [65, 65, 160, 255]),
+        (TextureOp::AddSigned2x, [129, 129, 255, 255]),
+        (TextureOp::AddSmooth, [160, 160, 255, 255]),
         (TextureOp::Subtract, [64, 0, 0, 255]),
     ];
 
