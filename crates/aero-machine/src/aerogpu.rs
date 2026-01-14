@@ -685,6 +685,12 @@ pub struct AeroGpuMmioDevice {
 
     doorbell_pending: bool,
     ring_reset_pending: bool,
+    /// Ring reset requires DMA to update the guest-owned ring head and optional fence page.
+    ///
+    /// If the guest requests a reset while PCI bus mastering (COMMAND.BME) is disabled, the device
+    /// must defer those DMA updates until bus mastering is enabled again (mirroring how doorbells
+    /// are deferred).
+    ring_reset_pending_dma: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -815,6 +821,7 @@ impl Default for AeroGpuMmioDevice {
 
             doorbell_pending: false,
             ring_reset_pending: false,
+            ring_reset_pending_dma: false,
         }
     }
 }
@@ -1329,6 +1336,7 @@ impl AeroGpuMmioDevice {
         // Snapshot v1 does not preserve these internal execution latches.
         self.doorbell_pending = false;
         self.ring_reset_pending = false;
+        self.ring_reset_pending_dma = false;
         self.pending_fence_completions.clear();
         self.backend_completed_fences.clear();
         self.fence_page_dirty = false;
@@ -1474,6 +1482,7 @@ impl AeroGpuMmioDevice {
         if self.ring_reset_pending {
             self.ring_reset_pending = false;
             self.doorbell_pending = false;
+            self.ring_reset_pending_dma = true;
 
             self.completed_fence = 0;
             self.irq_status = 0;
@@ -1487,8 +1496,14 @@ impl AeroGpuMmioDevice {
             if let Some(backend) = self.backend.as_mut() {
                 backend.reset();
             }
+        }
 
-            if dma_enabled && self.ring_gpa != 0 {
+        // Ring reset requests must still update guest memory (ring head + fence page) once DMA is
+        // permitted again.
+        if self.ring_reset_pending_dma && dma_enabled {
+            self.ring_reset_pending_dma = false;
+
+            if self.ring_gpa != 0 {
                 match (
                     self.ring_gpa.checked_add(RING_TAIL_OFFSET),
                     self.ring_gpa.checked_add(RING_HEAD_OFFSET),
@@ -1506,8 +1521,7 @@ impl AeroGpuMmioDevice {
                 }
             }
 
-            if dma_enabled
-                && self.fence_gpa != 0
+            if self.fence_gpa != 0
                 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
             {
                 write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
