@@ -933,7 +933,8 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Element count: `input_vertex_invocations * instance_count`.
 
 2. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
-    - Purpose: stores post-DS vertices + optional indices.
+    - Purpose: stores post-DS vertices + tessellator-generated indices (triangle list for tri/quad
+      domains; required in the baseline P2 design).
     - Usage (vertices): `STORAGE | VERTEX`
     - Usage (indices): `STORAGE | INDEX`
     - Index element type (baseline): `u32` (`wgpu::IndexFormat::Uint32`). A future optimization may
