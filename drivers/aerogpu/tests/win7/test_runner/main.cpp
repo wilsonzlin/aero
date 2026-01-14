@@ -66,6 +66,60 @@ static void AppendArtifactIfExistsW(const std::wstring& path, std::vector<std::w
 // This improves hang triage without forcing the user to re-run dbgctl multiple times.
 static const uint32_t kDbgctlDumpLastSubmitCount = 4;
 
+static bool IsJsonWhitespaceChar(char c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+static size_t SkipJsonWhitespace(const std::string& s, size_t i) {
+  while (i < s.size() && IsJsonWhitespaceChar(s[i])) {
+    ++i;
+  }
+  return i;
+}
+
+// Find a JSON string token that matches `key` outside quoted strings and return the index of the
+// opening '"' in the document.
+//
+// This is a lightweight helper used by the test runner when it needs to inject artifacts/adapter
+// fields into per-test JSON output. It intentionally does not implement full JSON parsing; it is
+// just robust enough to ignore escaped quotes inside string values.
+static size_t FindJsonKeyTokenOutsideStrings(const std::string& s, const char* key, size_t start) {
+  if (!key || !*key) {
+    return std::string::npos;
+  }
+  const size_t key_len = strlen(key);
+  bool in_string = false;
+  bool escape = false;
+  for (size_t i = start; i < s.size(); ++i) {
+    const char c = s[i];
+    if (in_string) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c == '\\') {
+        escape = true;
+        continue;
+      }
+      if (c == '"') {
+        in_string = false;
+        continue;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      if (i + 1 + key_len < s.size() && s.compare(i + 1, key_len, key) == 0 && s[i + 1 + key_len] == '"') {
+        return i;
+      }
+      in_string = true;
+      escape = false;
+      continue;
+    }
+  }
+  return std::string::npos;
+}
+
 static std::wstring BuildIndexedBinPath(const std::wstring& base, uint32_t index) {
   if (base.empty()) {
     return std::wstring();
@@ -118,44 +172,23 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
   }
 
   size_t array_start = std::string::npos;
-
-  // Fast path: our in-tree JSON reporter emits `"artifacts":[...]` with no whitespace.
-  const char* const kNeedle = "\"artifacts\":[";
-  size_t pos = obj->find(kNeedle);
-  if (pos != std::string::npos) {
-    array_start = pos + strlen(kNeedle);
-  } else {
-    // More tolerant fallback in case a test emits pretty-printed JSON with whitespace
-    // around the ':' or '[' (e.g. `"artifacts": [ ... ]`).
-    const char* const kKey = "\"artifacts\"";
-    size_t key_pos = obj->find(kKey);
-    while (key_pos != std::string::npos) {
-      size_t i = key_pos + strlen(kKey);
-      while (i < obj->size()) {
-        const char c = (*obj)[i];
-        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-          break;
-        }
-        i++;
-      }
-      if (i >= obj->size() || (*obj)[i] != ':') {
-        key_pos = obj->find(kKey, key_pos + 1);
-        continue;
-      }
-      i++;
-      while (i < obj->size()) {
-        const char c = (*obj)[i];
-        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-          break;
-        }
-        i++;
-      }
-      if (i < obj->size() && (*obj)[i] == '[') {
-        array_start = i + 1;
-        break;
-      }
-      key_pos = obj->find(kKey, key_pos + 1);
+  const char* const kKey = "artifacts";
+  const size_t kKeyLen = strlen(kKey);
+  size_t key_pos = FindJsonKeyTokenOutsideStrings(*obj, kKey, 0);
+  while (key_pos != std::string::npos) {
+    size_t i = key_pos + 1 + kKeyLen + 1;  // after closing '"'
+    i = SkipJsonWhitespace(*obj, i);
+    if (i >= obj->size() || (*obj)[i] != ':') {
+      key_pos = FindJsonKeyTokenOutsideStrings(*obj, kKey, key_pos + 1);
+      continue;
     }
+    i++;
+    i = SkipJsonWhitespace(*obj, i);
+    if (i < obj->size() && (*obj)[i] == '[') {
+      array_start = i + 1;
+      break;
+    }
+    key_pos = FindJsonKeyTokenOutsideStrings(*obj, kKey, key_pos + 1);
   }
 
   size_t array_end = std::string::npos;
@@ -211,7 +244,7 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     bool is_empty = true;
     for (size_t i = array_start; i < array_end; ++i) {
       const char c = (*obj)[i];
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      if (!IsJsonWhitespaceChar(c)) {
         is_empty = false;
         break;
       }
@@ -231,7 +264,7 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
   size_t end = obj->size();
   while (end > 0) {
     const char c = (*obj)[end - 1];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+    if (!IsJsonWhitespaceChar(c)) {
       break;
     }
     end--;
@@ -247,7 +280,7 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
   if (end >= 2 && (*obj)[0] == '{') {
     for (size_t i = 1; i + 1 < end; ++i) {
       const char c = (*obj)[i];
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      if (!IsJsonWhitespaceChar(c)) {
         is_empty_object = false;
         break;
       }
@@ -1095,21 +1128,15 @@ static bool ContainsJsonKeyWithColon(const std::string& obj, const char* key) {
   if (!key || !*key) {
     return false;
   }
-  const std::string needle = std::string("\"") + key + "\"";
-  size_t pos = obj.find(needle);
+  const size_t key_len = strlen(key);
+  size_t pos = FindJsonKeyTokenOutsideStrings(obj, key, 0);
   while (pos != std::string::npos) {
-    size_t i = pos + needle.size();
-    while (i < obj.size()) {
-      const char c = obj[i];
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-        break;
-      }
-      i++;
-    }
+    size_t i = pos + 1 + key_len + 1;
+    i = SkipJsonWhitespace(obj, i);
     if (i < obj.size() && obj[i] == ':') {
       return true;
     }
-    pos = obj.find(needle, pos + 1);
+    pos = FindJsonKeyTokenOutsideStrings(obj, key, pos + 1);
   }
   return false;
 }
@@ -1195,36 +1222,22 @@ static bool PopulateAdapterInTestReportJsonObject(std::string* obj,
     return true;
   }
 
-  const char* const kKey = "\"adapter\"";
-  size_t key_pos = obj->find(kKey);
+  const char* const kKey = "adapter";
+  const size_t kKeyLen = strlen(kKey);
+  size_t key_pos = FindJsonKeyTokenOutsideStrings(*obj, kKey, 0);
   while (key_pos != std::string::npos) {
-    size_t i = key_pos + strlen(kKey);
-    // Skip whitespace between key and ':'.
-    while (i < obj->size()) {
-      const char c = (*obj)[i];
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-        break;
-      }
-      i++;
-    }
+    size_t i = key_pos + 1 + kKeyLen + 1;
+    i = SkipJsonWhitespace(*obj, i);
     if (i >= obj->size() || (*obj)[i] != ':') {
-      key_pos = obj->find(kKey, key_pos + 1);
+      key_pos = FindJsonKeyTokenOutsideStrings(*obj, kKey, key_pos + 1);
       continue;
     }
     i++;
-    // Skip whitespace between ':' and value.
-    while (i < obj->size()) {
-      const char c = (*obj)[i];
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-        break;
-      }
-      i++;
-    }
+    i = SkipJsonWhitespace(*obj, i);
     if (i + 4 <= obj->size() && obj->compare(i, 4, "null") == 0) {
       // Ensure the token is exactly `null` (avoid matching e.g. "nullx").
       const bool ok_term =
-          (i + 4 == obj->size()) || (*obj)[i + 4] == ',' || (*obj)[i + 4] == '}' || (*obj)[i + 4] == ' ' ||
-          (*obj)[i + 4] == '\t' || (*obj)[i + 4] == '\r' || (*obj)[i + 4] == '\n';
+          (i + 4 == obj->size()) || (*obj)[i + 4] == ',' || (*obj)[i + 4] == '}' || IsJsonWhitespaceChar((*obj)[i + 4]);
       if (ok_term) {
         obj->replace(i, 4, adapter_json);
         if (out_modified) {
@@ -1241,7 +1254,7 @@ static bool PopulateAdapterInTestReportJsonObject(std::string* obj,
   size_t end = obj->size();
   while (end > 0) {
     const char c = (*obj)[end - 1];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+    if (!IsJsonWhitespaceChar(c)) {
       break;
     }
     end--;
