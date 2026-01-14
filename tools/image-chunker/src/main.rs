@@ -1415,10 +1415,10 @@ async fn verify_chunks(
         )?
         .progress_chars("##-"),
     );
-    pb.set_message(format!("0/{total_chunks_to_verify} chunks"));
+    pb.set_message(format!("0/{total_chunks_to_verify} chunks (0 failures)"));
 
-    let chunks_verified = Arc::new(AtomicU64::new(0));
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let chunks_checked = Arc::new(AtomicU64::new(0));
+    let failures = Arc::new(AtomicU64::new(0));
     let chunk_index_width: usize = manifest.chunk_index_width.try_into().map_err(|_| {
         anyhow!(
             "manifest chunkIndexWidth {} does not fit into usize",
@@ -1431,32 +1431,41 @@ async fn verify_chunks(
         index: u64,
     }
 
+    #[derive(Debug)]
+    struct VerifyChunkFailure {
+        index: u64,
+        key: String,
+        message: String,
+    }
+
     let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(concurrency * 2);
-    let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
+    let (failure_tx, mut failure_rx) =
+        tokio::sync::mpsc::unbounded_channel::<VerifyChunkFailure>();
+
+    // Only keep details for the first few failures (avoid unbounded memory usage).
+    const FAILURE_SAMPLE_LIMIT: u64 = 10;
 
     let mut workers = Vec::with_capacity(concurrency);
     for _ in 0..concurrency {
         let work_rx = work_rx.clone();
-        let err_tx = err_tx.clone();
+        let failure_tx = failure_tx.clone();
         let s3 = s3.clone();
         let bucket = bucket.to_string();
         let version_prefix = version_prefix.to_string();
         let manifest = Arc::clone(&manifest);
         let pb = pb.clone();
-        let chunks_verified = Arc::clone(&chunks_verified);
-        let cancelled = Arc::clone(&cancelled);
+        let chunks_checked = Arc::clone(&chunks_checked);
+        let failures = Arc::clone(&failures);
         workers.push(tokio::spawn(async move {
             while let Ok(job) = work_rx.recv().await {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
                 let key = format!(
                     "{version_prefix}{}",
                     chunk_object_key_with_width(job.index, chunk_index_width)?
                 );
                 let expected_size = expected_chunk_size(manifest.as_ref(), job.index)?;
                 let expected_sha256 = expected_chunk_sha256(manifest.as_ref(), job.index)?;
-                match verify_chunk_with_retry(
+
+                if let Err(err) = verify_chunk_with_retry(
                     &s3,
                     &bucket,
                     &key,
@@ -1466,77 +1475,48 @@ async fn verify_chunks(
                 )
                 .await
                 {
-                    Ok(()) => {
-                        pb.inc(expected_size);
-                        let done = chunks_verified.fetch_add(1, Ordering::SeqCst) + 1;
-                        pb.set_message(format!("{done}/{total_chunks_to_verify} chunks"));
-                    }
-                    Err(err) => {
-                        cancelled.store(true, Ordering::SeqCst);
-                        let _ = err_tx.send(err);
-                        break;
+                    let failure_no = failures.fetch_add(1, Ordering::SeqCst) + 1;
+                    if failure_no <= FAILURE_SAMPLE_LIMIT {
+                        let _ = failure_tx.send(VerifyChunkFailure {
+                            index: job.index,
+                            key: key.clone(),
+                            message: error_chain_summary(&err),
+                        });
                     }
                 }
+
+                pb.inc(expected_size);
+                let checked = chunks_checked.fetch_add(1, Ordering::SeqCst) + 1;
+                let failure_count = failures.load(Ordering::SeqCst);
+                pb.set_message(format!(
+                    "{checked}/{total_chunks_to_verify} chunks ({failure_count} failures)"
+                ));
             }
             Ok::<(), anyhow::Error>(())
         }));
     }
-    drop(err_tx);
+    drop(failure_tx);
 
-    let send_jobs = async {
-        if let Some(indices) = indices {
-            for index in indices {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-                work_tx
-                    .send(VerifyChunkJob { index })
-                    .await
-                    .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-            }
-        } else {
-            for index in 0..chunk_count {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-                tokio::select! {
-                    res = work_tx.send(VerifyChunkJob { index }) => {
-                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-                    }
-                    Some(err) = err_rx.recv() => {
-                        cancelled.store(true, Ordering::SeqCst);
-                        return Err(err);
-                    }
-                }
-            }
+    let send_result = if let Some(indices) = indices {
+        for index in indices {
+            work_tx
+                .send(VerifyChunkJob { index })
+                .await
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
         }
-        Ok::<(), anyhow::Error>(())
+        Ok(())
+    } else {
+        for index in 0..chunk_count {
+            work_tx
+                .send(VerifyChunkJob { index })
+                .await
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+        }
+        Ok(())
     };
-
-    let send_result = send_jobs.await;
     drop(work_tx);
 
-    // If we stopped sending due to an error received via `err_rx`, abort workers immediately.
     if let Err(err) = send_result {
-        for handle in &workers {
-            handle.abort();
-        }
-        for handle in workers {
-            let _ = handle.await;
-        }
-        pb.finish_and_clear();
-        return Err(err);
-    }
-
-    // Wait for completion or a worker error.
-    let worker_err = err_rx.recv().await;
-    if let Some(err) = worker_err {
-        for handle in &workers {
-            handle.abort();
-        }
-        for handle in workers {
-            let _ = handle.await;
-        }
         pb.finish_and_clear();
         return Err(err);
     }
@@ -1547,9 +1527,38 @@ async fn verify_chunks(
             .map_err(|err| anyhow!("verify worker panicked: {err}"))??;
     }
 
-    pb.finish_with_message(format!(
-        "{total_chunks_to_verify}/{total_chunks_to_verify} chunks"
-    ));
+    let checked = chunks_checked.load(Ordering::SeqCst);
+    let failure_count = failures.load(Ordering::SeqCst);
+
+    let mut samples: Vec<VerifyChunkFailure> = Vec::new();
+    while let Some(failure) = failure_rx.recv().await {
+        samples.push(failure);
+    }
+
+    pb.finish_and_clear();
+
+    if checked != total_chunks_to_verify {
+        bail!(
+            "internal error: only checked {checked}/{total_chunks_to_verify} chunks"
+        );
+    }
+
+    eprintln!(
+        "Chunk verification summary: checked {checked} chunks ({total_bytes_to_verify} bytes), failures: {failure_count}"
+    );
+    if failure_count > 0 {
+        if !samples.is_empty() {
+            eprintln!("First {} failures:", samples.len());
+            for failure in samples {
+                eprintln!(
+                    "  - chunk {} (s3://{bucket}/{}): {}",
+                    failure.index, failure.key, failure.message
+                );
+            }
+        }
+        bail!("chunk verification failed with {failure_count} failures");
+    }
+
     Ok(())
 }
 
@@ -2330,6 +2339,51 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChunkCheckError {
+    SizeMismatch { expected: u64, actual: u64 },
+    Sha256Mismatch { expected: String, actual: String },
+}
+
+impl std::fmt::Display for ChunkCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SizeMismatch { expected, actual } => {
+                write!(f, "size mismatch: expected {expected} bytes, got {actual} bytes")
+            }
+            Self::Sha256Mismatch { expected, actual } => {
+                write!(f, "sha256 mismatch: expected {expected}, got {actual}")
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn check_chunk_bytes(
+    bytes: &[u8],
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+) -> std::result::Result<(), ChunkCheckError> {
+    let actual_size = bytes.len() as u64;
+    if actual_size != expected_size {
+        return Err(ChunkCheckError::SizeMismatch {
+            expected: expected_size,
+            actual: actual_size,
+        });
+    }
+    if let Some(expected_sha256) = expected_sha256 {
+        let actual_sha256 = sha256_hex(bytes);
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(ChunkCheckError::Sha256Mismatch {
+                expected: expected_sha256.to_string(),
+                actual: actual_sha256,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn sha256_version_from_digest(digest: impl AsRef<[u8]>) -> String {
     format!("sha256-{}", hex::encode(digest))
 }
@@ -2749,6 +2803,40 @@ mod tests {
     }
 
     #[test]
+    fn manifest_v1_parses_from_json_and_validates() -> Result<()> {
+        let json = r#"
+{
+  "schema": "aero.chunked-disk-image.v1",
+  "imageId": "demo",
+  "version": "sha256-abc",
+  "mimeType": "application/octet-stream",
+  "totalSize": 1025,
+  "chunkSize": 512,
+  "chunkCount": 3,
+  "chunkIndexWidth": 8,
+  "chunks": [
+    { "size": 512, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "size": 512 },
+    { "size": 1 }
+  ]
+}
+"#;
+        let manifest: ManifestV1 = serde_json::from_str(json)?;
+        assert_eq!(manifest.image_id, "demo");
+        let chunks = manifest.chunks.as_ref().expect("chunks present");
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].size, 512);
+        assert_eq!(
+            chunks[0].sha256.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(chunks[1].sha256, None);
+
+        validate_manifest_v1(&manifest, MAX_CHUNKS)?;
+        Ok(())
+    }
+
+    #[test]
     fn chunk_sample_seed_requires_chunk_sample_flag() {
         let err = Cli::try_parse_from([
             "aero-image-chunker",
@@ -2898,5 +2986,23 @@ mod tests {
             "unexpected error message: {msg}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn check_chunk_bytes_validates_size_and_sha256() {
+        let bytes = b"hello";
+        let expected_sha = sha256_hex(bytes);
+        assert_eq!(check_chunk_bytes(bytes, 5, Some(&expected_sha)), Ok(()));
+        assert_eq!(
+            check_chunk_bytes(bytes, 6, Some(&expected_sha)),
+            Err(ChunkCheckError::SizeMismatch {
+                expected: 6,
+                actual: 5
+            })
+        );
+        assert!(matches!(
+            check_chunk_bytes(bytes, 5, Some("deadbeef")),
+            Err(ChunkCheckError::Sha256Mismatch { .. })
+        ));
     }
 }
