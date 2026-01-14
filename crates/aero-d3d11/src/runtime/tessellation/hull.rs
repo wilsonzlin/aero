@@ -69,7 +69,8 @@ fn compute_dispatch_x(
 /// that resolves:
 /// - D3D resources from the HS stage binding bucket (`@group(3)`).
 /// - Expansion-internal buffers (also `@group(3)`) via `internal_buffer()`.
- pub(in crate::runtime) fn dispatch_hull_phases(
+#[allow(clippy::too_many_arguments)]
+pub(in crate::runtime) fn dispatch_hull_phases(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     pipeline_cache: &mut PipelineCache,

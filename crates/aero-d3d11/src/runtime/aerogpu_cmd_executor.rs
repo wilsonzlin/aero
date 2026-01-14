@@ -12487,7 +12487,7 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     fn exec_hull_shader_phases(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -13887,10 +13887,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
             buffer: internal.buffer,
             offset: internal.offset,
             size: Some(internal.size),
-            total_size: internal
-                .offset
-                .checked_add(internal.size)
-                .unwrap_or(u64::MAX),
+            total_size: internal.offset.saturating_add(internal.size),
         })
     }
 
