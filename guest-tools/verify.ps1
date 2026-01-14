@@ -3608,6 +3608,7 @@ try {
                         if ($hs.Length -gt 12) { $hs = $hs.Substring(0, 12) }
                         $line += " sha256=" + $hs + "..."
                     }
+                    if ($e.file_version) { $line += " filever=" + $e.file_version }
                     $toolsDetails += $line
                     $shown++
                 }
