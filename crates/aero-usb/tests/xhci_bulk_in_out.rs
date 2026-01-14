@@ -128,6 +128,24 @@ impl UsbDeviceModel for BulkOutNakOnceDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct TimeoutInDevice;
+
+impl UsbDeviceModel for TimeoutInDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, _max_len: usize) -> UsbInResult {
+        assert_eq!(ep_addr, 0x81);
+        UsbInResult::Timeout
+    }
+}
+
 fn assert_single_success_event(events: &[TransferEvent], ep_addr: u8, trb_ptr: u64, residual: u32) {
     assert_eq!(
         events,
@@ -521,4 +539,38 @@ fn xhci_bulk_out_stall_halts_endpoint_and_reports_residual() {
     // Further ticks must not process additional TRBs while halted.
     xhci.tick_1ms(&mut mem);
     assert!(xhci.take_events().is_empty());
+}
+
+#[test]
+fn xhci_bulk_in_timeout_completes_with_usb_transaction_error() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
+    let buf = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf as u32, &sentinel);
+
+    write_trb(&mut mem, ring_base, make_normal_trb(buf, 4, true, false, false));
+
+    let mut xhci = XhciTransferExecutor::new(Box::new(TimeoutInDevice));
+    xhci.add_endpoint(0x81, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    // On timeout, we should advance the TD, emit an error event, and leave guest memory untouched.
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, sentinel);
+
+    let events = xhci.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x81);
+    assert_eq!(events[0].trb_ptr, ring_base);
+    assert_eq!(events[0].residual, 4);
+    assert_eq!(events[0].completion_code, CompletionCode::UsbTransactionError);
+    assert!(!xhci.endpoint_state(0x81).unwrap().halted);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        ring_base + TRB_LEN
+    );
 }
