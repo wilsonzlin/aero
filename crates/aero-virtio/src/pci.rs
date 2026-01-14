@@ -2146,4 +2146,50 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn config_interrupt_msix_enabled_with_unprogrammed_entry_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        // Vector assigned, but leave MSI-X table entry 0 at reset state (addr=0).
+        pci.msix_config_vector = 0;
+
+        pci.signal_config_interrupt();
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
+
+    #[test]
+    fn config_interrupt_msix_enabled_with_masked_entry_falls_back_to_intx() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        enable_msix(&mut pci);
+
+        pci.msix_config_vector = 0;
+        program_msix_vector_with_mask(&mut pci, 0, 0xFEE0_0000, 0x0046, true);
+
+        pci.signal_config_interrupt();
+
+        assert!(pci.irq_level());
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 1);
+        assert!(state.msix_messages.is_empty());
+    }
 }
