@@ -374,6 +374,9 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
     if (!NT_SUCCESS(status)) {
         VirtioStatusQPushFreeTxBuffer(Q, idx);
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq VirtqSplitAddBuffer failed: %!STATUS!\n", status);
+        if (status == STATUS_INSUFFICIENT_RESOURCES && devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.StatusQFull);
+        }
         if (Q->DropOnFull) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_VERBOSE | VIOINPUT_LOG_VIRTQ,
