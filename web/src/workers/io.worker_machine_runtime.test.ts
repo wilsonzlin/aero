@@ -130,6 +130,8 @@ describe("workers/io.worker (machine runtime host-only mode)", () => {
       expect(Atomics.load(views.status, StatusIndex.IoReady)).toBe(1);
 
       // Ensure we did not start the IO IPC server: an AIPC command should not be serviced.
+      // Push the command first, then wait (also used for the guest-RAM sentinel check) before
+      // asserting the event ring is still empty, so we don't rely on tight timing.
       const cmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       const evtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
       // Defensive: drain any junk.
@@ -146,11 +148,10 @@ describe("workers/io.worker (machine runtime host-only mode)", () => {
           }),
         ),
       ).toBe(true);
-      await new Promise<void>((resolve) => setTimeout(resolve, 20));
-      expect(evtRing.tryPop()).toBe(null);
 
-      // Wait a beat to catch any accidental background/tick writes.
+      // Wait a beat to catch any accidental background/tick writes (and any accidental AIPC server response).
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(evtRing.tryPop()).toBe(null);
       expect(arraysEqual(views.guestU8, guestCopy)).toBe(true);
 
       const pausedPromise = waitForWorkerMessage(
