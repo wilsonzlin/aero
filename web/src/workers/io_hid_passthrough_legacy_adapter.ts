@@ -115,7 +115,12 @@ export class IoWorkerLegacyHidPassthroughAdapter {
     const legacyId = this.#legacyIdByNumericId.get(payload.deviceId);
     if (!legacyId) return null;
 
-    const buffer = arrayBufferFromView(payload.data);
+    // USB control transfers use a 16-bit wLength, so a single output/feature report cannot exceed
+    // u16::MAX bytes of payload. Clamp here so a buggy/malicious guest can't trick the adapter into
+    // copying a multi-megabyte SharedArrayBuffer view into an ArrayBuffer just to send it to the
+    // main thread.
+    const clamped = payload.data.byteLength > 0xffff ? payload.data.subarray(0, 0xffff) : payload.data;
+    const buffer = arrayBufferFromView(clamped);
     return {
       type: "hid:sendReport",
       deviceId: legacyId,

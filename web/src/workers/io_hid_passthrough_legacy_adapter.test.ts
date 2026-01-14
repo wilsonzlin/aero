@@ -162,6 +162,29 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
     expect(new Uint8Array(msg!.data)).toEqual(new Uint8Array([0xbb, 0xcc]));
   });
 
+  it("hard-caps oversized hid.sendReport payloads when translating to legacy hid:sendReport messages", () => {
+    const adapter = new IoWorkerLegacyHidPassthroughAdapter({ firstDeviceId: 10 });
+
+    adapter.attach({
+      type: "hid:attach",
+      deviceId: "dev-a",
+      guestPort: 0,
+      vendorId: 1,
+      productId: 2,
+      collections: [] as any,
+    });
+
+    const shared = new SharedArrayBuffer(1024 * 1024);
+    const view = new Uint8Array(shared);
+    view.set([1, 2, 3], 0);
+
+    const msg = adapter.sendReport({ deviceId: 10, reportType: "feature", reportId: 9, data: view });
+    expect(msg).not.toBeNull();
+    expect(msg!.type).toBe("hid:sendReport");
+    expect(new Uint8Array(msg!.data).byteLength).toBe(0xffff);
+    expect(Array.from(new Uint8Array(msg!.data).slice(0, 3))).toEqual([1, 2, 3]);
+  });
+
   it("translates hid.getFeatureReport payloads into legacy hid:getFeatureReport and translates results back", () => {
     const adapter = new IoWorkerLegacyHidPassthroughAdapter({ firstDeviceId: 10 });
 

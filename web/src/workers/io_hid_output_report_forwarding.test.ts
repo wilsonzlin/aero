@@ -69,4 +69,39 @@ describe("io_hid_output_report_forwarding", () => {
     const [msg] = postMessage.mock.calls[0]!;
     expect(msg.outputRingTail).toBeUndefined();
   });
+
+  it("copies ArrayBuffer slices before transfer so only the report payload bytes are transferred", () => {
+    const postMessage = vi.fn<[HidSendReportMessage, Transferable[]], void>();
+    const backing = new Uint8Array(1024 * 1024);
+    backing.fill(0x11);
+    const view = new Uint8Array(backing.buffer, 0, 32);
+    view.set([1, 2, 3], 0);
+
+    const payload = { deviceId: 1, reportType: "output" as const, reportId: 2, data: view };
+    const res = forwardHidSendReportToMainThread(payload, { outputRing: null, postMessage });
+
+    expect(res).toEqual({ path: "postMessage", ringFailed: false });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const [msg, transfer] = postMessage.mock.calls[0]!;
+    expect(msg.data.byteLength).toBe(32);
+    // Ensure we did not transfer the entire 1MiB backing buffer.
+    expect(msg.data.buffer.byteLength).toBe(32);
+    expect(Array.from(msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+    expect(transfer).toEqual([msg.data.buffer]);
+  });
+
+  it("hard-caps absurdly large report payloads before transferring them", () => {
+    const postMessage = vi.fn<[HidSendReportMessage, Transferable[]], void>();
+    const shared = new SharedArrayBuffer(1024 * 1024);
+    const view = new Uint8Array(shared);
+    view.set([1, 2, 3], 0);
+
+    const payload = { deviceId: 1, reportType: "feature" as const, reportId: 9, data: view };
+    const res = forwardHidSendReportToMainThread(payload, { outputRing: null, postMessage });
+
+    expect(res).toEqual({ path: "postMessage", ringFailed: false });
+    const [msg] = postMessage.mock.calls[0]!;
+    expect(msg.data.byteLength).toBe(0xffff);
+    expect(Array.from(msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+  });
 });
