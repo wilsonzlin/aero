@@ -380,6 +380,11 @@ pub(super) trait BindGroupResourceProvider {
         None
     }
 
+    /// Optional `u#` UAV texture binding.
+    fn uav_texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        None
+    }
+
     fn dummy_uniform(&self) -> &wgpu::Buffer;
     fn dummy_storage(&self) -> &wgpu::Buffer;
     fn dummy_texture_view(&self) -> &wgpu::TextureView;
@@ -545,14 +550,25 @@ pub(super) fn build_bind_group(
                     },
                 });
             }
-            crate::BindingKind::Texture2D { slot }
-            | crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                // Aero's stage binding state currently does not track UAV textures separately.
-                // For now, reuse the stage's texture bindings as a best-effort mapping; callers
-                // that need typed UAV writes should provide textures created with
-                // `STORAGE_BINDING` usage and the correct view format.
+            crate::BindingKind::Texture2D { slot } => {
                 let (id, view) = provider
                     .texture2d(*slot)
+                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::TextureView { id, view },
+                });
+            }
+            crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                // Prefer a dedicated UAV texture binding if the runtime provides one; otherwise
+                // fall back to the regular `t#` texture binding as a best-effort mapping.
+                //
+                // Callers that need typed UAV writes should provide textures created with
+                // `STORAGE_BINDING` usage and the correct view format.
+                let (id, view) = provider
+                    .uav_texture2d(*slot)
+                    .or_else(|| provider.texture2d(*slot))
                     .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
 
                 entries.push(BindGroupCacheEntry {

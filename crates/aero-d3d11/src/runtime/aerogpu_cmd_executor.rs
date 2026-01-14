@@ -13277,6 +13277,12 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         Some((TextureViewId(bound.texture as u64), &tex.view))
     }
 
+    fn uav_texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        let bound = self.stage_state.uav_texture(slot)?;
+        let tex = self.resources.textures.get(&bound.texture)?;
+        Some((TextureViewId(bound.texture as u64), &tex.view))
+    }
+
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
         let bound = self.stage_state.srv_buffer(slot)?;
         let buf = self.resources.buffers.get(&bound.buffer)?;

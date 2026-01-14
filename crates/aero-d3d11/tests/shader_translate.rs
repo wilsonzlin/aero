@@ -6,7 +6,7 @@ use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, CmpOp,
     CmpType, DxbcFile, DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef,
     SamplerRef, ShaderModel, ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module,
-    Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    Sm4TestBool, SrcKind, SrcOperand, StorageTextureFormat, Swizzle, TextureRef, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -1745,6 +1745,80 @@ fn translates_store_uav_typed_as_storage_texture_write() {
         .bindings
         .iter()
         .find(|b| matches!(b.kind, BindingKind::UavTexture2DWriteOnly { slot: 0, .. }))
+        .expect("missing uav binding");
+    assert_eq!(uav_binding.group, 1);
+    assert_eq!(uav_binding.binding, BINDING_BASE_UAV);
+}
+
+#[test]
+fn translates_store_uav_typed_uint_format_uses_u32_value() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([0, 0, 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let value = SrcOperand {
+        // Raw u32 lane bits for 1,2,3,4.
+        kind: SrcKind::ImmediateF32([1, 2, 3, 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::UavTyped2D {
+            slot: 0,
+            // DXGI_FORMAT_R32G32B32A32_UINT
+            format: 3,
+        }],
+        instructions: vec![
+            Sm4Inst::StoreUavTyped {
+                uav: UavRef { slot: 0 },
+                coord,
+                value,
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([0.0, 0.0, 0.0, 1.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({BINDING_BASE_UAV}) var u0: texture_storage_2d<rgba32uint, write>;"
+    )));
+    assert!(
+        translated.wgsl.contains("vec4<u32>(0x00000001u, 0x00000002u, 0x00000003u, 0x00000004u)"),
+        "{}",
+        translated.wgsl
+    );
+
+    let uav_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(
+            b.kind,
+            BindingKind::UavTexture2DWriteOnly {
+                slot: 0,
+                format: StorageTextureFormat::Rgba32Uint
+            }
+        ))
         .expect("missing uav binding");
     assert_eq!(uav_binding.group, 1);
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);

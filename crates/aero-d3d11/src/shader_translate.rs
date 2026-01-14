@@ -100,30 +100,84 @@ pub enum BindingKind {
 
 /// Supported typed UAV storage texture formats.
 ///
-/// This is intentionally small for now: we only map a handful of DXGI formats that can be
-/// expressed as WGSL/WGPU storage textures.
+/// This is intentionally limited to formats that can be expressed as WGSL/WGPU storage textures.
 #[cfg_attr(target_arch = "wasm32", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StorageTextureFormat {
     Rgba8Unorm,
+    Rgba8Snorm,
+    Rgba8Uint,
+    Rgba8Sint,
     Rgba16Float,
+    Rgba16Uint,
+    Rgba16Sint,
     Rgba32Float,
+    Rgba32Uint,
+    Rgba32Sint,
+    R32Float,
+    R32Uint,
+    R32Sint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageTextureValueType {
+    F32,
+    U32,
+    I32,
 }
 
 impl StorageTextureFormat {
     pub fn wgsl_format(self) -> &'static str {
         match self {
             StorageTextureFormat::Rgba8Unorm => "rgba8unorm",
+            StorageTextureFormat::Rgba8Snorm => "rgba8snorm",
+            StorageTextureFormat::Rgba8Uint => "rgba8uint",
+            StorageTextureFormat::Rgba8Sint => "rgba8sint",
             StorageTextureFormat::Rgba16Float => "rgba16float",
+            StorageTextureFormat::Rgba16Uint => "rgba16uint",
+            StorageTextureFormat::Rgba16Sint => "rgba16sint",
             StorageTextureFormat::Rgba32Float => "rgba32float",
+            StorageTextureFormat::Rgba32Uint => "rgba32uint",
+            StorageTextureFormat::Rgba32Sint => "rgba32sint",
+            StorageTextureFormat::R32Float => "r32float",
+            StorageTextureFormat::R32Uint => "r32uint",
+            StorageTextureFormat::R32Sint => "r32sint",
         }
     }
 
     pub fn wgpu_format(self) -> wgpu::TextureFormat {
         match self {
             StorageTextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+            StorageTextureFormat::Rgba8Snorm => wgpu::TextureFormat::Rgba8Snorm,
+            StorageTextureFormat::Rgba8Uint => wgpu::TextureFormat::Rgba8Uint,
+            StorageTextureFormat::Rgba8Sint => wgpu::TextureFormat::Rgba8Sint,
             StorageTextureFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
+            StorageTextureFormat::Rgba16Uint => wgpu::TextureFormat::Rgba16Uint,
+            StorageTextureFormat::Rgba16Sint => wgpu::TextureFormat::Rgba16Sint,
             StorageTextureFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
+            StorageTextureFormat::Rgba32Uint => wgpu::TextureFormat::Rgba32Uint,
+            StorageTextureFormat::Rgba32Sint => wgpu::TextureFormat::Rgba32Sint,
+            StorageTextureFormat::R32Float => wgpu::TextureFormat::R32Float,
+            StorageTextureFormat::R32Uint => wgpu::TextureFormat::R32Uint,
+            StorageTextureFormat::R32Sint => wgpu::TextureFormat::R32Sint,
+        }
+    }
+
+    fn store_value_type(self) -> StorageTextureValueType {
+        match self {
+            StorageTextureFormat::Rgba8Unorm
+            | StorageTextureFormat::Rgba8Snorm
+            | StorageTextureFormat::Rgba16Float
+            | StorageTextureFormat::Rgba32Float
+            | StorageTextureFormat::R32Float => StorageTextureValueType::F32,
+            StorageTextureFormat::Rgba8Uint
+            | StorageTextureFormat::Rgba16Uint
+            | StorageTextureFormat::Rgba32Uint
+            | StorageTextureFormat::R32Uint => StorageTextureValueType::U32,
+            StorageTextureFormat::Rgba8Sint
+            | StorageTextureFormat::Rgba16Sint
+            | StorageTextureFormat::Rgba32Sint
+            | StorageTextureFormat::R32Sint => StorageTextureValueType::I32,
         }
     }
 }
@@ -309,7 +363,7 @@ impl fmt::Display for ShaderTranslateError {
             ),
             ShaderTranslateError::UnsupportedUavTextureFormat { slot, format } => write!(
                 f,
-                "typed UAV u{slot} uses unsupported DXGI format {format}; only rgba8unorm (28), rgba16float (10), and rgba32float (2) are supported"
+                "typed UAV u{slot} uses unsupported DXGI format {format}; supported formats: rgba8unorm (28), rgba8snorm (31), rgba8uint (30), rgba8sint (32), rgba16float (10), rgba16uint (12), rgba16sint (14), rgba32float (2), rgba32uint (3), rgba32sint (4), r32float (41), r32uint (42), r32sint (43)"
             ),
             ShaderTranslateError::PixelShaderMissingColorOutputs => {
                 write!(
@@ -3290,10 +3344,30 @@ fn scan_resources(
         let format = match dxgi_format {
             // DXGI_FORMAT_R8G8B8A8_UNORM
             28 => StorageTextureFormat::Rgba8Unorm,
+            // DXGI_FORMAT_R8G8B8A8_SNORM
+            31 => StorageTextureFormat::Rgba8Snorm,
+            // DXGI_FORMAT_R8G8B8A8_UINT
+            30 => StorageTextureFormat::Rgba8Uint,
+            // DXGI_FORMAT_R8G8B8A8_SINT
+            32 => StorageTextureFormat::Rgba8Sint,
             // DXGI_FORMAT_R16G16B16A16_FLOAT
             10 => StorageTextureFormat::Rgba16Float,
+            // DXGI_FORMAT_R16G16B16A16_UINT
+            12 => StorageTextureFormat::Rgba16Uint,
+            // DXGI_FORMAT_R16G16B16A16_SINT
+            14 => StorageTextureFormat::Rgba16Sint,
             // DXGI_FORMAT_R32G32B32A32_FLOAT
             2 => StorageTextureFormat::Rgba32Float,
+            // DXGI_FORMAT_R32G32B32A32_UINT
+            3 => StorageTextureFormat::Rgba32Uint,
+            // DXGI_FORMAT_R32G32B32A32_SINT
+            4 => StorageTextureFormat::Rgba32Sint,
+            // DXGI_FORMAT_R32_FLOAT
+            41 => StorageTextureFormat::R32Float,
+            // DXGI_FORMAT_R32_UINT
+            42 => StorageTextureFormat::R32Uint,
+            // DXGI_FORMAT_R32_SINT
+            43 => StorageTextureFormat::R32Sint,
             other => {
                 return Err(ShaderTranslateError::UnsupportedUavTextureFormat {
                     slot,
@@ -5397,7 +5471,24 @@ fn emit_instructions(
                     "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
                 );
 
-                let value = emit_src_vec4(value, inst_index, "store_uav_typed", ctx)?;
+                let format = ctx
+                    .resources
+                    .uav_textures
+                    .get(&uav.slot)
+                    .copied()
+                    .ok_or(ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot })?;
+
+                let value = match format.store_value_type() {
+                    StorageTextureValueType::F32 => {
+                        emit_src_vec4(value, inst_index, "store_uav_typed", ctx)?
+                    }
+                    StorageTextureValueType::U32 => {
+                        emit_src_vec4_u32(value, inst_index, "store_uav_typed", ctx)?
+                    }
+                    StorageTextureValueType::I32 => {
+                        emit_src_vec4_i32(value, inst_index, "store_uav_typed", ctx)?
+                    }
+                };
                 w.line(&format!(
                     "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
                     uav.slot
