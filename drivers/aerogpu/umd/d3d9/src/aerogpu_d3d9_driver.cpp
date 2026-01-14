@@ -13712,8 +13712,23 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  dev->viewport = *pViewport;
+  const bool cached_same =
+      f32_bits(dev->viewport.X) == f32_bits(pViewport->X) &&
+      f32_bits(dev->viewport.Y) == f32_bits(pViewport->Y) &&
+      f32_bits(dev->viewport.Width) == f32_bits(pViewport->Width) &&
+      f32_bits(dev->viewport.Height) == f32_bits(pViewport->Height) &&
+      f32_bits(dev->viewport.MinZ) == f32_bits(pViewport->MinZ) &&
+      f32_bits(dev->viewport.MaxZ) == f32_bits(pViewport->MaxZ);
+  if (!cached_same) {
+    dev->viewport = *pViewport;
+  }
   stateblock_record_viewport_locked(dev, dev->viewport);
+
+  if (cached_same) {
+    // Skip redundant viewport uploads: setting identical viewport again is a
+    // no-op, but still recorded above for state blocks.
+    return trace.ret(S_OK);
+  }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_viewport>(dev, AEROGPU_CMD_SET_VIEWPORT);
   if (!cmd) {
@@ -13744,6 +13759,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  const BOOL prev_enabled = dev->scissor_enabled;
+  const RECT prev_rect = dev->scissor_rect;
+
   if (pRect) {
     dev->scissor_rect = *pRect;
     dev->scissor_rect_user_set = true;
@@ -13761,6 +13779,23 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
   }
   scissor_fixup_unset_rect_locked(dev);
   stateblock_record_scissor_locked(dev, dev->scissor_rect, dev->scissor_enabled);
+
+  bool scissor_cmd_same = false;
+  if (!prev_enabled && !dev->scissor_enabled) {
+    // When scissor is disabled, the command-stream representation does not
+    // depend on the stored rect.
+    scissor_cmd_same = true;
+  } else if (prev_enabled && dev->scissor_enabled) {
+    scissor_cmd_same = (prev_rect.left == dev->scissor_rect.left &&
+                        prev_rect.top == dev->scissor_rect.top &&
+                        prev_rect.right == dev->scissor_rect.right &&
+                        prev_rect.bottom == dev->scissor_rect.bottom);
+  }
+  if (scissor_cmd_same) {
+    // Skip redundant scissor uploads: setting identical scissor state again is a
+    // no-op, but still recorded above for state blocks.
+    return trace.ret(S_OK);
+  }
 
   int32_t x = 0;
   int32_t y = 0;
