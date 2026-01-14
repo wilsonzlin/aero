@@ -76,6 +76,16 @@ fn pc_machine_net_rx_ring_backend_delivers_frame_into_e1000_rx_ring() {
 
     m.poll_network();
 
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.rx_popped_frames, 1);
+    assert_eq!(stats.rx_popped_bytes, frame.len() as u64);
+    assert_eq!(stats.rx_dropped_oversize, 0);
+    assert_eq!(stats.rx_dropped_oversize_bytes, 0);
+    assert_eq!(stats.rx_corrupt, 0);
+    assert!(!stats.rx_broken);
+
     // Verify descriptor 0 completed and guest memory contains the frame.
     let mut out = vec![0u8; frame.len()];
     m.platform_mut().memory.read_physical(rx_buf0, &mut out);
