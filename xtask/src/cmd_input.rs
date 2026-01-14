@@ -59,7 +59,7 @@ Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
   --machine             Also run targeted `aero-machine` tests (UHCI/xHCI wiring + snapshot/restore).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
-  --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
+  --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --with-wasm            Also run the `aero-wasm` input backend integration smoke test.
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
