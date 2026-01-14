@@ -1,7 +1,9 @@
 use aero_devices::pci::PciDevice;
 use aero_devices_gpu::pci::AeroGpuDeviceConfig;
-use aero_devices_gpu::regs::FEATURE_VBLANK;
-use aero_devices_gpu::regs::{irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC};
+use aero_devices_gpu::regs::{
+    irq_bits, mmio, ring_control, AerogpuErrorCode, FEATURE_ERROR_INFO, FEATURE_VBLANK,
+    AEROGPU_MMIO_MAGIC,
+};
 use aero_devices_gpu::ring::{
     AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
     FENCE_PAGE_MAGIC_OFFSET, RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET,
@@ -295,6 +297,9 @@ fn enabling_vblank_irq_does_not_latch_stale_irq_from_catchup_ticks() {
 fn error_mmio_regs_latch_and_survive_irq_ack() {
     let mut mem = VecMemory::new(0x1000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    let features = (dev.read(mmio::FEATURES_HI, 4) << 32) | dev.read(mmio::FEATURES_LO, 4);
+    assert_ne!(features & FEATURE_ERROR_INFO, 0);
 
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
 
