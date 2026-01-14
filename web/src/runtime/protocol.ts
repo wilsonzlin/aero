@@ -237,8 +237,8 @@ export type NetTraceStatusMessage = {
 };
 
 /**
- * AeroGPU fence completion forwarded from the GPU worker (via the coordinator) back to the CPU
- * worker running the canonical `api.Machine`.
+ * AeroGPU fence completion forwarded from the GPU worker (via the coordinator) back to the CPU worker
+ * running the canonical `api.Machine`.
  *
  * This is used in `vmRuntime="machine"` mode to drive AeroGPU fence/IRQ forward progress when the
  * submission bridge is enabled (external executor mode).
@@ -269,13 +269,13 @@ export type CoordinatorToWorkerPostMessage =
   | ConfigUpdateMessage
   | SetMicrophoneRingBufferMessage
   | SetAudioRingBufferMessage
-  | AerogpuCompleteFenceMessage
   | NetTraceEnableMessage
   | NetTraceDisableMessage
   | NetTraceClearMessage
   | NetTraceTakePcapngMessage
   | NetTraceExportPcapngMessage
-  | NetTraceStatusMessage;
+  | NetTraceStatusMessage
+  | AerogpuCompleteFenceMessage;
 
 /**
  * Cursor image update forwarded from an emulation worker (typically CPU/WASM) to the coordinator.

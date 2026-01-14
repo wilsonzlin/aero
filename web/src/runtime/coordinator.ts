@@ -2436,6 +2436,7 @@ export class WorkerCoordinator {
         }
         return;
       }
+
     }
     // Workers use structured `postMessage` for low-rate control/status messages
     // (READY/ERROR/WASM_READY). High-frequency device/bus events flow through
@@ -2801,7 +2802,13 @@ export class WorkerCoordinator {
 
     const transfer: Transferable[] = [cmdStream];
     if (allocTable) transfer.push(allocTable);
-    gpuInfo.worker.postMessage(msg, transfer);
+    try {
+      gpuInfo.worker.postMessage(msg, transfer);
+    } catch {
+      // If we fail to post the submission, do not strand the guest waiting on a fence.
+      this.aerogpuInFlightFencesByRequestId.delete(requestId);
+      this.forwardAerogpuFenceComplete(sub.signalFence);
+    }
   }
 
   private forwardAerogpuFenceComplete(fence: bigint): void {
