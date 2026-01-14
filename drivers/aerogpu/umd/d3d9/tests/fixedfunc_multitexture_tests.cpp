@@ -49,6 +49,7 @@ constexpr uint32_t kD3dTopAddSmooth = 11u;
 // D3DTA_* sources (from d3d9types.h).
 constexpr uint32_t kD3dTaCurrent = 1u;
 constexpr uint32_t kD3dTaTexture = 2u;
+constexpr uint32_t kD3dTaTFactor = 3u;
  
 // Pixel shader instruction token (ps_2_0).
 constexpr uint32_t kPsOpTexld = 0x04000042u;
@@ -1471,6 +1472,159 @@ bool TestFixedfuncIgnoresUnusedColorArg1ForSelectArg2() {
   return true;
 }
 
+bool TestFixedfuncStage1TFactorUploadsPsConstantOnRenderStateChange() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Stage0: CURRENT = tex0 (both color and alpha).
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  // Stage1: uses TFACTOR (no additional texturing) so the fixed-function PS must
+  // consume c255.
+  //
+  // Set args while stage1 is still disabled (default) to avoid generating
+  // intermediate PS variants during setup.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorArg1, kD3dTaTFactor);
+  if (!Check(hr == S_OK, "TSS stage1 COLORARG1=TFACTOR")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaArg1, kD3dTaCurrent);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAARG1=CURRENT")) {
+    return false;
+  }
+  // Enable stage1.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=SELECTARG1")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 tfactor)")) {
+    return false;
+  }
+
+  aerogpu_handle_t ps_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    // Stage0 samples tex0, stage1 uses only TFACTOR (no tex1).
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "stage1 tfactor => PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "stage1 tfactor => PS texld uses sampler s0")) {
+      return false;
+    }
+    ps_before = dev->ps->handle;
+  }
+
+  // Changing TEXTUREFACTOR should upload the new value into c255 when the active
+  // fixed-function stage chain references TFACTOR, without changing the PS
+  // variant itself.
+  dev->cmd.reset();
+
+  constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
+  constexpr uint32_t kTf = 0xFF000000u;         // ARGB => {r,g,b,a} = {0,0,0,1}
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, kTf);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  bool saw_tf_upload = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 255u || sc->vec4_count != 1u) {
+      continue;
+    }
+    const auto* data = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (data[0] == 0.0f && data[1] == 0.0f && data[2] == 0.0f && data[3] == 1.0f) {
+      saw_tf_upload = true;
+      break;
+    }
+  }
+  if (!Check(saw_tf_upload, "SetRenderState(TEXTUREFACTOR) uploads PS constant c255")) {
+    return false;
+  }
+
+  if (!Check(CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC).empty(),
+             "SetRenderState(TEXTUREFACTOR) emits no CREATE_SHADER_DXBC")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS).empty(),
+             "SetRenderState(TEXTUREFACTOR) emits no BIND_SHADERS")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound")) {
+      return false;
+    }
+    if (!Check(dev->ps->handle == ps_before, "SetRenderState(TEXTUREFACTOR) keeps PS handle stable")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncUnboundStage0TextureTruncatesChainToZeroStages() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -2068,6 +2222,9 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncIgnoresUnusedColorArg1ForSelectArg2()) {
+    return 1;
+  }
+  if (!TestFixedfuncStage1TFactorUploadsPsConstantOnRenderStateChange()) {
     return 1;
   }
   if (!TestFixedfuncUnboundStage2TextureDoesNotTruncateWhenStage2DoesNotSample()) {
