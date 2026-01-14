@@ -624,17 +624,6 @@ let tickInFlightCount = 0;
 let tickInFlightPromise: Promise<void> | null = null;
 let tickInFlightResolve: (() => void) | null = null;
 
-const waitForNoTickInFlight = async (): Promise<void> => {
-  while (tickInFlightCount > 0) {
-    if (!tickInFlightPromise) {
-      tickInFlightPromise = new Promise<void>((resolve) => {
-        tickInFlightResolve = resolve;
-      });
-    }
-    await tickInFlightPromise;
-  }
-};
-
 type SnapshotGuestMemoryBackup = {
   guestU8: Uint8Array | null;
   guestU32: Uint32Array | null;
