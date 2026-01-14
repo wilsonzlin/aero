@@ -18,6 +18,22 @@ import initAeroGpuWasm, {
 
 import type { DirtyRect } from '../ipc/shared-layout';
 
+function hardenWebGl2PresentState(gl: WebGL2RenderingContext): void {
+  // Best-effort deterministic state hardening: wgpu uses WebGL2 state under the hood, and
+  // some drivers enable dithering by default. Disable sources of output variance so
+  // presented-output readbacks are more stable across environments.
+  try {
+    gl.disable(gl.DITHER);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
+  } catch {
+    // Ignore; best-effort only.
+  }
+}
+
 export class WgpuWebGl2Presenter implements Presenter {
   public readonly backend = 'webgl2_wgpu' as const;
 
@@ -77,19 +93,7 @@ export class WgpuWebGl2Presenter implements Presenter {
       this.gl = null;
     }
     if (this.gl) {
-      // Best-effort deterministic state hardening: wgpu uses WebGL2 state under the hood, and
-      // some drivers enable dithering by default. Disable sources of output variance so
-      // presented-output readbacks are more stable across environments.
-      try {
-        this.gl.disable(this.gl.DITHER);
-        this.gl.disable(this.gl.SCISSOR_TEST);
-        this.gl.disable(this.gl.STENCIL_TEST);
-        this.gl.disable(this.gl.SAMPLE_ALPHA_TO_COVERAGE);
-        this.gl.disable(this.gl.SAMPLE_COVERAGE);
-        this.gl.colorMask(true, true, true, true);
-      } catch {
-        // Ignore; best-effort only.
-      }
+      hardenWebGl2PresentState(this.gl);
     }
 
     this.initialized = true;
@@ -271,6 +275,9 @@ export class WgpuWebGl2Presenter implements Presenter {
       throw new PresenterError('webgl2_unavailable', 'Failed to access the WebGL2 context for presented screenshot readback');
     }
     this.gl = gl;
+
+    // Ensure any re-render we trigger (see below) runs with our deterministic state.
+    hardenWebGl2PresentState(gl);
 
     const w = canvas.width;
     const h = canvas.height;
