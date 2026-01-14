@@ -95,8 +95,8 @@ func (sm *SessionManager) deleteSession(id string) {
 //
 // When key is non-empty, only one active session may exist for that key at a
 // time. This is used to prevent clients from bypassing per-session rate limits
-// by creating many parallel sessions with the same underlying authorization
-// token (e.g. AUTH_MODE=jwt with stable `sid` claim).
+// by creating many parallel sessions using distinct credentials that map to the
+// same stable identity (e.g. AUTH_MODE=jwt with stable `sid` claim).
 //
 // The session's public ID (Session.ID) remains a random value; key is used only
 // for quota bookkeeping and uniqueness enforcement.
