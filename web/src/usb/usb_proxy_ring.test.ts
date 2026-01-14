@@ -4,6 +4,18 @@ import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
 import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
 
 describe("usb/UsbProxyRing", () => {
+  it("validates createUsbProxyRingBuffer inputs", () => {
+    expect(() => createUsbProxyRingBuffer(0)).toThrow(/positive safe integer/);
+    expect(() => createUsbProxyRingBuffer(-1)).toThrow(/positive safe integer/);
+    expect(() => createUsbProxyRingBuffer(16 * 1024 * 1024 + 1)).toThrow(/must be <=/);
+  });
+
+  it("aligns createUsbProxyRingBuffer capacity to record alignment", () => {
+    const sab = createUsbProxyRingBuffer(65);
+    const ring = new UsbProxyRing(sab);
+    expect(ring.dataCapacityBytes()).toBe(68);
+  });
+
   it("round-trips all UsbHostAction kinds", () => {
     const sab = createUsbProxyRingBuffer(512);
     const ring = new UsbProxyRing(sab);
