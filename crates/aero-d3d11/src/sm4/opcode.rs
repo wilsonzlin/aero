@@ -730,6 +730,9 @@ mod tests {
                 .map(str::trim)
                 .expect("failed to parse opcode const value");
 
+            // We only care about opcode constants defined with a literal numeric value. Some
+            // constants are aliases for readability (e.g. `OPCODE_IFC = OPCODE_IF`), and those
+            // should not participate in uniqueness checks.
             let value_str = value_str.replace('_', "");
             let value = if let Some(hex) = value_str.strip_prefix("0x") {
                 u32::from_str_radix(hex, 16).expect("invalid hex opcode const value")

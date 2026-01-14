@@ -447,6 +447,33 @@ pub struct AerogpuCmdCacheStats {
     pub bind_groups: CacheStats,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceUploadDebugStats {
+    pub vertex_stage_bucket_lookups: u32,
+    pub pixel_stage_bucket_lookups: u32,
+    pub geometry_stage_bucket_lookups: u32,
+    pub hull_stage_bucket_lookups: u32,
+    pub domain_stage_bucket_lookups: u32,
+    pub compute_stage_bucket_lookups: u32,
+
+    pub implicit_buffer_uploads: u32,
+    pub implicit_texture_uploads: u32,
+    pub constant_buffer_scratch_copies: u32,
+}
+
+impl ResourceUploadDebugStats {
+    fn record_stage_bucket_lookup(&mut self, stage: ShaderStage) {
+        match stage {
+            ShaderStage::Vertex => self.vertex_stage_bucket_lookups += 1,
+            ShaderStage::Pixel => self.pixel_stage_bucket_lookups += 1,
+            ShaderStage::Geometry => self.geometry_stage_bucket_lookups += 1,
+            ShaderStage::Hull => self.hull_stage_bucket_lookups += 1,
+            ShaderStage::Domain => self.domain_stage_bucket_lookups += 1,
+            ShaderStage::Compute => self.compute_stage_bucket_lookups += 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExecuteReport {
     pub commands: u32,
@@ -1227,6 +1254,8 @@ pub struct AerogpuD3d11Executor {
     /// flush the encoder to preserve ordering relative to `queue.write_*`
     /// uploads.
     encoder_has_commands: bool,
+
+    resource_upload_debug: ResourceUploadDebugStats,
 }
 
 impl AerogpuD3d11Executor {
@@ -1472,6 +1501,7 @@ impl AerogpuD3d11Executor {
             destroyed_buffers: Vec::new(),
             destroyed_textures: Vec::new(),
             encoder_has_commands: false,
+            resource_upload_debug: ResourceUploadDebugStats::default(),
         }
     }
 
@@ -1601,6 +1631,39 @@ impl AerogpuD3d11Executor {
         &self.bindings
     }
 
+    #[doc(hidden)]
+    pub fn take_resource_upload_debug_stats(&mut self) -> ResourceUploadDebugStats {
+        std::mem::take(&mut self.resource_upload_debug)
+    }
+
+    #[doc(hidden)]
+    pub fn ensure_group_bindings_resources_uploaded_for_tests(
+        &mut self,
+        group_bindings: &[Vec<crate::Binding>],
+        group_stage_overrides: &[(u32, ShaderStage)],
+        allocs: Option<&[AerogpuAllocEntry]>,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
+        let alloc_map = AllocTable::new(allocs)?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu_cmd test resource upload encoder"),
+            });
+        self.ensure_group_bindings_resources_uploaded_with_stage_overrides(
+            &mut encoder,
+            group_bindings,
+            group_stage_overrides,
+            &alloc_map,
+            guest_mem,
+        )?;
+        self.submit_encoder_if_has_commands(
+            &mut encoder,
+            "aerogpu_cmd encoder after test implicit uploads",
+        );
+        Ok(())
+    }
+
     fn gs_hs_ds_emulation_required(&self) -> bool {
         if self.state.gs.is_some() || self.state.hs.is_some() || self.state.ds.is_some() {
             return true;
@@ -1684,7 +1747,6 @@ impl AerogpuD3d11Executor {
     pub fn set_emulated_expanded_vertex_buffer(&mut self, buffer: Option<u32>) {
         self.state.emulated_expanded_vertex_buffer = buffer;
     }
-
     pub fn reset(&mut self) {
         self.resources = AerogpuD3d11Resources::default();
         self.state = AerogpuD3d11State::default();
@@ -1703,6 +1765,7 @@ impl AerogpuD3d11Executor {
         self.destroyed_buffers.clear();
         self.destroyed_textures.clear();
         self.next_scratch_buffer_id = 1u64 << 32;
+        self.resource_upload_debug = ResourceUploadDebugStats::default();
         self.bindings = BindingState::default();
         for stage in [
             ShaderStage::Vertex,
@@ -11752,18 +11815,46 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
+        self.ensure_group_bindings_resources_uploaded_with_stage_overrides(
+            encoder,
+            &pipeline_bindings.group_bindings,
+            &[],
+            allocs,
+            guest_mem,
+        )
+    }
+
+    fn ensure_group_bindings_resources_uploaded_with_stage_overrides(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        group_bindings: &[Vec<crate::Binding>],
+        group_stage_overrides: &[(u32, ShaderStage)],
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
         let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let max_uniform_binding_size = self.device.limits().max_uniform_buffer_binding_size as u64;
         let storage_align =
             (self.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
         let max_storage_binding_size = self.device.limits().max_storage_buffer_binding_size as u64;
-
-        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
-            if group_bindings.is_empty() {
+        let mut stages: Vec<Option<ShaderStage>> = Vec::with_capacity(group_bindings.len());
+        for (group_index, bindings) in group_bindings.iter().enumerate() {
+            if bindings.is_empty() {
+                stages.push(None);
                 continue;
             }
-            let stage = group_index_to_stage(group_index as u32)?;
-            for binding in group_bindings {
+            let stage =
+                group_index_to_stage_with_overrides(group_index as u32, group_stage_overrides)?;
+            self.resource_upload_debug.record_stage_bucket_lookup(stage);
+            stages.push(Some(stage));
+        }
+
+        // Upload dirty guest-backed resources used by the current binding state.
+        for (group_index, bindings) in group_bindings.iter().enumerate() {
+            let Some(stage) = stages[group_index] else {
+                continue;
+            };
+            for binding in bindings {
                 #[allow(unreachable_patterns)]
                 match &binding.kind {
                     crate::BindingKind::ConstantBuffer { slot, .. } => {
@@ -11805,9 +11896,7 @@ impl AerogpuD3d11Executor {
                         if binding_num >= BINDING_BASE_UAV {
                             let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
                             if let Some(buf) = self.bindings.stage(stage).uav_buffer(slot) {
-                                self.ensure_buffer_uploaded(
-                                    encoder, buf.buffer, allocs, guest_mem,
-                                )?;
+                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
                             }
                             if let Some(tex) = self.bindings.stage(stage).uav_texture(slot) {
                                 self.ensure_texture_uploaded(
@@ -11830,18 +11919,13 @@ impl AerogpuD3d11Executor {
                                 )?;
                             }
                             if let Some(buf) = self.bindings.stage(stage).srv_buffer(slot) {
-                                self.ensure_buffer_uploaded(
-                                    encoder, buf.buffer, allocs, guest_mem,
-                                )?;
+                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
                             }
                         } else if binding_num < BINDING_BASE_TEXTURE {
-                            if let Some(cb) =
-                                self.bindings.stage(stage).constant_buffer(binding_num)
+                            if let Some(cb) = self.bindings.stage(stage).constant_buffer(binding_num)
                             {
                                 if cb.buffer != legacy_constants_buffer_id(stage) {
-                                    self.ensure_buffer_uploaded(
-                                        encoder, cb.buffer, allocs, guest_mem,
-                                    )?;
+                                    self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
                                 }
                             }
                         }
@@ -11854,12 +11938,11 @@ impl AerogpuD3d11Executor {
         // `min_uniform_buffer_offset_alignment`. D3D11 constant-buffer range binding does not have
         // this restriction, so for unaligned offsets we copy the bound range into an internal
         // scratch buffer and bind that at offset 0.
-        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
-            if group_bindings.is_empty() {
+        for (group_index, bindings) in group_bindings.iter().enumerate() {
+            let Some(stage) = stages[group_index] else {
                 continue;
-            }
-            let stage = group_index_to_stage(group_index as u32)?;
-            for binding in group_bindings {
+            };
+            for binding in bindings {
                 let crate::BindingKind::ConstantBuffer { slot, reg_count } = &binding.kind else {
                     continue;
                 };
@@ -11920,6 +12003,8 @@ impl AerogpuD3d11Executor {
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
                 self.encoder_used_buffers.insert(cb.buffer);
+                self.resource_upload_debug.constant_buffer_scratch_copies =
+                    self.resource_upload_debug.constant_buffer_scratch_copies.saturating_add(1);
             }
         }
 
@@ -11931,9 +12016,11 @@ impl AerogpuD3d11Executor {
         // Note: UAV buffers are read-write; a scratch implementation for UAV offsets would need to
         // copy results back into the original buffer. For now, we only scratch read-only SRV
         // buffers.
-        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
-            let stage = group_index_to_stage(group_index as u32)?;
-            for binding in group_bindings {
+        for (group_index, bindings) in group_bindings.iter().enumerate() {
+            let Some(stage) = stages[group_index] else {
+                continue;
+            };
+            for binding in bindings {
                 let crate::BindingKind::SrvBuffer { slot } = &binding.kind else {
                     continue;
                 };
@@ -12081,6 +12168,8 @@ impl AerogpuD3d11Executor {
         if !needs_upload {
             return Ok(());
         }
+        self.resource_upload_debug.implicit_buffer_uploads =
+            self.resource_upload_debug.implicit_buffer_uploads.saturating_add(1);
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         self.submit_encoder_if_has_commands(
@@ -12941,6 +13030,8 @@ impl AerogpuD3d11Executor {
             }
             return Ok(());
         };
+        self.resource_upload_debug.implicit_texture_uploads =
+            self.resource_upload_debug.implicit_texture_uploads.saturating_add(1);
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         self.submit_encoder_if_has_commands(
@@ -14252,6 +14343,16 @@ fn d3d_topology_requires_gs_hs_ds_emulation(topology: u32) -> bool {
     // - 10..13: *_ADJ adjacency topologies (geometry shader input)
     // - 33..64: N_CONTROL_POINT_PATCHLIST (tessellation)
     (10..=13).contains(&topology) || (33..=64).contains(&topology)
+}
+
+fn group_index_to_stage_with_overrides(
+    group: u32,
+    overrides: &[(u32, ShaderStage)],
+) -> Result<ShaderStage> {
+    if let Some((_, stage)) = overrides.iter().find(|(idx, _)| *idx == group) {
+        return Ok(*stage);
+    }
+    group_index_to_stage(group)
 }
 
 fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::ShaderStage {
