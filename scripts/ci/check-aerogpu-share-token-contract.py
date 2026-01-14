@@ -129,21 +129,21 @@ def extract_c_function_body_span(text: str, func_name: str) -> tuple[int, str] |
     return None
 
 
-POOL_OP_NEEDLES = (
+POOL_OP_FUNCS = (
     # Allocation APIs that can take global locks and/or significantly extend the
     # critical section. We conservatively treat lookaside allocs as allocations
     # too: they can fall back to pool allocation when the list is empty.
-    "ExAllocatePoolWithTag(",
-    "ExAllocatePool(",
-    "ExAllocatePool2(",
-    "ExAllocateFromNPagedLookasideList(",
-    "ExAllocateFromPagedLookasideList(",
+    "ExAllocatePoolWithTag",
+    "ExAllocatePool",
+    "ExAllocatePool2",
+    "ExAllocateFromNPagedLookasideList",
+    "ExAllocateFromPagedLookasideList",
     # Pool/allocator frees can also be expensive on some stacks; keep them out
     # of spin-locked regions as well.
-    "ExFreePoolWithTag(",
-    "ExFreePool(",
-    "ExFreeToNPagedLookasideList(",
-    "ExFreeToPagedLookasideList(",
+    "ExFreePoolWithTag",
+    "ExFreePool",
+    "ExFreeToNPagedLookasideList",
+    "ExFreeToPagedLookasideList",
 )
 
 
@@ -178,7 +178,7 @@ def check_no_pool_ops_under_allocations_lock_in_func(
         r"\bKeAcquireSpinLockRaiseToDpc\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
     )
 
-    pool_op_re = re.compile("|".join(re.escape(n) for n in POOL_OP_NEEDLES))
+    pool_op_re = re.compile("|".join(rf"\b{re.escape(n)}\s*\(" for n in POOL_OP_FUNCS))
 
     # Scan events by offset (more robust than line-based scanning if the call spans multiple lines).
     events: list[tuple[int, str, str]] = []
@@ -204,7 +204,7 @@ def check_no_pool_ops_under_allocations_lock_in_func(
 
         if kind == "pool" and lock_held:
             file_line = base_line + body[:pos].count("\n")
-            call_name = snippet.rstrip("(")
+            call_name = snippet.split("(", 1)[0].strip()
             errors.append(
                 f"{kmd_path.relative_to(ROOT)}:{file_line}: {call_name} called while Adapter->AllocationsLock is held ({func_name})"
             )
