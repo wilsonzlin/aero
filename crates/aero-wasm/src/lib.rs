@@ -3243,6 +3243,16 @@ where
     aero_storage::AeroCowDisk::open(base, overlay_backend)
 }
 
+/// Canonical machine BIOS boot device selection.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineBootDevice {
+    /// Boot from the primary HDD (AHCI port 0 / BIOS disk).
+    Hdd = 0,
+    /// Prefer booting from the install media CD-ROM (IDE secondary master ATAPI).
+    Cdrom = 1,
+}
+
 /// Canonical full-system Aero VM exported to JS via wasm-bindgen.
 ///
 /// This wrapper is backed by `aero_machine::Machine` and is the intended target for new browser
@@ -3715,6 +3725,23 @@ impl Machine {
         }
     }
 
+    /// Set the preferred BIOS boot device for the next reset.
+    pub fn set_boot_device(&mut self, device: MachineBootDevice) {
+        let native = match device {
+            MachineBootDevice::Hdd => aero_machine::BootDevice::Hdd,
+            MachineBootDevice::Cdrom => aero_machine::BootDevice::Cdrom,
+        };
+        self.inner.set_boot_device(native);
+    }
+
+    /// Returns the configured boot device preference.
+    pub fn boot_device(&self) -> MachineBootDevice {
+        match self.inner.boot_device() {
+            aero_machine::BootDevice::Hdd => MachineBootDevice::Hdd,
+            aero_machine::BootDevice::Cdrom => MachineBootDevice::Cdrom,
+        }
+    }
+
     pub fn set_disk_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         self.inner
             .set_disk_image(bytes.to_vec())
@@ -3798,6 +3825,14 @@ impl Machine {
         self.attach_install_media_iso_opfs_existing(path).await?;
         self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
         Ok(())
+    }
+
+    /// Back-compat alias: attach an in-memory ISO as the canonical install media CD-ROM.
+    ///
+    /// Prefer [`Machine::attach_install_media_iso_bytes`], which more clearly describes the
+    /// canonical machine's install-media slot (`disk_id=1`).
+    pub fn set_cd_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.attach_install_media_iso_bytes(bytes)
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
@@ -4586,6 +4621,15 @@ impl Machine {
     /// overlay ref (`disk_id=1`).
     pub fn eject_install_media(&mut self) {
         self.inner.eject_install_media();
+    }
+
+    /// Back-compat alias: attach an existing OPFS-backed ISO as the canonical install media CD-ROM.
+    ///
+    /// Prefer [`Machine::attach_install_media_opfs_iso`], which also records the snapshot overlay
+    /// reference for `disk_id=1`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_cd_opfs_existing(&mut self, path: String) -> Result<(), JsValue> {
+        self.attach_install_media_opfs_iso(path).await
     }
 
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {

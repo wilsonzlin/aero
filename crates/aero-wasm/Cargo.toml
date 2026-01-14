@@ -23,8 +23,8 @@ aero-net-pump = { path = "../aero-net-pump" }
 aero-guest-phys = { path = "../aero-guest-phys" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 aero-platform = { path = "../platform" }
-aero-storage = { path = "../aero-storage" }
 aero-usb = { path = "../aero-usb" }
+aero-storage = { path = "../aero-storage" }
 aero-virtio = { path = "../aero-virtio" }
 aero-shared = { path = "../aero-shared", optional = true }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }

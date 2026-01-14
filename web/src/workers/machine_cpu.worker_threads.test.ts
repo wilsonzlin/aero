@@ -1,4 +1,4 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
@@ -586,6 +586,94 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
           `expected the queued buffer (sentinel=1111) to be recycled on resume, got sentinel=${secondRecycleWords[1]}`,
         );
       }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});
+
+describe("workers/machine_cpu.worker (boot device selection)", () => {
+  function makeLocalHddMeta(): any {
+    return {
+      source: "local",
+      id: "hdd0",
+      name: "hdd0",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "hdd0.img",
+      sizeBytes: 1024 * 1024,
+      createdAtMs: 0,
+    };
+  }
+
+  function makeLocalCdMeta(): any {
+    return {
+      source: "local",
+      id: "cd0",
+      name: "cd0",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "cd0.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    };
+  }
+
+  it("selects CD boot when install media is present", async () => {
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const msgPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "cdrom",
+        10_000,
+      ) as Promise<{ type: string; bootDevice: string }>;
+
+      worker.postMessage({
+        type: "setBootDisks",
+        mounts: { hddId: "hdd0", cdId: "cd0" },
+        hdd: makeLocalHddMeta(),
+        cd: makeLocalCdMeta(),
+      } satisfies SetBootDisksMessage);
+
+      const msg = await msgPromise;
+      expect(msg.bootDevice).toBe("cdrom");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("selects HDD boot when install media is absent", async () => {
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const msgPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        10_000,
+      ) as Promise<{ type: string; bootDevice: string }>;
+
+      worker.postMessage({
+        type: "setBootDisks",
+        mounts: { hddId: "hdd0" },
+        hdd: makeLocalHddMeta(),
+        cd: null,
+      } satisfies SetBootDisksMessage);
+
+      const msg = await msgPromise;
+      expect(msg.bootDevice).toBe("hdd");
     } finally {
       await worker.terminate();
     }

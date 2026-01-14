@@ -273,6 +273,28 @@ impl LegacyVgaFrontend for AeroGpuDevice {
     }
 }
 
+/// Canonical BIOS boot device selection.
+///
+/// This is a high-level policy knob used by [`Machine::reset`] to decide which attached media the
+/// firmware should attempt to boot from.
+///
+/// `Cdrom` corresponds to booting from the conventional BIOS CD-ROM drive range (`DL=0xE0..=0xEF`)
+/// when used via [`Machine::set_boot_device`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootDevice {
+    /// Boot from the primary HDD (the machine's canonical [`SharedDisk`]).
+    Hdd,
+    /// Prefer booting from the install media ISO (IDE secondary master ATAPI) when present,
+    /// otherwise fall back to the primary HDD.
+    Cdrom,
+}
+
+impl Default for BootDevice {
+    fn default() -> Self {
+        Self::Hdd
+    }
+}
+
 /// Configuration for [`Machine`].
 ///
 /// # Platform wiring vs firmware tables
@@ -303,6 +325,14 @@ pub struct MachineConfig {
     ///
     /// See `docs/21-smp.md` for the current SMP status and roadmap.
     pub cpu_count: u8,
+    /// Preferred BIOS boot device (HDD vs CD-ROM).
+    ///
+    /// This is a higher-level selection knob intended for runtimes that want a simple "CD-first vs
+    /// HDD" policy without dealing with raw BIOS drive numbers.
+    ///
+    /// When using the provided [`Machine`] setters (`set_boot_device` / `set_boot_drive`), this is
+    /// kept in sync with [`MachineConfig::boot_drive`].
+    pub boot_device: BootDevice,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///
     /// Runtimes that need stable per-VM identities (e.g. Windows guests) should set this to a
@@ -462,6 +492,7 @@ impl Default for MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             boot_drive: 0x80,
             cpu_count: 1,
+            boot_device: BootDevice::Hdd,
             smbios_uuid_seed: 0,
             enable_pc_platform: false,
             enable_acpi: false,
@@ -513,6 +544,7 @@ impl MachineConfig {
             ram_size_bytes,
             boot_drive: 0x80,
             cpu_count: 1,
+            boot_device: BootDevice::Hdd,
             smbios_uuid_seed: 0,
             enable_pc_platform: true,
             enable_acpi: true,
@@ -570,6 +602,7 @@ impl MachineConfig {
     pub fn win7_install_defaults(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage_defaults(ram_size_bytes);
         cfg.boot_drive = 0xE0;
+        cfg.boot_device = BootDevice::Cdrom;
         cfg
     }
 
@@ -3891,9 +3924,47 @@ impl Machine {
     /// new value to the next boot.
     pub fn set_boot_drive(&mut self, boot_drive: u8) {
         self.boot_drive = boot_drive;
+        self.cfg.boot_drive = boot_drive;
+        self.cfg.boot_device = if (0xE0..=0xEF).contains(&boot_drive) {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        };
         // Keep the current BIOS config in sync so snapshots capture the selected boot drive and so
         // `Machine::reset()` can persist it.
         self.bios.set_boot_drive(boot_drive);
+    }
+
+    /// Set the preferred BIOS boot device for the next [`Machine::reset`].
+    ///
+    /// This is a convenience wrapper around [`Machine::set_boot_drive`]:
+    /// - [`BootDevice::Hdd`] maps to `boot_drive=0x80` (first hard disk).
+    /// - [`BootDevice::Cdrom`] maps to `boot_drive=0xE0` (first CD-ROM).
+    ///
+    /// This does not affect the currently-running guest. Call [`Machine::reset`] to re-run BIOS
+    /// POST and attempt boot from the newly-selected device.
+    pub fn set_boot_device(&mut self, boot_device: BootDevice) {
+        self.cfg.boot_device = boot_device;
+        let boot_drive = match boot_device {
+            BootDevice::Hdd => 0x80,
+            BootDevice::Cdrom => 0xE0,
+        };
+        self.set_boot_drive(boot_drive);
+    }
+
+    /// Returns the configured boot device preference.
+    pub fn boot_device(&self) -> BootDevice {
+        self.cfg.boot_device
+    }
+
+    /// Returns the effective boot device used for the current boot session.
+    pub fn active_boot_device(&self) -> BootDevice {
+        let boot_drive = self.bios.config().boot_drive;
+        if (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some() {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        }
     }
 
     /// Returns the configured vCPU count.

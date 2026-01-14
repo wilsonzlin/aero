@@ -95,6 +95,15 @@ function setMachineBusy(busy: boolean): void {
 
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
+// Canonical machine BIOS boot device policy for the next reset.
+//
+// Normative flows are defined in `docs/05-storage-topology-win7.md`:
+// - install: prefer CD-ROM (install ISO mounted)
+// - normal: boot HDD
+type MachineCpuBootDevice = "hdd" | "cdrom";
+type MachineCpuBootDeviceSelectedMessage = { type: "machineCpu.bootDeviceSelected"; bootDevice: MachineCpuBootDevice };
+let pendingBootDevice: MachineCpuBootDevice = "hdd";
+
 type InputBatchMessage = {
   type: "in:input-batch";
   buffer: ArrayBuffer;
@@ -157,6 +166,16 @@ function nowMs(): number {
 
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
   ctx.postMessage(msg);
+}
+
+function postBootDeviceSelected(bootDevice: MachineCpuBootDevice): void {
+  // Best-effort side-channel used by tests and debugging tools.
+  const msg: MachineCpuBootDeviceSelectedMessage = { type: "machineCpu.bootDeviceSelected", bootDevice };
+  try {
+    ctx.postMessage(msg);
+  } catch {
+    // ignore
+  }
 }
 
 function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
@@ -1187,6 +1206,13 @@ ctx.onmessage = (ev) => {
       post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
       return;
     }
+
+    const bootDevice: MachineCpuBootDevice = bootDisks.cd ? "cdrom" : "hdd";
+    if (bootDevice !== pendingBootDevice) {
+      pendingBootDevice = bootDevice;
+    }
+    // Publish the selected policy for tests/debug tooling.
+    postBootDeviceSelected(bootDevice);
 
     pendingBootDisks = bootDisks;
     return;

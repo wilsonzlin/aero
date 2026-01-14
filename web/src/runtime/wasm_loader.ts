@@ -48,6 +48,22 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     set_boot_drive?(drive: number): void;
+    /**
+     * Set the preferred BIOS boot device for the next boot attempt.
+     *
+     * This is a convenience wrapper over {@link set_boot_drive}:
+     * - `MachineBootDevice.Hdd` -> `DL=0x80`
+     * - `MachineBootDevice.Cdrom` -> `DL=0xE0`
+     *
+     * Optional for older WASM builds.
+     */
+    set_boot_device?(device: number): void;
+    /**
+     * Returns the configured boot device preference.
+     *
+     * Optional for older WASM builds.
+     */
+    boot_device?(): number;
     set_disk_image(bytes: Uint8Array): void;
     /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
@@ -976,6 +992,13 @@ export interface WasmApi {
      * Optional for older WASM builds.
      */
     MouseButtons?: WasmEnum<"Left" | "Right" | "Middle" | "Back" | "Forward">;
+
+    /**
+     * Canonical machine BIOS boot device selection.
+     *
+     * Optional for older WASM builds.
+     */
+    MachineBootDevice?: WasmEnum<"Hdd" | "Cdrom">;
 
     /**
      * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
@@ -2218,6 +2241,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         jit_abi_constants: mod.jit_abi_constants,
         MouseButton: mod.MouseButton,
         MouseButtons: mod.MouseButtons,
+        MachineBootDevice: mod.MachineBootDevice,
         VirtioInputPciDevice: mod.VirtioInputPciDevice,
         SharedRingBuffer: mod.SharedRingBuffer,
         open_ring_by_kind: mod.open_ring_by_kind,
