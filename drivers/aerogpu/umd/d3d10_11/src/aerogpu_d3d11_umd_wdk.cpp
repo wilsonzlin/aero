@@ -1394,6 +1394,58 @@ static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource)
   UnbindResourceFromSrvsLocked(dev, resource, nullptr);
 }
 
+static void UnbindResourceFromUavsLocked(Device* dev,
+                                         aerogpu_handle_t resource,
+                                         const Resource* res,
+                                         uint32_t exclude_slot) {
+  if (!dev || (resource == 0 && !res)) {
+    return;
+  }
+  for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
+    if (slot == exclude_slot) {
+      continue;
+    }
+    if ((resource == 0 || dev->cs_uavs[slot].buffer != resource) &&
+        (!res || slot >= dev->current_cs_uavs.size() || !ResourcesAlias(dev->current_cs_uavs[slot], res))) {
+      continue;
+    }
+    aerogpu_unordered_access_buffer_binding null_uav{};
+    null_uav.initial_count = 0xFFFFFFFFu;
+    if (BindUnorderedAccessBuffersRangeLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, 1, &null_uav)) {
+      dev->cs_uavs[slot] = null_uav;
+      if (slot < dev->current_cs_uavs.size()) {
+        dev->current_cs_uavs[slot] = nullptr;
+      }
+    }
+  }
+}
+
+static void UnbindResourceFromUavsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {
+  UnbindResourceFromUavsLocked(dev, resource, res, /*exclude_slot=*/kMaxUavSlots);
+}
+
+static bool UnbindResourceFromRenderTargetsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {
+  if (!dev || (resource == 0 && !res)) {
+    return false;
+  }
+  bool changed = false;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if ((resource != 0 && dev->current_rtvs[i] == resource) ||
+        (res && ResourcesAlias(dev->current_rtv_resources[i], res))) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+      changed = true;
+    }
+  }
+  if ((resource != 0 && dev->current_dsv == resource) ||
+      (res && ResourcesAlias(dev->current_dsv_resource, res))) {
+    dev->current_dsv = 0;
+    dev->current_dsv_resource = nullptr;
+    changed = true;
+  }
+  return changed;
+}
+
 static void EmitSetRenderTargetsLocked(Device* dev) {
   if (!dev) {
     return;
@@ -1422,39 +1474,10 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
   if (!dev || (resource == 0 && !res)) {
     return;
   }
-  bool changed = false;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if ((resource != 0 && dev->current_rtvs[i] == resource) ||
-        (res && ResourcesAlias(dev->current_rtv_resources[i], res))) {
-      dev->current_rtvs[i] = 0;
-      dev->current_rtv_resources[i] = nullptr;
-      changed = true;
-    }
-  }
-  if ((resource != 0 && dev->current_dsv == resource) ||
-      (res && ResourcesAlias(dev->current_dsv_resource, res))) {
-    dev->current_dsv = 0;
-    dev->current_dsv_resource = nullptr;
-    changed = true;
-  }
-
+  const bool changed = UnbindResourceFromRenderTargetsLocked(dev, resource, res);
   // Compute UAVs are outputs too: binding a resource as an SRV must unbind any
   // aliasing UAVs.
-  for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
-    if ((resource == 0 || dev->cs_uavs[slot].buffer != resource) &&
-        (!res || slot >= dev->current_cs_uavs.size() || !ResourcesAlias(dev->current_cs_uavs[slot], res))) {
-      continue;
-    }
-    aerogpu_unordered_access_buffer_binding null_uav{};
-    null_uav.initial_count = 0xFFFFFFFFu;
-    if (BindUnorderedAccessBuffersRangeLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, 1, &null_uav)) {
-      dev->cs_uavs[slot] = null_uav;
-      if (slot < dev->current_cs_uavs.size()) {
-        dev->current_cs_uavs[slot] = nullptr;
-      }
-    }
-  }
-
+  UnbindResourceFromUavsLocked(dev, resource, res);
   if (changed) {
     EmitSetRenderTargetsLocked(dev);
   }
@@ -5838,10 +5861,10 @@ void AEROGPU_APIENTRY CsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                                  UINT StartSlot,
-                                                  UINT NumUavs,
-                                                  const D3D11DDI_HUNORDEREDACCESSVIEW* phUavs,
-                                                  const UINT* pUAVInitialCounts) {
+                                                   UINT StartSlot,
+                                                   UINT NumUavs,
+                                                   const D3D11DDI_HUNORDEREDACCESSVIEW* phUavs,
+                                                   const UINT* pUAVInitialCounts) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || NumUavs == 0) {
     return;
@@ -5883,8 +5906,12 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
 
     if (b.buffer) {
-      // D3D11 hazards: unbind from SRVs when binding as UAV.
+      // D3D11 hazards: unbind from SRVs and other outputs when binding as UAV.
       UnbindResourceFromSrvsLocked(dev, b.buffer, res);
+      if (UnbindResourceFromRenderTargetsLocked(dev, b.buffer, res)) {
+        EmitSetRenderTargetsLocked(dev);
+      }
+      UnbindResourceFromUavsLocked(dev, b.buffer, res, slot);
     }
 
     bindings[i] = b;
@@ -6592,9 +6619,9 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 }
 
 void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                          UINT NumViews,
-                                          const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
-                                          D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
+                                           UINT NumViews,
+                                           const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                           D3D11DDI_HDEPTHSTENCILVIEW hDsv) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -6612,12 +6639,14 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   const DepthStencilView* dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv) : nullptr;
   SetRenderTargetsStateLocked(dev, NumViews, rtvs.data(), dsv);
 
-  // Auto-unbind SRVs that alias the newly bound render targets/depth buffer.
+  // Auto-unbind SRVs/UAVs that alias the newly bound render targets/depth buffer.
   const uint32_t bound_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
   for (uint32_t i = 0; i < bound_count; ++i) {
     UnbindResourceFromSrvsLocked(dev, dev->current_rtvs[i], dev->current_rtv_resources[i]);
+    UnbindResourceFromUavsLocked(dev, dev->current_rtvs[i], dev->current_rtv_resources[i]);
   }
   UnbindResourceFromSrvsLocked(dev, dev->current_dsv, dev->current_dsv_resource);
+  UnbindResourceFromUavsLocked(dev, dev->current_dsv, dev->current_dsv_resource);
 
   EmitSetRenderTargetsLocked(dev);
 }
