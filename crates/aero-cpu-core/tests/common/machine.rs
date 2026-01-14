@@ -146,12 +146,31 @@ impl Tier0Machine {
 
     fn handle_assist(&mut self, reason: AssistReason) {
         let ip = self.cpu.rip();
-        let fetch_addr = self
-            .cpu
-            .apply_a20(self.cpu.seg_base_reg(Register::CS).wrapping_add(ip));
-        let bytes = self.bus.fetch(fetch_addr, 15).expect("fetch");
-        let decoded = aero_x86::decode(&bytes, ip, self.cpu.bitness()).expect("decode");
-        let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();
+        let bitness = self.cpu.bitness();
+        let cs_base = self.cpu.seg_base_reg(Register::CS);
+        // Fetch bytes using the architectural IP width and A20-masked linear addresses so assists
+        // decode correctly even when the instruction stream crosses wrap boundaries (e.g. IP=0xFFFF
+        // in real mode or A20 aliasing when disabled).
+        let mut bytes = [0u8; 15];
+        for (i, slot) in bytes.iter_mut().enumerate() {
+            let ip_off = match bitness {
+                16 => ip.wrapping_add(i as u64) & 0xFFFF,
+                32 => ip.wrapping_add(i as u64) & 0xFFFF_FFFF,
+                _ => ip.wrapping_add(i as u64),
+            };
+            let addr = self.cpu.apply_a20(cs_base.wrapping_add(ip_off));
+            *slot = self
+                .bus
+                .read_u8(addr)
+                .unwrap_or_else(|e| panic!("fetch failed at {addr:#x}: {e:?}"));
+        }
+
+        let decoded = aero_x86::decode(&bytes, ip, bitness).expect("decode");
+        let next_ip = match bitness {
+            16 => ip.wrapping_add(decoded.len as u64) & 0xFFFF,
+            32 => ip.wrapping_add(decoded.len as u64) & 0xFFFF_FFFF,
+            _ => ip.wrapping_add(decoded.len as u64),
+        };
 
         match reason {
             AssistReason::Io => self.assist_io(&decoded.instr, next_ip),
