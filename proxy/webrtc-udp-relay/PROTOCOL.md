@@ -52,7 +52,7 @@ Additional knobs:
 
 Observability (via `GET /metrics`, exposed as `aero_webrtc_udp_relay_events_total{event="<name>"}`):
 
-- `udp_remote_allowlist_evictions_total`: allowlist entries evicted due to `MAX_ALLOWED_REMOTES_PER_BINDING`.
+- `udp_remote_allowlist_evictions_total`: allowlist entries evicted due to `MAX_ALLOWED_REMOTES_PER_BINDING` (cap-based evictions only; TTL expiry via `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` does **not** count as an eviction).
 - `udp_remote_allowlist_overflow_drops_total`: inbound UDP packets dropped due to inbound filtering (remote not currently on the allowlist, e.g. due to eviction or TTL expiry). This is tracked separately and is **not** included in the generic `webrtc_udp_dropped*` / `udp_ws_dropped*` counters.
 
 ### L2 tunnel DataChannel (`l2`)
