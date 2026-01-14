@@ -16,78 +16,6 @@ use aero_d3d11::runtime::vertex_pulling::{
 use aero_d3d11::{parse_signatures, DxbcFile};
 use anyhow::{anyhow, Context, Result};
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir = std::env::temp_dir().join(format!(
-                "aero-d3d11-vs-as-compute-xdg-runtime-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let supports_compute = adapter
-        .get_downlevel_capabilities()
-        .flags
-        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 VS-as-compute test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue, supports_compute))
-}
-
 fn load_vs_passthrough_signature() -> Result<(Vec<VsInputSignatureElement>, u32)> {
     let vs_dxbc = DxbcFile::parse(include_bytes!("fixtures/vs_passthrough.dxbc"))
         .context("parse vs_passthrough")?;
@@ -174,7 +102,8 @@ fn unpack_vec4_u32_as_f32(words: &[u32]) -> Vec<[f32; 4]> {
 #[test]
 fn vs_as_compute_writes_vs_out_regs_non_indexed() {
     pollster::block_on(async {
-        let (device, queue, supports_compute) = match create_device_queue().await {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(module_path!(), &format!("{err:#}"));
@@ -324,7 +253,8 @@ fn pack_u16_indices_to_words(indices: &[u16]) -> Vec<u32> {
 #[test]
 fn vs_as_compute_supports_index_pulling() {
     pollster::block_on(async {
-        let (device, queue, supports_compute) = match create_device_queue().await {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(module_path!(), &format!("{err:#}"));
@@ -486,7 +416,8 @@ fn vs_as_compute_supports_index_pulling() {
 #[test]
 fn vs_as_compute_rejects_non_multiple_of_control_points() {
     pollster::block_on(async {
-        let (device, queue, supports_compute) = match create_device_queue().await {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(module_path!(), &format!("{err:#}"));

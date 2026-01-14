@@ -623,5 +623,50 @@ mod tests {
             wiring_bindings, layout_bindings,
             "VS-as-compute vertex pulling bindings must match VertexPullingLayout"
         );
+    use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
+
+    #[test]
+    fn generated_wgsl_parses_without_a_device() {
+        // This ensures the WGSL generation is syntactically valid even on platforms where wgpu
+        // compute tests are skipped (no adapter / no compute support).
+        let layout_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ilay_pos3_color.bin"
+        ));
+        let layout = InputLayoutDesc::parse(layout_bytes).expect("fixture ILAY should parse");
+
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: layout.elements[0].semantic_name_hash,
+                semantic_index: layout.elements[0].semantic_index,
+                input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: layout.elements[1].semantic_name_hash,
+                semantic_index: layout.elements[1].semantic_index,
+                input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
+            },
+        ];
+
+        let stride = 28u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling =
+            VertexPullingLayout::new(&binding, &signature).expect("build VertexPullingLayout");
+
+        let wgsl = build_vs_as_compute_passthrough_wgsl(
+            &pulling,
+            VsAsComputeConfig {
+                control_point_count: 1,
+                out_reg_count: 2,
+                indexed: false,
+            },
+        );
+
+        naga::front::wgsl::parse_str(&wgsl).expect("generated VS-as-compute WGSL should parse");
     }
 }
