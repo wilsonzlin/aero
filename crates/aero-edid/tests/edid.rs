@@ -146,6 +146,10 @@ fn generate_edid_high_resolution_mode_is_sane() {
     assert_eq!(dtd.v_active, preferred.height);
     let refresh = dtd.refresh_hz();
     assert!((refresh - 60.0).abs() < 0.75, "refresh={refresh}");
+
+    let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
+    let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+    assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
 }
 
 #[test]
@@ -166,6 +170,20 @@ fn generate_edid_rejects_unrepresentable_preferred_mode() {
 fn generate_edid_rejects_excessive_refresh_rate() {
     // EDID range limits encode rates as u8, so >255Hz cannot be represented consistently.
     let edid = aero_edid::generate_edid(aero_edid::Timing::new(640, 480, 300));
+    assert_eq!(
+        &edid[54..72],
+        &[
+            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+            0x11, 0x00, 0x00, 0x18
+        ]
+    );
+}
+
+#[test]
+fn generate_edid_rejects_excessive_horizontal_frequency() {
+    // This timing fits within the DTD pixel clock limit, but implies a horizontal scan rate above
+    // what can be represented in the range limits descriptor (u8 kHz).
+    let edid = aero_edid::generate_edid(aero_edid::Timing::new(640, 4095, 240));
     assert_eq!(
         &edid[54..72],
         &[
