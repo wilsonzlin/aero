@@ -1,15 +1,9 @@
-use aero_devices::pci::profile::build_canonical_io_bus;
+use aero_devices::pci::profile::{
+    build_canonical_io_bus, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE, VIRTIO_INPUT_TABLET,
+};
 use aero_devices::pci::{
     PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
-
-const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
-const PCI_DEVICE_ID_VIRTIO_INPUT_MODERN: u16 = 0x1052;
-const PCI_SUBSYSTEM_VENDOR_ID_VIRTIO: u16 = 0x1af4;
-const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_KEYBOARD: u16 = 0x0010;
-const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_MOUSE: u16 = 0x0011;
-const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_TABLET: u16 = 0x0012;
-const PCI_REVISION_ID_CONTRACT_V1: u8 = 0x01;
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
@@ -107,9 +101,11 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
         .iter()
         .copied()
         .find(|info| {
-            info.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN)
-                && info.subsystem_vendor_id == PCI_SUBSYSTEM_VENDOR_ID_VIRTIO
-                && info.subsystem_device_id == PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_KEYBOARD
+            info.matches_vendor_device(
+                VIRTIO_INPUT_KEYBOARD.vendor_id,
+                VIRTIO_INPUT_KEYBOARD.device_id,
+            ) && info.subsystem_vendor_id == VIRTIO_INPUT_KEYBOARD.subsystem_vendor_id
+                && info.subsystem_device_id == VIRTIO_INPUT_KEYBOARD.subsystem_id
         })
         .expect("missing virtio-input keyboard function in canonical PCI topology");
 
@@ -118,11 +114,11 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
         "virtio-input keyboard must be function 0 (required for multifunction discovery)"
     );
     assert_eq!(
-        keyboard.revision_id, PCI_REVISION_ID_CONTRACT_V1,
+        keyboard.revision_id, VIRTIO_INPUT_KEYBOARD.revision_id,
         "virtio-input keyboard must report REV_01"
     );
     assert_eq!(
-        keyboard.header_type, 0x80,
+        keyboard.header_type, VIRTIO_INPUT_KEYBOARD.header_type,
         "virtio-input keyboard must set the multifunction bit (header_type 0x80)"
     );
 
@@ -134,31 +130,33 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
         .expect("virtio-input mouse must exist at the paired function 1 BDF");
 
     assert!(
-        mouse.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN),
+        mouse.matches_vendor_device(VIRTIO_INPUT_MOUSE.vendor_id, VIRTIO_INPUT_MOUSE.device_id),
         "virtio-input mouse must share vendor/device IDs with the keyboard"
     );
     assert_eq!(
-        mouse.subsystem_vendor_id, PCI_SUBSYSTEM_VENDOR_ID_VIRTIO,
+        mouse.subsystem_vendor_id, VIRTIO_INPUT_MOUSE.subsystem_vendor_id,
         "virtio-input mouse must use the virtio subsystem vendor ID"
     );
     assert_eq!(
-        mouse.subsystem_device_id, PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_MOUSE,
+        mouse.subsystem_device_id, VIRTIO_INPUT_MOUSE.subsystem_id,
         "virtio-input mouse must use the mouse subsystem ID"
     );
     assert_eq!(
-        mouse.revision_id, PCI_REVISION_ID_CONTRACT_V1,
+        mouse.revision_id, VIRTIO_INPUT_MOUSE.revision_id,
         "virtio-input mouse must report REV_01"
     );
     assert_eq!(
-        mouse.header_type, 0x00,
+        mouse.header_type, VIRTIO_INPUT_MOUSE.header_type,
         "virtio-input mouse must not advertise itself as multifunction"
     );
 
     let virtio_input_functions = found
         .iter()
         .filter(|info| {
-            info.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN)
-                && info.bdf.bus == keyboard.bdf.bus
+            info.matches_vendor_device(
+                VIRTIO_INPUT_KEYBOARD.vendor_id,
+                VIRTIO_INPUT_KEYBOARD.device_id,
+            ) && info.bdf.bus == keyboard.bdf.bus
                 && info.bdf.device == keyboard.bdf.device
         })
         .count();
@@ -173,23 +171,26 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
     if virtio_input_functions == 3 {
         let tablet = tablet.expect("virtio-input tablet must exist at the paired function 2 BDF");
         assert!(
-            tablet.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN),
+            tablet.matches_vendor_device(
+                VIRTIO_INPUT_TABLET.vendor_id,
+                VIRTIO_INPUT_TABLET.device_id
+            ),
             "virtio-input tablet must share vendor/device IDs with the keyboard"
         );
         assert_eq!(
-            tablet.subsystem_vendor_id, PCI_SUBSYSTEM_VENDOR_ID_VIRTIO,
+            tablet.subsystem_vendor_id, VIRTIO_INPUT_TABLET.subsystem_vendor_id,
             "virtio-input tablet must use the virtio subsystem vendor ID"
         );
         assert_eq!(
-            tablet.subsystem_device_id, PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_TABLET,
+            tablet.subsystem_device_id, VIRTIO_INPUT_TABLET.subsystem_id,
             "virtio-input tablet must use the tablet subsystem ID"
         );
         assert_eq!(
-            tablet.revision_id, PCI_REVISION_ID_CONTRACT_V1,
+            tablet.revision_id, VIRTIO_INPUT_TABLET.revision_id,
             "virtio-input tablet must report REV_01"
         );
         assert_eq!(
-            tablet.header_type, 0x00,
+            tablet.header_type, VIRTIO_INPUT_TABLET.header_type,
             "virtio-input tablet must not advertise itself as multifunction"
         );
     }

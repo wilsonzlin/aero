@@ -49,6 +49,38 @@ fn parse_subsys(pattern: &str) -> Option<(u16, u16)> {
     Some((subsys_vendor, subsys_device))
 }
 
+fn hwid_ven_dev(profile: PciDeviceProfile) -> String {
+    format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}",
+        profile.vendor_id, profile.device_id
+    )
+}
+
+fn hwid_ven_dev_rev(profile: PciDeviceProfile) -> String {
+    format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}&REV_{:02X}",
+        profile.vendor_id, profile.device_id, profile.revision_id
+    )
+}
+
+fn hwid_ven_dev_subsys(profile: PciDeviceProfile) -> String {
+    format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}",
+        profile.vendor_id, profile.device_id, profile.subsystem_id, profile.subsystem_vendor_id
+    )
+}
+
+fn hwid_ven_dev_subsys_rev(profile: PciDeviceProfile) -> String {
+    format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}&REV_{:02X}",
+        profile.vendor_id,
+        profile.device_id,
+        profile.subsystem_id,
+        profile.subsystem_vendor_id,
+        profile.revision_id
+    )
+}
+
 fn assert_contract_matches_profile(profile: PciDeviceProfile, contract: &serde_json::Value) {
     let pci_vendor_id = contract
         .get("pci_vendor_id")
@@ -84,10 +116,7 @@ fn assert_contract_matches_profile(profile: PciDeviceProfile, contract: &serde_j
         })
         .collect();
 
-    let expected_ven_dev = format!(
-        "PCI\\VEN_{:04X}&DEV_{:04X}",
-        profile.vendor_id, profile.device_id
-    );
+    let expected_ven_dev = hwid_ven_dev(profile);
     assert_has_pattern(&patterns, &expected_ven_dev);
 
     let subsys: Vec<(u16, u16)> = patterns.iter().filter_map(|p| parse_subsys(p)).collect();
@@ -459,9 +488,9 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
         })
         .collect();
 
-    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052");
-    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4");
-    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4");
+    assert_has_pattern(&patterns, &hwid_ven_dev(VIRTIO_INPUT_KEYBOARD));
+    assert_has_pattern(&patterns, &hwid_ven_dev_subsys(VIRTIO_INPUT_KEYBOARD));
+    assert_has_pattern(&patterns, &hwid_ven_dev_subsys(VIRTIO_INPUT_MOUSE));
 
     assert_eq!(VIRTIO_INPUT_KEYBOARD.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
@@ -535,16 +564,16 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     let inf_contents =
         std::fs::read_to_string(&inf_path).expect("read virtio-input INF from repository");
 
-    let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
-    let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
-    let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
-    let hwid_fallback_revisionless = "PCI\\VEN_1AF4&DEV_1052";
-    let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
+    let hwid_kbd = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_mouse = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_MOUSE);
+    let hwid_fallback = hwid_ven_dev_rev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_fallback_revisionless = hwid_ven_dev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_tablet = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_TABLET);
 
     let strings = inf_strings(&inf_contents);
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let kbd_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_kbd);
+        let kbd_entries = inf_model_entries_for_hwid(&inf_contents, section, &hwid_kbd);
         assert_eq!(
             kbd_entries.len(),
             1,
@@ -553,7 +582,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         );
         let (kbd_desc, kbd_install) = kbd_entries[0].clone();
 
-        let mouse_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_mouse);
+        let mouse_entries = inf_model_entries_for_hwid(&inf_contents, section, &hwid_mouse);
         assert_eq!(
             mouse_entries.len(),
             1,
@@ -562,7 +591,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         );
         let (mouse_desc, mouse_install) = mouse_entries[0].clone();
 
-        let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_fallback);
+        let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, &hwid_fallback);
         assert_eq!(
             fallback_entries.len(),
             1,
@@ -607,11 +636,12 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             "{section}: fallback DeviceDesc must be generic (must not equal mouse)"
         );
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback_revisionless).is_none(),
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_fallback_revisionless)
+                .is_none(),
             "{section}: canonical INF must not contain revision-less generic fallback model entry {hwid_fallback_revisionless}"
         );
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_tablet).is_none(),
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_tablet).is_none(),
             "{section}: virtio-input INF must not contain tablet subsystem model entry {hwid_tablet} (binds via aero_virtio_tablet.inf)"
         );
 
@@ -750,22 +780,10 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
                 .to_string()
         })
         .collect();
-    let hwid_tablet_rev = format!(
-        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}&REV_01",
-        VIRTIO_INPUT_TABLET.vendor_id,
-        VIRTIO_INPUT_TABLET.device_id,
-        VIRTIO_INPUT_TABLET.subsystem_id,
-        VIRTIO_INPUT_TABLET.subsystem_vendor_id,
-    );
-    let hwid_tablet = format!(
-        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}",
-        VIRTIO_INPUT_TABLET.vendor_id,
-        VIRTIO_INPUT_TABLET.device_id,
-        VIRTIO_INPUT_TABLET.subsystem_id,
-        VIRTIO_INPUT_TABLET.subsystem_vendor_id,
-    );
+    let hwid_tablet_rev = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_TABLET);
+    let hwid_tablet_no_rev = hwid_ven_dev_subsys(VIRTIO_INPUT_TABLET);
     assert_has_pattern(&patterns, &hwid_tablet_rev);
-    assert_has_pattern(&patterns, &hwid_tablet);
+    assert_has_pattern(&patterns, &hwid_tablet_no_rev);
 
     let inf_path = repo_root()
         .join("drivers/windows7/virtio-input/inf")
@@ -788,30 +806,29 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
     // fallback HWID (`...&REV_01`), since that fallback is provided by the keyboard/mouse INF.
     // The tablet HWID is more specific, so it wins over the fallback when both packages are
     // present.
-    let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
-    let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
-    let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
-    let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
+    let hwid_kbd = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_mouse = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_MOUSE);
+    let hwid_fallback = hwid_ven_dev_rev(VIRTIO_INPUT_KEYBOARD);
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
         let (tablet_desc, _tablet_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_tablet)
-                .unwrap_or_else(|| panic!("missing {hwid_tablet} model entry in [{section}]"));
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_tablet_rev)
+                .unwrap_or_else(|| panic!("missing {hwid_tablet_rev} model entry in [{section}]"));
         assert_eq!(
             tablet_desc, "%AeroVirtioTablet.DeviceDesc%",
             "{section}: unexpected DeviceDesc token for tablet model entry"
         );
 
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd).is_none(),
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_kbd).is_none(),
             "{section}: aero_virtio_tablet.inf must not include keyboard model entry {hwid_kbd}"
         );
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse).is_none(),
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_mouse).is_none(),
             "{section}: aero_virtio_tablet.inf must not include mouse model entry {hwid_mouse}"
         );
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
+            inf_model_entry_for_hwid(&inf_contents, section, &hwid_fallback).is_none(),
             "{section}: aero_virtio_tablet.inf must not include generic fallback model entry {hwid_fallback}"
         );
     }
