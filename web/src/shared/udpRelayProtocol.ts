@@ -162,7 +162,7 @@ export function encodeUdpRelayV2Datagram(
     throw new RangeError(`remoteIp must have length 4 (IPv4) or 16 (IPv6) (got ${ipLen})`);
   }
 
-  const headerLen = 4 + 2 + ipLen + 2;
+  const headerLen = ipLen === 4 ? UDP_RELAY_V2_IPV4_HEADER_LEN : UDP_RELAY_V2_IPV6_HEADER_LEN;
   const out = new Uint8Array(headerLen + d.payload.length);
   out[0] = UDP_RELAY_V2_MAGIC;
   out[1] = UDP_RELAY_V2_VERSION;
@@ -207,7 +207,7 @@ export function decodeUdpRelayV2Datagram(
     throw new UdpRelayDecodeError('invalid_v2', `unknown address family: 0x${af.toString(16)}`);
   }
 
-  const minLen = 4 + 2 + ipLen + 2;
+  const minLen = ipLen === 4 ? UDP_RELAY_V2_IPV4_HEADER_LEN : UDP_RELAY_V2_IPV6_HEADER_LEN;
   if (frame.length < minLen) {
     throw new UdpRelayDecodeError('too_short', `frame too short: ${frame.length} < ${minLen}`);
   }
