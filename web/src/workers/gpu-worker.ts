@@ -3222,6 +3222,22 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             try {
               snap = snapshotScanoutState(words);
             } catch {
+              // If scanout is WDDM-owned and base_paddr is non-zero, but the scanout
+              // descriptor cannot be snapshotted, treat it as unreadable and return the
+              // stub rather than falling back to legacy framebuffer paths.
+              try {
+                const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+                if (source === SCANOUT_SOURCE_WDDM) {
+                  const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+                  const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+                  if (((lo | hi) >>> 0) !== 0) {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
+                }
+              } catch {
+                // Ignore and fall through to the legacy screenshot paths.
+              }
               return false;
             }
 
