@@ -258,6 +258,95 @@ fn translates_compute_structured_buffer_load_store() {
 }
 
 #[test]
+fn structured_buffer_address_operands_use_raw_bits_not_float_to_int_heuristics() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use float-literal bit patterns for the structured buffer index/offset. DXBC register lanes are
+    // untyped, so the translator must treat these as raw `u32` bits (e.g. 16.0 -> 0x41800000) and
+    // must *not* attempt any float→int heuristics.
+    let index_bits = 16.0f32.to_bits();
+    let offset_bits = 4.0f32.to_bits();
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::ResourceBuffer {
+                slot: 0,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdStructured {
+                dst: dst_temp(0, WriteMask::XYZW),
+                index: src_imm_u32_scalar(index_bits),
+                offset: src_imm_u32_scalar(offset_bits),
+                buffer: BufferRef { slot: 0 },
+            },
+            Sm4Inst::StoreStructured {
+                uav: UavRef { slot: 0 },
+                index: src_imm_u32_scalar(index_bits),
+                offset: src_imm_u32_scalar(offset_bits),
+                value: src_temp(0, Swizzle::XYZW),
+                mask: WriteMask(0b0011),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let ld_index_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("var ld_struct_index0"))
+        .expect("expected ld_structured to declare a u32 index local");
+    assert!(
+        ld_index_line.contains("0x41800000u"),
+        "expected 16.0f32 bit pattern (0x41800000) to be preserved as raw u32 bits, line={}",
+        ld_index_line
+    );
+
+    let ld_offset_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("var ld_struct_offset0"))
+        .expect("expected ld_structured to declare a u32 offset local");
+    assert!(
+        ld_offset_line.contains("0x40800000u"),
+        "expected 4.0f32 bit pattern (0x40800000) to be preserved as raw u32 bits, line={}",
+        ld_offset_line
+    );
+
+    let store_index_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("var store_struct_index1"))
+        .expect("expected store_structured to declare a u32 index local");
+    assert!(
+        store_index_line.contains("0x41800000u"),
+        "expected store_structured to preserve 16.0f32 bits as u32, line={}",
+        store_index_line
+    );
+
+    assert!(
+        !translated.wgsl.contains("floor("),
+        "structured buffer indexing should not use float→int heuristics:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn rejects_store_structured_with_empty_write_mask() {
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
