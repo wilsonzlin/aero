@@ -28,8 +28,9 @@
 //!   - When MSI is enabled and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
 //!     sink, NVMe completions trigger MSI deliveries instead of asserting INTx.
 //!   - MSI-X exposes a BAR0-backed MSI-X table/PBA region (currently a single vector). The device
-//!     model routes guest BAR0 MMIO accesses to the table/PBA so guests can configure vectors.
-//!     Interrupt delivery via MSI-X is not yet modelled.
+//!     model routes guest BAR0 MMIO accesses to the table/PBA so guests can configure vectors; when
+//!     MSI-X is enabled and the platform attaches an MSI sink, NVMe completions trigger MSI-X
+//!     deliveries instead of asserting INTx.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -96,8 +97,9 @@ const NVME_MAX_PENDING_SQ_TAIL_UPDATES: usize = NVME_MAX_IO_QUEUES + 1; // + adm
 // -----------------------------------------------------------------------------
 //
 // We expose a minimal MSI-X capability so guests can bind modern NVMe drivers that prefer MSI-X
-// over legacy INTx. The controller model does not yet deliver MSI-X interrupts, but guests still
-// expect the BAR-backed MSI-X table/PBA to exist and to be writable.
+// over legacy INTx. The model delivers interrupts through MSI-X vector 0 when MSI-X is enabled and
+// the platform provides an MSI sink, while still exposing the BAR-backed table/PBA for guest
+// programming.
 //
 // Layout:
 // - Table: BAR0 + 0x3000, one 16-byte entry (vector 0)
@@ -2340,14 +2342,22 @@ impl NvmePciDevice {
     }
 
     pub fn irq_level(&self) -> bool {
-        // If MSI is enabled and the platform has attached an MSI sink, suppress legacy INTx.
-        if self.msi_target.is_some()
-            && self
+        // If MSI/MSI-X is enabled and the platform has attached an MSI sink, suppress legacy INTx.
+        if self.msi_target.is_some() {
+            if self
+                .config
+                .capability::<MsixCapability>()
+                .is_some_and(|msix| msix.enabled())
+            {
+                return false;
+            }
+            if self
                 .config
                 .capability::<MsiCapability>()
                 .is_some_and(|msi| msi.enabled())
-        {
-            return false;
+            {
+                return false;
+            }
         }
 
         // PCI command bit 10 disables legacy INTx assertion.
@@ -2374,7 +2384,7 @@ impl NvmePciDevice {
         &mut self.controller
     }
 
-    /// Attach or detach an MSI sink used to deliver interrupts when the guest enables MSI.
+    /// Attach or detach an MSI sink used to deliver interrupts when the guest enables MSI/MSI-X.
     pub fn set_msi_target(&mut self, target: Option<Box<dyn MsiTrigger>>) {
         self.msi_target = target;
     }
@@ -2394,15 +2404,43 @@ impl NvmePciDevice {
         let prev_intx = self.controller.intx_level;
         self.controller.process(memory);
 
-        // NVMe interrupt requests are edge-triggered when delivered via MSI. Use the legacy INTx
-        // derived level (`NvmeController::intx_level`) as an internal "interrupt requested" signal
-        // and trigger MSI on a rising edge (empty -> non-empty completion queue).
-        if !prev_intx && self.controller.intx_level {
-            if let (Some(target), Some(msi)) = (
-                self.msi_target.as_mut(),
-                self.config.capability_mut::<MsiCapability>(),
-            ) {
-                let _ = msi.trigger(target.as_mut());
+        // NVMe interrupt requests are edge-triggered when delivered via MSI/MSI-X. Use the legacy
+        // INTx-derived level (`NvmeController::intx_level`) as an internal "interrupt requested"
+        // signal and trigger MSI/MSI-X on a rising edge (empty -> non-empty completion queue).
+        //
+        // For masked MSI/MSI-X vectors, the PCI capability logic latches a pending bit but does not
+        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
+        // guests can observe delivery after unmask.
+        if !self.controller.intx_level {
+            return;
+        }
+
+        let Some(target) = self.msi_target.as_mut() else {
+            return;
+        };
+
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.enabled() {
+                // Single-vector MSI-X: table entry 0, pending bit 0.
+                let pending = msix
+                    .snapshot_pba()
+                    .first()
+                    .is_some_and(|word| (word & 1) != 0);
+                if !prev_intx || pending {
+                    if let Some(msg) = msix.trigger(0) {
+                        target.as_mut().trigger_msi(msg);
+                    }
+                }
+                return;
+            }
+        }
+
+        if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
+            if msi.enabled() {
+                let pending = msi.pending_bits() != 0;
+                if !prev_intx || pending {
+                    let _ = msi.trigger(target.as_mut());
+                }
             }
         }
     }

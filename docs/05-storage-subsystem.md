@@ -536,7 +536,7 @@ into Aero’s `DiskBackend` abstraction and `MemoryBus` DMA interface.
   - Legacy INTx signalling (sufficient to boot most guests).
   - Single-vector MSI is supported by the NVMe PCI wrapper when enabled by the guest and wired up
     by the platform (`aero_platform::interrupts::msi::MsiTrigger`).
-  - MSI-X is not currently implemented.
+  - MSI-X is supported with a single vector.
 
 ### Windows 7 Compatibility (Driver Requirements)
 

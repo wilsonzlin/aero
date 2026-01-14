@@ -1,8 +1,9 @@
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::{
     profile::NVME_CONTROLLER, PciDevice as _, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
-use aero_devices_nvme::NvmeController;
+use aero_devices_nvme::{NvmeController, NVME_MSIX_TABLE_OFFSET};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
@@ -523,6 +524,91 @@ fn pc_platform_nvme_admin_identify_produces_msi_when_enabled() {
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
 
     // And legacy INTx should not be asserted while MSI is enabled.
+    assert!(!pc
+        .nvme
+        .as_ref()
+        .expect("nvme should be enabled")
+        .borrow()
+        .irq_level());
+}
+
+#[test]
+fn pc_platform_nvme_admin_identify_produces_msix_when_enabled() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Switch the platform into APIC mode so `PlatformInterrupts::get_pending` observes LAPIC state,
+    // and MSI-X destinations can resolve to the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing and BAR0 MMIO
+    // accesses (including MSI-X table programming).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program MSI-X table entry 0 and enable MSI-X.
+    let cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSIX)
+        .expect("NVMe should expose MSI-X capability");
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+    let table_base = bar0_base + u64::from(NVME_MSIX_TABLE_OFFSET);
+    pc.memory.write_u32(table_base + 0x0, 0xfee0_0000); // addr low
+    pc.memory.write_u32(table_base + 0x4, 0); // addr high
+    let vector: u16 = 0x0067;
+    pc.memory.write_u32(table_base + 0x8, u32::from(vector)); // data
+    pc.memory.write_u32(table_base + 0xc, 0); // unmasked
+
+    let ctrl = read_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x02),
+    );
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap.wrapping_add(0x02),
+        ctrl | (1 << 15),
+    );
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+    pc.process_nvme();
+
+    // MSI-X should have been delivered into the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // And legacy INTx should not be asserted while MSI-X is enabled.
     assert!(!pc
         .nvme
         .as_ref()

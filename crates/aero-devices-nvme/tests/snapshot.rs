@@ -706,11 +706,11 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
         disk.clone(),
     ))));
 
-    // NVMe profile exposes an MSI-X capability backed by BAR0.
+    // NVMe always exposes an MSI-X capability with a single table entry backed by BAR0.
     let msix_cap_off = dev
         .config_mut()
         .find_capability(PCI_CAP_ID_MSIX)
-        .expect("NVMe device should expose MSI-X capability") as u16;
+        .expect("NVMe should expose MSI-X capability") as u16;
 
     // Enable MSI-X via the Message Control enable bit.
     let ctrl = dev.config_mut().read(msix_cap_off + 0x02, 2) as u16;
@@ -754,7 +754,7 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
     let msix_cap_off2 = restored
         .config_mut()
         .find_capability(PCI_CAP_ID_MSIX)
-        .expect("restored device should expose MSI-X capability") as u16;
+        .expect("restored device should have MSI-X capability") as u16;
     restored.load_state(&snap).unwrap();
 
     // MSI-X enable bit should be preserved via PCI config-space snapshot.
