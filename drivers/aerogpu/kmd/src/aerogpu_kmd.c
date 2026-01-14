@@ -1506,6 +1506,13 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_DEVICE_NOT_READY;
     }
+    /*
+     * Be defensive against partial BAR0 mappings. Legacy submission requires the
+     * ring head/tail/doorbell registers.
+     */
+    if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
+        return STATUS_DEVICE_NOT_READY;
+    }
 
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->RingLock, &oldIrql);
@@ -1562,6 +1569,10 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     }
     if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
+        return STATUS_DEVICE_NOT_READY;
+    }
+    /* Defensive: ring submission requires a usable doorbell register in BAR0. */
+    if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG))) {
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -2886,7 +2897,25 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         }
     }
 
-    InterlockedExchange(&adapter->AcceptingSubmissions, 1);
+    /*
+     * Only allow submissions if BAR0 contains the required ring + doorbell registers.
+     * Some bring-up/partial device models may expose enough MMIO for discovery/scanout
+     * but not the DMA submission path.
+     */
+    BOOLEAN canSubmit = FALSE;
+    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        canSubmit = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
+                     adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
+                        ? TRUE
+                        : FALSE;
+    } else {
+        canSubmit =
+            (adapter->RingVa && adapter->RingEntryCount != 0 &&
+             adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG)))
+                ? TRUE
+                : FALSE;
+    }
+    InterlockedExchange(&adapter->AcceptingSubmissions, canSubmit ? 1 : 0);
     return STATUS_SUCCESS;
 }
 
@@ -3300,8 +3329,19 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
         }
 
-        if (adapter->Bar0 && adapter->RingVa && adapter->RingEntryCount != 0 &&
-            (adapter->AbiKind != AEROGPU_ABI_KIND_V1 || adapter->RingHeader != NULL)) {
+        BOOLEAN canSubmit = FALSE;
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            canSubmit = (adapter->Bar0 && adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
+                         adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
+                            ? TRUE
+                            : FALSE;
+        } else {
+            canSubmit = (adapter->Bar0 && adapter->RingVa && adapter->RingEntryCount != 0 &&
+                         adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG)))
+                            ? TRUE
+                            : FALSE;
+        }
+        if (canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
         }
 
@@ -8442,9 +8482,13 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
 
     BOOLEAN ringReady = FALSE;
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        ringReady = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) ? TRUE : FALSE;
+        ringReady = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
+                     adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
+                        ? TRUE
+                        : FALSE;
     } else {
-        if (adapter->RingVa && adapter->RingEntryCount != 0) {
+        if (adapter->RingVa && adapter->RingEntryCount != 0 &&
+            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
             const ULONGLONG minRingBytes =
                 (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
             if (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes && adapter->RingTail < adapter->RingEntryCount) {
