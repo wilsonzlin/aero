@@ -4,7 +4,7 @@ use aero_usb::xhci::context::{
     SLOT_STATE_CONFIGURED,
 };
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
 mod util;
@@ -29,6 +29,7 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // --- Enable Slot (TRB0) ---
     {
@@ -226,6 +227,7 @@ fn configure_endpoint_preserves_topology_when_output_slot_context_is_uninitializ
     }
 
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     {
         let mut cfg = Trb::new(input_ctx, 0, 0);
         cfg.set_cycle(true);

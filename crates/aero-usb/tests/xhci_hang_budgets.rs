@@ -120,6 +120,7 @@ fn xhci_controller_command_ring_self_link_sets_hce() {
 
     let mut xhci = XhciController::new();
     xhci.set_command_ring(ring_base, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     xhci.process_command_ring(&mut mem, usize::MAX);
 

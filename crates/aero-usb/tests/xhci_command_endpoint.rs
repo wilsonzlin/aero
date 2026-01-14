@@ -2,7 +2,7 @@ mod util;
 
 use aero_usb::xhci::context::CONTEXT_SIZE;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
 use util::{Alloc, TestMemory};
@@ -19,6 +19,7 @@ fn xhci_command_ring_stop_reset_and_set_trdp_update_context_and_ring_cursor() {
 
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);

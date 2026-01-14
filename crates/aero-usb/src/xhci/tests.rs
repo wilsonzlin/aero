@@ -1069,6 +1069,7 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
     }
 
     ctrl.set_command_ring(cmd_ring, true);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Evaluate Context updates EP0's transfer ring state and should clear any in-flight EP0 control
     // TD tracking.
@@ -1163,6 +1164,7 @@ fn command_ring_address_device_resets_ep0_control_td_state() {
     }
 
     ctrl.set_command_ring(cmd_ring, true);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // If a control TD was in-flight, Address Device updates EP0's dequeue pointer and must reset
     // internal TD tracking to avoid consuming stale cursor state.

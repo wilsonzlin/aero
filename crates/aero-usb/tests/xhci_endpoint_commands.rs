@@ -48,6 +48,7 @@ fn endpoint_commands_update_context_and_transfer_ring() {
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     {
@@ -189,6 +190,7 @@ fn stop_endpoint_disabled_endpoint_returns_endpoint_not_enabled_error() {
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     {

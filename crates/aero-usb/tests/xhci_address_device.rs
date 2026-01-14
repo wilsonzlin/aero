@@ -30,6 +30,7 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     let mut enable = Trb::default();
@@ -133,6 +134,7 @@ fn address_device_invalid_port_fails_gracefully() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let mut enable = Trb::default();
     enable.set_cycle(true);
@@ -199,6 +201,7 @@ fn address_device_missing_output_context_does_not_set_address() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     let mut enable = Trb::default();
@@ -280,6 +283,7 @@ fn address_device_bsr_does_not_issue_set_address() {
     while xhci.pop_pending_event().is_some() {}
     xhci.set_dcbaap(dcbaa);
     xhci.set_command_ring(cmd_ring, true);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot.
     let mut enable = Trb::default();

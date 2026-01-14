@@ -898,6 +898,11 @@ impl XhciController {
         if self.host_controller_error {
             return true;
         }
+        // Command-ring execution is gated on `USBCMD.RUN` (see xHCI spec). Keep the host-side test
+        // harness consistent with the MMIO-driven command processor.
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            return false;
+        }
         let Some(mut cursor) = self.command_ring else {
             return true;
         };
