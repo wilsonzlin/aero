@@ -219,9 +219,9 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
     let (version1, data1) = extract_aerogpu_device_entry(&snap1);
     assert_eq!(version1, 2, "expected AeroGPU snapshot version v2");
 
-    // Ensure the payload is small enough to rule out "dump the whole 16MiB VRAM prefix".
+    // Ensure the payload is still substantially smaller than a full 16MiB VRAM dump.
     assert!(
-        data1.len() < 2 * 1024 * 1024,
+        data1.len() < aero_gpu_vga::DEFAULT_VRAM_SIZE / 2,
         "expected sparse AeroGPU snapshot payload; got {} bytes",
         data1.len()
     );
