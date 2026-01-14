@@ -537,7 +537,6 @@ impl IoSnapshot for XhciPciDevice {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        self.controller = XhciController::new();
         self.irq.set_level(false);
         self.last_irq_level = false;
 
@@ -585,9 +584,10 @@ impl IoSnapshot for XhciPciDevice {
         }
 
         if let Some(buf) = r.bytes(TAG_CONTROLLER) {
-            // Older snapshots may omit the controller field; the default controller created above
-            // is a valid deterministic baseline in that case.
             self.controller.load_state(buf)?;
+        } else {
+            // Older snapshots may omit the controller field; fall back to a deterministic baseline.
+            self.controller = XhciController::new();
         }
 
         if let Some(buf) = r.bytes(TAG_LAST_IRQ) {

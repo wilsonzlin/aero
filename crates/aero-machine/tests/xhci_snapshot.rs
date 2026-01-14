@@ -5,6 +5,9 @@ use std::rc::Rc;
 use aero_devices::pci::{profile, PciInterruptPin};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
+use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::hub::UsbHubDevice;
+use aero_usb::{ControlResponse, SetupPacket, UsbInResult};
 use pretty_assertions::{assert_eq, assert_ne};
 
 #[test]
@@ -84,4 +87,79 @@ fn snapshot_restore_roundtrips_xhci_state_and_redrives_intx_level() {
         true,
         "expected PCI INTx (GSI {gsi}) to be asserted for xHCI (bdf={bdf:?}) after restore"
     );
+}
+
+#[test]
+fn snapshot_restore_preserves_host_attached_xhci_device_handles() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on xHCI snapshot restore behavior.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Host attach a hub + a shareable USB HID keyboard handle.
+    vm.usb_xhci_attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(2)))
+        .expect("attach hub at root port 0");
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    let keyboard_handle = keyboard.clone();
+    vm.usb_xhci_attach_at_path(&[0, 1], Box::new(keyboard))
+        .expect("attach keyboard behind hub");
+
+    // Configure the keyboard so injected key events buffer interrupt reports.
+    {
+        let xhci = vm.xhci().expect("xhci enabled");
+        let mut xhci = xhci.borrow_mut();
+        let ctrl = xhci.controller_mut();
+
+        let kb_dev = ctrl
+            .find_device_by_topology(1, &[1])
+            .expect("keyboard reachable via topology");
+
+        let setup = SetupPacket {
+            bm_request_type: 0x00, // Host-to-device | Standard | Device
+            b_request: 9,          // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        };
+        assert_eq!(
+            kb_dev.model_mut().handle_control_request(setup, None),
+            ControlResponse::Ack,
+            "expected SET_CONFIGURATION to succeed"
+        );
+    }
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // After restore, the host-side keyboard handle must still drive the attached device model.
+    keyboard_handle.key_event(0x04, true); // HID usage: 'A'
+
+    let xhci = vm.xhci().expect("xhci enabled");
+    let mut xhci = xhci.borrow_mut();
+    let ctrl = xhci.controller_mut();
+    let kb_dev = ctrl
+        .find_device_by_topology(1, &[1])
+        .expect("keyboard still reachable after restore");
+
+    match kb_dev.model_mut().handle_interrupt_in(0x81) {
+        UsbInResult::Data(report) => {
+            assert_eq!(report.len(), 8);
+            // Boot keyboard report: bytes[2..] are key usage codes; ensure 'A' is present.
+            assert_eq!(report[2], 0x04);
+        }
+        other => panic!("expected interrupt report after key injection, got {other:?}"),
+    }
 }
