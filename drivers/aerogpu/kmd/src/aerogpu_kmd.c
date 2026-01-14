@@ -2685,7 +2685,33 @@ static NTSTATUS AeroGpuV1FencePageInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 
 static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
-    AeroGpuFreeContiguousNonCached(Adapter, Adapter->RingVa, (SIZE_T)Adapter->RingSizeBytes);
+    if (!Adapter) {
+        return;
+    }
+
+    /*
+     * Ring state can be observed concurrently by:
+     *  - dbgctl escapes (under RingLock),
+     *  - internal submission cleanup (under PendingLock), and
+     *  - legacy ring head/tail polling (under RingLock).
+     *
+     * Detach pointers/metadata under the same lock ordering used elsewhere
+     * (PendingLock -> RingLock), then free outside the locks to avoid holding
+     * spin locks across potentially slow MmFreeContiguousMemory* calls.
+     */
+    PVOID ringVa = NULL;
+    SIZE_T ringSizeBytes = 0;
+    PVOID fencePageVa = NULL;
+
+    KIRQL pendingIrql;
+    KeAcquireSpinLock(&Adapter->PendingLock, &pendingIrql);
+
+    KIRQL ringIrql;
+    KeAcquireSpinLock(&Adapter->RingLock, &ringIrql);
+
+    ringVa = Adapter->RingVa;
+    ringSizeBytes = (SIZE_T)Adapter->RingSizeBytes;
+
     Adapter->RingVa = NULL;
     Adapter->RingPa.QuadPart = 0;
     Adapter->RingSizeBytes = 0;
@@ -2696,9 +2722,15 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
     Adapter->LegacyRingTailSeq = 0;
     Adapter->RingHeader = NULL;
 
-    AeroGpuFreeContiguousNonCached(Adapter, Adapter->FencePageVa, PAGE_SIZE);
+    fencePageVa = Adapter->FencePageVa;
     Adapter->FencePageVa = NULL;
     Adapter->FencePagePa.QuadPart = 0;
+
+    KeReleaseSpinLock(&Adapter->RingLock, ringIrql);
+    KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
+
+    AeroGpuFreeContiguousNonCached(Adapter, ringVa, ringSizeBytes);
+    AeroGpuFreeContiguousNonCached(Adapter, fencePageVa, PAGE_SIZE);
 }
 
 static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTER* Adapter)
