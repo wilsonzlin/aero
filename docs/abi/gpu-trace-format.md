@@ -7,6 +7,21 @@ deterministically in isolation.
 > Status: **v2** (adds raw `aerogpu_cmd.h` submission capture). Backwards-incompatible
 > changes must bump `container_version` in the file header.
 
+## Compatibility policy (container + ABI)
+
+This spec distinguishes two versioned layers:
+
+- **`container_version`**: the on-disk *trace container format* version (this document).
+  - Readers should remain **backwards compatible** with older container versions.
+  - Readers must **reject unknown newer** container versions deterministically.
+  - `RecordType::AerogpuSubmission` is a **v2+** record type; v1 traces must not contain it.
+- **`command_abi_version`**: the version of the *recorded GPU command ABI*.
+  - For canonical AeroGPU traces this is `AEROGPU_ABI_VERSION_U32` (`(major << 16) | minor`).
+  - The AeroGPU ABI’s own compatibility rules apply (minor versions are backwards-compatible
+    extensions; major version changes are breaking).
+  - Note: the trace container itself stores this value in the header/metadata but does not
+    interpret it; decoders/replayers should validate it according to the command ABI.
+
 ---
 
 ## Goals / Non-goals
