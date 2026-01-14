@@ -328,6 +328,14 @@ pub const OPCODE_DCL_INPUT_CONTROL_POINT_COUNT: u32 = 0x112;
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
 pub const OPCODE_DCL_THREAD_GROUP: u32 = 0x11f;
 
+/// `dcl_resource` (typed SRV resource; e.g. `Texture2D t#`).
+///
+/// Typed resources include an extra dimension token after the resource operand (e.g. `2` for
+/// `Texture2D`).
+///
+/// Upstream: `D3D10_SB_OPCODE_DCL_RESOURCE`.
+pub const OPCODE_DCL_RESOURCE: u32 = 0x102;
+
 /// `dcl_resource_raw t#` (raw SRV buffer; `ByteAddressBuffer`).
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_RESOURCE_RAW`.
@@ -538,6 +546,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_FIRSTBIT_SHI => Some("firstbit_shi"),
         OPCODE_SYNC => Some("sync"),
         OPCODE_DCL_THREAD_GROUP => Some("dcl_thread_group"),
+        OPCODE_DCL_RESOURCE => Some("dcl_resource"),
         OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),

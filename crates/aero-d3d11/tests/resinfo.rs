@@ -1,3 +1,4 @@
+use aero_d3d11::binding_model::BINDING_BASE_TEXTURE;
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
@@ -7,10 +8,6 @@ use aero_d3d11::{
 use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
-
-// Declaration opcode used by the existing decoder tests. This is not currently exposed as a public
-// constant in the opcode table.
-const OPCODE_DCL_RESOURCE: u32 = 0x102;
 
 fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(tokens.len() * 4);
@@ -108,10 +105,10 @@ fn decodes_and_translates_resinfo_for_texture2d() {
     body.extend_from_slice(&tex_decl);
     body.push(2);
 
-    // resinfo r0.xyzw, l(0), t0
+    // resinfo r0.xyzw, l(3), t0
     body.push(opcode_token(OPCODE_RESINFO, 1 + 2 + 2 + 2));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
-    body.extend_from_slice(&imm32_scalar(0));
+    body.extend_from_slice(&imm32_scalar(3));
     body.extend_from_slice(&reg_src_resource(0));
 
     body.push(opcode_token(OPCODE_RET, 1));
@@ -145,14 +142,23 @@ fn decodes_and_translates_resinfo_for_texture2d() {
         "expected resinfo to store integer bits via bitcast:\n{}",
         translated.wgsl
     );
+    let t0 = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 }))
+        .expect("expected reflection to include t0 Texture2D binding");
+    assert_eq!(
+        t0.group, 2,
+        "expected compute-stage texture binding to use @group(2)"
+    );
+    assert_eq!(
+        t0.binding, BINDING_BASE_TEXTURE,
+        "expected t0 Texture2D binding to use BINDING_BASE_TEXTURE"
+    );
     assert!(
-        translated
-            .reflection
-            .bindings
-            .iter()
-            .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })),
-        "expected reflection to include t0 Texture2D binding (bindings={:#?})",
-        translated.reflection.bindings
+        t0.visibility.contains(wgpu::ShaderStages::COMPUTE),
+        "expected t0 Texture2D binding to have compute visibility"
     );
     assert_wgsl_validates(&translated.wgsl);
 }
