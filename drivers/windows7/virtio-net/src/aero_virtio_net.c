@@ -4499,6 +4499,7 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
 static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapterContext, _In_ PNET_DEVICE_PNP_EVENT NetDevicePnPEvent) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportAdapterContext;
   NDIS_HANDLE InterruptHandle;
+  ULONG I;
   const BOOLEAN CanDeregisterInterrupt = (KeGetCurrentIrql() == PASSIVE_LEVEL) ? TRUE : FALSE;
 
   if (!Adapter || !NetDevicePnPEvent) {
@@ -4519,6 +4520,9 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     // without holding Adapter->Lock.
     (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.QueueNotifyAddrCache, NULL);
     Adapter->Vdev.QueueNotifyAddrCacheCount = 0;
+    for (I = 0; I < RTL_NUMBER_OF(Adapter->QueueNotifyAddrCache); I++) {
+      (VOID)InterlockedExchangePointer((PVOID*)&Adapter->QueueNotifyAddrCache[I], NULL);
+    }
     (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.NotifyBase, NULL);
     (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.CommonCfg, NULL);
     (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.IsrStatus, NULL);
