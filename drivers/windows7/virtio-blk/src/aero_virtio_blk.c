@@ -1288,6 +1288,18 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     outInfo.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
     outInfo.MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
     outInfo.Reserved0 = 0;
+    if (devExt->Removed) {
+      outInfo.Reserved0 |= AEROVBLK_QUERY_FLAG_REMOVED;
+    }
+    if (devExt->SurpriseRemoved) {
+      outInfo.Reserved0 |= AEROVBLK_QUERY_FLAG_SURPRISE_REMOVED;
+    }
+    if (devExt->ResetInProgress != 0) {
+      outInfo.Reserved0 |= AEROVBLK_QUERY_FLAG_RESET_IN_PROGRESS;
+    }
+    if (devExt->ResetPending != 0) {
+      outInfo.Reserved0 |= AEROVBLK_QUERY_FLAG_RESET_PENDING;
+    }
 
     msixConfig = VIRTIO_PCI_MSI_NO_VECTOR;
     msixQueue0 = VIRTIO_PCI_MSI_NO_VECTOR;

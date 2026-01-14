@@ -52,6 +52,12 @@ typedef struct _AEROVBLK_QUERY_INFO {
     uint16_t MsixConfigVector;
     uint16_t MsixQueue0Vector;
     uint32_t MessageCount;
+    /*
+     * Flags (was Reserved0).
+     *
+     * This field is always present in the extended query layout (>= 0x20 bytes)
+     * but older callers may ignore it. See AEROVBLK_QUERY_FLAG_*.
+     */
     uint32_t Reserved0;
 
     /* SRB function counters (appended). */
@@ -65,3 +71,9 @@ typedef struct _AEROVBLK_QUERY_INFO {
     uint32_t CapacityChangeEvents;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
 #pragma pack(pop)
+
+/* AEROVBLK_QUERY_INFO.Reserved0 flags (AEROVBLK_QUERY_FLAG_*). */
+#define AEROVBLK_QUERY_FLAG_REMOVED 0x00000001u
+#define AEROVBLK_QUERY_FLAG_SURPRISE_REMOVED 0x00000002u
+#define AEROVBLK_QUERY_FLAG_RESET_IN_PROGRESS 0x00000004u
+#define AEROVBLK_QUERY_FLAG_RESET_PENDING 0x00000008u

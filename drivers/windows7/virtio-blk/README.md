@@ -167,6 +167,11 @@ The driver supports a minimal `IOCTL_SCSI_MINIPORT` query:
 
 Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats + interrupt mode/MSI-X vectors + abort/reset counters).
 
+Notes:
+
+- `AEROVBLK_QUERY_INFO.Reserved0` is used as a flags field (`AEROVBLK_QUERY_FLAG_*`) and may report whether the adapter is
+  currently stopped/removed or in a reset/recovery state.
+
 The output struct is **variable-length** for backwards compatibility: callers that only
 understand the original v1 layout can request/consume just the first 16 bytes (through
 `UsedIdx`).
