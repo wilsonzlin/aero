@@ -193,6 +193,36 @@ impl XhciTransferExecutor {
                     }
                 }
             }
+            TrbType::NoOp => {
+                // A No-op Transfer TRB completes immediately without issuing any USB bus
+                // transaction. Treat it as a zero-length TD and (optionally) generate a Transfer
+                // Event if IOC is set.
+                let trb_ptr = ep.ring.dequeue_ptr;
+                let ioc = trb.ioc();
+
+                match ep.ring.dequeue_ptr.checked_add(TRB_SIZE) {
+                    Some(next) => ep.ring.dequeue_ptr = next,
+                    None => {
+                        ep.halted = true;
+                        self.pending_events.push(TransferEvent {
+                            ep_addr: ep.ep_addr,
+                            trb_ptr,
+                            residual: 0,
+                            completion_code: CompletionCode::TrbError,
+                        });
+                        return;
+                    }
+                }
+
+                if ioc {
+                    self.pending_events.push(TransferEvent {
+                        ep_addr: ep.ep_addr,
+                        trb_ptr,
+                        residual: 0,
+                        completion_code: CompletionCode::Success,
+                    });
+                }
+            }
             TrbType::Link => {
                 // If we land on a link TRB after a TD commit, skip it now.
                 let _ = self.skip_link_trbs(mem, ep);

@@ -893,3 +893,64 @@ fn xhci_transfer_executor_advances_past_unsupported_trb_and_processes_next() {
         ring_base + 2 * TRB_LEN
     );
 }
+
+#[test]
+fn xhci_transfer_executor_noop_trb_advances_ring_and_does_not_touch_device() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let noop_addr = ring_base;
+    let normal_trb_addr = ring_base + TRB_LEN;
+
+    let mut noop = Trb::new(0, 0, 0);
+    noop.set_trb_type(TrbType::NoOp);
+    noop.set_cycle(true);
+    noop.control |= Trb::CONTROL_IOC_BIT;
+    write_trb(&mut mem, noop_addr, noop);
+
+    let buf = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf as u32, &sentinel);
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue.clone(), out_received);
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+    xhci.add_endpoint(0x81, ring_base);
+
+    // Tick #1: the NoOp TRB should complete successfully, advance the ring, and not invoke the
+    // device model (queue should be untouched, guest buffers unchanged).
+    xhci.tick_1ms(&mut mem);
+    assert_eq!(in_queue.borrow().len(), 1, "NoOp TRB must not consume IN queue");
+
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, sentinel);
+
+    assert_eq!(
+        xhci.take_events(),
+        &[TransferEvent {
+            ep_addr: 0x81,
+            trb_ptr: noop_addr,
+            residual: 0,
+            completion_code: CompletionCode::Success,
+        }]
+    );
+    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, normal_trb_addr);
+
+    // Tick #2: the Normal TRB should now complete and DMA the queued bytes.
+    xhci.tick_1ms(&mut mem);
+    assert!(in_queue.borrow().is_empty());
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
+
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, [1, 2, 3, 4]);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        ring_base + 2 * TRB_LEN
+    );
+}
