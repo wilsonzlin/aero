@@ -74,6 +74,11 @@ param(
   [Alias("VirtioInputMsixVectors")]
   [int]$VirtioInputVectors = 0,
 
+  # If set, disable MSI-X for virtio-pci devices created by the harness (virtio-net/blk/input/snd)
+  # so Windows 7 must use legacy INTx + ISR paths. This appends `,vectors=0` to each virtio `-device` arg.
+  [Parameter(Mandatory = $false)]
+  [switch]$VirtioDisableMsix,
+
   # If set, require INTx interrupt mode for attached virtio devices (blk/net/input/snd).
   # Fails if the guest reports MSI/MSI-X via virtio-*-irq markers.
   [Parameter(Mandatory = $false)]
@@ -311,6 +316,13 @@ if ($RequireIntx -and $RequireMsi) {
   throw "-RequireIntx and -RequireMsi are mutually exclusive."
 }
 
+if ($VirtioDisableMsix -and (($VirtioMsixVectors -gt 0) -or ($VirtioNetVectors -gt 0) -or ($VirtioBlkVectors -gt 0) -or ($VirtioSndVectors -gt 0) -or ($VirtioInputVectors -gt 0))) {
+  throw "-VirtioDisableMsix is mutually exclusive with -VirtioMsixVectors/-Virtio*Vectors (INTx-only mode disables MSI-X by forcing vectors=0)."
+}
+if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or $RequireVirtioSndMsix -or $RequireVirtioInputMsix)) {
+  throw "-VirtioDisableMsix is incompatible with -RequireVirtio*Msix (MSI-X is disabled)."
+}
+
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
   throw "-VirtioSndVectors requires -WithVirtioSnd."
 }
@@ -342,6 +354,23 @@ function Resolve-AeroWin7QemuMsixVectors {
     return 0
   }
   return $Vectors
+}
+
+function Assert-AeroWin7QemuAcceptsVectorsZero {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem,
+    [Parameter(Mandatory = $true)]
+    [string]$DeviceName
+  )
+
+  try {
+    # Use QEMU's `-device <name>,help` path to validate that `vectors=0` is accepted.
+    $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "$DeviceName,vectors=0"
+  } catch {
+    throw "QEMU rejected 'vectors=0' for device '$DeviceName' (required by -VirtioDisableMsix). Upgrade QEMU or omit -VirtioDisableMsix. $_"
+  }
 }
 
 if (-not $DisableUdp) {
@@ -1357,6 +1386,8 @@ function Get-AeroVirtioSoundDeviceArg {
 
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)] [int]$MsixVectors = 0,
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)] [switch]$DisableMsix,
     # Optional name of the PowerShell parameter that requested this override (for clearer warnings).
     [Parameter(Mandatory = $false)] [string]$VectorsParamName = "-VirtioMsixVectors",
 
@@ -1381,7 +1412,7 @@ function Get-AeroVirtioSoundDeviceArg {
   }
 
   $helpText = $null
-  if ($ModernOnly -or $MsixVectors -gt 0) {
+  if ($ModernOnly -or $MsixVectors -gt 0 -or $DisableMsix) {
     $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $deviceName
   }
 
@@ -1394,6 +1425,12 @@ function Get-AeroVirtioSoundDeviceArg {
     }
   }
 
+  if ($DisableMsix -and ($helpText -notmatch "(?m)^\s*vectors\b")) {
+    throw "QEMU device '$deviceName' does not advertise a 'vectors' property; cannot disable MSI-X via vectors=0. Upgrade QEMU or omit -VirtioDisableMsix."
+  }
+  if ($DisableMsix) {
+    Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName $deviceName
+  }
   if ($MsixVectors -gt 0 -and ($helpText -notmatch "(?m)^\s*vectors\b")) {
     Write-Warning "QEMU device '$deviceName' does not advertise a 'vectors' property; ignoring $VectorsParamName=$MsixVectors"
     $MsixVectors = 0
@@ -1404,7 +1441,9 @@ function Get-AeroVirtioSoundDeviceArg {
     $arg += ",disable-legacy=on,x-pci-revision=0x01"
   }
   $arg += ",audiodev=snd0"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
@@ -3767,19 +3806,41 @@ try {
   if (Test-Path -LiteralPath $qemuStderrPath) {
     Remove-Item -LiteralPath $qemuStderrPath -Force
   }
+
+  if ($VirtioDisableMsix) {
+    # Fail fast if the running QEMU build rejects `vectors=0` (used to disable MSI-X and force INTx).
+    Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-net-pci"
+    Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci"
+    if (-not $VirtioTransitional) {
+      Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci"
+      Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci"
+      if ($needVirtioTablet) {
+        Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci"
+      }
+    }
+  }
   if ($VirtioTransitional) {
     $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag
     $nic = "virtio-net-pci,netdev=net0"
-    if ($netVectors -gt 0) { $nic += ",vectors=$netVectors" }
+    if ($VirtioDisableMsix) {
+      $nic += ",vectors=0"
+    } elseif ($netVectors -gt 0) {
+      $nic += ",vectors=$netVectors"
+    }
 
     $virtioBlkArgs = @()
     $blkVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-blk-pci" -Vectors $requestedVirtioBlkVectors -ParamName $virtioBlkVectorsFlag
-    if ($blkVectors -gt 0) {
-      # Use an explicit virtio-blk-pci device so we can apply `vectors=`.
+    if ($VirtioDisableMsix -or $blkVectors -gt 0) {
+      # Use an explicit virtio-blk-pci device so we can apply `vectors=` / `vectors=0`.
       $driveId = "drive0"
       $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=none,id=$driveId,cache=writeback"
       if ($Snapshot) { $drive += ",snapshot=on" }
-      $blk = "virtio-blk-pci,drive=$driveId,vectors=$blkVectors"
+      $blk = "virtio-blk-pci,drive=$driveId"
+      if ($VirtioDisableMsix) {
+        $blk += ",vectors=0"
+      } else {
+        $blk += ",vectors=$blkVectors"
+      }
       $virtioBlkArgs = @(
         "-drive", $drive,
         "-device", $blk
@@ -3825,7 +3886,12 @@ try {
     if ($haveVirtioKbd) {
       $kbdArg = "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)"
       $kbdVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
-      if ($kbdVectors -gt 0) { $kbdArg += ",vectors=$kbdVectors" }
+      if ($VirtioDisableMsix) {
+        Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci"
+        $kbdArg += ",vectors=0"
+      } elseif ($kbdVectors -gt 0) {
+        $kbdArg += ",vectors=$kbdVectors"
+      }
       $virtioInputArgs += @(
         "-device", $kbdArg
       )
@@ -3833,7 +3899,12 @@ try {
     if ($haveVirtioMouse) {
       $mouseArg = "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
       $mouseVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
-      if ($mouseVectors -gt 0) { $mouseArg += ",vectors=$mouseVectors" }
+      if ($VirtioDisableMsix) {
+        Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci"
+        $mouseArg += ",vectors=0"
+      } elseif ($mouseVectors -gt 0) {
+        $mouseArg += ",vectors=$mouseVectors"
+      }
       $virtioInputArgs += @(
         "-device", $mouseArg
       )
@@ -3844,7 +3915,12 @@ try {
       }
       $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
       $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
-      if ($tabletVectors -gt 0) { $tabletArg += ",vectors=$tabletVectors" }
+      if ($VirtioDisableMsix) {
+        Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci"
+        $tabletArg += ",vectors=0"
+      } elseif ($tabletVectors -gt 0) {
+        $tabletArg += ",vectors=$tabletVectors"
+      }
       $virtioInputArgs += @(
         "-device", $tabletArg
       )
@@ -3881,7 +3957,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false -MsixVectors $requestedVirtioSndVectors -DisableMsix:$VirtioDisableMsix -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
@@ -3916,17 +3992,17 @@ try {
       $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag
     }
 
-    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $netVectors
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $netVectors -DisableMsix:$VirtioDisableMsix
     $driveId = "drive0"
     $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
-    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $blkVectors
+    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $blkVectors -DisableMsix:$VirtioDisableMsix
 
-    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $kbdVectors),id=$($script:VirtioInputKeyboardQmpId)"
-    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $mouseVectors),id=$($script:VirtioInputMouseQmpId)"
+    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $kbdVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputKeyboardQmpId)"
+    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $mouseVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputMouseQmpId)"
     $attachedVirtioInput = $true
     $virtioTabletArgs = @()
     if ($needVirtioTablet) {
-      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $tabletVectors),id=$($script:VirtioInputTabletQmpId)"
+      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $tabletVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputTabletQmpId)"
       $virtioTabletArgs = @(
         "-device", $tablet
       )
@@ -3962,7 +4038,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true -MsixVectors $requestedVirtioSndVectors -DisableMsix:$VirtioDisableMsix -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice

@@ -180,6 +180,28 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --timeout-seconds 600
 ```
 
+### INTx-only mode (disable MSI-X)
+
+By default, QEMU virtio-pci devices use MSI-X interrupts when available. To regression-test the **legacy INTx + ISR**
+paths in the Windows 7 drivers (contract v1 baseline), you can force QEMU to expose **no MSI-X capability** for the
+virtio devices the harness creates by appending `vectors=0`:
+
+- PowerShell: `-VirtioDisableMsix`
+- Python: `--virtio-disable-msix`
+
+Notes:
+
+- `-VirtioDisableMsix` / `--virtio-disable-msix` is **mutually exclusive** with the MSI-X vector override flags
+  (`-VirtioMsixVectors` / `--virtio-msix-vectors` and per-device `*Vectors` variants) and with
+  `-RequireVirtio*Msix` / `--require-virtio-*-msix`.
+- Some QEMU builds may reject `vectors=0`. In that case, the harness fails fast and includes the QEMU error in the
+  usual stderr sidecar log (`<serial-base>.qemu.stderr.log`).
+
+Expected markers (guest-side, for log scraping):
+
+- `virtio-*-irq|INFO|mode=intx|...` (per device)
+- virtio-blk miniport IRQ diagnostic: `...|mode=intx|...` (when emitted by the guest selftest)
+
 ### Requiring MSI-X to be enabled (host-side QMP check)
 
 By default, the harness will still PASS when Windows falls back to INTx (MSI/MSI-X is optional per the

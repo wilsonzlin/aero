@@ -159,11 +159,17 @@ function New-AeroWin7VirtioNetDeviceArg {
 
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
-    [int]$MsixVectors = 0
+    [int]$MsixVectors = 0,
+
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)]
+    [switch]$DisableMsix
   )
 
   $arg = "virtio-net-pci,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
@@ -198,11 +204,17 @@ function New-AeroWin7VirtioBlkDeviceArg {
 
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
-    [int]$MsixVectors = 0
+    [int]$MsixVectors = 0,
+
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)]
+    [switch]$DisableMsix
   )
 
   $arg = "virtio-blk-pci,drive=$DriveId,disable-legacy=on,x-pci-revision=0x01"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
@@ -213,11 +225,17 @@ function New-AeroWin7VirtioKeyboardDeviceArg {
   param(
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
-    [int]$MsixVectors = 0
+    [int]$MsixVectors = 0,
+
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)]
+    [switch]$DisableMsix
   )
 
   $arg = "virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
@@ -228,11 +246,17 @@ function New-AeroWin7VirtioMouseDeviceArg {
   param(
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
-    [int]$MsixVectors = 0
+    [int]$MsixVectors = 0,
+
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)]
+    [switch]$DisableMsix
   )
 
   $arg = "virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
@@ -243,11 +267,17 @@ function New-AeroWin7VirtioTabletDeviceArg {
   param(
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
-    [int]$MsixVectors = 0
+    [int]$MsixVectors = 0,
+
+    # If set, append `,vectors=0` to disable MSI-X and force legacy INTx.
+    [Parameter(Mandatory = $false)]
+    [switch]$DisableMsix
   )
 
   $arg = "virtio-tablet-pci,disable-legacy=on,x-pci-revision=0x01"
-  if ($MsixVectors -gt 0) {
+  if ($DisableMsix) {
+    $arg += ",vectors=0"
+  } elseif ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
   return $arg
