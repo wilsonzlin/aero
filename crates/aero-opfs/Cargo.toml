@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+# Enables shared-memory/threads-related helpers on wasm32 (e.g. using atomic counters so `Send`
+# wrappers can enforce thread affinity deterministically). This is intended to be driven by build
+# system features (see `aero-wasm`'s `wasm-threaded` feature).
+wasm-threaded = []
+
 [dependencies]
 aero-storage = { path = "../aero-storage" }
 

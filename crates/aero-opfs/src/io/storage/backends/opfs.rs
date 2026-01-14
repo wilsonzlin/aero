@@ -25,11 +25,11 @@ mod wasm {
         DiskBackend as StIdbDiskBackend, IndexedDbBackend as StIndexedDbBackend,
         IndexedDbBackendOptions, StorageError as StIdbError,
     };
-    #[cfg(not(target_feature = "atomics"))]
+    #[cfg(not(feature = "wasm-threaded"))]
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::collections::HashMap;
-    #[cfg(target_feature = "atomics")]
+    #[cfg(feature = "wasm-threaded")]
     use std::sync::atomic::{AtomicU32, Ordering};
     use wasm_bindgen::JsValue;
 
@@ -769,20 +769,20 @@ mod wasm {
         /// runtime (IO fails deterministically if used from the wrong thread).
         static OPFS_SEND_DISK_MAP: RefCell<HashMap<u32, OpfsBackend>> = RefCell::new(HashMap::new());
 
-        #[cfg(not(target_feature = "atomics"))]
+        #[cfg(not(feature = "wasm-threaded"))]
         static OPFS_SEND_DISK_NEXT_ID: Cell<u32> = const { Cell::new(1) };
     }
 
-    #[cfg(target_feature = "atomics")]
+    #[cfg(feature = "wasm-threaded")]
     static OPFS_SEND_DISK_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
     fn alloc_send_disk_id() -> u32 {
-        #[cfg(target_feature = "atomics")]
+        #[cfg(feature = "wasm-threaded")]
         {
             OPFS_SEND_DISK_NEXT_ID.fetch_add(1, Ordering::Relaxed)
         }
 
-        #[cfg(not(target_feature = "atomics"))]
+        #[cfg(not(feature = "wasm-threaded"))]
         {
             OPFS_SEND_DISK_NEXT_ID.with(|cell| {
                 let id = cell.get();
@@ -811,7 +811,7 @@ mod wasm {
     /// stores only an integer id + cached capacity and keeps the real backend in a thread-local
     /// map.
     ///
-    /// In wasm builds with threads enabled (`target-feature=+atomics`), IO methods fail
+    /// In wasm builds with threads enabled (`feature="wasm-threaded"`), IO methods fail
     /// deterministically if the wrapper is used from a different thread than the one that opened
     /// it.
     #[derive(Debug)]
