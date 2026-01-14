@@ -922,7 +922,7 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             };
-            let Some(reserved0) = read_u32_le(pkt.payload, 12) else {
+            let Some(stage_ex) = read_u32_le(pkt.payload, 12) else {
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             };
@@ -932,8 +932,9 @@ fn decode_known_fields(
             }
             out.insert("start_register".into(), json!(start_register));
             out.insert("vec4_count".into(), json!(vec4_count));
-            if reserved0 != 0 {
-                out.insert("reserved0".into(), json!(reserved0));
+            if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
+                out.insert("stage_ex".into(), json!(stage_ex));
+                out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }
             if let Some(int_count) = vec4_count.checked_mul(4) {
                 out.insert("int_count".into(), json!(int_count));
@@ -972,7 +973,7 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             };
-            let Some(reserved0) = read_u32_le(pkt.payload, 12) else {
+            let Some(stage_ex) = read_u32_le(pkt.payload, 12) else {
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             };
@@ -982,8 +983,9 @@ fn decode_known_fields(
             }
             out.insert("start_register".into(), json!(start_register));
             out.insert("bool_count".into(), json!(bool_count));
-            if reserved0 != 0 {
-                out.insert("reserved0".into(), json!(reserved0));
+            if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
+                out.insert("stage_ex".into(), json!(stage_ex));
+                out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }
             let Some(data_len) = bool_count.checked_mul(16) else {
                 out.insert("decode_error".into(), json!("bool_count overflow"));

@@ -249,12 +249,12 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
-    // SET_SHADER_CONSTANTS_I(stage=Compute, start_register=0, vec4_count=1, values=[1,2,3,4]).
+    // SET_SHADER_CONSTANTS_I(stage=Compute, start_register=0, vec4_count=1, stage_ex=Hull (3), values=[1,2,3,4]).
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 2); // stage=Compute
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 1); // vec4_count
-    push_u32_le(&mut payload, 0); // reserved0
+    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull
     for i in [1u32, 2, 3, 4] {
         push_u32_le(&mut payload, i);
     }
@@ -265,14 +265,14 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
-    // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, values=[0,1]).
+    // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, stage_ex=Domain (4), values=[0,1]).
     //
     // Each bool register is encoded as a vec4<u32> replicated across all lanes.
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 2); // stage=Compute
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 2); // bool_count
-    push_u32_le(&mut payload, 0); // reserved0
+    push_u32_le(&mut payload, 4); // reserved0 / stage_ex = Domain
     for &v in &[0u32, 1] {
         for _lane in 0..4 {
             push_u32_le(&mut payload, v);
@@ -988,6 +988,8 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(set_consts_i["decoded"]["stage"], 2);
     assert_eq!(set_consts_i["decoded"]["stage_name"], "Compute");
     assert_eq!(set_consts_i["decoded"]["vec4_count"], 1);
+    assert_eq!(set_consts_i["decoded"]["stage_ex"], 3);
+    assert_eq!(set_consts_i["decoded"]["stage_ex_name"], "Hull");
     assert_eq!(set_consts_i["decoded"]["data_len"], 16);
     assert_eq!(
         set_consts_i["decoded"]["data_prefix"],
@@ -998,6 +1000,8 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(set_consts_b["decoded"]["stage"], 2);
     assert_eq!(set_consts_b["decoded"]["stage_name"], "Compute");
     assert_eq!(set_consts_b["decoded"]["bool_count"], 2);
+    assert_eq!(set_consts_b["decoded"]["stage_ex"], 4);
+    assert_eq!(set_consts_b["decoded"]["stage_ex_name"], "Domain");
     assert_eq!(set_consts_b["decoded"]["data_len"], 32);
     assert_eq!(
         set_consts_b["decoded"]["data_prefix"],
