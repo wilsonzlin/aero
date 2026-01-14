@@ -4046,6 +4046,32 @@ function renderAudioPanel(): HTMLElement {
     }
   }
 
+  function snapshotWorkerCoordinator(): unknown {
+    try {
+      const wasm = {
+        cpu: workerCoordinator.getWorkerWasmStatus("cpu") ?? null,
+        gpu: workerCoordinator.getWorkerWasmStatus("gpu") ?? null,
+        io: workerCoordinator.getWorkerWasmStatus("io") ?? null,
+        jit: workerCoordinator.getWorkerWasmStatus("jit") ?? null,
+        net: workerCoordinator.getWorkerWasmStatus("net") ?? null,
+      };
+      return {
+        vmState: workerCoordinator.getVmState(),
+        statuses: workerCoordinator.getWorkerStatuses(),
+        wasm,
+        configVersion: workerCoordinator.getConfigVersion(),
+        configAckVersions: workerCoordinator.getWorkerConfigAckVersions(),
+        heartbeatCounter: workerCoordinator.getHeartbeatCounter(),
+        lastHeartbeatFromRing: workerCoordinator.getLastHeartbeatFromRing(),
+        lastFatal: workerCoordinator.getLastFatalEvent(),
+        lastNonFatal: workerCoordinator.getLastNonFatalEvent(),
+        pendingFullRestart: workerCoordinator.getPendingFullRestart(),
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   const exportMetricsButton = el("button", {
     text: "Export audio metrics (json)",
     onclick: () => {
@@ -4074,6 +4100,7 @@ function renderAudioPanel(): HTMLElement {
             overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
           },
           microphone: snapshotMicAttachment(),
+          workers: snapshotWorkerCoordinator(),
         };
 
         downloadJson(report, `aero-audio-metrics-${ts}.json`);
@@ -4176,6 +4203,7 @@ function renderAudioPanel(): HTMLElement {
             overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
           },
           microphone: snapshotMicAttachment(),
+          workers: snapshotWorkerCoordinator(),
         };
 
         const entries: Array<{ path: string; data: Uint8Array }> = [
@@ -4225,6 +4253,18 @@ function renderAudioPanel(): HTMLElement {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/aero.version-error.txt`, data: encoder.encode(message) });
+        }
+
+        // Worker coordinator snapshot (best-effort): captures worker state/health + wasm variants.
+        try {
+          const workersSnap = snapshotWorkerCoordinator();
+          entries.push({
+            path: `${dir}/workers.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, workers: workersSnap }, null, 2)),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/workers-error.txt`, data: encoder.encode(message) });
         }
 
         // HDA codec debug state (best-effort).
