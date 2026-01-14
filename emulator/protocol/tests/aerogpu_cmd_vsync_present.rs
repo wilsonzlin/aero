@@ -169,3 +169,28 @@ fn reader_does_not_copy_full_stream() {
     );
     assert!(read_calls <= 8, "expected few reads, got {read_calls}");
 }
+
+#[test]
+fn accepts_extended_present_packets() {
+    // PRESENT packets are fixed-size today, but newer guests may extend them by appending fields
+    // after the existing `{scanout_id, flags}` payload. The vsync-present helper should accept
+    // such packets as long as the prefix is present.
+    let mut stream = build_cmd_stream_header();
+    push_u32(&mut stream, AerogpuCmdOpcode::Present as u32);
+    push_u32(&mut stream, 20); // size_bytes (hdr + scanout_id + flags + extra u32)
+    push_u32(&mut stream, 0); // scanout_id
+    push_u32(&mut stream, AEROGPU_PRESENT_FLAG_VSYNC);
+    push_u32(&mut stream, 0); // reserved extension field
+    patch_stream_size(&mut stream);
+
+    assert!(cmd_stream_has_vsync_present_bytes(&stream).unwrap());
+
+    let base_gpa = 0x6000u64;
+    let stream_copy = stream.clone();
+    let read = |gpa: u64, buf: &mut [u8]| {
+        let off = usize::try_from(gpa - base_gpa).unwrap();
+        let end = off + buf.len();
+        buf.copy_from_slice(&stream_copy[off..end]);
+    };
+    assert!(cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap());
+}
