@@ -55,6 +55,36 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     );
     const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
 
+    // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
+    const ioWorkerImported = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out waiting for io.worker import marker"));
+      }, 5000);
+      (timer as unknown as { unref?: () => void }).unref?.();
+
+      const handler = (ev: MessageEvent): void => {
+        const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+        if (!data) return;
+        if (data.type === "__aero_io_worker_imported") {
+          cleanup();
+          resolve();
+          return;
+        }
+        if (data.type === "__aero_io_worker_import_failed") {
+          cleanup();
+          reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        ioWorker.removeEventListener("message", handler);
+      };
+
+      ioWorker.addEventListener("message", handler);
+    });
+
     let workerError: unknown = null;
     const onWorkerMessage = (ev: MessageEvent) => {
       const data = ev.data as { type?: unknown; message?: unknown };
@@ -190,26 +220,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     };
 
     try {
-      // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
-        const handler = (ev: MessageEvent): void => {
-          const data = ev.data as { type?: unknown; message?: unknown } | undefined;
-          if (!data) return;
-          if (data.type === "__aero_io_worker_imported") {
-            clearTimeout(timer);
-            ioWorker.removeEventListener("message", handler);
-            resolve();
-            return;
-          }
-          if (data.type === "__aero_io_worker_import_failed") {
-            clearTimeout(timer);
-            ioWorker.removeEventListener("message", handler);
-            reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
-          }
-        };
-        ioWorker.addEventListener("message", handler);
-      });
+      await ioWorkerImported;
 
       // io.worker waits for an initial boot disk selection message before reporting READY.
       ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
