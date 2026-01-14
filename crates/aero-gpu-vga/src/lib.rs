@@ -2144,10 +2144,11 @@ mod tests {
     }
 
     fn vbe_write_bgrx32(dev: &mut VgaDevice, byte_offset: u32, b: u8, g: u8, r: u8) {
-        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset, b);
-        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 1, g);
-        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 2, r);
-        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 3, 0x00);
+        let base = dev.lfb_base();
+        dev.mem_write_u8(base.wrapping_add(byte_offset), b);
+        dev.mem_write_u8(base.wrapping_add(byte_offset + 1), g);
+        dev.mem_write_u8(base.wrapping_add(byte_offset + 2), r);
+        dev.mem_write_u8(base.wrapping_add(byte_offset + 3), 0x00);
     }
 
     fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -2857,9 +2858,10 @@ mod tests {
         vbe_write(&mut dev, 0x0009, 1); // y_offset
         vbe_write(&mut dev, 0x0004, 0x0041); // enable + lfb
 
+        let base = dev.lfb_base();
         // Pixel at (0,0): blue (0x001F).
-        dev.mem_write_u8(SVGA_LFB_BASE, 0x1F);
-        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00);
+        dev.mem_write_u8(base, 0x1F);
+        dev.mem_write_u8(base.wrapping_add(1), 0x00);
 
         // Pixel at (x_offset,y_offset) = (1,1): 0x8543 (RGB565).
         //
@@ -2870,8 +2872,8 @@ mod tests {
         let x_offset = 1u32;
         let y_offset = 1u32;
         let offset_bytes = (y_offset * virt_width + x_offset) * bytes_per_pixel;
-        dev.mem_write_u8(SVGA_LFB_BASE + offset_bytes, 0x43);
-        dev.mem_write_u8(SVGA_LFB_BASE + offset_bytes + 1, 0x85);
+        dev.mem_write_u8(base.wrapping_add(offset_bytes), 0x43);
+        dev.mem_write_u8(base.wrapping_add(offset_bytes + 1), 0x85);
 
         dev.present();
 
