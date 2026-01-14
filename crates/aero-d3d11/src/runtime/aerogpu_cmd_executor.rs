@@ -5186,7 +5186,7 @@ impl AerogpuD3d11Executor {
             bail!("DRAW_INDEXED without index buffer");
         }
 
-        // Tessellation emulation validation.
+        // Tessellation validation.
         //
         // D3D11 patchlist topologies are only valid when a hull shader + domain shader are bound,
         // and the patchlist control point count must match the hull shader's
@@ -5945,6 +5945,15 @@ impl AerogpuD3d11Executor {
             expanded_index_alloc = Some(i_alloc);
             indirect_args_alloc = args_alloc;
         } else {
+            // Patchlist draws that hit this branch are running through a placeholder tessellation
+            // path. Avoid allocating/dispatching work proportional to the guest-provided draw
+            // counts: we only need to emit a single placeholder triangle.
+            let (primitive_count, instance_count, gs_instance_count) = if patchlist_only_emulation {
+                (1u32, 1u32, 1u32)
+            } else {
+                (primitive_count, instance_count, gs_instance_count)
+            };
+
             // The placeholder compute prepass currently emits a dense vertex buffer where
             // `vertex_index` == expanded vertex slot. Prefer a non-indexed indirect draw even when
             // the original guest draw was indexed. This avoids consuming a compute-written index
