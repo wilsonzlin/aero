@@ -3063,6 +3063,16 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
         out.extend_from_slice(entry);
     }
 
+    // Optional trailing VGA Attribute Controller state (palette mapping registers).
+    //
+    // The AeroGPU "legacy text scanout" path resolves text-mode colors via the VGA Attribute
+    // Controller registers. Preserve these so snapshot/restore keeps text colors deterministic when
+    // the guest programs 0x3C0/0x3C1.
+    out.extend_from_slice(b"ATRG");
+    // Attribute Controller indices are 5 bits wide (0x00..=0x1F). Masking on write means only the
+    // first 32 bytes are observable/meaningful.
+    out.extend_from_slice(&vram.attr_regs[..0x20]);
+
     out
 }
 
@@ -3341,14 +3351,20 @@ fn apply_aerogpu_snapshot_v2(
         } else {
             (0, false)
         };
-    let restored_dac = {
-        const TAG: &[u8; 4] = b"DACP";
-        const PALETTE_LEN: usize = 256 * 3;
-        const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
-
-        if bytes.get(off..off.saturating_add(4)) == Some(TAG.as_slice())
-            && bytes.len() >= off.saturating_add(TOTAL_LEN)
-        {
+    let mut restored_dac = false;
+    // Optional trailing sections:
+    // - `DACP`: VGA DAC state (PEL mask + palette)
+    // - `ATRG`: VGA Attribute Controller palette mapping regs
+    //
+    // Keep these after the variable-length VRAM payload for forward compatibility: older decoders
+    // stop after the page list, while newer versions can parse known tags and ignore the rest.
+    while let Some(tag) = bytes.get(off..off.saturating_add(4)) {
+        if tag == b"DACP" {
+            const PALETTE_LEN: usize = 256 * 3;
+            const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
+            if bytes.len() < off.saturating_add(TOTAL_LEN) {
+                break;
+            }
             let pel_mask = bytes.get(off + 4).copied().unwrap_or(0xFF);
             let pal_bytes = bytes.get((off + 5)..(off + 5 + PALETTE_LEN)).unwrap_or(&[]);
             let mut palette = [[0u8; 3]; 256];
@@ -3360,12 +3376,27 @@ fn apply_aerogpu_snapshot_v2(
             }
             vram.pel_mask = pel_mask;
             vram.dac_palette = palette;
-            true
-        } else {
-            false
+            restored_dac = true;
+            off = off.saturating_add(TOTAL_LEN);
+            continue;
         }
-    };
-    // Forward-compatible: ignore trailing bytes from future versions.
+
+        if tag == b"ATRG" {
+            const ATTR_LEN: usize = 0x20;
+            const TOTAL_LEN: usize = 4 + ATTR_LEN;
+            if bytes.len() < off.saturating_add(TOTAL_LEN) {
+                break;
+            }
+            if let Some(regs) = bytes.get((off + 4)..(off + 4 + ATTR_LEN)) {
+                vram.attr_regs[..ATTR_LEN].copy_from_slice(regs);
+            }
+            off = off.saturating_add(TOTAL_LEN);
+            continue;
+        }
+
+        break;
+    }
+    // Forward-compatible: ignore trailing bytes from future versions (including unknown tags).
 
     bar0.reset();
     bar0.restore_snapshot_v1(&crate::aerogpu::AeroGpuMmioSnapshotV1 {
