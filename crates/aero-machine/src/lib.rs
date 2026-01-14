@@ -51,7 +51,7 @@ use aero_devices::a20_gate::{A20Gate as A20GateDevice, A20_GATE_PORT};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
-use aero_devices::clock::ManualClock;
+use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::debugcon::{register_debugcon, SharedDebugConLog};
 use aero_devices::hpet;
@@ -4800,9 +4800,16 @@ Track progress: docs/21-smp.md\n\
             vga.borrow_mut().tick(delta_ns);
         }
 
+        // AeroGPU vblank scheduling is driven by the deterministic platform clock. Tick once at the
+        // pre-advance time so a newly-enabled scanout can establish its next-vblank deadline, then
+        // tick again after the clock jump to catch up.
+        self.process_aerogpu();
+
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
         }
+
+        self.process_aerogpu();
 
         if let Some(acpi_pm) = &self.acpi_pm {
             acpi_pm.borrow_mut().tick(delta_ns);
@@ -5266,17 +5273,7 @@ Track progress: docs/21-smp.md\n\
                     })
                     .unwrap_or(0);
 
-                // Tick vblank scheduling based on the deterministic platform clock so tests do not
-                // depend on wall clock time.
-                let clock_ns = self
-                    .platform_clock
-                    .as_ref()
-                    .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
-                    .unwrap_or(0);
-
-                let mut dev = aerogpu.borrow_mut();
-                dev.tick_vblank(clock_ns);
-                let mut level = dev.irq_level();
+                let mut level = aerogpu.borrow().irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -7237,7 +7234,9 @@ Track progress: docs/21-smp.md\n\
     /// -> advance head -> update completed fence + fence page) to make forward progress during
     /// `StartDevice` and early submission.
     pub fn process_aerogpu(&mut self) {
-        let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {
+        let (Some(aerogpu), Some(pci_cfg), Some(clock)) =
+            (&self.aerogpu_mmio, &self.pci_cfg, &self.platform_clock)
+        else {
             return;
         };
 
@@ -7252,8 +7251,10 @@ Track progress: docs/21-smp.md\n\
 
         // Ring DMA (reading guest memory, updating ring head, updating fence page) is gated by PCI
         // COMMAND.BME (bit 2).
+        let now_ns = clock.now_ns();
         let bus_master_enabled = (command & (1 << 2)) != 0;
         let mut dev = aerogpu.borrow_mut();
+        dev.tick_vblank(now_ns);
         dev.process(&mut self.mem, bus_master_enabled);
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
@@ -7634,6 +7635,7 @@ Track progress: docs/21-smp.md\n\
                     self.process_ahci();
                     self.process_nvme();
                     self.process_virtio_blk();
+                    self.process_aerogpu();
                     // Like storage controllers, the guest may have kicked a NIC queue immediately
                     // before executing `HLT` (e.g. E1000 TX descriptor doorbell). Poll the network
                     // bridge again here so the device can complete DMA and raise INTx to wake the
@@ -7649,6 +7651,7 @@ Track progress: docs/21-smp.md\n\
                     self.process_ahci();
                     self.process_nvme();
                     self.process_virtio_blk();
+                    self.process_aerogpu();
                     self.poll_network();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
