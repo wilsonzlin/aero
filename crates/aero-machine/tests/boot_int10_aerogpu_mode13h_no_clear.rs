@@ -75,4 +75,3 @@ fn boot_int10_aerogpu_mode13h_no_clear_preserves_vram() {
     // Default VGA palette entry 4 is EGA red (0xAA,0x00,0x00).
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00AA);
 }
-

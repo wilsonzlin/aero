@@ -8371,7 +8371,9 @@ impl Machine {
         }
 
         let available_events = (words.len().saturating_sub(HEADER_WORDS)) / WORDS_PER_EVENT;
-        let count = declared_count.min(available_events).min(MAX_EVENTS_PER_BATCH);
+        let count = declared_count
+            .min(available_events)
+            .min(MAX_EVENTS_PER_BATCH);
 
         // Routing policy mirrors the browser worker runtime at a high level:
         // - Keyboard: virtio-input (DRIVER_OK) → synthetic USB HID keyboard (once configured) → PS/2 i8042.
@@ -8657,10 +8659,16 @@ impl Machine {
                         };
                         // Match DOM `MouseEvent.buttons` bit mapping.
                         if (changed & 0x01) != 0 {
-                            input.inject_button(aero_virtio::devices::input::BTN_LEFT, next & 0x01 != 0);
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_LEFT,
+                                next & 0x01 != 0,
+                            );
                         }
                         if (changed & 0x02) != 0 {
-                            input.inject_button(aero_virtio::devices::input::BTN_RIGHT, next & 0x02 != 0);
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_RIGHT,
+                                next & 0x02 != 0,
+                            );
                         }
                         if (changed & 0x04) != 0 {
                             input.inject_button(
@@ -8669,10 +8677,16 @@ impl Machine {
                             );
                         }
                         if (changed & 0x08) != 0 {
-                            input.inject_button(aero_virtio::devices::input::BTN_SIDE, next & 0x08 != 0);
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_SIDE,
+                                next & 0x08 != 0,
+                            );
                         }
                         if (changed & 0x10) != 0 {
-                            input.inject_button(aero_virtio::devices::input::BTN_EXTRA, next & 0x10 != 0);
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_EXTRA,
+                                next & 0x10 != 0,
+                            );
                         }
                         self.ps2_mouse_buttons = next;
                         virtio_input_dirty = true;

@@ -242,7 +242,11 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         push_u32_le(&mut payload, i);
     }
     assert_eq!(payload.len(), 32);
-    push_packet(&mut out, AerogpuCmdOpcode::SetShaderConstantsI as u32, &payload);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetShaderConstantsI as u32,
+        &payload,
+    );
 
     // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, stage_ex=Geometry, values=[0,1]).
     //
@@ -258,7 +262,11 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         }
     }
     assert_eq!(payload.len(), 48);
-    push_packet(&mut out, AerogpuCmdOpcode::SetShaderConstantsB as u32, &payload);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetShaderConstantsB as u32,
+        &payload,
+    );
 
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;

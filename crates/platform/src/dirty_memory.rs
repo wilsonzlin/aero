@@ -203,7 +203,8 @@ mod tests {
 
     #[test]
     fn dirty_tracking_memory_new_panics_at_call_site_on_zero_page_size() {
-        let inner = Box::new(DenseMemory::new(0).expect("DenseMemory::new")) as Box<dyn memory::GuestMemory>;
+        let inner = Box::new(DenseMemory::new(0).expect("DenseMemory::new"))
+            as Box<dyn memory::GuestMemory>;
 
         let expected_file = file!();
         let expected_line = line!() + 2;

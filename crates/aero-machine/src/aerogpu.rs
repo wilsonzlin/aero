@@ -1315,10 +1315,7 @@ impl AeroGpuMmioDevice {
                 //
                 // Some `MemoryBus` implementations iterate bytewise using `wrapping_add`, so allowing a ring
                 // GPA near `u64::MAX` could cause device reads/writes to silently wrap to low memory.
-                if self
-                    .ring_gpa
-                    .checked_add(RING_HEADER_SIZE_BYTES)
-                    .is_none()
+                if self.ring_gpa.checked_add(RING_HEADER_SIZE_BYTES).is_none()
                     || self
                         .ring_gpa
                         .checked_add(u64::from(self.ring_size_bytes))

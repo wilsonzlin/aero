@@ -11743,7 +11743,9 @@ impl AerogpuD3d11Executor {
                             .stage_mut(other_stage)
                             .clear_uav_texture_handle(handle);
                     }
-                    self.bindings.stage_mut(stage).set_texture(slot, Some(handle));
+                    self.bindings
+                        .stage_mut(stage)
+                        .set_texture(slot, Some(handle));
 
                     // Mirror D3D11 hazard behavior: binding a texture as an SRV should unbind it
                     // from any currently bound render targets / depth-stencil outputs.
@@ -18700,7 +18702,9 @@ mod tests {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    bindings.as_slice(),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info should succeed");
@@ -21442,9 +21446,9 @@ fn cs_main() {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(std::slice::from_ref(
-                    &binding,
-                ))],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    std::slice::from_ref(&binding),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build pipeline bindings");
@@ -21507,7 +21511,8 @@ fn cs_main() {
                 cbuffer_scratch: &exec.cbuffer_scratch,
                 srv_buffer_scratch: &exec.srv_buffer_scratch,
                 storage_align,
-                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size as u64,
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view: &exec.dummy_texture_view,

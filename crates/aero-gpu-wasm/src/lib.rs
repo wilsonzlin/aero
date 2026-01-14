@@ -1035,7 +1035,9 @@ mod wasm {
                 Err(_) => return Ok(()),
             };
 
-            if exec_result.is_ok() && let Some(scanout_id) = last_present_scanout {
+            if exec_result.is_ok()
+                && let Some(scanout_id) = last_present_scanout
+            {
                 d3d9_state.last_presented_scanout = Some(scanout_id);
 
                 if let Some(presenter) = d3d9_state.presenter.as_mut() {

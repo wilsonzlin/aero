@@ -589,7 +589,9 @@ impl AerogpuCmdWriter {
     /// unbound (0). This helper exists mainly for tests/fixtures that want to bind HS/DS without
     /// having to pass a bunch of zero handles into [`Self::bind_shaders_ex`].
     pub fn bind_shaders_hs_ds(&mut self, hs: AerogpuHandle, ds: AerogpuHandle) {
-        self.bind_shaders_ex(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, /*gs=*/ 0, hs, ds);
+        self.bind_shaders_ex(
+            /*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, /*gs=*/ 0, hs, ds,
+        );
     }
 
     pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {

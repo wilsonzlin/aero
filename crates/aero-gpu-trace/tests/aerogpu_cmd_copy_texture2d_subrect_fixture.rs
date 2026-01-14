@@ -59,7 +59,21 @@ fn make_cmd_stream() -> Vec<u8> {
 
     // Copy a 32x32 square into the center of DST. Resulting frame is a red background with a
     // centered green square.
-    w.copy_texture2d(DST, SRC, 0, 0, 0, 0, 16, 16, 0, 0, 32, 32, AEROGPU_COPY_FLAG_NONE);
+    w.copy_texture2d(
+        DST,
+        SRC,
+        0,
+        0,
+        0,
+        0,
+        16,
+        16,
+        0,
+        0,
+        32,
+        32,
+        AEROGPU_COPY_FLAG_NONE,
+    );
 
     w.set_render_targets(&[DST], 0);
     w.present(0, 0);
@@ -112,4 +126,3 @@ fn aerogpu_cmd_copy_texture2d_subrect_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

@@ -1881,7 +1881,11 @@ fn pc_platform_virtio_blk_msix_function_mask_defers_delivery_until_unmasked() {
         "expected no MSI-X delivery while Function Mask is set"
     );
     let pba_bits = pc.memory.read_u64(pba_base);
-    assert_ne!(pba_bits & 1, 0, "expected pending bit 0 to be set while masked");
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected pending bit 0 to be set while masked"
+    );
 
     // Clear Function Mask and process again. This should redeliver the pending MSI-X vector and
     // clear the PBA bit even if there is no additional virtqueue work.
@@ -1904,7 +1908,11 @@ fn pc_platform_virtio_blk_msix_function_mask_defers_delivery_until_unmasked() {
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
 
     let pba_bits = pc.memory.read_u64(pba_base);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit 0 to clear after delivery");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit 0 to clear after delivery"
+    );
 }
 
 #[test]

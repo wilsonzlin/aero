@@ -2324,30 +2324,29 @@ fn emit_stmt(
             let mut then_call: Option<(String, u32)> = None;
             let mut else_call: Option<(String, u32)> = None;
 
-            let call_chain = |stmt: &Stmt,
-                              base_cond: &str|
-             -> Result<Option<(String, u32)>, WgslError> {
-                let mut cond = base_cond.to_owned();
-                let mut current = stmt;
-                loop {
-                    match current {
-                        Stmt::Call { label } => return Ok(Some((cond, *label))),
-                        Stmt::If {
-                            cond: inner_cond,
-                            then_block,
-                            else_block: None,
-                        } => {
-                            if then_block.stmts.len() != 1 {
-                                return Ok(None);
+            let call_chain =
+                |stmt: &Stmt, base_cond: &str| -> Result<Option<(String, u32)>, WgslError> {
+                    let mut cond = base_cond.to_owned();
+                    let mut current = stmt;
+                    loop {
+                        match current {
+                            Stmt::Call { label } => return Ok(Some((cond, *label))),
+                            Stmt::If {
+                                cond: inner_cond,
+                                then_block,
+                                else_block: None,
+                            } => {
+                                if then_block.stmts.len() != 1 {
+                                    return Ok(None);
+                                }
+                                let inner = cond_expr(inner_cond, f32_defs)?;
+                                cond = format!("({cond} && {inner})");
+                                current = &then_block.stmts[0];
                             }
-                            let inner = cond_expr(inner_cond, f32_defs)?;
-                            cond = format!("({cond} && {inner})");
-                            current = &then_block.stmts[0];
+                            _ => return Ok(None),
                         }
-                        _ => return Ok(None),
                     }
-                }
-            };
+                };
 
             if let Some(Stmt::Op(op)) = then_block.stmts.first() {
                 let cond_for_op = cond_with_pred(op, &cond_e)?;
@@ -2408,9 +2407,9 @@ fn emit_stmt(
             if then_lines.is_empty() {
                 if let Some(first) = then_block.stmts.first() {
                     if let Some((call_cond, label)) = call_chain(first, &cond_e)? {
-                        let sub_info = subroutine_infos
-                            .get(&label)
-                            .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+                        let sub_info = subroutine_infos.get(&label).ok_or_else(|| {
+                            err(format!("call target label l{label} is not defined"))
+                        })?;
                         if sub_info.uses_derivatives && !sub_info.may_discard {
                             then_call = Some((call_cond, label));
                             then_skip = 1;
@@ -2451,9 +2450,9 @@ fn emit_stmt(
                 if let Some(else_b) = else_block.as_ref() {
                     if let Some(first) = else_b.stmts.first() {
                         if let Some((call_cond, label)) = call_chain(first, &not_cond_e)? {
-                            let sub_info = subroutine_infos
-                                .get(&label)
-                                .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+                            let sub_info = subroutine_infos.get(&label).ok_or_else(|| {
+                                err(format!("call target label l{label} is not defined"))
+                            })?;
                             if sub_info.uses_derivatives && !sub_info.may_discard {
                                 else_call = Some((call_cond, label));
                                 else_skip = 1;
@@ -3034,10 +3033,7 @@ pub fn generate_wgsl_with_options(
             let _ = writeln!(
                 wgsl,
                 "const i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
-                value[0],
-                value[1],
-                value[2],
-                value[3]
+                value[0], value[1], value[2], value[3]
             );
         } else {
             let _ = writeln!(wgsl, "var<private> i{idx}: vec4<i32> = vec4<i32>(0);");

@@ -259,17 +259,7 @@ fn compute_vertex_pulling_supports_unaligned_byte_addresses() {
         // At byte offset 5: [0x55, 0x66, 0x77, 0x88] => 0x88776655
         let vb = vec![
             0x00u8, // padding byte (unaddressed by the shader)
-            0x11u8,
-            0x22u8,
-            0x33u8,
-            0x44u8,
-            0x55u8,
-            0x66u8,
-            0x77u8,
-            0x88u8,
-            0x00u8,
-            0x00u8,
-            0x00u8,
+            0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8, 0x00u8, 0x00u8, 0x00u8,
         ];
 
         let mut meta = IaMeta::default();
@@ -326,7 +316,11 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let mut writer = CmdWriter::new();
         writer.create_buffer(VB, vb.len() as u64, BufferUsage::VERTEX);
         writer.create_buffer(META, meta.as_bytes().len() as u64, BufferUsage::UNIFORM);
-        writer.create_buffer(OUT, output_size, BufferUsage::STORAGE | BufferUsage::MAP_READ);
+        writer.create_buffer(
+            OUT,
+            output_size,
+            BufferUsage::STORAGE | BufferUsage::MAP_READ,
+        );
 
         writer.update_buffer(VB, 0, &vb);
         writer.update_buffer(META, 0, meta.as_bytes());

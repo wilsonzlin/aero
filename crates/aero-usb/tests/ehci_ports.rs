@@ -743,7 +743,11 @@ fn ehci_keyboard_remote_wakeup_propagates_through_external_hub_without_hub_remot
         0,
         "expected EHCI resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
     );
-    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended while resuming");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "port should remain suspended while resuming"
+    );
     assert_eq!(
         portsc & PORTSC_LS_MASK,
         0b01 << 10,

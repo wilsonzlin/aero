@@ -251,9 +251,9 @@ impl D3D11Runtime {
             return Ok(Vec::new());
         }
 
-        let end = offset
-            .checked_add(size)
-            .ok_or_else(|| anyhow!("read_buffer range overflows u64 (offset={offset} size={size})"))?;
+        let end = offset.checked_add(size).ok_or_else(|| {
+            anyhow!("read_buffer range overflows u64 (offset={offset} size={size})")
+        })?;
         if end > buffer.size {
             bail!(
                 "read_buffer out of bounds: offset={offset} size={size} buffer_size={}",
