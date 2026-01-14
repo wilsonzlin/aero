@@ -118,6 +118,10 @@ const X86_PAGE_BYTES = 4096;
 const LOW_RAM_END = BigInt(LOW_RAM_END_U32);
 const HIGH_RAM_START = BigInt(HIGH_RAM_START_U53);
 
+// Page-version snapshot metadata (`CompiledBlockMeta.page_versions`) serialized through wasm-bindgen.
+//
+// `version` is a modulo-2^32 u32 counter (wrapping on overflow) and is validated via equality
+// checks against the current runtime/JIT page-version table.
 type JsPageVersionSnapshot = { page: number; version: number };
 type JsCompiledBlockMeta = { code_paddr: number; byte_len: number; page_versions: JsPageVersionSnapshot[] };
 

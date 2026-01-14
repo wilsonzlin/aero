@@ -3,7 +3,12 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageVersionSnapshot {
+    /// 4KiB guest physical page number (`paddr >> 12`).
     pub page: u64,
+    /// Version of [`Self::page`] at snapshot time.
+    ///
+    /// Versions are treated as modulo-2^32 counters (wrapping on overflow) and are validated by
+    /// equality checks against the current [`crate::jit::runtime::PageVersionTracker`] state.
     pub version: u32,
 }
 
@@ -17,6 +22,11 @@ pub struct CompiledBlockMeta {
     /// compilation results derived from pre-reset snapshots are rejected even if the per-page
     /// version values happen to match (e.g. all zeros).
     pub page_versions_generation: u64,
+    /// Page-version snapshot metadata for self-modifying code detection.
+    ///
+    /// The snapshot contains one entry per 4KiB page covering the code span
+    /// `[code_paddr, code_paddr + byte_len)`. Versions are modulo-2^32 counters and are validated
+    /// via equality checks.
     pub page_versions: Vec<PageVersionSnapshot>,
     /// Architectural guest instruction count for this block (i.e. number of retired guest
     /// instructions when the block commits).
