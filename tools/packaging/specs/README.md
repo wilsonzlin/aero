@@ -3,6 +3,11 @@
 These JSON files are consumed by `tools/packaging/aero_packager/` (`--spec`) to validate
 driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip`.
 
+Note: packaging specs validate and select **drivers** only. Optional guest-side utilities can be
+provided under `guest-tools/tools/**` in the input tree; when present they are packaged into the
+ISO/zip at `tools/**` using the same safety filtering rules as driver directories (for example
+`*.pdb` is excluded by default and symlinks are refused).
+
 `aero_packager` writes a `manifest.json` at the media root. In manifest schema v3+, the
 manifest includes an `inputs` object recording the SHA-256 of the **exact spec JSON bytes**
 and Windows device contract JSON bytes used for that packaging run. In-guest, this is
