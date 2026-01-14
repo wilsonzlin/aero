@@ -1338,5 +1338,8 @@ fn snapshot_restore_rejects_pending_submissions_with_too_many_entries() {
 
     let mut restored = new_test_device(cfg);
     let err = restored.load_state(&corrupted).unwrap_err();
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("pending_submissions"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("pending_submissions")
+    );
 }

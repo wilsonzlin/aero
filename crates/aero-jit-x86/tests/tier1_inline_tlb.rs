@@ -2974,10 +2974,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_does_not_trigger_at_page_tail_w32()
 
     assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(
-        got_cpu.gpr[Gpr::Rbx.as_u8() as usize] as u32,
-        0xAABB_CCDD
-    );
+    assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] as u32, 0xAABB_CCDD);
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
@@ -3180,10 +3177,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_does_not_trigger_at_page_tail_w16()
 
     assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(
-        got_cpu.gpr[Gpr::Rbx.as_u8() as usize] as u16,
-        0xBEEF
-    );
+    assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] as u16, 0xBEEF);
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
