@@ -20052,6 +20052,114 @@ bool TestFixedfuncFogEmitsConstants() {
   return true;
 }
 
+bool TestFixedfuncFogConstantsSanitizeNonFiniteValues() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+
+  // Intentionally feed NaN fog start/end values (render-state float bits).
+  // The driver should sanitize constants to keep the command stream finite.
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(nan));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART=NaN)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(nan));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND=NaN)")) {
+    return false;
+  }
+
+  // Capture only the draw-time fog constant upload in the command stream.
+  dev->cmd.reset();
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fog enabled, NaN start/end)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(fog constants NaN)")) {
+    return false;
+  }
+
+  const float expected[8] = {
+      // c1: fog color (RGBA from ARGB red).
+      1.0f, 0.0f, 0.0f, 1.0f,
+      // c2: fog params sanitized to finite defaults.
+      0.0f, 0.0f, 0.0f, 0.0f,
+  };
+
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 1u || sc->vec4_count != 2u) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected);
+    if (!Check(hdr->size_bytes >= need, "fog constants NaN: SET_SHADER_CONSTANTS_F contains payload")) {
+      return false;
+    }
+    const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    for (size_t i = 0; i < 8; ++i) {
+      if (!Check(std::isfinite(payload[i]), "fog constants NaN: payload floats are finite")) {
+        return false;
+      }
+    }
+    if (std::memcmp(payload, expected, sizeof(expected)) != 0) {
+      return Check(false, "fog constants NaN: payload matches expected sanitized c1/c2 data");
+    }
+    ++uploads;
+  }
+  if (!Check(uploads == 1, "fog constants NaN uploaded once")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogConstantsDedupAndReuploadOnChange() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24339,6 +24447,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogEmitsConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncFogConstantsSanitizeNonFiniteValues()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogConstantsDedupAndReuploadOnChange()) {

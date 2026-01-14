@@ -5043,8 +5043,23 @@ HRESULT ensure_fixedfunc_fog_constants_locked(Device* dev) {
   std::memcpy(&fog_start, &fog_start_bits, sizeof(float));
   std::memcpy(&fog_end, &fog_end_bits, sizeof(float));
 
+  // D3DRS_FOGSTART / D3DRS_FOGEND are float bits stored in render state. Keep
+  // fog constants finite even if the app provides NaN/Inf values.
+  if (!std::isfinite(fog_start)) {
+    fog_start = 0.0f;
+  }
+  if (!std::isfinite(fog_end)) {
+    fog_end = 0.0f;
+  }
+
   const float range = fog_end - fog_start;
-  const float inv_range = (range != 0.0f) ? (1.0f / range) : 0.0f;
+  float inv_range = 0.0f;
+  if (range != 0.0f && std::isfinite(range)) {
+    inv_range = 1.0f / range;
+    if (!std::isfinite(inv_range)) {
+      inv_range = 0.0f;
+    }
+  }
   const float params[4] = {fog_start, inv_range, 0.0f, 0.0f};
 
   const float* cached_color = dev->ps_consts_f + static_cast<size_t>(kPsFogColorRegister) * 4u;
