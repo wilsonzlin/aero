@@ -201,8 +201,9 @@ typically `aerogpu_wddm_alloc_priv_v2` and the `reserved0` field may carry a **p
 
 To support this DWM-style path, the AeroGPU D3D9 UMD `OpenResource` implementation falls back to
 the v2 metadata (`width/height/DXGI format/row_pitch_bytes`) and maps a small set of common DXGI
-formats (BGRA/RGBA) to their nearest D3D9 `D3DFORMAT` values, so `Lock` can report the correct
-`RowPitch` and CPU-side helpers can compute a consistent surface layout.
+formats (BGRA/RGBA, plus common 16-bit formats like B5G6R5 and B5G5R5A1) to their nearest D3D9
+`D3DFORMAT` values, so `Lock` can report the correct `RowPitch` and CPU-side helpers can compute a
+consistent surface layout.
 
 ## Build
 
