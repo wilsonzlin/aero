@@ -51,23 +51,57 @@ test("AerogpuShaderStageEx intentionally omits Vertex=1 (DXBC program type) and 
 });
 
 test("stage_ex helpers are gated by command stream ABI minor", () => {
-  // Pre-stage_ex streams (ABI minor < 3) must ignore reserved0 when shader_stage==Compute.
+  // Pre-stage_ex streams (ABI minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR) must ignore reserved0 when
+  // shader_stage==Compute.
   assert.equal(
     decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
     AerogpuShaderStageEx.None,
   );
   assert.deepEqual(
-    resolveShaderStageWithExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    resolveShaderStageWithExGated(
+      AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1,
+      AerogpuShaderStage.Compute,
+      AerogpuShaderStageEx.Geometry,
+    ),
     { kind: "Compute" },
   );
 
-  // ABI 1.3+ streams must honor stage_ex.
+  // Ensure other extended stages are also gated.
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Hull),
+    AerogpuShaderStageEx.None,
+  );
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Domain),
+    AerogpuShaderStageEx.None,
+  );
+
+  // ABI minors at/after the stage_ex introduction must honor stage_ex.
   assert.equal(
     decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
     AerogpuShaderStageEx.Geometry,
   );
   assert.deepEqual(
-    resolveShaderStageWithExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    resolveShaderStageWithExGated(
+      AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+      AerogpuShaderStage.Compute,
+      AerogpuShaderStageEx.Geometry,
+    ),
     { kind: "Geometry" },
   );
+
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Hull),
+    AerogpuShaderStageEx.Hull,
+  );
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Domain),
+    AerogpuShaderStageEx.Domain,
+  );
+
+  // stage_ex decoding is only active when shaderStage == Compute.
+  assert.equal(decodeStageExGated(0, AerogpuShaderStage.Pixel, AerogpuShaderStageEx.Hull), undefined);
+  assert.deepEqual(resolveShaderStageWithExGated(0, AerogpuShaderStage.Pixel, AerogpuShaderStageEx.Hull), {
+    kind: "Pixel",
+  });
 });
