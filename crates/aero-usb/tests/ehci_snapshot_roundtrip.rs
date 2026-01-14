@@ -1,4 +1,6 @@
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotReader, SnapshotWriter};
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::regs::{
     PORTSC_CCS, PORTSC_PED, PORTSC_PP, PORTSC_PR, REG_ASYNCLISTADDR, REG_CONFIGFLAG, REG_FRINDEX,
@@ -209,4 +211,66 @@ fn ehci_snapshot_roundtrip_preserves_port_owner_unreachability() {
         restored.hub_mut().device_mut_for_address(0).is_some(),
         "device should be reachable once PORT_OWNER is cleared and port reset completes"
     );
+}
+
+#[test]
+fn ehci_snapshot_restore_rejects_oversized_nested_usb_device_snapshots() {
+    // Construct a valid EHCI snapshot, then replace the first port's nested ADEV length with an
+    // oversized value so `load_state` errors out before attempting to allocate/copy bytes.
+    let ctrl = EhciController::new();
+    let snapshot = ctrl.save_state();
+
+    const TAG_ROOT_HUB_PORTS: u16 = 8;
+    const MAX_USB_DEVICE_SNAPSHOT_BYTES: u32 = 4 * 1024 * 1024;
+
+    let r = SnapshotReader::parse(&snapshot, EhciController::DEVICE_ID).unwrap();
+    let Some(root_ports_bytes) = r.bytes(TAG_ROOT_HUB_PORTS) else {
+        panic!("expected ROOT_HUB_PORTS field in EHCI snapshot");
+    };
+
+    let mut d = Decoder::new(root_ports_bytes);
+    let mut port_records = d.vec_bytes().unwrap();
+    d.finish().unwrap();
+    assert!(!port_records.is_empty(), "expected at least one root port record");
+
+    // Replace port 0 record with one that declares an oversized device snapshot length.
+    let oversize_len = MAX_USB_DEVICE_SNAPSHOT_BYTES + 1;
+    port_records[0] = Encoder::new()
+        .bool(false) // connected
+        .bool(false) // connect_change
+        .bool(false) // enabled
+        .bool(false) // enable_change
+        .bool(false) // over_current
+        .bool(false) // over_current_change
+        .bool(false) // reset
+        .u8(0) // reset_countdown_ms
+        .bool(false) // suspended
+        .bool(false) // resuming
+        .u8(0) // resume_countdown_ms
+        .bool(false) // powered
+        .bool(false) // port_owner
+        .bool(true) // has_device_state
+        .u32(oversize_len)
+        .finish();
+
+    let modified_root_ports = Encoder::new().vec_bytes(&port_records).finish();
+
+    let mut w = SnapshotWriter::new(EhciController::DEVICE_ID, EhciController::DEVICE_VERSION);
+    for (tag, bytes) in r.iter_fields() {
+        if tag == TAG_ROOT_HUB_PORTS {
+            w.field_bytes(tag, modified_root_ports.clone());
+        } else {
+            w.field_bytes(tag, bytes.to_vec());
+        }
+    }
+    let bad_snapshot = w.finish();
+
+    let mut restored = EhciController::new();
+    let err = restored.load_state(&bad_snapshot).unwrap_err();
+    match err {
+        SnapshotError::InvalidFieldEncoding(msg) => {
+            assert_eq!(msg, "usb device snapshot too large");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
