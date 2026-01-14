@@ -38,6 +38,25 @@ function Assert-ValidJson {
   if ($ExpectedCommand -eq "status" -and -not $obj.perf) {
     throw "Missing perf section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
   }
+
+  # When perf is supported, ensure newer nested objects exist (schema stability).
+  if ($ExpectedCommand -eq "status" -and $obj.ok -and $obj.perf -and $obj.perf.supported) {
+    if (-not $obj.perf.get_scanline) {
+      throw "Missing perf.get_scanline section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    }
+    if (-not $obj.perf.contig_pool) {
+      throw "Missing perf.contig_pool section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    }
+  }
+
+  if ($ExpectedCommand -eq "query-perf" -and $obj.ok) {
+    if (-not $obj.get_scanline) {
+      throw "Missing get_scanline section in query-perf JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    }
+    if (-not $obj.contig_pool) {
+      throw "Missing contig_pool section in query-perf JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    }
+  }
 }
 
 function Assert-ValidJsonFile {
@@ -90,6 +109,15 @@ function Assert-ValidJsonFile {
 
   if ($ExpectedCommand -eq "status" -and -not $obj.perf) {
     throw "Missing perf section in status JSON file: $JsonPath`n$jsonText"
+  }
+
+  if ($ExpectedCommand -eq "status" -and $obj.ok -and $obj.perf -and $obj.perf.supported) {
+    if (-not $obj.perf.get_scanline) {
+      throw "Missing perf.get_scanline section in status JSON file: $JsonPath`n$jsonText"
+    }
+    if (-not $obj.perf.contig_pool) {
+      throw "Missing perf.contig_pool section in status JSON file: $JsonPath`n$jsonText"
+    }
   }
 
   Remove-Item -ErrorAction SilentlyContinue $JsonPath

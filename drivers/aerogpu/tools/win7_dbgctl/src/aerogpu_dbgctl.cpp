@@ -8187,6 +8187,19 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   }
   w.EndObject();
 
+  w.Key("contig_pool");
+  w.BeginObject();
+  const bool haveContigPool =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) + sizeof(q.contig_pool_bytes_saved));
+  w.Key("available");
+  w.Bool(haveContigPool);
+  if (haveContigPool) {
+    JsonWriteU64HexDec(w, "hit", q.contig_pool_hit);
+    JsonWriteU64HexDec(w, "miss", q.contig_pool_miss);
+    JsonWriteU64HexDec(w, "bytes_saved", q.contig_pool_bytes_saved);
+  }
+  w.EndObject();
+
   w.Key("irqs");
   w.BeginObject();
   JsonWriteU64HexDec(w, "fence_delivered", q.irq_fence_delivered);
