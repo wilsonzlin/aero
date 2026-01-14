@@ -159,6 +159,12 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
 
       await waitForAtomic(StatusIndex.IoReady, 1, 10_000);
 
+      const countersBefore = {
+        received: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
+        processed: Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0,
+        dropped: Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0,
+      };
+
       const caseA = await runCase(() => {
         // byteLength not divisible by 4.
         // Use >= header size so a regression that checks "too small" first but still constructs an
@@ -176,7 +182,13 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         ioWorker.postMessage({ type: "in:input-batch", buffer }, [buffer]);
       });
 
-      return { ok: true, workerError, caseA, caseB };
+      const countersAfter = {
+        received: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
+        processed: Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0,
+        dropped: Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0,
+      };
+
+      return { ok: true, workerError, countersBefore, countersAfter, caseA, caseB };
     } finally {
       ioWorker.removeEventListener("message", onWorkerMessage);
       ioWorker.removeEventListener("error", onWorkerError);
@@ -191,4 +203,12 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
   expect(result.caseA.dropsAfter).toBeGreaterThan(result.caseA.dropsBefore);
   expect(result.caseB.batchAfter).toBeGreaterThan(result.caseB.batchBefore);
   expect(result.caseB.dropsAfter).toBeGreaterThan(result.caseB.dropsBefore);
+
+  const receivedDelta = (result.countersAfter.received - result.countersBefore.received) >>> 0;
+  const processedDelta = (result.countersAfter.processed - result.countersBefore.processed) >>> 0;
+  const droppedDelta = (result.countersAfter.dropped - result.countersBefore.dropped) >>> 0;
+  expect(receivedDelta).toBeGreaterThanOrEqual(4);
+  expect(processedDelta).toBeGreaterThanOrEqual(2);
+  expect(droppedDelta).toBeGreaterThanOrEqual(2);
+  expect(receivedDelta).toBeGreaterThanOrEqual(processedDelta + droppedDelta);
 });
