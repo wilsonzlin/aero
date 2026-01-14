@@ -1117,13 +1117,21 @@ impl AeroGpuMmioDevice {
         if self.wddm_scanout_active {
             return;
         }
+        // Claim WDDM ownership only once scanout is actually enabled. The Windows driver stages
+        // `SCANOUT0_*` values and uses `SCANOUT0_ENABLE` as the commit/visibility toggle.
+        //
+        // This prevents prematurely suppressing legacy VGA/VBE output while the driver is still
+        // programming the scanout registers with `ENABLE=0`.
+        if !self.scanout0_enable {
+            return;
+        }
         if !self.scanout0_config_is_valid_for_wddm() {
             return;
         }
 
-        // Claim the WDDM scanout once a valid configuration has been programmed, even if
-        // `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until the VM
-        // resets.
+        // Claim the WDDM scanout once we observe `SCANOUT0_ENABLE=1` with a valid configuration,
+        // even if `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until
+        // the VM resets.
         self.wddm_scanout_active = true;
 
         // Mark dirty so scanout consumers see the transition immediately.
@@ -1319,12 +1327,6 @@ impl AeroGpuMmioDevice {
         self.next_vblank_ns = snap.next_vblank_ns;
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
-        // Defensive (snapshot restore): if scanout is disabled (`enable=0`), clear the host-side
-        // WDDM ownership latch. This avoids restoring into a state where legacy output is
-        // suppressed even though scanout is disabled.
-        if !self.scanout0_enable {
-            self.wddm_scanout_active = false;
-        }
 
         self.cursor_enable = snap.cursor_enable != 0;
         self.cursor_x = snap.cursor_x as i32;
@@ -2529,11 +2531,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn restore_snapshot_clears_wddm_scanout_active_when_scanout_is_disabled() {
+    fn restore_snapshot_preserves_wddm_scanout_active_when_scanout_is_disabled() {
         let mut snap = AeroGpuMmioDevice::default().snapshot_v1();
 
-        // Snapshot/restore should not resurrect a WDDM ownership latch when scanout itself is
-        // disabled.
+        // Snapshot a valid state: once claimed, WDDM scanout ownership is sticky until reset, even
+        // when scanout is disabled (`SCANOUT0_ENABLE=0`).
         snap.scanout0_enable = 0;
         snap.wddm_scanout_active = true;
         snap.next_vblank_ns = Some(123);
@@ -2544,8 +2546,8 @@ mod tests {
 
         assert!(!dev.scanout0_enable);
         assert!(
-            !dev.wddm_scanout_active,
-            "restoring with scanout disabled should clear WDDM scanout ownership"
+            dev.wddm_scanout_active,
+            "scanout disable must not clear the WDDM ownership latch on restore"
         );
         assert!(
             dev.next_vblank_ns.is_none(),
@@ -2559,7 +2561,7 @@ mod tests {
     }
 
     #[test]
-    fn io_snapshot_load_state_clears_wddm_scanout_active_when_scanout_is_disabled() {
+    fn io_snapshot_load_state_preserves_wddm_scanout_active_when_scanout_is_disabled() {
         const TAG_ABI_VERSION: u16 = 1;
         const TAG_FEATURES: u16 = 2;
         const TAG_RING_GPA: u16 = 3;
@@ -2597,8 +2599,8 @@ mod tests {
         w.field_u32(TAG_IRQ_STATUS, pci::AEROGPU_IRQ_SCANOUT_VBLANK);
         w.field_u32(TAG_IRQ_ENABLE, pci::AEROGPU_IRQ_SCANOUT_VBLANK);
 
-        // The inconsistency we want to defend against: `enable=0` with the WDDM ownership latch
-        // set.
+        // Once claimed, WDDM scanout ownership is sticky until reset, even when scanout is disabled
+        // (`SCANOUT0_ENABLE=0`).
         w.field_bool(TAG_SCANOUT0_ENABLE, false);
         w.field_u32(TAG_SCANOUT0_WIDTH, 1);
         w.field_u32(TAG_SCANOUT0_HEIGHT, 1);
@@ -2623,8 +2625,8 @@ mod tests {
 
         assert!(!dev.scanout0_enable);
         assert!(
-            !dev.wddm_scanout_active,
-            "load_state with scanout disabled should clear WDDM scanout ownership"
+            dev.wddm_scanout_active,
+            "scanout disable must not clear the WDDM ownership latch on load_state"
         );
         assert!(
             dev.next_vblank_ns.is_none(),
@@ -3770,12 +3772,6 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.vblank_interval_ns = vblank_interval_ns;
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
-        // Defensive (load_state): if scanout is disabled (`enable=0`), clear the host-side WDDM
-        // ownership latch. This avoids restoring into a state where legacy output is suppressed
-        // even though scanout is disabled.
-        if !self.scanout0_enable {
-            self.wddm_scanout_active = false;
-        }
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = scanout0_dirty;

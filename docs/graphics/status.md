@@ -111,7 +111,7 @@ Test pointers:
     - `0xB0000..0xBFFFF` remains `VRAM[0x10000..0x1FFFF]`
 - [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x40000`, protocol: `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`)
 - [x] host-side presentation fallback when VGA is disabled:
-  - WDDM scanout0 if claimed (valid `SCANOUT0_*` config + `SCANOUT0_ENABLE=1`; if later disabled, output is blank but WDDM ownership remains sticky), otherwise
+  - WDDM scanout0 if claimed (valid `SCANOUT0_*` config + `SCANOUT0_ENABLE=1`; `SCANOUT0_ENABLE=0` blanks output but does not release WDDM ownership), otherwise
   - VBE LFB (from BIOS state), otherwise
   - VGA mode 13h (320×200×256) (from BIOS state), otherwise
   - text mode (scan `0xB8000`)
