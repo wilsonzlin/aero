@@ -122,6 +122,14 @@ fn parses_and_translates_sm5_ds_eval_tri_integer_fixture() {
         "DS eval WGSL should not embed legacy per-patch fixed-stride indexing:\n{}",
         translated.wgsl
     );
+    let expected_cp_stride = 1 + aero_d3d11::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
+    assert!(
+        translated.wgsl.contains(&format!(
+            "const DS_CP_IN_STRIDE: u32 = {expected_cp_stride}u;"
+        )),
+        "expected DS eval translation to use fixed control-point stride {expected_cp_stride}:\n{}",
+        translated.wgsl
+    );
 
     // Ensure the snippet links into the runtime wrapper and validates as a full WGSL module.
     let out_reg_count = translated

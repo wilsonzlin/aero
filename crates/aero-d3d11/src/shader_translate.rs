@@ -1598,18 +1598,12 @@ fn translate_ds_eval(
         rdef,
     };
 
-    // These strides must match the buffers produced by HS emulation.
-    let cp_in_stride = isgn
-        .parameters
-        .iter()
-        .filter(|p| {
-            !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name)
-        })
-        .map(|p| p.register)
-        .max()
-        .map(|m| m.saturating_add(1))
-        .unwrap_or(1)
-        .max(1);
+    // These strides must match the buffers produced by the tessellation prepass runtime.
+    //
+    // Per-control-point payloads are written using the expanded-vertex record layout
+    // (pos + `EXPANDED_VERTEX_MAX_VARYINGS` varyings) so later stages can always use the same
+    // fixed-size vertex struct.
+    let cp_in_stride: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
     let pc_in_stride = psgn
         .parameters
         .iter()
