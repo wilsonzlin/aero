@@ -1803,6 +1803,50 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn src_input(index: u32) -> Src {
+        Src {
+            reg: RegRef {
+                file: RegFile::Input,
+                index,
+                relative: None,
+            },
+            swizzle: Swizzle::identity(),
+            modifier: SrcModifier::None,
+        }
+    }
+
+    #[test]
+    fn collect_used_pixel_inputs_includes_dp2add_src2() {
+        // Regression test: `dp2add` reads a third source operand (`src2.x`) and the software
+        // raster path needs to treat it like other 3-src ops when discovering which pixel inputs
+        // are required for interpolation.
+        let op = IrOp::Dp2Add {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_input(0),
+            src1: src_input(1),
+            src2: src_input(2),
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 1)));
+        assert!(used.contains(&(RegFile::Input, 2)));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rasterize_triangle(
     target: &mut RenderTarget,
