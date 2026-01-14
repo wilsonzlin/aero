@@ -9972,6 +9972,140 @@ bool TestFvfXyzNormalDiffusePacksPointLightConstants() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseTransformsLightDirectionByView() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Set VIEW to a 90-degree rotation about Z (row-vector convention):
+  //   [ 0  1  0  0 ]
+  //   [-1  0  0  0 ]
+  //   [ 0  0  1  0 ]
+  //   [ 0  0  0  1 ]
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX view = identity;
+  view.m[0][0] = 0.0f;
+  view.m[0][1] = 1.0f;
+  view.m[1][0] = -1.0f;
+  view.m[1][1] = 0.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &view);
+  if (!Check(hr == S_OK, "SetTransform(VIEW rotated)")) {
+    return false;
+  }
+
+  // Configure a directional light whose direction will change under the view transform.
+  // D3D9 direction is the direction light rays travel; the shader expects vertex->light,
+  // so the driver negates it.
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {1.0f, 0.0f, 0.0f};
+  light0.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(rotated view directional light)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(rotated view directional light)")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "rotated view: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "rotated view: lighting payload present")) {
+    return false;
+  }
+
+  // c208..c210 should match the world*view columns 0..2 (WORLD0 is identity).
+  // For the view matrix above, expected columns are:
+  //   c208 = {0, -1, 0, 0}
+  //   c209 = {1,  0, 0, 0}
+  //   c210 = {0,  0, 1, 0}
+  if (!Check(payload[0] == 0.0f && payload[1] == -1.0f && payload[2] == 0.0f && payload[3] == 0.0f &&
+             payload[4] == 1.0f && payload[5] == 0.0f && payload[6] == 0.0f && payload[7] == 0.0f &&
+             payload[8] == 0.0f && payload[9] == 0.0f && payload[10] == 1.0f && payload[11] == 0.0f,
+             "rotated view: c208..c210 pack world*view columns")) {
+    return false;
+  }
+
+  // Directional slot0 direction (c211) should reflect view-space vertex->light:
+  // - Light direction (rays) = (1,0,0)
+  // - Transform into view space: (1,0,0) * view3x3 = (0,1,0)
+  // - Negate for vertex->light: (0,-1,0)
+  constexpr uint32_t kLight0DirRel = (211u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kLight0DirRel * 4 + 0] == 0.0f &&
+             payload[kLight0DirRel * 4 + 1] == -1.0f &&
+             payload[kLight0DirRel * 4 + 2] == 0.0f &&
+             payload[kLight0DirRel * 4 + 3] == 0.0f,
+             "rotated view: directional light direction transformed into view space")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTogglesShaderVariant() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -10196,6 +10330,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffusePacksPointLightConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseTransformsLightDirectionByView()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {
