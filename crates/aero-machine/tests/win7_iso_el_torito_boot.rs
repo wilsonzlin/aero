@@ -365,6 +365,7 @@ fn win7_iso_el_torito_boot_smoke() {
         const CODE_ADDR: u64 = 0x9000;
 
         let cpu_entry = m.cpu().clone();
+        let saved_packet = m.read_physical_bytes(PACKET_ADDR, 0x20);
 
         // Caller-supplied status packet buffer (0x13 bytes). Use a larger clear window so stale
         // bytes can't mask partial writes.
@@ -388,6 +389,7 @@ fn win7_iso_el_torito_boot_smoke() {
             0xFA, // cli
             0xF4, // hlt
         ];
+        let saved_code = m.read_physical_bytes(CODE_ADDR, code.len());
         m.write_physical(CODE_ADDR, &code);
 
         // Jump to the stub.
@@ -421,6 +423,11 @@ fn win7_iso_el_torito_boot_smoke() {
             m.read_physical_u16(PACKET_ADDR + 14),
             boot_info.boot_image_sector_count_512
         );
+
+        // Restore memory we scribbled so the subsequent boot image slice runs in an environment as
+        // close as possible to the real POST handoff.
+        m.write_physical(PACKET_ADDR, &saved_packet);
+        m.write_physical(CODE_ADDR, &saved_code);
 
         // Restore CPU state at the El Torito boot entrypoint so we can execute a bounded slice of
         // the real boot image below.
