@@ -4,7 +4,7 @@ use aero_pc_constants::{PCI_MMIO_BASE, PCI_MMIO_SIZE};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 
 #[test]
-fn aerogpu_enumerates_at_canonical_bdf_with_bar0_in_pci_mmio_window() {
+fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     let mut cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -29,7 +29,7 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bar0_in_pci_mmio_window() {
     let mut m = Machine::new(cfg).unwrap();
 
     let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-    let (id, class, bar0) = {
+    let (id, class, bar0, bar1) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
@@ -43,7 +43,10 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bar0_in_pci_mmio_window() {
         let bar0 = cfg
             .bar_range(0)
             .expect("AeroGPU BAR0 should be assigned by PCI BIOS POST");
-        (id, class, bar0)
+        let bar1 = cfg
+            .bar_range(1)
+            .expect("AeroGPU BAR1 should be assigned by PCI BIOS POST");
+        (id, class, bar0, bar1)
     };
 
     assert_eq!(id.vendor_id, 0xA3A0, "AeroGPU vendor ID drifted");
@@ -75,4 +78,28 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bar0_in_pci_mmio_window() {
     // constant from the BAR0 register space.
     let magic = m.read_physical_u32(bar0.base + u64::from(pci::AEROGPU_MMIO_REG_MAGIC));
     assert_eq!(magic, pci::AEROGPU_MMIO_MAGIC);
+
+    // BAR1 (VRAM aperture) should also be reachable via the same PCI MMIO window.
+    assert_eq!(bar1.kind, PciBarKind::Mmio32);
+    assert_ne!(bar1.base, 0, "AeroGPU BAR1 base must be non-zero");
+    assert_eq!(
+        bar1.size,
+        aero_devices::pci::profile::AEROGPU_VRAM_SIZE,
+        "AeroGPU BAR1 size drifted"
+    );
+    assert_eq!(bar1.base & (bar1.size - 1), 0, "BAR1 base must be aligned");
+    assert!(
+        bar1.base >= PCI_MMIO_BASE && bar1.end_exclusive() <= window_end,
+        "AeroGPU BAR1 (0x{:x}..0x{:x}) must lie within PCI MMIO window (0x{:x}..0x{:x})",
+        bar1.base,
+        bar1.end_exclusive(),
+        PCI_MMIO_BASE,
+        window_end
+    );
+
+    // Probe that BAR1 is wired into the MMIO router by performing a small write/read roundtrip.
+    let probe_addr = bar1.base + 0x1000;
+    let orig = m.read_physical_u32(probe_addr);
+    m.write_physical_u32(probe_addr, orig ^ 0xA5A5_5A5A);
+    assert_eq!(m.read_physical_u32(probe_addr), orig ^ 0xA5A5_5A5A);
 }
