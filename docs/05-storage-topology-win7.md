@@ -108,6 +108,9 @@ setup/boot.
         fallback (e.g. `boot_drive=0x80` / `BootDevice::Hdd`) even when the current boot actually
         came from CD. Use `Machine::active_boot_device()` (or `Bios::booted_from_cdrom()`) to query
         what firmware actually booted from.
+      - Rust convenience: `Machine::configure_win7_install_boot(iso)` (or
+        `Machine::new_with_win7_install(...)`) enables this policy, attaches the ISO to the canonical
+        ATAPI slot, and resets.
 2. The boot ISO must be attached and presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary
    master** (`disk_id=1`) before BIOS POST/boot:
    - Rust: `Machine::attach_install_media_iso_bytes(...)` (in-memory ISO) or

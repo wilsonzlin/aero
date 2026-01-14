@@ -195,6 +195,8 @@ should attach an ISO and select CD boot (`boot_drive=0xE0`) either:
 - at runtime via `Machine::set_boot_drive(0xE0)` **before** invoking `Machine::reset()`.
 - or enable the firmware “CD-first when present” policy (`Machine::set_cd_boot_drive(0xE0)`,
   `Machine::set_boot_from_cd_if_present(true)`) while keeping `boot_drive=0x80` as the fallback.
+  - Convenience: `Machine::configure_win7_install_boot(iso)` (or `Machine::new_with_win7_install(...)`)
+    does the CD-first enable + ISO attach + reset in one call.
 
 Relevant code:
 
