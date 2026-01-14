@@ -1,6 +1,7 @@
 //! PCI device glue for the AeroGPU device model.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
@@ -105,6 +106,7 @@ pub struct AeroGpuPciDevice {
 
     doorbell_pending: bool,
     ring_reset_pending_dma: bool,
+    pending_fence_completions: VecDeque<u64>,
 }
 
 impl Default for AeroGpuPciDevice {
@@ -172,6 +174,7 @@ impl AeroGpuPciDevice {
             cursor_fb_gpa_lo_pending: false,
             doorbell_pending: false,
             ring_reset_pending_dma: false,
+            pending_fence_completions: VecDeque::new(),
         }
     }
 
@@ -303,6 +306,9 @@ impl AeroGpuPciDevice {
 
         if dma_enabled {
             self.executor.poll_backend_completions(&mut self.regs, mem);
+            while let Some(fence) = self.pending_fence_completions.pop_front() {
+                self.executor.complete_fence(&mut self.regs, mem, fence);
+            }
         }
         // `tick` has early-return paths (no vblank yet); update IRQ after polling completions.
         self.update_irq_level();
@@ -388,6 +394,9 @@ impl AeroGpuPciDevice {
 
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
         if !self.bus_master_enabled() {
+            if fence > self.regs.completed_fence {
+                self.pending_fence_completions.push_back(fence);
+            }
             return;
         }
         self.executor.complete_fence(&mut self.regs, mem, fence);
@@ -431,6 +440,7 @@ impl AeroGpuPciDevice {
         // A ring reset discards any pending doorbell notification. The guest is expected to
         // reinitialize the ring state (including head/tail) before submitting more work.
         self.doorbell_pending = false;
+        self.pending_fence_completions.clear();
         // DMA portion (updating ring head + fence page) will run on the next tick if bus mastering
         // is enabled.
         self.ring_reset_pending_dma = true;
@@ -702,6 +712,7 @@ impl PciDevice for AeroGpuPciDevice {
         self.cursor_fb_gpa_lo_pending = false;
         self.doorbell_pending = false;
         self.ring_reset_pending_dma = false;
+        self.pending_fence_completions.clear();
         self.next_vblank_deadline_ns = None;
         self.boot_time_ns = None;
         self.vblank_irq_enable_pending = false;
@@ -947,12 +958,20 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_SCANOUT0_FB_GPA_LO_PENDING: u16 = 11;
         const TAG_CURSOR_FB_GPA_PENDING_LO: u16 = 12;
         const TAG_CURSOR_FB_GPA_LO_PENDING: u16 = 13;
+        const TAG_PENDING_FENCE_COMPLETIONS: u16 = 14;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_bytes(TAG_REGS, encode_regs(&self.regs));
         w.field_bytes(TAG_EXECUTOR, self.executor.save_snapshot_state());
         if let Some(bytes) = self.executor.save_pending_submissions_snapshot_state() {
             w.field_bytes(TAG_PENDING_SUBMISSIONS, bytes);
+        }
+        if !self.pending_fence_completions.is_empty() {
+            let mut e = Encoder::new().u32(self.pending_fence_completions.len() as u32);
+            for fence in &self.pending_fence_completions {
+                e = e.u64(*fence);
+            }
+            w.field_bytes(TAG_PENDING_FENCE_COMPLETIONS, e.finish());
         }
         if let Some(vblank_period_ns) = self.vblank_period_ns {
             w.field_u64(TAG_VBLANK_PERIOD_NS, vblank_period_ns);
@@ -996,6 +1015,8 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_SCANOUT0_FB_GPA_LO_PENDING: u16 = 11;
         const TAG_CURSOR_FB_GPA_PENDING_LO: u16 = 12;
         const TAG_CURSOR_FB_GPA_LO_PENDING: u16 = 13;
+        const TAG_PENDING_FENCE_COMPLETIONS: u16 = 14;
+        const TAG_PENDING_FENCE_COMPLETIONS_LEGACY: u16 = 10;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1011,10 +1032,47 @@ impl IoSnapshot for AeroGpuPciDevice {
         let vblank_irq_enable_pending = r.bool(TAG_VBLANK_IRQ_ENABLE_PENDING)?.unwrap_or(false);
         let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
         let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
-        let scanout0_fb_gpa_pending_lo = r.u32(TAG_SCANOUT0_FB_GPA_PENDING_LO)?.unwrap_or(0);
-        let scanout0_fb_gpa_lo_pending = r.bool(TAG_SCANOUT0_FB_GPA_LO_PENDING)?.unwrap_or(false);
-        let cursor_fb_gpa_pending_lo = r.u32(TAG_CURSOR_FB_GPA_PENDING_LO)?.unwrap_or(0);
-        let cursor_fb_gpa_lo_pending = r.bool(TAG_CURSOR_FB_GPA_LO_PENDING)?.unwrap_or(false);
+        let snapshot_minor = r.header().device_version.minor;
+
+        let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending, cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
+            if snapshot_minor >= 2 {
+                (
+                    r.u32(TAG_SCANOUT0_FB_GPA_PENDING_LO)?.unwrap_or(0),
+                    r.bool(TAG_SCANOUT0_FB_GPA_LO_PENDING)?.unwrap_or(false),
+                    r.u32(TAG_CURSOR_FB_GPA_PENDING_LO)?.unwrap_or(0),
+                    r.bool(TAG_CURSOR_FB_GPA_LO_PENDING)?.unwrap_or(false),
+                )
+            } else {
+                (0, false, 0, false)
+            };
+
+        let pending_fence_completions_tag = if snapshot_minor <= 1 {
+            TAG_PENDING_FENCE_COMPLETIONS_LEGACY
+        } else {
+            TAG_PENDING_FENCE_COMPLETIONS
+        };
+
+        let pending_fence_completions = match r.bytes(pending_fence_completions_tag) {
+            Some(buf) => {
+                // Snapshots may come from untrusted sources; cap sizes to keep decode bounded.
+                const MAX_PENDING_FENCE_COMPLETIONS: usize = 65_536;
+
+                let mut d = Decoder::new(buf);
+                let count = d.u32()? as usize;
+                if count > MAX_PENDING_FENCE_COMPLETIONS {
+                    return Err(SnapshotError::InvalidFieldEncoding("pending_fence_completions"));
+                }
+                let mut out = VecDeque::new();
+                out.try_reserve(count)
+                    .map_err(|_| SnapshotError::OutOfMemory)?;
+                for _ in 0..count {
+                    out.push_back(d.u64()?);
+                }
+                d.finish()?;
+                out
+            }
+            None => VecDeque::new(),
+        };
 
         // Reset executor state up-front so any fields not restored from the snapshot do not leak
         // across restore calls.
@@ -1040,6 +1098,7 @@ impl IoSnapshot for AeroGpuPciDevice {
         self.scanout0_fb_gpa_lo_pending = scanout0_fb_gpa_lo_pending;
         self.cursor_fb_gpa_pending_lo = cursor_fb_gpa_pending_lo;
         self.cursor_fb_gpa_lo_pending = cursor_fb_gpa_lo_pending;
+        self.pending_fence_completions = pending_fence_completions;
 
         // If vblank is disabled or scanout is off, ensure no vblank deadline remains scheduled.
         if self.vblank_period_ns.is_none() || !self.regs.scanout0.enable {

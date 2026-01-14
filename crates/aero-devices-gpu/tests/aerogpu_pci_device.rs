@@ -982,6 +982,159 @@ fn snapshot_roundtrip_preserves_pending_ring_reset_dma_until_dma_is_enabled() {
 }
 
 #[test]
+fn complete_fence_is_deferred_until_bus_mastering_is_enabled() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+    };
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(cfg);
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    let fence = 42u64;
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
+
+    let fence_gpa = 0x3000u64;
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    // Doorbell queues the decoded submission, but does not complete the fence without an external
+    // completion.
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+
+    let subs = dev.drain_pending_submissions();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].signal_fence, fence);
+
+    // Disable bus mastering and complete the fence. The completion should be queued and applied
+    // once COMMAND.BME is re-enabled.
+    dev.config_mut().set_command(1 << 1);
+    dev.complete_fence(&mut mem, fence);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
+
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, fence);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(dev.irq_level());
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        fence
+    );
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_pending_fence_completion_until_dma_is_enabled() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+    };
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(cfg.clone());
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    let fence = 42u64;
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
+
+    let fence_gpa = 0x3000u64;
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    // Disable bus mastering and queue a completion.
+    dev.config_mut().set_command(1 << 1);
+    dev.complete_fence(&mut mem, fence);
+
+    let snap = dev.save_state();
+
+    // Restore into a device with DMA enabled: the pending completion should be applied.
+    let mut restored = AeroGpuPciDevice::new(cfg);
+    restored.config_mut().set_command((1 << 1) | (1 << 2));
+    restored.load_state(&snap).unwrap();
+    restored.tick(&mut mem, 0);
+
+    assert_eq!(restored.regs.completed_fence, fence);
+    assert_ne!(restored.regs.irq_status & irq_bits::FENCE, 0);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        fence
+    );
+}
+
+#[test]
 fn drain_pending_submissions_returns_completed_fences_as_well() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
