@@ -1519,6 +1519,36 @@ func TestUDPWebSocketServer_AuthTimeoutClosesWithoutAuthMessage(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_APIKeyAuthViaHeader(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeAPIKey,
+		APIKey:                   "secret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	h := http.Header{}
+	h.Set("X-API-Key", "secret")
+	c := dialWSWithHeader(t, ts.URL, "/udp", h)
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+}
+
 func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()
