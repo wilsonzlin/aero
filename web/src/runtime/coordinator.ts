@@ -37,6 +37,7 @@ import {
   type NetTraceStatusMessage,
   type NetTraceStatusResponseMessage,
   type NetTraceTakePcapngMessage,
+  ErrorCode,
   MessageType,
   type ProtocolMessage,
   type SetAudioRingBufferMessage,
@@ -2337,8 +2338,20 @@ export class WorkerCoordinator {
 
     if (msg?.type === MessageType.ERROR && typeof (msg as { message?: unknown }).message === "string") {
       const message = (msg as { message: string }).message;
+      const code = (msg as { code?: unknown }).code;
       info.status = { state: "failed", error: message };
       setReadyFlag(shared.status, role, false);
+
+      // Deterministic configuration/selection errors should fail fast without scheduling
+      // an automatic restart loop. Restarting cannot fix incompatible boot disk selections;
+      // the user must change the selection.
+      if (code === ErrorCode.BOOT_DISKS_INCOMPATIBLE) {
+        this.recordFatal({ kind: "worker_reported_error", role, message, atMs: nowMs() });
+        this.cancelPendingRestarts();
+        this.stopWorkersInternal({ clearShared: true });
+        this.setVmState("failed", "boot_disks_incompatible");
+        return;
+      }
 
       if (role === "gpu") {
         const lower = message.toLowerCase();

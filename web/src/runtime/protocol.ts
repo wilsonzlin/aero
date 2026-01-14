@@ -16,6 +16,20 @@ export const MessageType = {
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
+/**
+ * Optional machine-readable error codes sent via {@link ErrorMessage}.
+ *
+ * These are used by the coordinator to decide whether an error is *recoverable* (restartable)
+ * or requires user intervention (e.g. an incompatible boot disk selection).
+ */
+export const ErrorCode = {
+  /**
+   * The selected boot disks cannot be used by the machine runtime (e.g. IDB backend or remote
+   * streaming disks). Restarting workers will not fix this; the user must change the selection.
+   */
+  BOOT_DISKS_INCOMPATIBLE: "boot_disks_incompatible",
+} as const;
+
 export type ReadyMessage = {
   type: typeof MessageType.READY;
   role: WorkerRole;
@@ -25,6 +39,11 @@ export type ErrorMessage = {
   type: typeof MessageType.ERROR;
   role: WorkerRole;
   message: string;
+  /**
+   * Optional machine-readable error code. When present, the coordinator may apply specialized
+   * policies (e.g. avoid infinite restart loops for deterministic configuration errors).
+   */
+  code?: string;
 };
 
 export type WasmReadyMessage = {

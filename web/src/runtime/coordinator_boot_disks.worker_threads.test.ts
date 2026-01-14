@@ -6,6 +6,7 @@ import { WorkerCoordinator } from "./coordinator";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
 import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
+import { ErrorCode, MessageType } from "./protocol";
 
 class MockWorker {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,5 +185,33 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       message: expectedIoMessage,
       transfer: undefined,
     });
+  });
+
+  it("does not schedule an automatic restart when boot disks are incompatible (machine runtime)", () => {
+    vi.useFakeTimers();
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    // `scheduleFullRestart` is gated on `enableWorkers`; keep it enabled so this test would fail
+    // if we accidentally reintroduced the restart loop.
+    (coordinator as any).activeConfig = { enableWorkers: true, vmRuntime: "machine" };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+
+    const cpuInfo = (coordinator as any).workers.cpu;
+    expect(cpuInfo).toBeTruthy();
+
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      type: MessageType.ERROR,
+      role: "cpu",
+      message: "machine runtime does not yet support remote streaming disks",
+      code: ErrorCode.BOOT_DISKS_INCOMPATIBLE,
+    });
+
+    expect(coordinator.getVmState()).toBe("failed");
+    expect(coordinator.getPendingFullRestart()).toBeNull();
+    vi.useRealTimers();
   });
 });

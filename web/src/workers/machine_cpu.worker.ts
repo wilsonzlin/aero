@@ -14,6 +14,7 @@ import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
+  ErrorCode,
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
@@ -1424,7 +1425,7 @@ ctx.onmessage = (ev) => {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+      post({ type: MessageType.ERROR, role, message, code: ErrorCode.BOOT_DISKS_INCOMPATIBLE } satisfies ProtocolMessage);
       return;
     }
 
