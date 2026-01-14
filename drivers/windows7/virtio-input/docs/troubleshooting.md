@@ -125,14 +125,21 @@ The driver expects a **modern virtio-pci** device exposing the standard capabili
 
 The driver uses virtio-input config space to validate and classify the device:
 
-- `ID_NAME` must be exactly one of:
-  - `Aero Virtio Keyboard`
-  - `Aero Virtio Mouse`
-  - `Aero Virtio Tablet`
-- If the PCI **Subsystem Device ID** indicates a specific kind, it must match `ID_NAME`:
-  - `SUBSYS_00101AF4` (`0x0010`, keyboard) → `ID_NAME` must be `Aero Virtio Keyboard`
-  - `SUBSYS_00111AF4` (`0x0011`, mouse) → `ID_NAME` must be `Aero Virtio Mouse`
-  - `SUBSYS_00121AF4` (`0x0012`, tablet) → `ID_NAME` must be `Aero Virtio Tablet`
+- `ID_NAME` must be implemented (non-empty).
+  - In **strict** mode (`CompatIdName=0`, default), keyboard/mouse devices must use the Aero contract strings:
+    - `Aero Virtio Keyboard`
+    - `Aero Virtio Mouse`
+    - (tablet recommended) `Aero Virtio Tablet`
+    - Note: for tablet/absolute-pointer devices (`EV_ABS`), the driver can also identify a tablet via `EV_BITS` even if
+      `ID_NAME` is not recognized.
+  - In **compat** mode (`CompatIdName=1`), the driver also accepts common QEMU strings:
+    - `QEMU Virtio Keyboard`
+    - `QEMU Virtio Mouse`
+    - `QEMU Virtio Tablet`
+- If the PCI **Subsystem Device ID** indicates a specific kind, it must match the **kind** implied by `ID_NAME`:
+  - `SUBSYS_00101AF4` (`0x0010`, keyboard) → `ID_NAME` must identify a keyboard
+  - `SUBSYS_00111AF4` (`0x0011`, mouse) → `ID_NAME` must identify a mouse
+  - `SUBSYS_00121AF4` (`0x0012`, tablet) → `ID_NAME` must identify a tablet
 - `EV_BITS` must be implemented and must advertise the minimum required event types/codes.
   - If `EV_BITS` is missing or empty, the driver will refuse to start.
 
@@ -141,7 +148,8 @@ If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BI
 ### QEMU/non-Aero virtio-input devices
 
 Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard` and may not use the Aero
-contract subsystem IDs. In **strict mode** (compat disabled), the driver will refuse to start (Code 10 / `STATUS_NOT_SUPPORTED`).
+contract subsystem IDs. In **strict mode** (compat disabled), the keyboard/mouse devices will refuse to start (Code 10 /
+`STATUS_NOT_SUPPORTED`). (Tablets may still be identified via `EV_BITS` if they advertise `EV_ABS` with `ABS_X`/`ABS_Y`.)
 
 For QEMU development/testing, you can either:
 
