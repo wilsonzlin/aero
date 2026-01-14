@@ -985,16 +985,14 @@ impl D3D11Runtime {
         let trimmed_fs_wgsl: Option<String> =
             if linked_fs_wgsl.as_ref() == fs.wgsl.as_str() && missing_outputs.is_empty() {
                 None
+            } else if missing_outputs.is_empty() {
+                Some(linked_fs_wgsl.into_owned())
             } else {
                 // Apply MRT output trimming on top of any PS input trimming already done above.
-                let mut wgsl = linked_fs_wgsl.into_owned();
-                if !missing_outputs.is_empty() {
-                    wgsl = super::wgsl_link::trim_ps_outputs_to_locations(
-                        &wgsl,
-                        &keep_output_locations,
-                    );
-                }
-                Some(wgsl)
+                Some(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_fs_wgsl.as_ref(),
+                    &keep_output_locations,
+                ))
             };
 
         let trimmed_vs_module = if vs_can_trim_outputs
@@ -2316,10 +2314,11 @@ mod tests {
                     return out;
                 }
             "#;
-
             let keep_output_locations = BTreeSet::from([0u32]);
-            let expected_trimmed_wgsl =
-                super::super::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep_output_locations);
+            let expected_trimmed_wgsl = super::super::wgsl_link::trim_ps_outputs_to_locations(
+                fs_wgsl,
+                &keep_output_locations,
+            );
             assert!(
                 !expected_trimmed_wgsl.contains("@location(1)"),
                 "sanity check: trimmed WGSL should drop unbound outputs"
