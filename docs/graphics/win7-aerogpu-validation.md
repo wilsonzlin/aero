@@ -575,6 +575,7 @@ See `drivers/aerogpu/tools/win7_dbgctl/README.md` for the full gating/security b
 
 Note: `--map-shared-handle` relies on `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE`, which is also disabled by default. Enable via
 `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (`REG_DWORD`) and reboot/reload the driver.
+The caller must also be privileged (**Administrator** and/or `SeDebugPrivilege`), otherwise the KMD returns `STATUS_NOT_SUPPORTED`.
 
 Common global options:
 
