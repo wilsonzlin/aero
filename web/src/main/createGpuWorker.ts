@@ -224,7 +224,71 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     { resolve: (msg: GpuRuntimeSubmitCompleteMessage) => void; reject: (err: unknown) => void }
   >();
 
+  // Some AeroGPU submissions (notably vsync-paced PRESENT packets) defer their
+  // `submit_complete` notification until the worker receives a `tick`.
+  //
+  // In the full VM runtime, the frame scheduler drives `tick` continuously while scanout
+  // is WDDM-owned (or while the shared framebuffer is dirty). `createGpuWorker()` is a
+  // lower-level harness helper and does not run a scheduler, so we run a lightweight
+  // tick pump while there are pending submit requests to avoid deadlocking callers that
+  // await `submitAerogpu()`.
+  let tickPumpActive = false;
+  let tickPumpRafId: number | null = null;
+  let tickPumpTimerId: ReturnType<typeof setTimeout> | null = null;
+
+  function stopTickPump(): void {
+    tickPumpActive = false;
+    if (tickPumpRafId !== null) {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(tickPumpRafId);
+      tickPumpRafId = null;
+    }
+    if (tickPumpTimerId !== null) {
+      clearTimeout(tickPumpTimerId);
+      tickPumpTimerId = null;
+    }
+  }
+
+  function scheduleTickPump(): void {
+    if (!tickPumpActive) return;
+
+    if (typeof requestAnimationFrame === "function") {
+      tickPumpRafId = requestAnimationFrame(tickPumpLoop);
+      return;
+    }
+
+    tickPumpTimerId = setTimeout(() => tickPumpLoop(performance.now()), 16);
+  }
+
+  function tickPumpLoop(frameTimeMs: number): void {
+    tickPumpRafId = null;
+    tickPumpTimerId = null;
+
+    if (!tickPumpActive) return;
+
+    if (submitRequests.size === 0) {
+      stopTickPump();
+      return;
+    }
+
+    try {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs });
+    } catch (err) {
+      stopTickPump();
+      rejectAllPending(err);
+      return;
+    }
+
+    scheduleTickPump();
+  }
+
+  function startTickPump(): void {
+    if (tickPumpActive) return;
+    tickPumpActive = true;
+    scheduleTickPump();
+  }
+
   function rejectAllPending(err: unknown): void {
+    stopTickPump();
     for (const [, pending] of screenshotRequests) {
       pending.reject(err);
     }
@@ -269,6 +333,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         if (!pending) return;
         submitRequests.delete(typed.requestId);
         pending.resolve(typed);
+        if (submitRequests.size === 0) stopTickPump();
         break;
       }
       case "error": {
@@ -387,6 +452,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         );
         return new Promise<GpuRuntimeSubmitCompleteMessage>((resolve, reject) => {
           submitRequests.set(requestId, { resolve, reject });
+          startTickPump();
         });
       },
       (err) => Promise.reject(err),
@@ -434,6 +500,8 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function shutdown(): void {
+    stopTickPump();
+    rejectAllPending(new Error("gpu-worker shutdown"));
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
     worker.terminate();
   }
