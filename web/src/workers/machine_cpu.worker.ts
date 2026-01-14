@@ -281,6 +281,34 @@ function initInputDiagnosticsTelemetry(): void {
   }
 }
 
+function publishInputBackendStatusFromMachine(): void {
+  // Best-effort status publishing for the input diagnostics panel.
+  //
+  // In legacy runtime, the IO worker is responsible for publishing backend selection + driver
+  // readiness. In `vmRuntime="machine"`, the CPU worker owns the canonical `api.Machine`, so it is
+  // the only place we can probe e.g. virtio-input driver readiness.
+  const st = status;
+  const m = machine;
+  if (!st || !m) return;
+
+  // Be defensive: older WASM builds may not expose these probes.
+  const anyMachine = m as unknown as {
+    virtio_input_keyboard_driver_ok?: () => boolean;
+    virtio_input_mouse_driver_ok?: () => boolean;
+  };
+  try {
+    const virtioKeyboardOk =
+      typeof anyMachine.virtio_input_keyboard_driver_ok === "function" ? anyMachine.virtio_input_keyboard_driver_ok() : false;
+    const virtioMouseOk =
+      typeof anyMachine.virtio_input_mouse_driver_ok === "function" ? anyMachine.virtio_input_mouse_driver_ok() : false;
+
+    Atomics.store(st, StatusIndex.IoInputVirtioKeyboardDriverOk, virtioKeyboardOk ? 1 : 0);
+    Atomics.store(st, StatusIndex.IoInputVirtioMouseDriverOk, virtioMouseOk ? 1 : 0);
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
 // End-to-end input latency telemetry (main thread capture -> CPU worker injection).
 //
 // Keep this in sync with the IO worker's input telemetry so debug HUDs (input diagnostics panel)
@@ -1307,6 +1335,7 @@ async function runLoop(): Promise<void> {
       if (now >= nextHeartbeatMs) {
         const counter = Atomics.add(st, StatusIndex.HeartbeatCounter, 1) + 1;
         pushEvent({ kind: "ack", seq: counter });
+        publishInputBackendStatusFromMachine();
         nextHeartbeatMs = now + HEARTBEAT_INTERVAL_MS;
       }
 
@@ -1471,6 +1500,7 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
     } catch {
       // ignore
     }
+    publishInputBackendStatusFromMachine();
 
     // WASM init completes asynchronously relative to the main run loop. If the run loop is
     // currently waiting on the command ring heartbeat timeout, wake it so pending boot disk
