@@ -1262,20 +1262,18 @@ pub fn decode_instruction(
         OPCODE_STORE_RAW => decode_store_raw(&mut r),
         OPCODE_STORE_STRUCTURED => decode_store_structured(&mut r),
         OPCODE_SYNC => {
-            // `sync` encodes barrier flags in the opcode token control bits.
-            // We only model the variants that include a full thread-group sync (`*_t`), since
-            // those have an exact WGSL `workgroupBarrier()` mapping. Memory-fence-only variants
-            // (without thread-group sync) are left as unknown for now, because translating them to
-            // a WGSL workgroup barrier would introduce stronger synchronization requirements and
-            // could deadlock if used in divergent control flow.
+            // `sync` encodes barrier/fence semantics in the opcode token control bits.
+            //
+            // Note: the SM5 instruction set includes both:
+            // - Group-sync barriers (`*_t` variants), which require all threads to participate.
+            // - Fence-only variants (no `THREAD_GROUP_SYNC`), which do not synchronize threads and
+            //   must *not* be translated to WGSL `workgroupBarrier()` (which can deadlock in
+            //   divergent control flow).
+            //
+            // We preserve the raw flags here and let the WGSL backend pick the safest mapping.
             let sync_flags = (opcode_token >> OPCODE_CONTROL_SHIFT) & OPCODE_CONTROL_MASK;
-            if (sync_flags & SYNC_FLAG_THREAD_GROUP_SYNC) == 0 {
-                return Ok(Sm4Inst::Unknown {
-                    opcode: OPCODE_SYNC,
-                });
-            }
             r.expect_eof()?;
-            Ok(Sm4Inst::WorkgroupBarrier)
+            Ok(Sm4Inst::Sync { flags: sync_flags })
         }
         OPCODE_LD_UAV_RAW => decode_ld_uav_raw(saturate, &mut r),
         other => {

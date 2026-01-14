@@ -1456,7 +1456,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
-            Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::Sync { .. } => {}
             Sm4Inst::AtomicAdd { addr, value, .. } => {
                 scan_src_regs(addr, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
@@ -1511,8 +1511,8 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             | Sm4Inst::EndLoop
             | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src }
-            | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Utof { dst: _, src }
+            | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Ftoi { dst: _, src }
             | Sm4Inst::Ftou { dst: _, src } => scan_src(src),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
@@ -1688,7 +1688,7 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 scan_src(addr);
                 scan_src(value);
             }
-            Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::Sync { .. } => {}
             Sm4Inst::Switch { selector } => scan_src(selector),
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Emit { .. }
@@ -3059,7 +3059,7 @@ fn scan_resources(
                 validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
                 used_uav_texture_slots.insert(uav.slot);
             }
-            Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::Sync { .. } => {}
             Sm4Inst::Switch { selector } => {
                 scan_src(selector)?;
             }
@@ -3504,7 +3504,7 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(addr, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
-            Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::Sync { .. } => {}
             Sm4Inst::Switch { selector } => {
                 scan_src_regs(selector, &mut scan_reg);
             }
@@ -4941,29 +4941,51 @@ fn emit_instructions(
                     format!("bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
-            Sm4Inst::WorkgroupBarrier => {
+            Sm4Inst::Sync { flags } => {
                 if ctx.stage != ShaderStage::Compute {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index,
-                        opcode: "workgroup_barrier".to_owned(),
+                        opcode: "sync".to_owned(),
                     });
                 }
 
-                // SM5 `sync_*_t` instructions are workgroup barriers that optionally include
-                // storage/UAV memory ordering semantics.
-                //
-                // WGSL exposes:
-                // - `workgroupBarrier()` for control + workgroup-memory synchronization.
-                // - `storageBarrier()` for storage-buffer/texture memory ordering.
-                //
-                // We conservatively emit both. This preserves the semantics of
-                // `DeviceMemoryBarrierWithGroupSync()` / `AllMemoryBarrierWithGroupSync()` in
-                // addition to `GroupMemoryBarrierWithGroupSync()`.
-                //
-                // Order matters if `storageBarrier()` is treated as a memory fence without an
-                // execution barrier: we want all invocations to execute it before synchronizing.
-                w.line("storageBarrier();");
-                w.line("workgroupBarrier();");
+                let group_sync = (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SYNC) != 0;
+                if group_sync {
+                    // SM5 `sync_*_t` instructions are workgroup barriers that optionally include
+                    // storage/UAV memory ordering semantics.
+                    //
+                    // WGSL exposes:
+                    // - `workgroupBarrier()` for control + workgroup-memory synchronization.
+                    // - `storageBarrier()` for storage-buffer memory ordering.
+                    //
+                    // We conservatively emit both. This preserves the semantics of
+                    // `DeviceMemoryBarrierWithGroupSync()` / `AllMemoryBarrierWithGroupSync()` in
+                    // addition to `GroupMemoryBarrierWithGroupSync()`.
+                    //
+                    // Order matters if `storageBarrier()` is treated as a memory fence without an
+                    // execution barrier: we want all invocations to execute it before
+                    // synchronizing.
+                    w.line("storageBarrier();");
+                    w.line("workgroupBarrier();");
+                } else {
+                    // Fence-only variants (no `THREAD_GROUP_SYNC`) do not require all threads to
+                    // participate; emitting a WGSL `workgroupBarrier()` would impose a control barrier
+                    // and can deadlock if used in divergent control flow.
+                    //
+                    // For UAV/storage memory ordering we can use `storageBarrier()` as a per-invocation
+                    // fence. If the shader only requests TGSM/workgroup-memory ordering semantics,
+                    // WGSL has no fence-only equivalent today, so we currently emit nothing as an
+                    // approximation.
+                    let uav_fence = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
+                    if uav_fence {
+                        w.line("storageBarrier();");
+                    } else if (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY) != 0
+                    {
+                        // NOTE: No-op approximation. Once we support TGSM/workgroup memory, we may be
+                        // able to translate this more accurately (but we still must not emit a full
+                        // `workgroupBarrier()` without `THREAD_GROUP_SYNC`).
+                    }
+                }
             }
             Sm4Inst::LdUavRaw { dst, addr, uav } => {
                 // Raw UAV buffer loads operate on byte offsets. Model UAV buffers as a storage

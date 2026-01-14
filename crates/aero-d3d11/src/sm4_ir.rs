@@ -698,11 +698,18 @@ pub enum Sm4Inst {
         value: SrcOperand,
         mask: WriteMask,
     },
-    /// Workgroup barrier + thread-group synchronization (`sync_*_t` in SM5).
+    /// SM5 `sync` (barrier / memory fence) instruction.
     ///
-    /// This corresponds to HLSL intrinsics such as `GroupMemoryBarrierWithGroupSync()` and
-    /// `DeviceMemoryBarrierWithGroupSync()`.
-    WorkgroupBarrier,
+    /// DXBC encodes a set of `D3D11_SB_SYNC_FLAGS` in the opcode token's "opcode-specific control"
+    /// field. This is used to represent HLSL intrinsics such as:
+    /// - `GroupMemoryBarrierWithGroupSync()`
+    /// - `DeviceMemoryBarrierWithGroupSync()`
+    /// - `AllMemoryBarrierWithGroupSync()`
+    /// - `DeviceMemoryBarrier()` / `AllMemoryBarrier()` (fence-only; no group sync)
+    ///
+    /// The translator interprets `flags` using the `SYNC_FLAG_*` constants in
+    /// [`crate::sm4::opcode`].
+    Sync { flags: u32 },
     /// Atomic add on a UAV buffer word address (SM5 `InterlockedAdd` family).
     ///
     /// This models the subset needed for `RWByteAddressBuffer` / `RWStructuredBuffer<uint>`

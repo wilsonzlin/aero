@@ -1714,18 +1714,12 @@ fn decodes_integer_compare_ops() {
 }
 
 #[test]
-fn decodes_sync_with_thread_group_sync_as_workgroup_barrier() {
+fn decodes_sync_with_thread_group_sync() {
     let mut body = Vec::<u32>::new();
 
     // `sync` encodes flags in bits 24..=30 of the opcode token.
-    // - With thread-group sync (`*_t` variants), decode should map to `WorkgroupBarrier`.
-    // - Without thread-group sync, decode conservatively leaves it as an unknown instruction.
-    let with_sync_flags = SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY;
-    body.push(opcode_token(OPCODE_SYNC, 1) | (with_sync_flags << OPCODE_CONTROL_SHIFT));
-
-    let without_sync_flags = SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY;
-    body.push(opcode_token(OPCODE_SYNC, 1) | (without_sync_flags << OPCODE_CONTROL_SHIFT));
-
+    let flags = SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY;
+    body.push(opcode_token(OPCODE_SYNC, 1) | (flags << OPCODE_CONTROL_SHIFT));
     body.push(opcode_token(OPCODE_RET, 1));
 
     // Stage type 5 is compute shader.
@@ -1736,13 +1730,25 @@ fn decodes_sync_with_thread_group_sync_as_workgroup_barrier() {
 
     assert_eq!(module.stage, aero_d3d11::ShaderStage::Compute);
     assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
-    assert_eq!(module.instructions[0], Sm4Inst::WorkgroupBarrier);
-    assert!(matches!(
-        module.instructions[1],
-        Sm4Inst::Unknown {
-            opcode: OPCODE_SYNC
-        }
-    ));
+    assert_eq!(module.instructions[0], Sm4Inst::Sync { flags });
+}
+
+#[test]
+fn decodes_sync_with_uav_memory_without_thread_group_sync() {
+    let mut body = Vec::<u32>::new();
+
+    // UAV/storage memory fence without a thread-group barrier.
+    let flags = SYNC_FLAG_UAV_MEMORY;
+    body.push(opcode_token(OPCODE_SYNC, 1) | (flags << OPCODE_CONTROL_SHIFT));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 is compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(module.instructions[0], Sm4Inst::Sync { flags });
 }
 
 #[test]
