@@ -640,6 +640,11 @@ impl AeroGpuExecutor {
                         && regs.scanout0.enable;
 
                     let wants_irq = desc.flags & AeroGpuSubmitDesc::FLAG_NO_IRQ == 0;
+                    let kind = if can_pace_vsync {
+                        PendingFenceKind::Vblank
+                    } else {
+                        PendingFenceKind::Immediate
+                    };
 
                     // Maintain a monotonically increasing fence schedule across queued
                     // (vsync-delayed) and immediate submissions.
@@ -652,12 +657,20 @@ impl AeroGpuExecutor {
                         self.pending_fences.push_back(PendingFenceCompletion {
                             fence: desc.signal_fence,
                             wants_irq,
-                            kind: if can_pace_vsync {
-                                PendingFenceKind::Vblank
-                            } else {
-                                PendingFenceKind::Immediate
-                            },
+                            kind,
                         });
+                    } else if desc.signal_fence == last_fence {
+                        // Duplicate fence values can occur (e.g. Win7 KMD internal submissions
+                        // reusing the most recently submitted fence). Preserve the most restrictive
+                        // completion/IRQ semantics.
+                        if let Some(back) = self.pending_fences.back_mut() {
+                            back.wants_irq |= wants_irq;
+                            if back.kind == PendingFenceKind::Immediate
+                                && kind == PendingFenceKind::Vblank
+                            {
+                                back.kind = PendingFenceKind::Vblank;
+                            }
+                        }
                     }
                 }
                 AeroGpuFenceCompletionMode::Deferred => {
@@ -1336,7 +1349,9 @@ mod tests {
         AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
         FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
     };
-    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    };
     use memory::Bus;
 
     fn write_ring_header(
@@ -1372,6 +1387,49 @@ mod tests {
         mem.write_u64(gpa + 32, 0);
         mem.write_u32(gpa + 40, 0);
         mem.write_u64(gpa + 48, fence);
+    }
+
+    fn write_submit_desc_with_cmd(
+        mem: &mut dyn MemoryBus,
+        gpa: u64,
+        fence: u64,
+        flags: u32,
+        cmd_gpa: u64,
+        cmd_size_bytes: u32,
+    ) {
+        mem.write_u32(gpa, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(gpa + 4, flags);
+        mem.write_u32(gpa + 8, 0);
+        mem.write_u32(gpa + 12, 0);
+        mem.write_u64(gpa + 16, cmd_gpa);
+        mem.write_u32(gpa + 24, cmd_size_bytes);
+        mem.write_u64(gpa + 32, 0);
+        mem.write_u32(gpa + 40, 0);
+        mem.write_u64(gpa + 48, fence);
+    }
+
+    fn write_vsync_present_cmd_stream(mem: &mut dyn MemoryBus, gpa: u64) -> u32 {
+        // Minimal command stream:
+        // - stream header (24 bytes)
+        // - PRESENT packet (16 bytes): cmd hdr (8) + payload {scanout_id:u32, flags:u32} (8)
+        let size_bytes = 40u32;
+
+        mem.write_u32(gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
+        mem.write_u32(gpa + 8, size_bytes);
+        mem.write_u32(gpa + 12, 0);
+        mem.write_u32(gpa + 16, 0);
+        mem.write_u32(gpa + 20, 0);
+
+        // Packet header.
+        mem.write_u32(gpa + 24, AerogpuCmdOpcode::Present as u32);
+        mem.write_u32(gpa + 28, 16);
+
+        // Payload (scanout_id, flags).
+        mem.write_u32(gpa + 32, 0);
+        mem.write_u32(gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
+
+        size_bytes
     }
 
     #[test]
@@ -1499,6 +1557,101 @@ mod tests {
         // Completing the fence should still raise an IRQ because *one* of the submissions
         // associated with this fence wanted one.
         exec.complete_fence(&mut regs, &mut mem, fence);
+        assert_eq!(regs.completed_fence, fence);
+        assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+
+    #[test]
+    fn immediate_duplicate_fence_entries_preserve_irq_request() {
+        let mut mem = Bus::new(0x4000);
+        let ring_gpa = 0x1000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 2);
+
+        let fence = 7u64;
+
+        // Reverse the flags order: first entry suppresses IRQ, second wants one. Even though the
+        // fence value is duplicated, we must preserve the IRQ request.
+        let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc(&mut mem, desc0_gpa, fence, AeroGpuSubmitDesc::FLAG_NO_IRQ);
+        let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + stride;
+        write_submit_desc(&mut mem, desc1_gpa, fence, 0);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Immediate,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        assert_eq!(regs.completed_fence, fence);
+        assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+
+    #[test]
+    fn immediate_duplicate_fence_entries_upgrade_to_vblank_gating() {
+        let mut mem = Bus::new(0x5000);
+        let ring_gpa = 0x1000u64;
+        let cmd_gpa = 0x3000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 2);
+
+        let fence = 7u64;
+
+        // First entry does not contain a vsynced present (no cmd stream), so it would normally be
+        // scheduled as immediate. Second entry reuses the same fence but contains a vsynced present
+        // command, so the fence must be gated on vblank.
+        let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc(&mut mem, desc0_gpa, fence, 0);
+
+        let cmd_size_bytes = write_vsync_present_cmd_stream(&mut mem, cmd_gpa);
+        let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + stride;
+        write_submit_desc_with_cmd(&mut mem, desc1_gpa, fence, 0, cmd_gpa, cmd_size_bytes);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
+        regs.scanout0.enable = true;
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Immediate,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+        assert_eq!(
+            regs.completed_fence, 0,
+            "fence must be gated on vblank once any submission with that fence contains a vsynced present"
+        );
+        assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
+
+        exec.process_vblank_tick(&mut regs, &mut mem);
         assert_eq!(regs.completed_fence, fence);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
     }

@@ -299,6 +299,16 @@ Fences are **monotonic 64-bit** values chosen by the guest.
 
 If interrupts are enabled, the device raises `AEROGPU_IRQ_FENCE` when the completed fence advances (unless the submission requested `AEROGPU_SUBMIT_FLAG_NO_IRQ`).
 
+### Win7/WDDM 1.1 note (u32 `SubmissionFenceId` vs protocol u64 fences)
+
+Windows 7 WDDM 1.1 miniports receive a 32-bit `SubmissionFenceId` from dxgkrnl (`DXGKARG_SUBMITCOMMAND.SubmissionFenceId`).
+The AeroGPU ring protocol requires that `signal_fence`/`completed_fence` be **monotonic u64**, so the KMD must extend the u32 fence into a u64 domain (for example by tracking an epoch and using `(epoch << 32) | fence32` when `fence32` wraps).
+
+When notifying dxgkrnl of DMA completion/fault, the KMD must still report a 32-bit fence ID (truncate to the low 32 bits).
+
+Guest drivers may also emit **duplicate** `signal_fence` values (for example, internal KMD submissions that reuse the most recent fence and suppress IRQ delivery via `AEROGPU_SUBMIT_FLAG_NO_IRQ`).
+Host/device implementations must tolerate duplicate fences without losing metadata: a fence should still raise `IRQ_FENCE` if *any* submission using that fence requested an IRQ, and any `PRESENT`/writeback metadata for that fence must be preserved.
+
 ## Command stream (“AeroGPU IR”)
 
 ### Structure
