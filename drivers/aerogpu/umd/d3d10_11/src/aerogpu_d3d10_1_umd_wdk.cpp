@@ -2705,7 +2705,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                 bool is_ds,
                                 bool is_shared,
                                 bool want_primary,
-                                uint32_t pitch_bytes) -> HRESULT {
+                                uint32_t pitch_bytes,
+                                aerogpu_wddm_alloc_priv_v2* out_priv) -> HRESULT {
     if (!pDesc->pAllocationInfo) {
       return E_INVALIDARG;
     }
@@ -2822,6 +2823,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const bool have_priv_out = ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
                                                       static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
                                                       &priv_out);
+    if (out_priv) {
+      *out_priv = priv_out;
+    }
     if (have_priv_out && priv_out.alloc_id != 0) {
       alloc_id = priv_out.alloc_id;
     }
@@ -2983,7 +2987,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     want_host_owned = want_host_owned && !is_shared;
 
-    HRESULT alloc_hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
+    HRESULT alloc_hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0, nullptr);
     if (FAILED(alloc_hr)) {
       set_error(dev, alloc_hr);
       deallocate_if_needed();
@@ -3198,7 +3202,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     // are expressed in terms of subresource byte offsets (the Map/Unmap and UpdateSubresourceUP
     // paths upload whole subresources).
 
-    HRESULT alloc_hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
+    aerogpu_wddm_alloc_priv_v2 alloc_priv = {};
+    HRESULT alloc_hr = allocate_one(total_bytes,
+                                    cpu_visible,
+                                    is_rt,
+                                    is_ds,
+                                    is_shared,
+                                    is_primary,
+                                    res->row_pitch_bytes,
+                                    &alloc_priv);
     if (FAILED(alloc_hr)) {
       set_error(dev, alloc_hr);
       deallocate_if_needed();
@@ -3209,6 +3221,68 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (want_host_owned) {
       res->backing_alloc_id = 0;
       res->backing_offset_bytes = 0;
+    }
+
+    if (!want_host_owned) {
+      uint32_t alloc_pitch = static_cast<uint32_t>(alloc_priv.row_pitch_bytes);
+      if (alloc_pitch == 0 && !AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(alloc_priv.reserved0)) {
+        alloc_pitch = static_cast<uint32_t>(alloc_priv.reserved0 & 0xFFFFFFFFu);
+      }
+      if (alloc_pitch != 0 && alloc_pitch != res->row_pitch_bytes) {
+        // If the KMD returns a different pitch (via the private driver data blob),
+        // update our internal + protocol-visible layout before uploading any data.
+        //
+        // This keeps the host's `CREATE_TEXTURE2D.row_pitch_bytes` interpretation in
+        // sync with the actual guest backing memory layout and avoids silent row
+        // corruption when the Win7 runtime/KMD chooses a different pitch.
+        static std::atomic<uint32_t> g_create_tex_pitch_logs{0};
+        const uint32_t n = g_create_tex_pitch_logs.fetch_add(1, std::memory_order_relaxed);
+        if (n < 32) {
+          AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: KMD overrode Texture2D pitch %u -> %u",
+                               static_cast<unsigned>(res->row_pitch_bytes),
+                               static_cast<unsigned>(alloc_pitch));
+        } else if (n == 32) {
+          AEROGPU_D3D10_11_LOG("D3D10.1 CreateResource: pitch override log limit reached; suppressing further messages");
+        }
+
+        if (alloc_pitch < row_bytes) {
+          set_error(dev, E_INVALIDARG);
+          deallocate_if_needed();
+          res->~AeroGpuResource();
+          AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+        }
+
+        std::vector<Texture2DSubresourceLayout> updated_layouts;
+        uint64_t updated_total_bytes = 0;
+        if (!build_texture2d_subresource_layouts(aer_fmt,
+                                                 res->width,
+                                                 res->height,
+                                                 res->mip_levels,
+                                                 res->array_size,
+                                                 alloc_pitch,
+                                                 &updated_layouts,
+                                                 &updated_total_bytes)) {
+          set_error(dev, E_FAIL);
+          deallocate_if_needed();
+          res->~AeroGpuResource();
+          AEROGPU_D3D10_RET_HR(E_FAIL);
+        }
+
+        const uint64_t backing_size =
+            alloc_priv.size_bytes ? static_cast<uint64_t>(alloc_priv.size_bytes) : total_bytes;
+        if (updated_total_bytes == 0 ||
+            updated_total_bytes > backing_size ||
+            updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+          set_error(dev, E_INVALIDARG);
+          deallocate_if_needed();
+          res->~AeroGpuResource();
+          AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+        }
+
+        res->row_pitch_bytes = alloc_pitch;
+        res->tex2d_subresources = std::move(updated_layouts);
+        total_bytes = updated_total_bytes;
+      }
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
