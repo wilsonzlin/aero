@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may append `{gs,hs,ds}` after the 24-byte prefix—appended handles are authoritative and `reserved0` may optionally mirror `gs`) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may append `{gs,hs,ds}` after the 24-byte prefix—appended handles are authoritative and `reserved0` may optionally mirror `gs`) | **Supported (partial)**: create+bind+stage bindings; host runs compute-prepass emulation (synthetic fallback + minimal SM4 GS DXBC execution for `PointList`/`LineList`/`TriangleList` IA inputs) |
+| Geometry shaders (GS) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may append `{gs,hs,ds}` after the 24-byte prefix—appended handles are authoritative and `reserved0` may optionally mirror `gs`) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may append `{gs,hs,ds}` after the 24-byte prefix—appended handles are authoritative and `reserved0` may optionally mirror `gs`) | **Supported (partial)**: create+bind+stage bindings; host runs compute-prepass emulation (synthetic fallback + minimal SM4 GS DXBC execution for a small set of IA input topologies: `PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj`) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -40,7 +40,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
   - D3D10/D3D10.1: VS/PS/GS
-  - D3D11: VS/PS/GS/CS (GS binding triggers compute-prepass path; a small translated SM4 GS subset can execute for a limited set of IA input topologies: `PointList`, `LineList`, `TriangleList` (`Draw` + `DrawIndexed`). Other IA input topologies (strip/adjacency/patchlists) still fall back to synthetic expansion; see “Geometry shaders (GS)” below)
+  - D3D11: VS/PS/GS/CS (GS binding triggers compute-prepass path; a small translated SM4 GS subset can execute for a limited set of IA input topologies: `PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj`; other cases fall back to synthetic expansion; see “Geometry shaders (GS)” below)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -85,12 +85,12 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet. When present, the appended handles are authoritative; producers may optionally mirror `gs` into `reserved0` for best-effort legacy compatibility (if mirrored, it should match the appended `gs`).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for GS compute-emulation. Today, draws using the supported IA topology subset (`PointList`, `LineList`, and `TriangleList`) can execute translated SM4 GS DXBC. If GS translation fails, draws with that GS bound currently return a clear error; if translation succeeds but the draw is outside the translated-GS execution paths, the executor falls back to synthetic expansion (guest GS DXBC does not execute).
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for GS compute-emulation. Today, draws using a supported IA topology subset (`PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj`) can execute translated SM4 GS DXBC. If GS translation fails, draws with that GS bound currently return a clear error; if translation succeeds but the draw is outside the translated-GS execution paths, the executor falls back to synthetic expansion (guest GS DXBC does not execute).
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
     - Prepass implementations:
       - A deterministic synthetic-expansion compute prepass used for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-      - GS prepass paths that can execute a translated SM4 GS DXBC subset for a small set of IA input topologies (`PointList`, `LineList`, `TriangleList`) (bring-up limitations apply: the VS-as-compute feeding path is still minimal; see `docs/graphics/geometry-shader-emulation.md`).
+      - GS prepass paths that can execute a translated SM4 GS DXBC subset for a small set of IA input topologies (`PointList`/`LineList`/`TriangleList`/`LineListAdj`/`TriangleListAdj`) (bring-up limitations apply: the VS-as-compute feeding path is still minimal; see `docs/graphics/geometry-shader-emulation.md`).
     - A minimal SM4 GS DXBC→WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs` and is partially wired into the executor:
       - `CREATE_SHADER_DXBC` attempts to translate GS DXBC into a compute prepass.
       - Eligible draws can execute the translated prepass when translation succeeds (see `exec_geometry_shader_prepass_*` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
@@ -103,9 +103,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
-    - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for the supported IA input topology subset: `PointList`/`LineList`/`TriangleList`):
-      - End-to-end execution path: `Draw` and `DrawIndexed` for `PointList`/`LineList`/`TriangleList`.
-      - Remaining work (translated-GS execution): `LineStrip`/`TriangleStrip` and adjacency variants (these currently route through synthetic expansion).
+    - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for the supported IA input topology subset):
+      - End-to-end execution path: `Draw` and `DrawIndexed` for `PointList`/`LineList`/`TriangleList` and adjacency list variants (`LineListAdj`/`TriangleListAdj`).
+      - Remaining work (translated-GS execution): `LineStrip`/`TriangleStrip` and adjacency strip variants (these currently route through synthetic expansion).
       - Output (end-to-end): GS output topology `pointlist`/`linestrip`/`triangle_strip` (stream 0). Strip output is expanded into indexed list topologies for `draw_indexed_indirect` (and `pointlist` is rendered as `PointList`).
       - Shader instructions/operands: a small SM4 subset (see `docs/graphics/geometry-shader-emulation.md`), including `emit`/`cut`, basic ALU, structured control flow (`if`/`loop`/`break`/`continue`, etc), and a small set of **read-only** resource ops:
         - Texture2D: `sample`/`sample_l`/`ld`/`resinfo`
