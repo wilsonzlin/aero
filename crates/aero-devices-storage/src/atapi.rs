@@ -403,9 +403,6 @@ impl AtapiCdrom {
                 // Windows' CD/DVD stack may use this to poll for media change and tray events.
                 // We provide a minimal "no event" response and advertise only the media event
                 // class.
-                if let Err(e) = self.check_ready() {
-                    return e;
-                }
                 let request = packet[4];
                 let alloc_len = u16::from_be_bytes([packet[7], packet[8]]) as usize;
                 let data = self.get_event_status_notification(request);
@@ -733,5 +730,95 @@ fn write_ata_string(dst_words: &mut [u16], src: &str, byte_len: usize) {
             break;
         }
         *word = u16::from_be_bytes([bytes[idx], bytes[idx + 1]]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gesn_packet(request: u8, alloc_len: u16) -> [u8; 12] {
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x4A;
+        pkt[4] = request;
+        pkt[7..9].copy_from_slice(&alloc_len.to_be_bytes());
+        pkt
+    }
+
+    fn request_sense_packet(alloc_len: u8) -> [u8; 12] {
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x03;
+        pkt[4] = alloc_len;
+        pkt
+    }
+
+    #[test]
+    fn get_event_status_notification_succeeds_without_media_request_0() {
+        let mut dev = AtapiCdrom::new(None);
+
+        let pkt = gesn_packet(0, 0xFFFF);
+        let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
+            panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
+        };
+
+        assert_eq!(data.len(), 4);
+        assert_eq!(&data[0..2], &2u16.to_be_bytes());
+        assert_eq!(data[2], 0x00, "notification class should be 0 (no event)");
+        assert_eq!(data[3] & 0x08, 0x08, "media event class should be advertised");
+    }
+
+    #[test]
+    fn get_event_status_notification_succeeds_without_media_and_preserves_sense() {
+        let mut dev = AtapiCdrom::new(None);
+        dev.set_sense(0x05, 0xDE, 0xAD);
+
+        let pkt = gesn_packet(0x08, 0xFFFF);
+        let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
+            panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
+        };
+
+        assert_eq!(data.len(), 8);
+        assert_eq!(&data[0..2], &6u16.to_be_bytes());
+        assert_eq!(data[2], 0x08);
+        assert_eq!(data[3] & 0x08, 0x08);
+        assert_eq!(data[4], 0x00, "event code should be 'no change'");
+        assert_eq!(data[5] & 0x01, 0x00, "media-present bit must be clear");
+        assert_eq!(data[5] & 0x02, 0x00, "tray-open bit must be clear");
+
+        // GET EVENT STATUS NOTIFICATION should not clobber current sense state.
+        let req_sense = request_sense_packet(18);
+        let PacketResult::DataIn(sense) = dev.handle_packet(&req_sense, false) else {
+            panic!("expected DataIn for REQUEST SENSE");
+        };
+        assert_eq!(sense[2] & 0x0F, 0x05);
+        assert_eq!(sense[12], 0xDE);
+        assert_eq!(sense[13], 0xAD);
+    }
+
+    #[test]
+    fn get_event_status_notification_reports_tray_open_bit() {
+        let mut dev = AtapiCdrom::new(None);
+        dev.eject_media();
+
+        let pkt = gesn_packet(0x08, 0xFFFF);
+        let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
+            panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
+        };
+
+        assert_eq!(data.len(), 8);
+        assert_eq!(data[5] & 0x01, 0x00, "media-present bit must be clear");
+        assert_eq!(data[5] & 0x02, 0x02, "tray-open bit must be set");
+    }
+
+    #[test]
+    fn get_event_status_notification_respects_allocation_length() {
+        let mut dev = AtapiCdrom::new(None);
+
+        let pkt = gesn_packet(0x08, 4);
+        let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
+            panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
+        };
+
+        assert_eq!(data.len(), 4, "response must be truncated to allocation length");
     }
 }
