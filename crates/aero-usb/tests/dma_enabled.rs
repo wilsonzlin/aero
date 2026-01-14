@@ -1,8 +1,10 @@
 use aero_usb::ehci::regs as ehci_regs;
 use aero_usb::ehci::EhciController;
+use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs as uhci_regs;
 use aero_usb::uhci::UhciController;
 use aero_usb::xhci::regs as xhci_regs;
+use aero_usb::xhci::transfer::{Ep0TransferEngine, XhciTransferExecutor};
 use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
 
@@ -115,5 +117,55 @@ fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
         mf1,
         (mf0 + 8) & 0x3fff,
         "xHCI MFINDEX should still advance while DMA is disabled"
+    );
+}
+
+#[test]
+fn xhci_transfer_executor_does_not_touch_guest_memory_without_dma() {
+    let mut mem = NoDmaCountingMem::default();
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(keyboard));
+
+    // Configure a dummy endpoint pointing at an arbitrary transfer ring pointer. Without DMA gating
+    // the executor would attempt to read a TRB (open-bus 0xFF) and halt the endpoint with TRB Error.
+    exec.add_endpoint(0x81, 0x1000);
+
+    exec.tick_1ms(&mut mem);
+    exec.poll_endpoint(&mut mem, 0x81);
+
+    assert_eq!(
+        mem.reads, 0,
+        "xHCI transfer executor must not DMA-read guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        mem.writes, 0,
+        "xHCI transfer executor must not DMA-write guest memory when dma_enabled() is false"
+    );
+    assert!(exec.take_events().is_empty());
+    let st = exec.endpoint_state(0x81).expect("endpoint exists");
+    assert!(!st.halted);
+    assert_eq!(st.ring.dequeue_ptr, 0x1000);
+}
+
+#[test]
+fn xhci_ep0_transfer_engine_does_not_touch_guest_memory_without_dma() {
+    let mut mem = NoDmaCountingMem::default();
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(0x2000, 8);
+    xhci.hub_mut().attach(0, Box::new(UsbHidKeyboardHandle::new()));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, 0x1000, true, 64));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+    xhci.tick_1ms(&mut mem);
+
+    assert_eq!(
+        mem.reads, 0,
+        "EP0 transfer engine must not DMA-read guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        mem.writes, 0,
+        "EP0 transfer engine must not DMA-write guest memory when dma_enabled() is false"
     );
 }

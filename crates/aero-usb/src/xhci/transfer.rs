@@ -188,6 +188,9 @@ impl XhciTransferExecutor {
     /// This is useful for wiring into xHCI doorbell behavior where the guest explicitly notifies
     /// the controller that a particular endpoint has new work available.
     pub fn poll_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep_addr: u8) {
+        if !mem.dma_enabled() {
+            return;
+        }
         // See `tick_1ms`: move the endpoint map out to avoid holding a mutable borrow of
         // `self.endpoints` while calling helpers that need `&mut self`.
         let mut endpoints = core::mem::take(&mut self.endpoints);
@@ -208,6 +211,9 @@ impl XhciTransferExecutor {
 
     pub fn tick_1ms<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {
         self.device.tick_1ms();
+        if !mem.dma_enabled() {
+            return;
+        }
 
         // `BTreeMap::iter_mut()` holds a mutable borrow of `self.endpoints` for the duration of the
         // loop. Move the map out temporarily so we can still call helper methods that need `&mut
@@ -1573,12 +1579,18 @@ impl Ep0TransferEngine {
             return;
         };
         ep0.doorbell_pending = true;
+        if !mem.dma_enabled() {
+            return;
+        }
         self.process_slot_ep0(mem, slot_id);
     }
 
     pub fn tick_1ms<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {
         self.now_ms = self.now_ms.wrapping_add(1);
         self.hub.tick_1ms();
+        if !mem.dma_enabled() {
+            return;
+        }
 
         // Process any endpoints that are waiting on NAK pacing or were doorbelled.
         for slot_id in 1..self.slots.len() {
