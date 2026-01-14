@@ -290,11 +290,11 @@ Semantics / guarantees:
   requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
   back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
   lost.
-  If either side detects ring corruption in the `hid.ringAttach` rings (e.g. the consumer cannot
-  decode/drain records), it sends `{ type: "hid.ringDetach", reason? }` to disable those rings.
-  Output/feature reports then fall back to `postMessage` (`hid.sendReport`), and input reports
-  continue using `hid.ring.init` when configured (otherwise falling back to `hid.inputReport`).
-  Any reports already queued in the detached ring may be dropped/abandoned.
+  If either side detects ring corruption (e.g. the consumer cannot decode/drain records), it sends
+  `{ type: "hid.ringDetach", reason? }` to disable the SharedArrayBuffer fast paths and fall back to
+  `postMessage` (`hid.inputReport` / `hid.sendReport`). In the current runtime, `hid.ringDetach`
+  disables both the `hid.ringAttach` rings and the `hid.ring.init` input report ring. Any reports
+  already queued in a detached ring may be dropped/abandoned.
 - **Size limits:** the SAB `HidReportRing` record format stores `len` as a `u16` and the default
   output ring capacity is 1 MiB (configurable via `WebHidBroker({ outputRingCapacityBytes })`).
   Feature reports larger than the maximum ring record payload (≈64 KiB, due to the `u16` length
