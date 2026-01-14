@@ -63,7 +63,9 @@ use self::trb::{Trb, TrbType};
 use event_ring::EventRingProducer;
 use interrupter::InterrupterRegs;
 
-const DEFAULT_PORT_COUNT: u8 = 2;
+// Most PC xHCI controllers expose multiple root ports. Use a reasonably sized default so common
+// guest drivers see a realistic topology without requiring explicit configuration.
+const DEFAULT_PORT_COUNT: u8 = 8;
 const MAX_PENDING_EVENTS: usize = 256;
 const COMPLETION_CODE_SUCCESS: u8 = 1;
 
