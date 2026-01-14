@@ -2,8 +2,10 @@
 
 use aero_storage::{DiskError, StdFileBackend, StorageBackend};
 
+use std::io::Write as _;
+
 #[cfg(any(unix, windows))]
-use std::io::{Seek, SeekFrom, Write as _};
+use std::io::{Seek, SeekFrom};
 
 #[test]
 fn std_file_backend_set_len_write_read_roundtrip() {
@@ -92,4 +94,28 @@ fn std_file_backend_offset_overflow_is_reported() {
 
     let err = backend.write_at(u64::MAX - 1, &buf).unwrap_err();
     assert!(matches!(err, DiskError::OffsetOverflow));
+}
+
+#[test]
+fn std_file_backend_read_only_rejects_writes_and_allows_flush() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(b"abcd").unwrap();
+    tmp.flush().unwrap();
+
+    let mut backend = StdFileBackend::open_read_only(tmp.path()).unwrap();
+    assert!(backend.is_read_only());
+    assert_eq!(backend.len().unwrap(), 4);
+
+    let mut buf = [0u8; 4];
+    backend.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"abcd");
+
+    let err = backend.write_at(0, b"x").unwrap_err();
+    assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only backend"));
+
+    let err = backend.set_len(8).unwrap_err();
+    assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only backend"));
+
+    // Flush is a no-op for read-only file handles.
+    backend.flush().unwrap();
 }
