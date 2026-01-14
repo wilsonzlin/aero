@@ -274,3 +274,29 @@ fn ehci_snapshot_restore_rejects_oversized_nested_usb_device_snapshots() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
+
+#[test]
+fn ehci_snapshot_restore_detaches_pre_attached_devices_when_snapshot_has_none() {
+    // Snapshot an empty topology (no devices), then restore into a controller that has a device
+    // pre-attached. The snapshot should be authoritative and must detach the device.
+    let empty = EhciController::new();
+    let snapshot = empty.save_state();
+
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut()
+        .attach(0, Box::new(UsbHidKeyboardHandle::new()));
+    assert!(
+        ctrl.hub().port_device(0).is_some(),
+        "precondition: device should be attached"
+    );
+
+    ctrl.load_state(&snapshot)
+        .expect("ehci snapshot restore should succeed");
+
+    assert!(
+        ctrl.hub().port_device(0).is_none(),
+        "restored snapshot should detach pre-attached devices when snapshot has none"
+    );
+    let portsc = ctrl.mmio_read(REG_PORTSC_BASE, 4);
+    assert_eq!(portsc & PORTSC_CCS, 0, "CCS should be cleared");
+}
