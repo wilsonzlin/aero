@@ -71,14 +71,14 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
     bytes
 }
 
-fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32) {
+fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32, hs: u32, ds: u32) {
     // Encode the append-only `BIND_SHADERS` extension so the executor sees `{gs,hs,ds}` via the
     // canonical decoder (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
     //
     // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
     // tests/fixtures.
     let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(vs, ps, cs, gs, /* hs */ 0, /* ds */ 0);
+    w.bind_shaders_ex(vs, ps, cs, gs, hs, ds);
     let packet_stream = w.finish();
     stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
 }
@@ -200,8 +200,12 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         };
 
         const GS_SHADER: u32 = 1;
+        const HS_SHADER: u32 = 2;
+        const DS_SHADER: u32 = 3;
 
         let gs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(2))]);
+        let hs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(3))]);
+        let ds_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(4))]);
 
         let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
         stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
@@ -221,8 +225,32 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             end_cmd(&mut stream, start);
         }
 
-        // Bind the GS via the append-only `BIND_SHADERS` extension (`{gs,hs,ds}` payload).
-        push_bind_shaders(&mut stream, 0, 0, 0, GS_SHADER);
+        // CREATE_SHADER_DXBC (hull shader payload, SM4 program type 3).
+        {
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+            stream.extend_from_slice(&HS_SHADER.to_le_bytes());
+            stream.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes()); // stage
+            stream.extend_from_slice(&(hs_dxbc.len() as u32).to_le_bytes());
+            stream.extend_from_slice(&STAGE_EX_HULL.to_le_bytes()); // reserved0 = stage_ex
+            stream.extend_from_slice(&hs_dxbc);
+            stream.resize(align4(stream.len()), 0);
+            end_cmd(&mut stream, start);
+        }
+
+        // CREATE_SHADER_DXBC (domain shader payload, SM4 program type 4).
+        {
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+            stream.extend_from_slice(&DS_SHADER.to_le_bytes());
+            stream.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes()); // stage
+            stream.extend_from_slice(&(ds_dxbc.len() as u32).to_le_bytes());
+            stream.extend_from_slice(&STAGE_EX_DOMAIN.to_le_bytes()); // reserved0 = stage_ex
+            stream.extend_from_slice(&ds_dxbc);
+            stream.resize(align4(stream.len()), 0);
+            end_cmd(&mut stream, start);
+        }
+
+        // Bind the GS/HS/DS via the append-only `BIND_SHADERS` extension (`{gs,hs,ds}` payload).
+        push_bind_shaders(&mut stream, 0, 0, 0, GS_SHADER, HS_SHADER, DS_SHADER);
 
         // Create dummy resources for each binding table.
         for texture in [301u32, 302, 303, 304, 306, 308] {
@@ -375,6 +403,8 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             "gs_main",
             "geometry shader should be stored in the shader table"
         );
+        assert_eq!(exec.shader_entry_point(HS_SHADER).unwrap(), "hs_main");
+        assert_eq!(exec.shader_entry_point(DS_SHADER).unwrap(), "ds_main");
 
         let bindings = exec.binding_state();
 
