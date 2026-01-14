@@ -2498,6 +2498,53 @@ fn translates_compute_store_raw_to_storage_buffer() {
 }
 
 #[test]
+fn translates_compute_store_raw_accepts_float_byte_address() {
+    // Compute shaders do not have ISGN/OSGN signatures.
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use a float immediate (`16.0`) for the byte address. The translator should apply the
+    // float-to-u32 heuristic and treat it as byte offset 16 (word index 4), rather than the raw
+    // bit-pattern `0x41800000`.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::StoreRaw {
+                uav: UavRef { slot: 0 },
+                addr: src_imm([16.0, 16.0, 16.0, 16.0]),
+                value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
+                mask: WriteMask::X,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("16u"),
+        "expected float 16.0 address to be treated as numeric 16u:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("0x41800000u"),
+        "expected raw float bit-pattern 0x41800000 to not be used as a byte address:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[

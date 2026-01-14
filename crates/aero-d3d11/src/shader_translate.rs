@@ -757,9 +757,7 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_cp.outputs.keys() {
-        w.line(&format!(
-            "hs_store_out_cp(hs_out_base + {reg}u, o{reg});"
-        ));
+        w.line(&format!("hs_store_out_cp(hs_out_base + {reg}u, o{reg});"));
     }
     w.dedent();
     w.line("}");
@@ -787,9 +785,7 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_pc.outputs.keys() {
-        w.line(&format!(
-            "hs_store_out_pc(hs_out_base + {reg}u, o{reg});"
-        ));
+        w.line(&format!("hs_store_out_pc(hs_out_base + {reg}u, o{reg});"));
     }
     w.dedent();
     w.line("}");
@@ -1649,18 +1645,18 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 width,
                 offset,
                 src,
-             }
-             | Sm4Inst::Ibfe {
-                 dst: _,
-                 width,
-                 offset,
+            }
+            | Sm4Inst::Ibfe {
+                dst: _,
+                width,
+                offset,
                 src,
             } => {
                 scan_src(width);
                 scan_src(offset);
                 scan_src(src);
-             }
-             Sm4Inst::Rcp { dst: _, src }
+            }
+            Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
             | Sm4Inst::Not { dst: _, src }
             | Sm4Inst::Clip { src }
@@ -2869,7 +2865,8 @@ fn scan_resources(
                 scan_src(a)?;
                 scan_src(b)?;
             }
-            Sm4Inst::Setp { a, b, .. } | Sm4Inst::Add { dst: _, a, b }
+            Sm4Inst::Setp { a, b, .. }
+            | Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
@@ -3499,11 +3496,7 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
-            Sm4Inst::ResInfo {
-                dst,
-                mip_level,
-                ..
-            } => {
+            Sm4Inst::ResInfo { dst, mip_level, .. } => {
                 scan_reg(dst.reg);
                 scan_src_regs(mip_level, &mut scan_reg);
             }
@@ -3877,13 +3870,13 @@ fn emit_instructions(
                 cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
             }
             Sm4Inst::Break => {
-                 let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
-                 let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                 if !inside_case && !inside_loop {
-                     return Err(ShaderTranslateError::MalformedControlFlow {
-                         inst_index,
-                         expected: "loop or switch case".to_owned(),
-                         found: blocks
+                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_case && !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop or switch case".to_owned(),
+                        found: blocks
                             .last()
                             .map(|b| b.describe())
                             .unwrap_or_else(|| "none".to_owned()),
@@ -4519,8 +4512,7 @@ fn emit_instructions(
                         };
 
                         // Convert the bool vector result into D3D-style predicate mask bits.
-                        let mask =
-                            format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
+                        let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
                         let expr = format!("bitcast<vec4<f32>>({mask})");
                         emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
                     }
@@ -4602,11 +4594,8 @@ fn emit_instructions(
                     src_f
                 };
 
-                let pack_lane = |c: char| {
-                    format!(
-                        "(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)"
-                    )
-                };
+                let pack_lane =
+                    |c: char| format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)");
                 let ux = pack_lane('x');
                 let uy = pack_lane('y');
                 let uz = pack_lane('z');
@@ -4623,8 +4612,7 @@ fn emit_instructions(
                 let mut src_bits = src.clone();
                 src_bits.modifier = OperandModifier::None;
                 let src_u = emit_src_vec4_u32(&src_bits, inst_index, "f16tof32", ctx)?;
-                let unpack_lane =
-                    |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
+                let unpack_lane = |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
                 let x = unpack_lane('x');
                 let y = unpack_lane('y');
                 let z = unpack_lane('z');
@@ -4746,9 +4734,9 @@ fn emit_instructions(
             Sm4Inst::LdRaw { dst, addr, buffer } => {
                 // Raw buffer loads operate on byte offsets. Model buffers as a storage
                 // `array<u32>` and derive a word index from the byte address.
-                let addr_u = emit_src_vec4_u32(addr, inst_index, "ld_raw", ctx)?;
+                let addr_u32 = emit_src_scalar_u32_addr(addr, inst_index, "ld_raw", ctx)?;
                 let base_name = format!("ld_raw_base{inst_index}");
-                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
+                w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
 
                 let mask_bits = dst.mask.0 & 0xF;
                 let load_lane = |bit: u8, offset: u32| {
@@ -4793,9 +4781,9 @@ fn emit_instructions(
                 // address operand may be provided either as raw integer bits or as a numeric float
                 // (common when the compiler materializes an integer constant in a float register).
                 // Use the same float→u32 heuristic as `ld_uav_raw`.
-                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "store_raw", ctx)?;
+                let addr_u32 = emit_src_scalar_u32_addr(addr, inst_index, "store_raw", ctx)?;
                 let base_name = format!("store_raw_base{inst_index}");
-                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
+                w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
 
                 // Store raw bits. Buffer stores must preserve the underlying 32-bit lane patterns
                 // (e.g. a `mov`-based `asuint` bitcast of `1.0` must store `0x3f800000`, not `1`).
@@ -4837,11 +4825,12 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32(index, inst_index, "ld_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32(offset, inst_index, "ld_structured", ctx)?;
+                let index_u32 = emit_src_scalar_u32_addr(index, inst_index, "ld_structured", ctx)?;
+                let offset_u32 =
+                    emit_src_scalar_u32_addr(offset, inst_index, "ld_structured", ctx)?;
                 let base_name = format!("ld_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
+                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
                 ));
 
                 let mask_bits = dst.mask.0 & 0xF;
@@ -4888,11 +4877,12 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32_int(index, inst_index, "ld_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32_int(offset, inst_index, "ld_structured", ctx)?;
+                let index_u32 = emit_src_scalar_u32_addr(index, inst_index, "ld_structured", ctx)?;
+                let offset_u32 =
+                    emit_src_scalar_u32_addr(offset, inst_index, "ld_structured", ctx)?;
                 let base_name = format!("ld_uav_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
+                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
                 ));
 
                 let mask_bits = dst.mask.0 & 0xF;
@@ -4948,11 +4938,13 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32(index, inst_index, "store_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32(offset, inst_index, "store_structured", ctx)?;
+                let index_u32 =
+                    emit_src_scalar_u32_addr(index, inst_index, "store_structured", ctx)?;
+                let offset_u32 =
+                    emit_src_scalar_u32_addr(offset, inst_index, "store_structured", ctx)?;
                 let base_name = format!("store_struct_base{inst_index}");
                 w.line(&format!(
-                    "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
+                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
                 ));
 
                 // Store raw bits (see `store_raw` rationale above).
@@ -5068,7 +5060,8 @@ fn emit_instructions(
                     let uav_fence = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
                     if uav_fence {
                         w.line("storageBarrier();");
-                    } else if (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY) != 0
+                    } else if (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY)
+                        != 0
                     {
                         // NOTE: No-op approximation. Once we support TGSM/workgroup memory, we may be
                         // able to translate this more accurately (but we still must not emit a full
@@ -5079,9 +5072,9 @@ fn emit_instructions(
             Sm4Inst::LdUavRaw { dst, addr, uav } => {
                 // Raw UAV buffer loads operate on byte offsets. Model UAV buffers as a storage
                 // `array<u32>` and derive a word index from the byte address.
-                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "ld_uav_raw", ctx)?;
+                let addr_u32 = emit_src_scalar_u32_addr(addr, inst_index, "ld_uav_raw", ctx)?;
                 let base_name = format!("ld_uav_raw_base{inst_index}");
-                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
+                w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
 
                 let mask_bits = dst.mask.0 & 0xF;
                 let load_lane = |bit: u8, offset: u32| {
@@ -5114,7 +5107,7 @@ fn emit_instructions(
                 addr,
                 value,
             } => {
-                let addr_u32 = emit_src_scalar_u32(addr, inst_index, "atomic_add", ctx)?;
+                let addr_u32 = emit_src_scalar_u32_addr(addr, inst_index, "atomic_add", ctx)?;
                 let value_u32 = emit_src_scalar_u32(value, inst_index, "atomic_add", ctx)?;
                 let ptr = format!("&u{}.data[{addr_u32}]", uav.slot);
 
@@ -5368,6 +5361,66 @@ fn emit_src_vec4_u32_int(
     let base = format!("select(({bits}), vec4<u32>({f}), {cond})");
     Ok(apply_modifier_u32(base, src.modifier))
 }
+
+/// Emits a scalar `u32` source operand for buffer addressing/indexing.
+///
+/// DXBC register files are untyped 32-bit lanes. While most integer operations interpret source
+/// values as raw integer bits, address-like operands (byte offsets, indices, etc.) are sometimes
+/// encoded as float values (e.g. `l(16.0)`) even though the consuming instruction expects an
+/// integer.
+///
+/// For these address-like operands we apply a heuristic:
+/// - If interpreting the source as an `f32` yields a non-negative integer value representable in
+///   `u32`, use the numeric value (`u32(f)`).
+/// - Otherwise interpret the source as raw integer bits (via `bitcast<u32>`).
+fn emit_src_scalar_u32_addr(
+    src: &crate::sm4_ir::SrcOperand,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    // Fast path for immediates: constant fold the heuristic so the generated WGSL stays compact and
+    // deterministic.
+    if let SrcKind::ImmediateF32(bits) = &src.kind {
+        let selected = bits[src.swizzle.0[0] as usize];
+
+        // Apply float modifier semantics when attempting the float->u32 path.
+        let mut f = f32::from_bits(selected);
+        f = match src.modifier {
+            OperandModifier::None => f,
+            OperandModifier::Neg => -f,
+            OperandModifier::Abs => f.abs(),
+            OperandModifier::AbsNeg => -f.abs(),
+        };
+
+        // Use a strict `< 2^32` check to avoid the `4294967296.0` edge case where clamping +
+        // float-roundtrip would otherwise "validate" an out-of-range value.
+        const U32_LIMIT_F32: f32 = 4294967296.0;
+        if f.is_finite() && f >= 0.0 && f < U32_LIMIT_F32 {
+            let as_u = f as u32;
+            if (as_u as f32) == f {
+                return Ok(format!("{as_u}u"));
+            }
+        }
+
+        // Apply unsigned-integer modifier semantics for the raw-bits path.
+        let mut u = selected;
+        if matches!(src.modifier, OperandModifier::Neg | OperandModifier::AbsNeg) {
+            u = 0u32.wrapping_sub(u);
+        }
+        return Ok(format!("0x{u:08x}u"));
+    }
+
+    let f_vec = emit_src_vec4(src, inst_index, opcode, ctx)?;
+    let f = format!("({f_vec}).x");
+    let bits_vec = emit_src_vec4_u32_int(src, inst_index, opcode, ctx)?;
+    let bits = format!("({bits_vec}).x");
+
+    // See immediate path for why we use a strict `< 2^32` check.
+    let cond = format!("(({f}) >= 0.0 && ({f}) < 4294967296.0 && f32(u32({f})) == ({f}))");
+    Ok(format!("select({bits}, u32({f}), {cond})"))
+}
+
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
