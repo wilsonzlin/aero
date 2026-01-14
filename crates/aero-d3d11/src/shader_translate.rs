@@ -5380,6 +5380,46 @@ mod tests {
     }
 
     #[test]
+    fn semantic_to_d3d_name_recognizes_compute_builtins() {
+        assert_eq!(
+            semantic_to_d3d_name("SV_DispatchThreadID"),
+            Some(D3D_NAME_DISPATCH_THREAD_ID)
+        );
+        assert_eq!(
+            semantic_to_d3d_name("sv_groupthreadid"),
+            Some(D3D_NAME_GROUP_THREAD_ID)
+        );
+        assert_eq!(
+            semantic_to_d3d_name("SV_GROUPID"),
+            Some(D3D_NAME_GROUP_ID)
+        );
+        assert_eq!(
+            semantic_to_d3d_name("sv_groupindex"),
+            Some(D3D_NAME_GROUP_INDEX)
+        );
+    }
+
+    #[test]
+    fn builtin_from_d3d_name_maps_compute_builtins() {
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_DISPATCH_THREAD_ID),
+            Some(Builtin::GlobalInvocationId)
+        );
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_GROUP_THREAD_ID),
+            Some(Builtin::LocalInvocationId)
+        );
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_GROUP_ID),
+            Some(Builtin::WorkgroupId)
+        );
+        assert_eq!(
+            builtin_from_d3d_name(D3D_NAME_GROUP_INDEX),
+            Some(Builtin::LocalInvocationIndex)
+        );
+    }
+
+    #[test]
     fn pixel_shader_sv_target1_only_emits_location_1() {
         let module = minimal_module(vec![Sm4Inst::Ret]);
         let isgn = DxbcSignature { parameters: vec![] };
