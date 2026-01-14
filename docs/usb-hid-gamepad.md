@@ -29,7 +29,9 @@ Current topology (see also [`docs/08-input-devices.md`](./08-input-devices.md)):
 - Root port **1**: reserved for WebUSB passthrough
 
 Source-of-truth constants live in `web/src/usb/uhci_external_hub.ts` and are used by the worker
-runtime for UHCI/EHCI/xHCI builds.
+runtime for UHCI/EHCI/xHCI builds. Note: when the hub is hosted behind xHCI, hub port numbers must
+be <= **15** (xHCI Route String encodes downstream hub ports as 4-bit values), so the external hub
+port count is clamped accordingly and “hub ports 5+” means ports 5..=15.
 
 This approach keeps Windows 7 driver binding simple: each device binds via the in-box HID stack
 (`hidusb.sys` + `hidclass.sys`) and then the appropriate client driver (`kbdhid.sys`, `mouhid.sys`,
