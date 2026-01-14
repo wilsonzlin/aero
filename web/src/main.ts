@@ -6161,6 +6161,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const cpuWorker = workerCoordinator.getCpuWorker();
         if (vmRuntime === "machine" && cpuWorker) {
           attachedCpuWorker = cpuWorker;
+          lastSentCpuBootDiskSelection = selection;
           cpuWorker.postMessage({
             type: "setBootDisks",
             mounts: selection.mounts,
@@ -6373,6 +6374,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
   let attachedCpuWorker: Worker | null = null;
+  let lastSentCpuBootDiskSelection: BootDiskSelection | null = null;
   let attachedIoWorker: Worker | null = null;
   let inputCapture: InputCapture | null = null;
   let inputCaptureCanvas: HTMLCanvasElement | null = null;
@@ -6507,17 +6509,23 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     forceJitCspBlock.disabled = anyActive;
 
     const cpuWorker = workerCoordinator.getCpuWorker();
-    if (cpuWorker !== attachedCpuWorker) {
-      if (cpuWorker && vmRuntime === "machine") {
-        const selection = bootDiskSelection;
+    if (vmRuntime === "machine") {
+      const selection = bootDiskSelection;
+      if (cpuWorker && (cpuWorker !== attachedCpuWorker || selection !== lastSentCpuBootDiskSelection)) {
         cpuWorker.postMessage({
           type: "setBootDisks",
           mounts: selection?.mounts ?? {},
           hdd: selection?.hdd ?? null,
           cd: selection?.cd ?? null,
         } satisfies SetBootDisksMessage);
+        lastSentCpuBootDiskSelection = selection;
       }
       attachedCpuWorker = cpuWorker;
+    } else {
+      // Reset state so toggling to machine runtime while workers are running will
+      // re-send the current selection to the CPU worker.
+      attachedCpuWorker = null;
+      lastSentCpuBootDiskSelection = null;
     }
 
     const ioWorker = workerCoordinator.getIoWorker();
