@@ -87,7 +87,7 @@ fn ring_cursor_zero_step_budget_errors() {
 fn ring_cursor_reports_address_overflow() {
     let mut mem = SparseMem::default();
 
-    let trb_addr = !0x0fu64;
+    let trb_addr = !0x0f_u64;
     let mut trb = Trb::default();
     trb.set_cycle(true);
     trb.set_trb_type(TrbType::Normal);

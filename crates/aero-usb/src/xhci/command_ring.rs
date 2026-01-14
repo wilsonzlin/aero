@@ -1717,13 +1717,13 @@ mod tests {
         // Seed non-zero bytes into the corresponding Device Context endpoint contexts.
         for dci in 3u8..=5 {
             let addr = dev_ctx + u64::from(dci) * CONTEXT_SIZE;
-            mem.write_u32(addr + 0, 0xdead_beef);
+            mem.write_u32(addr, 0xdead_beef);
             mem.write_u32(addr + 4, 0xfeed_f00d);
         }
 
         // Build a deconfigure Configure Endpoint TRB.
         // Input context pointer must be readable/aligned; contents are ignored in deconfigure mode.
-        mem.write_u32(input_ctx + 0, 0); // drop flags
+        mem.write_u32(input_ctx, 0); // drop flags
         mem.write_u32(input_ctx + 4, 0); // add flags
 
         let mut trb = Trb::new(input_ctx, 0, 0);
