@@ -3737,6 +3737,7 @@ impl AerogpuD3d11Executor {
             .state
             .primitive_topology
             .primitive_count_from_element_count(element_count);
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
 
         // Consume the draw packet now so errors include consistent cursor information.
         stream.iter.next().expect("peeked Some").map_err(|err| {
