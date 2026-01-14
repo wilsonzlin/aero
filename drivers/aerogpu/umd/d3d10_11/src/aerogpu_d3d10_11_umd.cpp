@@ -335,7 +335,7 @@ uint32_t d3d11_format_support_flags(const AeroGpuAdapter* adapter, uint32_t dxgi
     support |= kD3D11FormatSupportDisplay;
   }
   if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapBuffer) {
-    support |= kD3D11FormatSupportBuffer;
+    support |= kD3D11FormatSupportBuffer | kD3D11FormatSupportShaderLoad;
   }
   if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaVertexBuffer) {
     support |= kD3D11FormatSupportIaVertexBuffer;

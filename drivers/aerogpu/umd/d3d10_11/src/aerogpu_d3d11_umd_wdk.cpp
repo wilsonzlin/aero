@@ -2253,6 +2253,12 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       if (caps & kAerogpuDxgiFormatCapShaderSample) {
         support |= D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
       }
+      // Buffers are accessed via shader-load operations (not sampling). Report
+      // SHADER_LOAD for the buffer formats we expose so the runtime can validate
+      // Buffer/BufferEx SRVs (including RAW views).
+      if (caps & kAerogpuDxgiFormatCapBuffer) {
+        support |= D3D11_FORMAT_SUPPORT_SHADER_LOAD;
+      }
       if (caps & kAerogpuDxgiFormatCapDisplay) {
         support |= D3D11_FORMAT_SUPPORT_DISPLAY;
       }

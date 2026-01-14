@@ -24,8 +24,11 @@ constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
 constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
+constexpr uint32_t kDxgiFormatR32Typeless = 39;
 constexpr uint32_t kDxgiFormatD32Float = 40;
+constexpr uint32_t kDxgiFormatR32Float = 41;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
+constexpr uint32_t kDxgiFormatR32Sint = 43;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
 constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatBc1Typeless = 70;
@@ -275,6 +278,10 @@ inline uint32_t AerogpuDxgiFormatCapsMask(const T* dev_or_adapter, uint32_t dxgi
     case kDxgiFormatR16Uint:
     case kDxgiFormatR32Uint:
       return kAerogpuDxgiFormatCapBuffer | kAerogpuDxgiFormatCapIaIndexBuffer;
+    case kDxgiFormatR32Typeless:
+    case kDxgiFormatR32Float:
+    case kDxgiFormatR32Sint:
+      return kAerogpuDxgiFormatCapBuffer;
     case kDxgiFormatR32G32Float:
     case kDxgiFormatR32G32B32Float:
     case kDxgiFormatR32G32B32A32Float:
@@ -329,4 +336,3 @@ inline bool AerogpuSupportsMultisampleQualityLevels(const T* dev_or_adapter, uin
 }
 
 } // namespace aerogpu::d3d10_11
-
