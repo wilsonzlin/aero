@@ -1,6 +1,9 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hub::{RootHub, UsbHubDevice};
-use aero_usb::{ControlResponse, SetupPacket, UsbInResult, UsbOutResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const USB_REQUEST_GET_STATUS: u8 = 0x00;
 const USB_REQUEST_CLEAR_FEATURE: u8 = 0x01;
@@ -166,4 +169,45 @@ fn usb_hub_hotplug_attach_detach_at_path() {
         ));
         assert_ne!(change_bits & 0x0001, 0);
     }
+}
+
+#[test]
+fn usb_hub_hotplug_attach_while_upstream_suspended_propagates_suspend_state() {
+    #[derive(Clone)]
+    struct SuspendedSpy(Rc<RefCell<bool>>);
+
+    impl SuspendedSpy {
+        fn new() -> Self {
+            Self(Rc::new(RefCell::new(false)))
+        }
+
+        fn suspended(&self) -> bool {
+            *self.0.borrow()
+        }
+    }
+
+    impl UsbDeviceModel for SuspendedSpy {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+
+        fn set_suspended(&mut self, suspended: bool) {
+            *self.0.borrow_mut() = suspended;
+        }
+    }
+
+    let mut hub = UsbHubDevice::new();
+    hub.set_suspended(true);
+
+    let spy = SuspendedSpy::new();
+    hub.attach(1, Box::new(spy.clone()));
+
+    assert!(
+        spy.suspended(),
+        "expected newly attached downstream device to observe upstream suspend"
+    );
 }

@@ -1071,7 +1071,17 @@ impl UsbHubDevice {
         if idx >= self.ports.len() {
             return;
         }
-        self.ports[idx].attach(model);
+        let upstream_suspended = self.upstream_suspended;
+        let port = &mut self.ports[idx];
+        port.attach(model);
+
+        // Ensure newly attached devices observe the current upstream+port suspended state.
+        //
+        // This matters for host-side hotplug while the upstream link is suspended: device models
+        // (especially HID) should only request remote wakeup while suspended.
+        if let Some(dev) = port.device.as_mut() {
+            dev.model_mut().set_suspended(upstream_suspended || port.suspended);
+        }
     }
 
     #[allow(dead_code)]
@@ -1684,7 +1694,11 @@ impl UsbHub for UsbHubDevice {
 
     fn attach_downstream(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         if let Some(p) = self.ports.get_mut(port) {
+            let upstream_suspended = self.upstream_suspended;
             p.attach(model);
+            if let Some(dev) = p.device.as_mut() {
+                dev.model_mut().set_suspended(upstream_suspended || p.suspended);
+            }
         }
     }
 
