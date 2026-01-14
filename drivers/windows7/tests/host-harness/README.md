@@ -265,6 +265,11 @@ This:
 - requires the guest marker:
   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
 
+Note: Like the base input-events injection, the harness may retry injection a few times after the guest reports
+`virtio-input-events|READY` to reduce timing flakiness. In that case the guest may observe multiple injected wheel
+events; the wheel selftest is designed to handle this (it validates expected per-event deltas, and totals may be
+multiples of the injected values).
+
 Note: Some QEMU builds use a different name for horizontal scroll (for example `hwheel` instead of `hscroll`).
 The harness retries with a fallback name; if neither is accepted, `-WithInputWheel` / `--with-input-wheel` fails with a
 clear error (upgrade QEMU or omit the wheel flag).

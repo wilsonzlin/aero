@@ -415,6 +415,10 @@ When enabled, the harness:
    - horizontal wheel: `axis=hscroll`, `value=-2` (with fallback `axis=hwheel` for older/alternate QEMU builds)
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
 
+Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness. In that
+case the guest may observe multiple injected scroll events; the wheel selftest is designed to handle this, and totals
+may be multiples of the injected values.
+
 If the running QEMU build rejects both `hscroll` and the fallback `hwheel` axis name, the harness fails with a clear
 error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel`).
 

@@ -72,6 +72,9 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Expected injected deltas (deterministic):
       - wheel: `+1`
       - horizontal pan: `-2`
+    - Note: The host harness may retry injection a few times after the guest reports `virtio-input-events|READY` to reduce
+      timing flakiness. In that case the guest may observe multiple injected scroll events; the wheel selftest is
+      designed to handle this, and totals may be multiples of the injected values.
     - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS/FAIL/SKIP|...`.
   - Optional end-to-end **tablet (absolute pointer)** event delivery smoke test (`virtio-input-tablet-events`):
     - Disabled by default (requires host-side QMP injection).
