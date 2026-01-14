@@ -15,6 +15,8 @@ mod signature;
 
 use std::fmt;
 
+const MAX_DXBC_CHUNK_COUNT: u32 = 4096;
+
 pub use chunks::{DxbcChunk, FourCc};
 pub use container::DxbcContainer;
 pub use disasm::disassemble_sm2_sm3;
@@ -37,6 +39,10 @@ pub enum DxbcError {
     InvalidContainerSizeTooSmall {
         declared: u32,
         minimum: usize,
+    },
+    ChunkCountTooLarge {
+        chunk_count: u32,
+        max: u32,
     },
     UnexpectedEof {
         offset: usize,
@@ -94,6 +100,9 @@ impl fmt::Display for DxbcError {
                 f,
                 "DXBC container size {declared} is too small (need at least {minimum} bytes)"
             ),
+            DxbcError::ChunkCountTooLarge { chunk_count, max } => {
+                write!(f, "DXBC chunk count {chunk_count} exceeds maximum {max}")
+            }
             DxbcError::UnexpectedEof {
                 offset,
                 needed,
@@ -412,4 +421,3 @@ fn parse_version_token(token: Option<u32>) -> Option<(ShaderType, ShaderModel)> 
     };
     Some((shader_type, ShaderModel { major, minor }))
 }
-

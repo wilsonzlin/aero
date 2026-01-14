@@ -1,5 +1,5 @@
 use super::byte_reader::ByteReader;
-use super::{DxbcError, FourCc};
+use super::{DxbcError, FourCc, MAX_DXBC_CHUNK_COUNT};
 
 use super::chunks::DxbcChunk;
 
@@ -41,6 +41,12 @@ impl<'a> DxbcContainer<'a> {
         }
 
         let chunk_count = r.read_u32_le()?;
+        if chunk_count > MAX_DXBC_CHUNK_COUNT {
+            return Err(DxbcError::ChunkCountTooLarge {
+                chunk_count,
+                max: MAX_DXBC_CHUNK_COUNT,
+            });
+        }
 
         let offsets_bytes = (chunk_count as usize).checked_mul(4).ok_or(
             DxbcError::InvalidContainerSizeTooSmall {
@@ -127,3 +133,22 @@ impl<'a> DxbcContainer<'a> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{DxbcContainer, DxbcError, MAX_DXBC_CHUNK_COUNT};
+
+    #[test]
+    fn rejects_excessive_chunk_count() {
+        // Minimal DXBC header with an absurd chunk count. The robust parser must reject this
+        // without attempting to allocate based on the untrusted count.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"DXBC");
+        bytes.extend_from_slice(&[0u8; 16]); // checksum
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
+        bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
+        bytes.extend_from_slice(&(MAX_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
+
+        let err = DxbcContainer::parse(&bytes).unwrap_err();
+        assert!(matches!(err, DxbcError::ChunkCountTooLarge { .. }), "{err:?}");
+    }
+}
