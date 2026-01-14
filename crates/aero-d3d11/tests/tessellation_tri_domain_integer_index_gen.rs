@@ -12,13 +12,17 @@ fn build_expected_indices(patch: &TriDomainPatchMeta, winding: TriangleWinding) 
     let tri_count = tri_domain_integer_triangle_count(patch.tess_level);
     let mut out = Vec::with_capacity(tri_count as usize * 3);
     for tri_id in 0..tri_count {
-        let tri = tessellator::tri_index_to_vertex_indices(patch.tess_level, tri_id);
+        let tri = match winding {
+            TriangleWinding::Ccw => {
+                tessellator::tri_index_to_vertex_indices(patch.tess_level, tri_id)
+            }
+            TriangleWinding::Cw => {
+                tessellator::tri_index_to_vertex_indices_cw(patch.tess_level, tri_id)
+            }
+        };
         let v0 = patch.vertex_base + tri[0];
-        let mut v1 = patch.vertex_base + tri[1];
-        let mut v2 = patch.vertex_base + tri[2];
-        if winding == TriangleWinding::Cw {
-            core::mem::swap(&mut v1, &mut v2);
-        }
+        let v1 = patch.vertex_base + tri[1];
+        let v2 = patch.vertex_base + tri[2];
         out.push(v0);
         out.push(v1);
         out.push(v2);
