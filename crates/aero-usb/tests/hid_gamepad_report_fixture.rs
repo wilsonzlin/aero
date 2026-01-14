@@ -39,17 +39,20 @@ fn hid_gamepad_report_vectors_match_fixture() {
     );
 
     for (idx, v) in vectors.iter().enumerate() {
+        let name = if v.name.is_empty() { "<unnamed>" } else { &v.name };
+
+        // Fixture vectors are intended to stay within the canonical report field ranges so they
+        // primarily validate the packed layout (endianness + signed byte encoding) rather than
+        // clamping behavior.
         assert!(
             v.hat <= 8,
-            "fixture vector {idx} ({}) has out-of-range hat value {} (expected 0..=8)",
-            if v.name.is_empty() { "<unnamed>" } else { &v.name },
+            "fixture vector {idx} ({name}) has out-of-range hat value {} (expected 0..=8)",
             v.hat
         );
         for (axis_name, axis) in [("x", v.x), ("y", v.y), ("rx", v.rx), ("ry", v.ry)] {
             assert!(
                 (-127..=127).contains(&axis),
-                "fixture vector {idx} ({}) has out-of-range axis {axis_name}={axis} (expected -127..=127)",
-                if v.name.is_empty() { "<unnamed>" } else { &v.name },
+                "fixture vector {idx} ({name}) has out-of-range axis {axis_name}={axis} (expected -127..=127)"
             );
         }
 
@@ -61,25 +64,7 @@ fn hid_gamepad_report_vectors_match_fixture() {
             rx: v.rx,
             ry: v.ry,
         };
-        // The fixture intentionally includes out-of-range hat/axis values to validate our clamping
-        // behaviour, so we only assert on the clamped values.
-        assert!(
-            report.hat <= 8,
-            "fixture vector {idx} ({}) clamped to out-of-range hat value {} (expected 0..=8)",
-            if v.name.is_empty() { "<unnamed>" } else { &v.name },
-            report.hat
-        );
-        for (axis_name, axis) in [("x", report.x), ("y", report.y), ("rx", report.rx), ("ry", report.ry)] {
-            assert!(
-                (-127..=127).contains(&(axis as i16)),
-                "fixture vector {idx} ({}) clamped to out-of-range axis {axis_name}={} (expected -127..=127)",
-                if v.name.is_empty() { "<unnamed>" } else { &v.name },
-                axis
-            );
-        }
         let actual = report.to_bytes();
-
-        let name = if v.name.is_empty() { "<unnamed>" } else { &v.name };
         assert_eq!(actual, v.bytes, "fixture vector {idx} ({name}) mismatch");
     }
 }
