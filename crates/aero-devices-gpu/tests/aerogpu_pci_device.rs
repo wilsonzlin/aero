@@ -5,6 +5,11 @@ use aero_devices_gpu::regs::{
     irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC, FEATURE_ERROR_INFO,
     FEATURE_VBLANK,
 };
+use aero_devices_gpu::cmd::{
+    CMD_STREAM_ABI_VERSION_OFFSET, CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_HEADER_SIZE_BYTES,
+    CMD_STREAM_MAGIC_OFFSET, CMD_STREAM_RESERVED0_OFFSET, CMD_STREAM_RESERVED1_OFFSET,
+    CMD_STREAM_SIZE_BYTES_OFFSET,
+};
 use aero_devices_gpu::ring::{
     AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
     AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
@@ -20,8 +25,7 @@ use aero_io_snapshot::io::state::{
     codec::Encoder, IoSnapshot, SnapshotError, SnapshotReader, SnapshotVersion, SnapshotWriter,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_PRESENT_FLAG_VSYNC,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use memory::{MemoryBus, MmioHandler};
@@ -682,14 +686,26 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 
     // Minimal command stream: header only (no packets).
     let cmd_gpa = 0x2000u64;
-    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+    let cmd_size_bytes = CMD_STREAM_HEADER_SIZE_BYTES;
     let mut stream = vec![0u8; cmd_size_bytes as usize];
-    stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-    stream[4..8].copy_from_slice(&dev.regs.abi_version.to_le_bytes());
-    stream[8..12].copy_from_slice(&cmd_size_bytes.to_le_bytes());
-    stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
-    stream[16..20].copy_from_slice(&0u32.to_le_bytes()); // reserved0
-    stream[20..24].copy_from_slice(&0u32.to_le_bytes()); // reserved1
+    let u32_size = core::mem::size_of::<u32>();
+    let magic_range = (CMD_STREAM_MAGIC_OFFSET as usize)..(CMD_STREAM_MAGIC_OFFSET as usize + u32_size);
+    stream[magic_range].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    let abi_range = (CMD_STREAM_ABI_VERSION_OFFSET as usize)
+        ..(CMD_STREAM_ABI_VERSION_OFFSET as usize + u32_size);
+    stream[abi_range].copy_from_slice(&dev.regs.abi_version.to_le_bytes());
+    let size_range = (CMD_STREAM_SIZE_BYTES_OFFSET as usize)
+        ..(CMD_STREAM_SIZE_BYTES_OFFSET as usize + u32_size);
+    stream[size_range].copy_from_slice(&cmd_size_bytes.to_le_bytes());
+    let flags_range =
+        (CMD_STREAM_FLAGS_OFFSET as usize)..(CMD_STREAM_FLAGS_OFFSET as usize + u32_size);
+    stream[flags_range].copy_from_slice(&0u32.to_le_bytes()); // flags
+    let reserved0_range = (CMD_STREAM_RESERVED0_OFFSET as usize)
+        ..(CMD_STREAM_RESERVED0_OFFSET as usize + u32_size);
+    stream[reserved0_range].copy_from_slice(&0u32.to_le_bytes()); // reserved0
+    let reserved1_range = (CMD_STREAM_RESERVED1_OFFSET as usize)
+        ..(CMD_STREAM_RESERVED1_OFFSET as usize + u32_size);
+    stream[reserved1_range].copy_from_slice(&0u32.to_le_bytes()); // reserved1
     mem.write_physical(cmd_gpa, &stream);
 
     // Submit descriptor at slot 0.
@@ -785,14 +801,26 @@ fn snapshot_roundtrip_preserves_pending_submissions_for_external_backend() {
 
     // Minimal command stream: header only (no packets).
     let cmd_gpa = 0x2000u64;
-    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+    let cmd_size_bytes = CMD_STREAM_HEADER_SIZE_BYTES;
     let mut stream = vec![0u8; cmd_size_bytes as usize];
-    stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-    stream[4..8].copy_from_slice(&dev.regs.abi_version.to_le_bytes());
-    stream[8..12].copy_from_slice(&cmd_size_bytes.to_le_bytes());
-    stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
-    stream[16..20].copy_from_slice(&0u32.to_le_bytes()); // reserved0
-    stream[20..24].copy_from_slice(&0u32.to_le_bytes()); // reserved1
+    let u32_size = core::mem::size_of::<u32>();
+    let magic_range = (CMD_STREAM_MAGIC_OFFSET as usize)..(CMD_STREAM_MAGIC_OFFSET as usize + u32_size);
+    stream[magic_range].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    let abi_range = (CMD_STREAM_ABI_VERSION_OFFSET as usize)
+        ..(CMD_STREAM_ABI_VERSION_OFFSET as usize + u32_size);
+    stream[abi_range].copy_from_slice(&dev.regs.abi_version.to_le_bytes());
+    let size_range = (CMD_STREAM_SIZE_BYTES_OFFSET as usize)
+        ..(CMD_STREAM_SIZE_BYTES_OFFSET as usize + u32_size);
+    stream[size_range].copy_from_slice(&cmd_size_bytes.to_le_bytes());
+    let flags_range =
+        (CMD_STREAM_FLAGS_OFFSET as usize)..(CMD_STREAM_FLAGS_OFFSET as usize + u32_size);
+    stream[flags_range].copy_from_slice(&0u32.to_le_bytes()); // flags
+    let reserved0_range = (CMD_STREAM_RESERVED0_OFFSET as usize)
+        ..(CMD_STREAM_RESERVED0_OFFSET as usize + u32_size);
+    stream[reserved0_range].copy_from_slice(&0u32.to_le_bytes()); // reserved0
+    let reserved1_range = (CMD_STREAM_RESERVED1_OFFSET as usize)
+        ..(CMD_STREAM_RESERVED1_OFFSET as usize + u32_size);
+    stream[reserved1_range].copy_from_slice(&0u32.to_le_bytes()); // reserved1
     mem.write_physical(cmd_gpa, &stream);
 
     // Submit descriptor at slot 0.
