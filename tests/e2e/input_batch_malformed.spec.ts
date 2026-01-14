@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker survives malformed in:input-batch messages", async ({ page }) => {
   test.setTimeout(30_000);
@@ -211,7 +212,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       });
 
       // io.worker waits for an initial boot disk selection message before reporting READY.
-      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
       ioWorker.postMessage({
         kind: "init",
         role: "io",

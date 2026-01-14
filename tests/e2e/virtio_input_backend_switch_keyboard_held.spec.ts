@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker does not switch keyboard input backend while a key is held (prevents stuck keys)", async ({ page }) => {
   test.setTimeout(60_000);
@@ -82,7 +83,7 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     });
 
     // io.worker waits for an initial boot disk selection message before reporting READY.
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
     ioWorker.postMessage({
       kind: "init",
       role: "io",

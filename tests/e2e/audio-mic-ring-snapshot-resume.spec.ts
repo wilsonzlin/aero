@@ -8,6 +8,7 @@ import {
   READ_POS_INDEX as MIC_READ_POS_INDEX,
   WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
 } from "../../web/src/audio/mic_ring.js";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
@@ -45,7 +46,9 @@ test("Worker snapshot resume discards buffered mic samples (stale latency avoida
       };
       coord.start(workerConfig);
       // io.worker waits for the first `setBootDisks` message before reporting READY.
-      coord.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+      coord
+        .getIoWorker()
+        ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
       const capacitySamples = 4096;
       const sab = new SharedArrayBuffer(MIC_HEADER_BYTES + capacitySamples * Float32Array.BYTES_PER_ELEMENT);

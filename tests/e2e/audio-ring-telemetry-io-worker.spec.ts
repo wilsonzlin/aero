@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", async ({ page }) => {
   test.setTimeout(30_000);
@@ -194,7 +195,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     });
 
     // io.worker waits for `setBootDisks` before reporting READY.
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
     await waitForMessage((data) => {
       if (!data || typeof data !== "object") return false;

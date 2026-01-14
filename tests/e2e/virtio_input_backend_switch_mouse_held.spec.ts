@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker does not switch mouse backend while a button is held (prevents stuck drag)", async ({ page }) => {
   test.setTimeout(60_000);
@@ -647,7 +648,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
-      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+      ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
       await waitForAtomic(StatusIndex.IoReady, 1, 20_000);
 

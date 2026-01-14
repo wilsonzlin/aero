@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
+import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
   test.setTimeout(45_000);
@@ -132,7 +133,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
     });
-    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const waitFor = async (predicate: () => boolean, timeoutMs: number, name: string) => {
