@@ -109,10 +109,8 @@ _Use_decl_annotations_
 NTSTATUS VirtioInputHandleVirtioConfigChange(WDFDEVICE Device)
 {
     PDEVICE_CONTEXT ctx;
-    NTSTATUS quiesceStatus;
     NTSTATUS exitStatus;
     NTSTATUS entryStatus;
-    NTSTATUS resumeStatus;
     NTSTATUS status;
 
     PAGED_CODE();
@@ -140,13 +138,11 @@ NTSTATUS VirtioInputHandleVirtioConfigChange(WDFDEVICE Device)
     // The config-change interrupt comes from a DISPATCH_LEVEL DPC. All heavy
     // config reads / reset + reinitialization must happen here at PASSIVE_LEVEL.
     //
-    quiesceStatus = VirtioPciInterruptsQuiesce(&ctx->Interrupts, ctx->PciDevice.CommonCfg);
-    if (!NT_SUCCESS(quiesceStatus)) {
-        VIOINPUT_LOG(
-            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-            "VirtioPciInterruptsQuiesce (config-change) failed: %!STATUS!\n",
-            quiesceStatus);
-    }
+    // NOTE: Transport interrupt quiesce/resume is owned by the D0Exit/D0Entry
+    // paths (VirtioInputInterruptsQuiesceForReset / VirtioInputInterruptsResumeAfterReset).
+    // Do not call VirtioPciInterruptsQuiesce/Resume directly here; doing so can
+    // cause redundant WDF interrupt disable/enable calls (including potential
+    // double-enable in INTx mode).
 
     //
     // Reinitialize the transport similarly to a D0Exit->D0Entry cycle. This
@@ -165,29 +161,18 @@ NTSTATUS VirtioInputHandleVirtioConfigChange(WDFDEVICE Device)
         //
         // Ensure the device is left in a known-safe reset state if reinit fails.
         //
+        // Note: D0Exit quiesces OS interrupt delivery and sets ResetInProgress.
+        // If D0Entry fails before it resumes interrupts, we intentionally leave
+        // interrupts quiesced and keep the device in reset rather than attempting
+        // a best-effort resume. This avoids double-enable noise and prevents the
+        // driver from continuing with partially reinitialized queues/config.
+        //
         VirtioPciResetDevice(&ctx->PciDevice);
     }
 
     status = entryStatus;
-
-    //
-    // Upstream D0Entry re-enables MSI-X delivery via VirtioPciInterruptsResume.
-    // Avoid double-enabling (which may fail) by only resuming explicitly for:
-    //   - legacy INTx (or unknown) mode, or
-    //   - failure paths where D0Entry may not have reached the resume step.
-    //
-    resumeStatus = STATUS_SUCCESS;
-    if (ctx->Interrupts.Mode != VirtioPciInterruptModeMsix || !NT_SUCCESS(entryStatus)) {
-        resumeStatus = VirtioPciInterruptsResume(&ctx->Interrupts, ctx->PciDevice.CommonCfg);
-        if (!NT_SUCCESS(resumeStatus)) {
-            VIOINPUT_LOG(
-                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                "VirtioPciInterruptsResume (config-change) failed: %!STATUS!\n",
-                resumeStatus);
-            if (NT_SUCCESS(status)) {
-                status = resumeStatus;
-            }
-        }
+    if (!NT_SUCCESS(exitStatus) && NT_SUCCESS(status)) {
+        status = exitStatus;
     }
 
     if (ctx->PciDevice.CommonCfg != NULL) {
