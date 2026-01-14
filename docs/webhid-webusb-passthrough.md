@@ -345,20 +345,23 @@ When rings were previously attached but later become unavailable (e.g., worker r
 the runtime should treat this as a performance downgrade only and continue operating via the
 `postMessage` path.
 
-## Guest-side model (UHCI + generic HID passthrough device)
+## Guest-side model (guest USB controller + generic HID passthrough device)
 
 ### Emulated topology
 
 The guest-visible device is modeled as:
 
-- **UHCI host controller** (USB 1.1)
-- **root hub** (2 ports)
+- A guest-visible USB host controller:
+  - **UHCI** (USB 1.1, default path), or
+  - **xHCI/EHCI** when the deployed WASM build exports the required controller bridge and passthrough
+    hooks.
+- A **root hub** with one or more root ports (controller-dependent).
 - (optional) **external USB hub device** (USB class `0x09`) attached behind a root port to
   provide additional downstream ports
 - **one generic HID device per physical passthrough device**
 
-On attach, the worker hot-plugs the device onto an available UHCI port, which
-triggers the guest USB stack to enumerate it.
+On attach, the worker hot-plugs the device onto an available guest USB attachment path (root port or
+downstream hub port), which triggers the guest USB stack to enumerate it.
 
 ### Device identity and descriptors
 
@@ -423,7 +426,7 @@ using WebHID `receiveFeatureReport(reportId)`.
 Because WebHID is async, the USB control transfer cannot complete immediately. The device model
 represents “waiting for the host” by returning **NAK** until the host Promise settles; once the host
 responds, the next retry completes with the returned report bytes. Host failures are surfaced as a
-timeout-style error (UHCI TD timeout/CRC) so the guest can retry.
+retryable transfer error (controller-specific) so the guest can retry.
 
 Host boundary protocol:
 
