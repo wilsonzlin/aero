@@ -654,7 +654,6 @@ impl IoSnapshot for XhciController {
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
         self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
         self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
-        self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);
