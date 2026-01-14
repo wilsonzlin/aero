@@ -805,6 +805,11 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 #endif
         KSAUDIO_SPEAKER_STEREO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_SPEAKER);
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    if (miniport != NULL && miniport->Dx != NULL) {
+        connected = VirtIoSndJackStateIsConnected(&miniport->Dx->JackState, VIRTIOSND_JACK_ID_SPEAKER);
+    }
+#endif
     jack->IsConnected = connected ? TRUE : FALSE;
 
     PropertyRequest->ValueSize = required;
@@ -865,6 +870,11 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 #endif
         KSAUDIO_SPEAKER_MONO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_MICROPHONE);
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    if (miniport != NULL && miniport->Dx != NULL) {
+        connected = VirtIoSndJackStateIsConnected(&miniport->Dx->JackState, VIRTIOSND_JACK_ID_MICROPHONE);
+    }
+#endif
     jack->IsConnected = connected ? TRUE : FALSE;
 
     PropertyRequest->ValueSize = required;
@@ -917,6 +927,14 @@ VirtIoSndProperty_JackDescription2Common(_In_ PPCPROPERTY_REQUEST PropertyReques
     jack = (KSJACK_DESCRIPTION2 *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
     connected = VirtIoSndTopology_IsJackConnected(JackId);
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    {
+        PVIRTIOSND_TOPOLOGY_MINIPORT miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
+        if (miniport != NULL && miniport->Dx != NULL) {
+            connected = VirtIoSndJackStateIsConnected(&miniport->Dx->JackState, JackId);
+        }
+    }
+#endif
 
     /*
      * KSJACK_DESCRIPTION2 exposes connection state via DeviceStateInfo.
