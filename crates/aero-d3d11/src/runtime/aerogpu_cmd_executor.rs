@@ -612,7 +612,6 @@ enum CmdPrimitiveTopology {
     LineStripAdj,
     TriangleListAdj,
     TriangleStripAdj,
-
     // D3D11 patchlists (HS/DS input).
     PatchList {
         control_points: u8,

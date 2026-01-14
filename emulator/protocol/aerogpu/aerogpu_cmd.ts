@@ -466,10 +466,12 @@ export const AerogpuPrimitiveTopology = {
   TriangleList: 4,
   TriangleStrip: 5,
   TriangleFan: 6,
+
   LineListAdj: 10,
   LineStripAdj: 11,
   TriangleListAdj: 12,
   TriangleStripAdj: 13,
+
   PatchList1: 33,
   PatchList2: 34,
   PatchList3: 35,

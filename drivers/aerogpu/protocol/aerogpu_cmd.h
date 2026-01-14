@@ -207,13 +207,13 @@ enum aerogpu_primitive_topology {
   AEROGPU_TOPOLOGY_TRIANGLESTRIP = 5,
   AEROGPU_TOPOLOGY_TRIANGLEFAN = 6,
 
-  /* D3D11 adjacency topologies (used by geometry shaders). */
+  /* D3D10/11 adjacency topologies (used by geometry shaders; require expansion/emulation). */
   AEROGPU_TOPOLOGY_LINELIST_ADJ = 10,
   AEROGPU_TOPOLOGY_LINESTRIP_ADJ = 11,
   AEROGPU_TOPOLOGY_TRIANGLELIST_ADJ = 12,
   AEROGPU_TOPOLOGY_TRIANGLESTRIP_ADJ = 13,
 
-  /* D3D11 patchlist topologies (used by tessellation HS/DS). */
+  /* D3D11 patchlist topologies (1..32 control points; used by tessellation HS/DS). */
   AEROGPU_TOPOLOGY_PATCHLIST_1 = 33,
   AEROGPU_TOPOLOGY_PATCHLIST_2 = 34,
   AEROGPU_TOPOLOGY_PATCHLIST_3 = 35,
