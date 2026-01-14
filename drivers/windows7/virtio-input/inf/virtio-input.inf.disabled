@@ -72,8 +72,8 @@ aero_virtio_input.sys = 1
 ;
 ; Legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf`
 ; to enable). From the first section header (`[Version]`) onward, it is expected
-; to be byte-for-byte identical to this INF (only the leading banner/comments may
-; differ). See:
+; to be byte-for-byte identical to `aero_virtio_input.inf` (only the leading
+; banner/comments may differ). See:
 ;   drivers/windows7/virtio-input/scripts/check-inf-alias.py
 ;
 ; If your device enumerates with a different DEV id, add it here.
