@@ -622,6 +622,16 @@ struct aerogpu_cmd_set_texture {
   - Other values (`stage_ex = VERTEX/PIXEL/COMPUTE`) are reserved and should not be used in binding
     commands.
 
+**GS note:** because `enum aerogpu_shader_stage` includes `GEOMETRY = 3`, GS resource bindings may be
+encoded either as:
+
+- `shader_stage = GEOMETRY`, `stage_ex = 0` (direct/legacy GS encoding), or
+- `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (uniform “stage_ex” encoding shared with HS/DS).
+
+Implementations should accept both. Producers should prefer the `stage_ex` encoding for consistency
+across GS/HS/DS, but must ensure they do not accidentally clobber CS bindings on hosts that do not
+support the extension.
+
 The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
 graphics-tess/GS pipelines do not trample each other’s bindings. At the WGSL interface level this
 maps to distinct bind groups:
