@@ -46,18 +46,21 @@ What exists today (bring-up stage):
 - Snapshot/restore is implemented for EHCI controller state and attached USB topology.
 - Companion routing semantics (`CONFIGFLAG` / `PORT_OWNER`) are implemented. EHCI treats
   `PORT_OWNER=1` ports as companion-owned/unreachable.
-- Shared-port routing is **partially wired** in the canonical `aero_machine::Machine`: when both
-  UHCI and EHCI are enabled, **ports 0–1** are backed by a shared `Usb2PortMux`, so ownership handoff
-  moves the same attached device model between controllers (see `crates/aero-machine/src/lib.rs` and
+- Shared-port routing is wired in the canonical `aero_machine::Machine`: when both
+  `MachineConfig.enable_uhci` and `MachineConfig.enable_ehci` are enabled, the machine instantiates a
+  shared `Usb2PortMux` and wires UHCI root ports **0–1** ↔ EHCI root ports **0–1** via
+  `hub.attach_usb2_port_mux` on both controllers (see `crates/aero-machine/src/lib.rs` and
   `crates/aero-usb/src/usb2_port.rs`).
+  - Current limitation: only the first two EHCI ports are muxed today; EHCI still exposes additional
+    standalone root ports by default, and no TT/split transactions are implemented.
 
 What is *not* implemented yet (still MVP-relevant):
 
 - Isochronous periodic descriptors (`iTD` / `siTD`) and split/TT behavior.
 - MSI/MSI-X (Aero uses PCI INTx for EHCI).
 - Full platform wiring for **all shared root ports** between EHCI and UHCI companions (routing a
-  single physical device between two PCI functions) is still in progress; today only ports 0–1 are
-  muxed in `aero_machine::Machine`.
+  single physical device between two PCI functions); today only ports 0–1 are muxed in
+  `aero_machine::Machine`.
 
 Current code locations:
 
@@ -65,8 +68,8 @@ Current code locations:
 - Rust EHCI tests: `crates/aero-usb/tests/ehci*.rs`
 - Shared USB2 port mux model (EHCI↔UHCI routing building block): `crates/aero-usb/src/usb2_port.rs`
   (+ `crates/aero-usb/tests/usb2_companion_routing.rs`)
-- Canonical machine wiring (PC platform init; installs shared `Usb2PortMux` when UHCI+EHCI enabled):
-  `crates/aero-machine/src/lib.rs`
+- Canonical machine wiring (PC platform init; creates `Usb2PortMux` and attaches it via
+  `hub.attach_usb2_port_mux` when UHCI+EHCI enabled): `crates/aero-machine/src/lib.rs`
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
 - Native PCI device wrapper (MMIO BAR + IRQ + DMA gating): `crates/devices/src/usb/ehci.rs`
 - Emulator crate glue (legacy/compat; feature-gated by `emulator/legacy-usb-ehci`): `emulator::io::usb::ehci` (thin wrapper around `aero_usb::ehci`; tracked for deletion in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md))
@@ -255,7 +258,7 @@ Each port tracks:
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
 - **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
 - **Port owner** (`PORT_OWNER`) for companion routing (modeled; `PORT_OWNER=1` makes the port
-  unreachable from EHCI; in the canonical machine ports 0–1 may be backed by `Usb2PortMux` so
+  unreachable from EHCI; if the port is backed by `Usb2PortMux` (canonical machine ports 0–1),
   ownership handoff routes the same attached device between EHCI and UHCI)
 - **Speed reporting** via `PORTSC.HSP` (high-speed indicator) and `PORTSC.LS` (line status)
 
@@ -567,7 +570,7 @@ PCI: UHCI companions (USB 1.1, full/low-speed)
 Shared physical root ports
 ```
 
-**Contract for ownership/routing (planned):**
+**Contract for ownership/routing:**
 
 - Each physical root port has a single “device attached” slot, but two logical controllers can
   potentially observe it depending on ownership.
@@ -577,9 +580,33 @@ Shared physical root ports
 - When `CONFIGFLAG=1` and `PORT_OWNER=0`:
   - The port is routed to EHCI and can enumerate high-speed devices.
 
-**Important deferred part:** correct handling of **FS/LS devices behind EHCI** requires split
-transactions + TT behavior, which we intentionally defer. Until then, “routing” is primarily about
-selecting which controller owns a root port, not about TT.
+### Companion mux wiring in the canonical machine (native)
+
+In `aero_machine::Machine`, when both `MachineConfig.enable_uhci` and `MachineConfig.enable_ehci`
+are enabled, the machine creates a shared `Usb2PortMux` with **2** ports and attaches it to both
+controllers:
+
+- UHCI root ports **0..1** ↔ mux ports **0..1**
+- EHCI root ports **0..1** ↔ mux ports **0..1**
+
+Code pointers:
+
+- `crates/aero-machine/src/lib.rs` (mux creation + `hub.attach_usb2_port_mux` wiring)
+- `crates/aero-usb/src/usb2_port.rs` (mux semantics: `CONFIGFLAG` + `PORT_OWNER` → effective owner)
+
+This wiring allows a guest OS to route a shared port between controllers using the standard EHCI
+hand-off mechanism:
+
+- set `CONFIGFLAG=1` to claim ports for EHCI, and
+- set `PORT_OWNER=1` on a given port to hand it to the UHCI companion when a full-/low-speed device
+  is detected.
+
+**Current limitations:**
+
+- Only the first **two** EHCI ports are muxed. EHCI still exposes additional standalone root ports
+  by default, which are EHCI-only today (no companion).
+- No split transactions / TT behavior are implemented, so full-/low-speed devices *behind* a
+  high-speed hub are not supported by EHCI yet.
 
 ---
 
@@ -597,9 +624,10 @@ Current bring-up tests cover basic register/port behavior, schedule traversal, a
 - `crates/aero-usb/tests/ehci_async.rs` (async schedule QH/qTD traversal)
 - `crates/aero-usb/tests/ehci_periodic.rs` (periodic frame list + interrupt QH/qTD polling)
 - `crates/aero-usb/tests/ehci_snapshot.rs` (small snapshot roundtrip smoke test)
-- `crates/aero-usb/tests/usb2_companion_routing.rs` (shared-port mux: device moves between EHCI+UHCI)
 - `crates/aero-usb/tests/ehci_snapshot_roundtrip.rs` (snapshot/restore)
 - `crates/aero-usb/tests/ehci_legacy_handoff.rs` (legacy BIOS handoff)
+- `crates/aero-usb/tests/usb2_companion_routing.rs` (shared-port mux routing: UHCI↔EHCI handoff via
+  `CONFIGFLAG`/`PORT_OWNER`, plus an order-independent snapshot roundtrip regression test)
 
 In `crates/aero-usb`, write unit tests that:
 
