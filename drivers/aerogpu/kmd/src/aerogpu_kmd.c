@@ -1963,14 +1963,6 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
             continue;
         }
 
-        /*
-         * Win7/WDDM 1.1 exposes per-submit write access via DXGK_ALLOCATIONLIST::Flags.WriteOperation (bit 0).
-         * Propagate this into the host-visible alloc table so host executors can reject unintended
-         * guest-memory writeback to allocations that are only read by this submission.
-         */
-        const BOOLEAN writeOp = ((List[i].Flags.Value & 0x1u) != 0) ? TRUE : FALSE;
-        const uint32_t entryFlags = writeOp ? 0u : (uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
-
         const uint32_t allocId = (uint32_t)alloc->AllocationId;
         if (allocId == 0) {
 #if DBG
@@ -1982,6 +1974,7 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
         }
 
         const uint32_t entryFlags = AeroGpuAllocTableEntryFlagsFromAllocationListEntry(&List[i]);
+        const BOOLEAN writeOp = ((entryFlags & (uint32_t)AEROGPU_ALLOC_FLAG_READONLY) == 0);
 
         UINT slot = (allocId * 2654435761u) & mask;
         for (;;) {
