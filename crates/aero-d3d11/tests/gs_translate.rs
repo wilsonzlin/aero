@@ -1,4 +1,4 @@
-use aero_d3d11::runtime::gs_translate::translate_gs_module_to_wgsl_compute_prepass;
+use aero_d3d11::runtime::gs_translate::{translate_gs_module_to_wgsl_compute_prepass, GsTranslateError};
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{ShaderModel, ShaderStage, Sm4Program};
@@ -171,4 +171,25 @@ fn sm4_gs_emit_cut_fixture_translates() {
     );
 
     assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm5_gs_emit_stream_cut_stream_fixture_rejects_nonzero_stream() {
+    const DXBC: &[u8] = include_bytes!("fixtures/gs_emit_stream_cut_stream.dxbc");
+
+    let program = Sm4Program::parse_from_dxbc_bytes(DXBC).expect("SM4 parse");
+    assert_eq!(program.stage, ShaderStage::Geometry);
+    assert_eq!(program.model, ShaderModel { major: 5, minor: 0 });
+
+    let module = decode_program(&program).expect("decode");
+    let err = translate_gs_module_to_wgsl_compute_prepass(&module)
+        .expect_err("expected GS translator to reject non-zero stream indices");
+    assert_eq!(
+        err,
+        GsTranslateError::UnsupportedStream {
+            inst_index: 0,
+            opcode: "emit",
+            stream: 2
+        }
+    );
 }
