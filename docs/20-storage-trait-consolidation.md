@@ -32,7 +32,11 @@ See also:
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
 - `aero_storage::StdFileBackend` / `aero_storage::FileBackend` (sync, byte-addressed native `std::fs::File` backend; non-wasm32)\
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
+- `aero_storage::ReadOnlyBackend` (sync, read-only wrapper for `aero_storage::StorageBackend`)\
+  Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
 - `aero_storage::VirtualDisk` (sync, fixed-capacity virtual disk; byte addressing + sector helpers)\
+  Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
+- `aero_storage::ReadOnlyDisk` (sync, read-only wrapper for `aero_storage::VirtualDisk`)\
   Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
 - `aero_storage::ChunkStore` (sync, chunk-addressed cache store used by `aero_storage::{StreamingDisk, ChunkedStreamingDisk}`; **native-only** / non-wasm32)\
   Defined in: [`crates/aero-storage/src/streaming.rs`](../crates/aero-storage/src/streaming.rs)
