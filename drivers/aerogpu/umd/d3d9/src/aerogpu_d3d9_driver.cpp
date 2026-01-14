@@ -112,8 +112,9 @@ namespace aerogpu {
 // the current AeroGPU D3D9 UMD already understands/emits:
 // - render states
 // - sampler states
-// - fixed-function / legacy state caches (cached-only; used for deterministic
-//   Get* queries + state-block compatibility):
+// - fixed-function / legacy state caches (cached; used for deterministic Get*
+//   queries + state-block compatibility, and consulted by the minimal
+//   fixed-function fallback path where implemented):
 //   - texture stage state (D3DTSS_*)
 //   - transforms / clip planes / clip status
 //   - software vertex processing / N-patch mode / stream source frequency
@@ -13290,11 +13291,16 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 }
 
 // -----------------------------------------------------------------------------
-// Legacy fixed-function/DDI state (cached only)
+// Legacy fixed-function/DDI state (cached; minimal fixed-function consumption)
 // -----------------------------------------------------------------------------
-// These DDIs are not currently consumed by the AeroGPU command stream (fixed
-// function is not implemented), but some legacy D3D9 apps call the corresponding
-// Get* APIs and treat failures as fatal. Cache the values so Set*/Get* round-trip.
+// These DDIs are mostly cached-only and are not emitted as explicit fixed-function
+// GPU state in the AeroGPU command stream, but some legacy D3D9 apps call the
+// corresponding Get* APIs and treat failures as fatal. Cache values so Set*/Get*
+// and state blocks round-trip.
+//
+// Note: stage0 texture stage state is consulted by the UMD's minimal fixed-function
+// fallback path to select a pixel shader variant (see the stage0 update hook in
+// device_set_texture_stage_state_impl()).
 
 template <typename StageT, typename StateT, typename ValueT>
 HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT value) {

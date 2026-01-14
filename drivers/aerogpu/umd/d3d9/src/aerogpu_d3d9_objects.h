@@ -631,9 +631,9 @@ struct Device {
 
     // Texture stage state defaults (numeric values from d3d9types.h).
     //
-    // These are fixed-function states and are not currently consumed by the
-    // AeroGPU shader pipeline, but keeping defaults allows GetTextureStageState
-    // and state blocks to behave deterministically.
+    // These are fixed-function states. Most are cached-only (GetTextureStageState
+    // + state blocks), but stage0 is consulted by the UMD's minimal fixed-function
+    // fallback path to select a pixel shader variant.
     //
     // D3DTEXTUREOP:
     // - DISABLE = 1
