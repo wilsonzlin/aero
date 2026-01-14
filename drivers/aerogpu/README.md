@@ -73,6 +73,7 @@ Details: `docs/16-driver-packaging-and-signing.md`.
 
 ## Key docs / entrypoints
 
+* Repo-wide graphics status (“what’s implemented vs missing”): `docs/graphics/status.md`
 * Build + toolchain setup: `drivers/aerogpu/build/README.md`
 * Win7 packaging/signing/install: `drivers/aerogpu/packaging/win7/README.md`
 * Guest-side validation tests: `drivers/aerogpu/tests/win7/README.md`
