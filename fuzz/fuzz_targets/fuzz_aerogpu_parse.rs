@@ -228,13 +228,27 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderConstantsI) => {
-                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
-                        let _ = cmd::decode_cmd_set_shader_constants_i_payload_le(packet_bytes);
+                    let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
+                        continue;
+                    };
+                    if let Ok((cmd_sc, _data)) =
+                        cmd::decode_cmd_set_shader_constants_i_payload_le(packet_bytes)
+                    {
+                        let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderConstantsB) => {
-                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
-                        let _ = cmd::decode_cmd_set_shader_constants_b_payload_le(packet_bytes);
+                    let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
+                        continue;
+                    };
+                    if let Ok((cmd_sc, _data)) =
+                        cmd::decode_cmd_set_shader_constants_b_payload_le(packet_bytes)
+                    {
+                        let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
+                        let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
@@ -1638,6 +1652,8 @@ fuzz_target!(|data: &[u8]| {
         + cmd::AerogpuCmdUploadResource::SIZE_BYTES
         + cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES
         + cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES
+        + cmd::AerogpuCmdSetShaderConstantsI::SIZE_BYTES
+        + cmd::AerogpuCmdSetShaderConstantsB::SIZE_BYTES
         + cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES
         + cmd::AerogpuCmdSetSamplers::SIZE_BYTES
         + cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES
@@ -1699,6 +1715,28 @@ fuzz_target!(|data: &[u8]| {
         &mut off,
         cmd::AerogpuCmdOpcode::SetShaderConstantsF as u32,
         cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_SHADER_CONSTANTS_I: vec4_count=1 but no int data bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderConstantsI as u32,
+        cmd::AerogpuCmdSetShaderConstantsI::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_SHADER_CONSTANTS_B: bool_count=1 but no bool data bytes.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderConstantsB as u32,
+        cmd::AerogpuCmdSetShaderConstantsB::SIZE_BYTES,
     ) {
         if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
             v.copy_from_slice(&1u32.to_le_bytes());
@@ -1921,6 +1959,8 @@ fuzz_target!(|data: &[u8]| {
         initial_count: 0,
     }];
     let stage_ex_constants_f = [0.0f32, 1.0, -1.0, f32::from_bits(u32::MAX)];
+    let stage_ex_constants_i = [0i32, 1, -1, i32::MIN];
+    let stage_ex_constants_b = [0u32, 1u32];
 
     let mut w = AerogpuCmdWriter::new();
     // Host-backed resources so the stream is self-contained (no allocation table required).
@@ -1979,6 +2019,16 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuShaderStageEx::Domain,
         /*start_register=*/ 0,
         &stage_ex_constants_f,
+    );
+    w.set_shader_constants_i_ex(
+        cmd::AerogpuShaderStageEx::Geometry,
+        /*start_register=*/ 0,
+        &stage_ex_constants_i,
+    );
+    w.set_shader_constants_b_ex(
+        cmd::AerogpuShaderStageEx::Hull,
+        /*start_register=*/ 0,
+        &stage_ex_constants_b,
     );
 
     // Emit the append-only extended BIND_SHADERS payload using the cmd_writer helper so we keep
