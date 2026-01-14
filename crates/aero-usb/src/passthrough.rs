@@ -3048,6 +3048,35 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_never_panics_for_pseudorandom_bytes() {
+        // This is a lightweight fuzz-style regression test: snapshot_load should never panic on
+        // arbitrary input.
+        //
+        // Keep the corpus small and deterministic so it runs quickly and reproducibly.
+        fn next_u32(state: &mut u64) -> u32 {
+            // LCG parameters from Numerical Recipes (good enough for test data generation).
+            *state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (*state >> 32) as u32
+        }
+
+        let mut state = 0x9e3779b97f4a7c15u64;
+        for _ in 0..256 {
+            let len = (next_u32(&mut state) as usize) % 512;
+            let mut bytes = vec![0u8; len];
+            for b in &mut bytes {
+                *b = next_u32(&mut state) as u8;
+            }
+            let res = std::panic::catch_unwind(move || {
+                let mut dev = UsbPassthroughDevice::new();
+                let _ = dev.snapshot_load(&bytes);
+            });
+            assert!(res.is_ok(), "snapshot_load panicked for len {len}");
+        }
+    }
+
+    #[test]
     fn snapshot_save_is_deterministic_independent_of_hashmap_order() {
         let mut dev_a = UsbPassthroughDevice::new();
         let mut dev_b = UsbPassthroughDevice::new();
