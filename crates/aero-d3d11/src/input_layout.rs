@@ -744,6 +744,29 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_type: DxgiFormatComponentType::I8,
             component_count: 2,
         },
+        // R16_FLOAT
+        //
+        // WebGPU does not support scalar 16-bit vertex formats; the closest representation is
+        // `float16x2` which consumes 4 bytes. This matches D3D's 4-byte alignment rules but requires
+        // shader translation to only consume the `.x` component (the `.y` value comes from padding
+        // / undefined bytes).
+        54 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Float16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::F16,
+            component_count: 1,
+        },
+        // R16_UNORM
+        //
+        // See `R16_UINT` for why this is represented as 4 bytes.
+        56 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm16,
+            component_count: 1,
+        },
         // R16_UINT
         //
         // WebGPU does not support scalar 16-bit vertex formats; the closest representation is
@@ -755,6 +778,26 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             size_bytes: 4,
             align_bytes: 4,
             component_type: DxgiFormatComponentType::U16,
+            component_count: 1,
+        },
+        // R16_SNORM
+        //
+        // See `R16_UINT` for why this is represented as 4 bytes.
+        58 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Snorm16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Snorm16,
+            component_count: 1,
+        },
+        // R16_SINT
+        //
+        // See `R16_UINT` for why this is represented as 4 bytes.
+        59 => DxgiFormatInfo {
+            wgpu_vertex_format: wgpu::VertexFormat::Sint16x2,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I16,
             component_count: 1,
         },
         _ => return Err(InputLayoutError::UnsupportedDxgiFormat(dxgi_format)),

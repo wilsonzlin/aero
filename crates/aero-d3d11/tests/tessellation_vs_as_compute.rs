@@ -1794,6 +1794,70 @@ fn vs_as_compute_loads_extended_formats() {
             assert_vec4_approx,
         )
         .await;
+
+        // i16 scalar (-123)
+        let mut vb_i16_scalar = Vec::new();
+        vb_i16_scalar.extend_from_slice(&(-123i16).to_le_bytes());
+        vb_i16_scalar.extend_from_slice(&0i16.to_le_bytes()); // padding
+        run_case(
+            &device,
+            &queue,
+            59,  // DXGI_FORMAT_R16_SINT
+            0x1, // x
+            4,
+            &vb_i16_scalar,
+            [-123.0, 0.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // unorm16 scalar (1.0)
+        let mut vb_un16_scalar = Vec::new();
+        vb_un16_scalar.extend_from_slice(&0xffffu16.to_le_bytes());
+        vb_un16_scalar.extend_from_slice(&0u16.to_le_bytes()); // padding
+        run_case(
+            &device,
+            &queue,
+            56,  // DXGI_FORMAT_R16_UNORM
+            0x1, // x
+            4,
+            &vb_un16_scalar,
+            [1.0, 0.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // snorm16 scalar (-1.0)
+        let mut vb_sn16_scalar = Vec::new();
+        vb_sn16_scalar.extend_from_slice(&(-32768i16).to_le_bytes());
+        vb_sn16_scalar.extend_from_slice(&0i16.to_le_bytes()); // padding
+        run_case(
+            &device,
+            &queue,
+            58,  // DXGI_FORMAT_R16_SNORM
+            0x1, // x
+            4,
+            &vb_sn16_scalar,
+            [-1.0, 0.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // f16 scalar (1.0)
+        let mut vb_f16_scalar = Vec::new();
+        vb_f16_scalar.extend_from_slice(&0x3c00u16.to_le_bytes()); // 1.0
+        vb_f16_scalar.extend_from_slice(&0x0000u16.to_le_bytes()); // padding
+        run_case(
+            &device,
+            &queue,
+            54,  // DXGI_FORMAT_R16_FLOAT
+            0x1, // x
+            4,
+            &vb_f16_scalar,
+            [1.0, 0.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
     });
 }
 

@@ -531,7 +531,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             _ => "load_attr_f32x4".to_owned(),
         },
         DxgiFormatComponentType::F16 => match attr.format.component_count {
-            2 => "load_attr_f16x2".to_owned(),
+            1 | 2 => "load_attr_f16x2".to_owned(),
             4 => "load_attr_f16x4".to_owned(),
             _ => "load_attr_f16x4".to_owned(),
         },
@@ -582,12 +582,12 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             _ => "load_attr_snorm8x4".to_owned(),
         },
         DxgiFormatComponentType::Unorm16 => match attr.format.component_count {
-            2 => "load_attr_unorm16x2".to_owned(),
+            1 | 2 => "load_attr_unorm16x2".to_owned(),
             4 => "load_attr_unorm16x4".to_owned(),
             _ => "load_attr_unorm16x4".to_owned(),
         },
         DxgiFormatComponentType::Snorm16 => match attr.format.component_count {
-            2 => "load_attr_snorm16x2".to_owned(),
+            1 | 2 => "load_attr_snorm16x2".to_owned(),
             4 => "load_attr_snorm16x4".to_owned(),
             _ => "load_attr_snorm16x4".to_owned(),
         },
@@ -639,6 +639,14 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             ),
             "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
         ),
+        // Scalar float16 is represented as `float16x2` in memory; use the `.x` lane.
+        (DxgiFormatComponentType::F16, 1) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, 0.0, 0.0, 1.0);".to_owned(),
+        ),
         (DxgiFormatComponentType::F16, 4) => (
             format!(
                 "let v: vec4<f32> = {load_expr}({slot}u, addr);",
@@ -648,6 +656,14 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
         ),
 
         // Normalized formats.
+        // Scalar 16-bit normalized formats are represented as `*16x2` in memory; use the `.x` lane.
+        (DxgiFormatComponentType::Unorm16, 1) | (DxgiFormatComponentType::Snorm16, 1) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, 0.0, 0.0, 1.0);".to_owned(),
+        ),
         (DxgiFormatComponentType::Unorm8, 2)
         | (DxgiFormatComponentType::Snorm8, 2)
         | (DxgiFormatComponentType::Unorm16, 2)
