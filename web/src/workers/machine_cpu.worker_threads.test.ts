@@ -423,6 +423,68 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("processes multiple queued machine snapshot save requests (no WASM)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const pauseAck = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      await pauseAck;
+
+      const save1 = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 10,
+        10_000,
+      );
+      const save2 = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 11,
+        10_000,
+      );
+
+      worker.postMessage({ kind: "vm.snapshot.machine.saveToOpfs", requestId: 10, path: "state/a.snap" });
+      worker.postMessage({ kind: "vm.snapshot.machine.saveToOpfs", requestId: 11, path: "state/b.snap" });
+
+      const [res1, res2] = (await Promise.all([save1, save2])) as [any, any];
+      for (const res of [res1, res2]) {
+        if (res.ok !== false) {
+          throw new Error("expected vm.snapshot.machine.saved to return ok=false when WASM is unavailable");
+        }
+        const message = (res.error as { message?: unknown } | undefined)?.message;
+        if (typeof message !== "string" || !message.toLowerCase().includes("wasm")) {
+          throw new Error(`expected missing-WASM error message to mention WASM, got: ${String(message)}`);
+        }
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("drops excess input batches while snapshot-paused and recycles them immediately", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
 
