@@ -4251,6 +4251,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_rejects_zero_chunk_size() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.chunk_size = 0;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("--chunk-size must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn publish_rejects_too_large_chunk_size() {
         let cli = Cli::parse_from([
             "aero-image-chunker",
@@ -4472,6 +4496,137 @@ mod tests {
         assert!(
             err.to_string().contains("manifest schema mismatch"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_empty_image_id() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected imageId validation failure");
+        assert!(
+            err.to_string().contains("manifest imageId must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_empty_version() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err =
+            validate_manifest_v1(&manifest, MAX_CHUNKS).expect_err("expected version validation");
+        assert!(
+            err.to_string().contains("manifest version must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_empty_mime_type() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: "".to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected mimeType validation failure");
+        assert!(
+            err.to_string().contains("manifest mimeType must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_zero_chunk_size() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: 0,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkSize validation failure");
+        assert!(
+            err.to_string().contains("manifest chunkSize must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_zero_chunk_index_width() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: 0,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkIndexWidth validation failure");
+        assert!(
+            err.to_string().contains("manifest chunkIndexWidth must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_sha256_non_hex() {
+        let bad = "z".repeat(64);
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![ManifestChunkV1 {
+                size: Some(SECTOR_SIZE as u64),
+                sha256: Some(bad),
+            }]),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected sha256 validation failure");
+        let msg = error_chain_summary(&err);
+        assert!(
+            msg.contains("manifest chunk[0].sha256 is invalid") && msg.contains("expected hex"),
+            "unexpected error chain: {msg}"
         );
     }
 
@@ -5106,6 +5261,26 @@ mod tests {
     }
 
     #[test]
+    fn http_sha256_mismatch_is_non_retryable_even_when_wrapped() {
+        let err = anyhow!(
+            "sha256 mismatch for chunk 0 (http://127.0.0.1/chunks/00000000.bin): expected deadbeef, got cafebabe"
+        );
+        let err = Err::<(), _>(err)
+            .context("chunk verify failed")
+            .unwrap_err();
+        assert!(!is_retryable_http_error(&err));
+    }
+
+    #[test]
+    fn http_unexpected_content_encoding_is_non_retryable_even_when_wrapped() {
+        let err = anyhow!("unexpected Content-Encoding: gzip");
+        let err = Err::<(), _>(err)
+            .context("GET http://127.0.0.1/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(!is_retryable_http_error(&err));
+    }
+
+    #[test]
     fn unexpected_content_encoding_is_non_retryable_even_with_context_wrapping() {
         let err =
             anyhow!("unexpected Content-Encoding for s3://bucket/prefix/chunks/00000000.bin: gzip");
@@ -5375,6 +5550,19 @@ mod tests {
         let err = validate_verify_args(&args).expect_err("expected validation failure");
         assert!(
             err.to_string().contains("--retries must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_header_in_s3_mode() {
+        let args = VerifyArgs {
+            header: vec!["authorization: bearer test".to_string()],
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--header is only valid with --manifest-url"),
             "unexpected error: {err}"
         );
     }
