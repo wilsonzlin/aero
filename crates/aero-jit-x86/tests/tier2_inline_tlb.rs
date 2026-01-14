@@ -521,6 +521,73 @@ fn run_trace(
     (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
 }
 
+fn run_trace_with_prefilled_tlbs(
+    trace: &TraceIr,
+    ram: Vec<u8>,
+    cpu_ptr: u64,
+    ram_size: u64,
+    prefill_tlbs: &[(u64, u64)],
+) -> (u64, Vec<u8>, [u64; 16], HostState) {
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM at `ram_base = 0`.
+    assert!(ram.len() <= cpu_ptr as usize, "ram must fit before cpu_ptr");
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let tlb_salt = 0x1234_5678_9abc_def0u64;
+    let ctx = JitContext { ram_base: 0, tlb_salt };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    for &(vaddr, tlb_data) in prefill_tlbs {
+        let vpn = vaddr >> PAGE_SHIFT;
+        let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+        let entry_addr = jit_ctx_ptr_usize
+            + (JitContext::TLB_OFFSET as usize)
+            + idx * (JIT_TLB_ENTRY_SIZE as usize);
+        let tag = (vpn ^ tlb_salt) | 1;
+        mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+        mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&tlb_data.to_le_bytes());
+    }
+
+    let pages = (total_len.div_ceil(65_536)) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let mut gpr = [0u64; 16];
+    for (dst, off) in gpr.iter_mut().zip(abi::CPU_GPR_OFF.iter()) {
+        *dst = read_u64_le(&got_mem, cpu_ptr_usize + (*off as usize));
+    }
+
+    (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
+}
+
 fn run_trace_with_code_version_table(
     trace: &TraceIr,
     ram: Vec<u8>,
@@ -720,6 +787,69 @@ fn tier2_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(host.mmu_translate_calls, 1);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_load_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
+    // Ensure a cached non-RAM entry (missing `TLB_FLAG_IS_RAM`) falls back to the slow helper
+    // without calling `mmu_translate`.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1234),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1234..0x1234 + 4].copy_from_slice(&0xDDCC_BBAAu32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+    let tlb_data =
+        (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+
+    let (_ret, _got_ram, gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1234, tlb_data)]);
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0xDDCC_BBAA);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 1);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
+    // Ensure a cached non-RAM entry (missing `TLB_FLAG_IS_RAM`) falls back to the slow helper
+    // without calling `mmu_translate`.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1234),
+            src: Operand::Const(0xDDCC_BBAA),
+            width: Width::W32,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let tlb_data =
+        (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1234, tlb_data)]);
+
+    assert_eq!(read_u32_le(&got_ram, 0x1234), 0xDDCC_BBAA);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
 }
 
 #[test]
