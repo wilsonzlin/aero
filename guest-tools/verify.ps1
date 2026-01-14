@@ -538,9 +538,11 @@ function Add-DeviceBindingCheck(
     foreach ($m in $matches) {
         $inf = $null
         $signer = $null
+        $isSigned = $null
         if ($m.signed_driver) {
             $inf = "" + $m.signed_driver.inf_name
             $signer = "" + $m.signed_driver.signer
+            $isSigned = $m.signed_driver.is_signed
         }
 
         $data.matched_devices += @{
@@ -553,6 +555,7 @@ function Add-DeviceBindingCheck(
             config_manager_error_code = $m.config_manager_error_code
             config_manager_error_meaning = "" + $m.config_manager_error_meaning
             inf_name = $inf
+            is_signed = $isSigned
             signer = $signer
         }
 
@@ -563,6 +566,7 @@ function Add-DeviceBindingCheck(
             if ($m.config_manager_error_meaning) { $line += " (" + $m.config_manager_error_meaning + ")" }
         }
         if ($inf) { $line += ", INF=" + $inf }
+        if ($isSigned -ne $null) { $line += ", IsSigned=" + $isSigned }
         if ($signer) { $line += ", Signer=" + $signer }
         $details += $line
     }
