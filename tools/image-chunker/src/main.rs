@@ -864,7 +864,9 @@ async fn verify_chunks(
 
     let verify_all = match chunk_sample {
         None => true,
-        Some(n) => n >= chunk_count,
+        // We always include the final chunk in sampling. If `N random + last` covers the entire
+        // image, just verify all chunks deterministically.
+        Some(n) => n.saturating_add(1) >= chunk_count,
     };
 
     let indices: Option<Vec<u64>> = if verify_all {
