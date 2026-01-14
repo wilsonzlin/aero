@@ -89,6 +89,14 @@ pub struct AeroGpuPciDevice {
     /// (drivers typically write LO then HI).
     scanout0_fb_gpa_lo_pending: bool,
 
+    /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
+    cursor_fb_gpa_pending_lo: u32,
+    /// Set after a write to `CURSOR_FB_GPA_LO` and cleared on `CURSOR_FB_GPA_HI`.
+    ///
+    /// This avoids exposing a torn 64-bit cursor framebuffer address (drivers typically write LO
+    /// then HI).
+    cursor_fb_gpa_lo_pending: bool,
+
     boot_time_ns: Option<u64>,
     /// Last `now_ns` value observed by [`AeroGpuPciDevice::tick`].
     ///
@@ -174,6 +182,8 @@ impl AeroGpuPciDevice {
             last_published_scanout0: None,
             scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
+            cursor_fb_gpa_pending_lo: 0,
+            cursor_fb_gpa_lo_pending: false,
             // The `now_ns` timebase used by `tick()` is defined as "nanoseconds since device boot"
             // (see `drivers/aerogpu/protocol/vblank.md`). Use 0 as the stable epoch so vblank
             // timestamps remain meaningful even if the first `tick()` is delayed.
@@ -420,6 +430,10 @@ impl AeroGpuPciDevice {
         self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
         self.last_published_scanout0 = None;
+
+        // Reset torn cursor framebuffer address tracking.
+        self.cursor_fb_gpa_pending_lo = 0;
+        self.cursor_fb_gpa_lo_pending = false;
 
         // Resetting guest-visible registers implicitly disables scanout0. Ensure scanout consumers
         // see ownership revert back to the legacy VGA/VBE path rather than continuing to treat WDDM
@@ -747,7 +761,13 @@ impl AeroGpuPciDevice {
             mmio::CURSOR_WIDTH => self.regs.cursor.width,
             mmio::CURSOR_HEIGHT => self.regs.cursor.height,
             mmio::CURSOR_FORMAT => self.regs.cursor.format as u32,
-            mmio::CURSOR_FB_GPA_LO => self.regs.cursor.fb_gpa as u32,
+            mmio::CURSOR_FB_GPA_LO => {
+                if self.cursor_fb_gpa_lo_pending {
+                    self.cursor_fb_gpa_pending_lo
+                } else {
+                    self.regs.cursor.fb_gpa as u32
+                }
+            }
             mmio::CURSOR_FB_GPA_HI => (self.regs.cursor.fb_gpa >> 32) as u32,
             mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes,
 
@@ -881,7 +901,17 @@ impl AeroGpuPciDevice {
                 self.maybe_publish_wddm_scanout0_state();
             }
 
-            mmio::CURSOR_ENABLE => self.regs.cursor.enable = value != 0,
+            mmio::CURSOR_ENABLE => {
+                let prev = self.regs.cursor.enable;
+                let new_enable = value != 0;
+                self.regs.cursor.enable = new_enable;
+                if prev && !new_enable {
+                    // Reset torn-update tracking so a stale LO write can't affect future cursor
+                    // updates.
+                    self.cursor_fb_gpa_pending_lo = 0;
+                    self.cursor_fb_gpa_lo_pending = false;
+                }
+            }
             mmio::CURSOR_X => self.regs.cursor.x = value as i32,
             mmio::CURSOR_Y => self.regs.cursor.y = value as i32,
             mmio::CURSOR_HOT_X => self.regs.cursor.hot_x = value,
@@ -890,12 +920,20 @@ impl AeroGpuPciDevice {
             mmio::CURSOR_HEIGHT => self.regs.cursor.height = value,
             mmio::CURSOR_FORMAT => self.regs.cursor.format = AeroGpuFormat::from_u32(value),
             mmio::CURSOR_FB_GPA_LO => {
-                self.regs.cursor.fb_gpa =
-                    (self.regs.cursor.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid exposing a torn 64-bit cursor framebuffer address. Treat the LO write as
+                // starting a new update and commit the combined value on the subsequent HI write.
+                self.cursor_fb_gpa_pending_lo = value;
+                self.cursor_fb_gpa_lo_pending = true;
             }
             mmio::CURSOR_FB_GPA_HI => {
-                self.regs.cursor.fb_gpa =
-                    (self.regs.cursor.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.cursor_fb_gpa_lo_pending {
+                    u64::from(self.cursor_fb_gpa_pending_lo)
+                } else {
+                    self.regs.cursor.fb_gpa & 0xffff_ffff
+                };
+                self.regs.cursor.fb_gpa = (u64::from(value) << 32) | lo;
+                self.cursor_fb_gpa_lo_pending = false;
             }
             mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes = value,
 
