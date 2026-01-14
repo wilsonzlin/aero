@@ -1,4 +1,4 @@
-use aero_devices_nvme::{from_virtual_disk, NvmeController};
+use aero_devices_nvme::NvmeController;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -86,7 +86,7 @@ fn dataset_management_deallocate_accepts_sgl_datablock() {
     let disk_sectors = 1024u64;
     let capacity_bytes = disk_sectors * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
-    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;

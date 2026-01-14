@@ -4,7 +4,7 @@ use std::io;
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as a `aero-devices` [`DiskBackend`].
 ///
 /// Prefer constructing disks at wiring boundaries as `aero_storage::VirtualDisk` and adapting as
-/// needed using this wrapper (mirrors `aero_devices_nvme::AeroStorageDiskAdapter`).
+/// needed using this wrapper.
 pub use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend as AeroStorageDiskAdapter;
 
 /// Byte-addressed disk backend used by `aero-devices` device models (e.g. virtio-blk).

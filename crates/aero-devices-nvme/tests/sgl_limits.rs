@@ -1,4 +1,4 @@
-use aero_devices_nvme::{from_virtual_disk, NvmeController};
+use aero_devices_nvme::NvmeController;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -91,7 +91,7 @@ fn write_sgl_desc(mem: &mut TestMem, addr: u64, ptr: u64, len: u32, type_byte: u
 
 fn setup_ctrl_with_io_queues() -> (NvmeController, TestMem, u64, u64) {
     let disk = RawDisk::create(MemBackend::new(), 1024 * SECTOR_SIZE as u64).unwrap();
-    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000u64;

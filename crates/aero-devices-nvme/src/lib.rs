@@ -2959,7 +2959,7 @@ mod tests {
     #[test]
     fn msix_table_mmio_round_trip() {
         let disk = TestDisk::new(1024);
-        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut dev = NvmePciDevice::try_new_from_aero_storage(disk).unwrap();
         dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
 
         let (table_base, pba_base, table_bir, pba_bir) = {
@@ -3086,7 +3086,7 @@ mod tests {
     #[test]
     fn identify_controller_advertises_oncs_dsm_and_write_zeroes() {
         let disk = TestDisk::new(1024);
-        let ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let data = ctrl.identify_controller();
         let oncs = u16::from_le_bytes(data[520..522].try_into().unwrap());
@@ -3198,7 +3198,7 @@ mod tests {
     #[test]
     fn write_zeroes_zeros_range() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -3298,7 +3298,7 @@ mod tests {
     #[test]
     fn dataset_management_deallocate_completes_and_does_not_corrupt_outside_range() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -3448,7 +3448,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -4090,7 +4090,7 @@ mod tests {
     #[test]
     fn admin_delete_io_sq_clears_pending_doorbell_updates() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Create CQ1 + SQ1 directly.
         let cq_cmd = NvmeCommand {
@@ -4154,7 +4154,7 @@ mod tests {
     #[test]
     fn admin_delete_io_cq_rejects_in_use_and_then_allows_delete() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Create CQ1 + SQ1 directly.
         let cq_cmd = NvmeCommand {
@@ -4250,7 +4250,7 @@ mod tests {
     #[test]
     fn admin_delete_io_queues_nonexistent_returns_invalid_field() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let del_sq = NvmeCommand {
             opc: 0x00,
@@ -4290,7 +4290,7 @@ mod tests {
     #[test]
     fn admin_get_set_features_number_of_queues_interrupt_coalescing_and_unsupported() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Defaults: report max supported IO queues (0-based).
         let get_nq = NvmeCommand {

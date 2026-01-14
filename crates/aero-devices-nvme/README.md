@@ -35,15 +35,11 @@ disk capacity is a multiple of 512:
 - [`NvmeController::try_new_from_virtual_disk`] / [`NvmePciDevice::try_new_from_virtual_disk`]
 - [`NvmeController::try_new_from_aero_storage`] / [`NvmePciDevice::try_new_from_aero_storage`]
 
-## Reverse adapter: using an NVMe backend as an `aero-storage` disk
+## Using `aero-storage` layers
 
-In rare cases, you may already have an NVMe [`DiskBackend`] implementation (e.g. a platform-specific
-backend or a test stub), but want to layer `aero-storage` disk wrappers (cache/sparse/overlay/etc)
-on top of it.
-
-Use [`aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`] to adapt an NVMe backend into an
-[`aero_storage::VirtualDisk`]. Note that NVMe backends are sector-addressed; this adapter only
-supports *sector-aligned* byte offsets and lengths.
+Because the controller consumes [`aero_storage::VirtualDisk`] directly, you can freely compose the
+`aero-storage` wrapper stack (cache/sparse/overlay/etc) and pass the resulting disk into the NVMe
+device.
 
 ## Interrupts
 

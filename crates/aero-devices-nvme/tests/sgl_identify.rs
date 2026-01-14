@@ -1,4 +1,4 @@
-use aero_devices_nvme::{from_virtual_disk, NvmeController};
+use aero_devices_nvme::NvmeController;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -83,7 +83,7 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> Cqe {
 #[test]
 fn identify_controller_supports_sgl_data_pointer() {
     let disk = RawDisk::create(MemBackend::new(), 1024 * SECTOR_SIZE as u64).unwrap();
-    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000u64;
@@ -122,7 +122,7 @@ fn identify_controller_supports_sgl_data_pointer() {
 #[test]
 fn identify_controller_supports_sgl_segment_list() {
     let disk = RawDisk::create(MemBackend::new(), 1024 * SECTOR_SIZE as u64).unwrap();
-    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000u64;
@@ -182,7 +182,7 @@ fn identify_controller_supports_sgl_segment_list() {
 #[test]
 fn identify_controller_supports_sgl_last_segment_root() {
     let disk = RawDisk::create(MemBackend::new(), 1024 * SECTOR_SIZE as u64).unwrap();
-    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000u64;
