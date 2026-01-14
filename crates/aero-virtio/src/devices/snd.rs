@@ -459,6 +459,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                     break;
                 }
                 let take = (d.len as usize).min(event_len - checked);
+                if take == 0 {
+                    continue;
+                }
                 if mem.get_slice(d.addr, take).is_err() {
                     guest_ok = false;
                     break;
@@ -487,6 +490,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                         break;
                     }
                     let take = (d.len as usize).min(event_len - written);
+                    if take == 0 {
+                        continue;
+                    }
                     let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
                         wrote_all = false;
                         break;
@@ -1925,6 +1931,61 @@ mod tests {
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
         assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 0);
         assert_eq!(snd.pending_events.len(), 1);
+    }
+
+    #[test]
+    fn virtio_snd_eventq_flush_ignores_zero_length_descriptors() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf = 0x4000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // Descriptor 0 is zero-length and uses an out-of-bounds address. A robust device should not
+        // attempt to map it.
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            0xFFFF_FFFFu64,
+            0,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            1,
+        );
+        write_desc(&mut mem, desc_table, 1, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        snd.pending_events.push_back(evt.to_vec());
+
+        snd.flush_eventq(&mut queue, &mut mem).unwrap();
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 4).unwrap(), 0);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+        assert_eq!(mem.get_slice(buf, 8).unwrap(), &evt);
+        assert!(snd.pending_events.is_empty());
     }
 
     #[test]
