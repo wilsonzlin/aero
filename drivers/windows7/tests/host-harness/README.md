@@ -1179,6 +1179,34 @@ To require the guest virtio drivers to use a specific interrupt family, set eith
 These inputs are mutually exclusive. Note: `force_intx=true` is incompatible with `require_msi=true` (the workflow will
 fail fast before launching QEMU).
 
+To opt back into QEMU’s transitional virtio-pci devices (legacy + modern) for backcompat with older QEMU builds/guest
+images, set the workflow input `virtio_transitional=true` (passes `--virtio-transitional`).
+
+Notes:
+
+- This is incompatible with `with_virtio_snd=true` (virtio-snd testing requires the modern-only contract-v1 layout).
+- This is incompatible with `with_blk_resize=true` (blk resize uses the contract-v1 drive layout with stable IDs).
+
+To request a specific MSI-X vector table size from QEMU (`vectors=N`), set:
+
+- `virtio_msix_vectors=<N>` for a global default, and/or per-device overrides:
+  - `virtio_net_vectors=<N>`
+  - `virtio_blk_vectors=<N>`
+  - `virtio_input_vectors=<N>`
+  - `virtio_snd_vectors=<N>` (requires `with_virtio_snd=true`)
+
+These inputs require `N > 0` and are mutually exclusive with `force_intx=true` (which forces `vectors=0`).
+
+To require that MSI-X is enabled/effective for a given device (fail when the device is not operating in MSI-X mode),
+set the corresponding workflow input (passes the same-named `--require-virtio-*-msix` flag to the Python harness):
+
+- `require_virtio_net_msix=true`
+- `require_virtio_blk_msix=true`
+- `require_virtio_input_msix=true`
+- `require_virtio_snd_msix=true` (requires `with_virtio_snd=true`)
+
+These inputs are incompatible with `force_intx=true` and with `require_intx=true`.
+
 The workflow can also optionally exercise the end-to-end virtio-input event delivery path (guest HID report verification +
 host-side input injection via QMP/HMP) by setting the workflow input `with_virtio_input_events=true`.
 This requires a guest image provisioned with `--test-input-events` (for example via

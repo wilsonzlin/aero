@@ -48,6 +48,11 @@ on:
         required: false
         default: false
         type: boolean
+      virtio_transitional:
+        description: Use transitional virtio-pci devices (legacy + modern) instead of modern-only contract-v1 devices (backcompat for older QEMU/guest images)
+        required: false
+        default: false
+        type: boolean
       force_intx:
         description: Force virtio devices to expose no MSI-X capability (vectors=0) so the guest uses INTx
         required: false
@@ -63,6 +68,51 @@ on:
         required: false
         default: false
         type: boolean
+      require_virtio_net_msix:
+        description: Require virtio-net MSI-X to be enabled/effective (host QMP check + guest mode marker)
+        required: false
+        default: false
+        type: boolean
+      require_virtio_blk_msix:
+        description: Require virtio-blk MSI-X to be enabled/effective (host QMP check + guest mode marker)
+        required: false
+        default: false
+        type: boolean
+      require_virtio_snd_msix:
+        description: Require virtio-snd MSI-X to be enabled/effective (requires with_virtio_snd; host QMP check + guest mode marker)
+        required: false
+        default: false
+        type: boolean
+      require_virtio_input_msix:
+        description: Require virtio-input MSI-X to be effective (guest mode marker check)
+        required: false
+        default: false
+        type: boolean
+      virtio_msix_vectors:
+        description: Request N MSI-X vectors from QEMU for all virtio devices (vectors=N). Mutually exclusive with force_intx.
+        required: false
+        default: ""
+        type: string
+      virtio_net_vectors:
+        description: Request N MSI-X vectors from QEMU for virtio-net (overrides virtio_msix_vectors). Mutually exclusive with force_intx.
+        required: false
+        default: ""
+        type: string
+      virtio_blk_vectors:
+        description: Request N MSI-X vectors from QEMU for virtio-blk (overrides virtio_msix_vectors). Mutually exclusive with force_intx.
+        required: false
+        default: ""
+        type: string
+      virtio_input_vectors:
+        description: Request N MSI-X vectors from QEMU for virtio-input keyboard/mouse/tablet (overrides virtio_msix_vectors). Mutually exclusive with force_intx.
+        required: false
+        default: ""
+        type: string
+      virtio_snd_vectors:
+        description: Request N MSI-X vectors from QEMU for virtio-snd (requires with_virtio_snd; overrides virtio_msix_vectors). Mutually exclusive with force_intx.
+        required: false
+        default: ""
+        type: string
       with_virtio_input_events:
         description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS (requires a guest image provisioned with --test-input-events)
         required: false
@@ -230,9 +280,19 @@ jobs:
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  qemu_preflight_pci: '${{ inputs.qemu_preflight_pci }}'"
+            echo "  virtio_transitional: '${{ inputs.virtio_transitional }}'"
             echo "  force_intx: '${{ inputs.force_intx }}'"
             echo "  require_intx: '${{ inputs.require_intx }}'"
             echo "  require_msi: '${{ inputs.require_msi }}'"
+            echo "  require_virtio_net_msix: '${{ inputs.require_virtio_net_msix }}'"
+            echo "  require_virtio_blk_msix: '${{ inputs.require_virtio_blk_msix }}'"
+            echo "  require_virtio_snd_msix: '${{ inputs.require_virtio_snd_msix }}'"
+            echo "  require_virtio_input_msix: '${{ inputs.require_virtio_input_msix }}'"
+            echo "  virtio_msix_vectors: '${{ inputs.virtio_msix_vectors }}'"
+            echo "  virtio_net_vectors: '${{ inputs.virtio_net_vectors }}'"
+            echo "  virtio_blk_vectors: '${{ inputs.virtio_blk_vectors }}'"
+            echo "  virtio_input_vectors: '${{ inputs.virtio_input_vectors }}'"
+            echo "  virtio_snd_vectors: '${{ inputs.virtio_snd_vectors }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
@@ -321,6 +381,16 @@ jobs:
             force_intx="${{ inputs.force_intx }}"
             require_intx="${{ inputs.require_intx }}"
             require_msi="${{ inputs.require_msi }}"
+            virtio_transitional="${{ inputs.virtio_transitional }}"
+            require_virtio_net_msix="${{ inputs.require_virtio_net_msix }}"
+            require_virtio_blk_msix="${{ inputs.require_virtio_blk_msix }}"
+            require_virtio_snd_msix="${{ inputs.require_virtio_snd_msix }}"
+            require_virtio_input_msix="${{ inputs.require_virtio_input_msix }}"
+            virtio_msix_vectors="${{ inputs.virtio_msix_vectors }}"
+            virtio_net_vectors="${{ inputs.virtio_net_vectors }}"
+            virtio_blk_vectors="${{ inputs.virtio_blk_vectors }}"
+            virtio_input_vectors="${{ inputs.virtio_input_vectors }}"
+            virtio_snd_vectors="${{ inputs.virtio_snd_vectors }}"
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
@@ -347,6 +417,84 @@ jobs:
               echo "ERROR: workflow input force_intx=true is incompatible with require_msi=true (force_intx disables MSI-X)" >&2
               exit 1
             fi
+            if [[ "${virtio_transitional}" == "true" && "${with_blk_resize}" == "true" ]]; then
+              echo "ERROR: workflow input virtio_transitional=true is incompatible with with_blk_resize=true (blk resize requires the contract-v1 drive layout)" >&2
+              exit 1
+            fi
+            if [[ "${virtio_transitional}" == "true" && "${with_virtio_snd}" == "true" ]]; then
+              echo "ERROR: workflow input virtio_transitional=true is incompatible with with_virtio_snd=true (virtio-snd requires modern-only contract-v1 layout)" >&2
+              exit 1
+            fi
+            if [[ "${require_virtio_snd_msix}" == "true" && "${with_virtio_snd}" != "true" ]]; then
+              echo "ERROR: workflow input require_virtio_snd_msix=true requires with_virtio_snd=true" >&2
+              exit 1
+            fi
+            if [[ -n "${virtio_snd_vectors}" && "${with_virtio_snd}" != "true" ]]; then
+              echo "ERROR: workflow input virtio_snd_vectors requires with_virtio_snd=true" >&2
+              exit 1
+            fi
+            if [[ "${require_intx}" == "true" && ( "${require_virtio_net_msix}" == "true" || "${require_virtio_blk_msix}" == "true" || "${require_virtio_snd_msix}" == "true" || "${require_virtio_input_msix}" == "true" ) ]]; then
+              echo "ERROR: workflow input require_intx=true is incompatible with require_virtio_*_msix=true (MSI-X implies message interrupts)" >&2
+              exit 1
+            fi
+            if [[ -n "${virtio_msix_vectors}" ]]; then
+              if [[ ! "${virtio_msix_vectors}" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: workflow input virtio_msix_vectors must be a positive integer, got: '${virtio_msix_vectors}'" >&2
+                exit 1
+              fi
+              if (( virtio_msix_vectors <= 0 )); then
+                echo "ERROR: workflow input virtio_msix_vectors must be > 0, got: '${virtio_msix_vectors}'" >&2
+                exit 1
+              fi
+            fi
+            if [[ -n "${virtio_net_vectors}" ]]; then
+              if [[ ! "${virtio_net_vectors}" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: workflow input virtio_net_vectors must be a positive integer, got: '${virtio_net_vectors}'" >&2
+                exit 1
+              fi
+              if (( virtio_net_vectors <= 0 )); then
+                echo "ERROR: workflow input virtio_net_vectors must be > 0, got: '${virtio_net_vectors}'" >&2
+                exit 1
+              fi
+            fi
+            if [[ -n "${virtio_blk_vectors}" ]]; then
+              if [[ ! "${virtio_blk_vectors}" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: workflow input virtio_blk_vectors must be a positive integer, got: '${virtio_blk_vectors}'" >&2
+                exit 1
+              fi
+              if (( virtio_blk_vectors <= 0 )); then
+                echo "ERROR: workflow input virtio_blk_vectors must be > 0, got: '${virtio_blk_vectors}'" >&2
+                exit 1
+              fi
+            fi
+            if [[ -n "${virtio_input_vectors}" ]]; then
+              if [[ ! "${virtio_input_vectors}" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: workflow input virtio_input_vectors must be a positive integer, got: '${virtio_input_vectors}'" >&2
+                exit 1
+              fi
+              if (( virtio_input_vectors <= 0 )); then
+                echo "ERROR: workflow input virtio_input_vectors must be > 0, got: '${virtio_input_vectors}'" >&2
+                exit 1
+              fi
+            fi
+            if [[ -n "${virtio_snd_vectors}" ]]; then
+              if [[ ! "${virtio_snd_vectors}" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: workflow input virtio_snd_vectors must be a positive integer, got: '${virtio_snd_vectors}'" >&2
+                exit 1
+              fi
+              if (( virtio_snd_vectors <= 0 )); then
+                echo "ERROR: workflow input virtio_snd_vectors must be > 0, got: '${virtio_snd_vectors}'" >&2
+                exit 1
+              fi
+            fi
+            if [[ "${force_intx}" == "true" && ( -n "${virtio_msix_vectors}" || -n "${virtio_net_vectors}" || -n "${virtio_blk_vectors}" || -n "${virtio_input_vectors}" || -n "${virtio_snd_vectors}" ) ]]; then
+              echo "ERROR: workflow input force_intx=true is mutually exclusive with virtio_*_vectors inputs (force_intx forces vectors=0)" >&2
+              exit 1
+            fi
+            if [[ "${force_intx}" == "true" && ( "${require_virtio_net_msix}" == "true" || "${require_virtio_blk_msix}" == "true" || "${require_virtio_snd_msix}" == "true" || "${require_virtio_input_msix}" == "true" ) ]]; then
+              echo "ERROR: workflow input force_intx=true is incompatible with require_virtio_*_msix=true (force_intx disables MSI-X)" >&2
+              exit 1
+            fi
 
             # Remove stale output from previous runs (self-hosted runners persist state).
             rm -f "${virtio_snd_wav_path}"
@@ -370,17 +518,47 @@ jobs:
             if [[ "${{ inputs.qemu_preflight_pci }}" == "true" ]]; then
               args+=(--qemu-preflight-pci)
             fi
+            if [[ "${virtio_transitional}" == "true" ]]; then
+              args+=(--virtio-transitional)
+            fi
             if [[ "${{ inputs.disable_udp }}" == "true" ]]; then
               args+=(--disable-udp)
             fi
             if [[ "${force_intx}" == "true" ]]; then
               args+=(--force-intx)
             fi
+            if [[ -n "${virtio_msix_vectors}" ]]; then
+              args+=(--virtio-msix-vectors "${virtio_msix_vectors}")
+            fi
+            if [[ -n "${virtio_net_vectors}" ]]; then
+              args+=(--virtio-net-vectors "${virtio_net_vectors}")
+            fi
+            if [[ -n "${virtio_blk_vectors}" ]]; then
+              args+=(--virtio-blk-vectors "${virtio_blk_vectors}")
+            fi
+            if [[ -n "${virtio_input_vectors}" ]]; then
+              args+=(--virtio-input-vectors "${virtio_input_vectors}")
+            fi
+            if [[ -n "${virtio_snd_vectors}" ]]; then
+              args+=(--virtio-snd-vectors "${virtio_snd_vectors}")
+            fi
             if [[ "${require_intx}" == "true" ]]; then
               args+=(--require-intx)
             fi
             if [[ "${require_msi}" == "true" ]]; then
               args+=(--require-msi)
+            fi
+            if [[ "${require_virtio_net_msix}" == "true" ]]; then
+              args+=(--require-virtio-net-msix)
+            fi
+            if [[ "${require_virtio_blk_msix}" == "true" ]]; then
+              args+=(--require-virtio-blk-msix)
+            fi
+            if [[ "${require_virtio_snd_msix}" == "true" ]]; then
+              args+=(--require-virtio-snd-msix)
+            fi
+            if [[ "${require_virtio_input_msix}" == "true" ]]; then
+              args+=(--require-virtio-input-msix)
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
               args+=(--with-input-events)
@@ -557,13 +735,17 @@ jobs:
           net_irq_host_marker=""
           snd_irq_host_marker=""
           input_irq_host_marker=""
-           blk_recovery_host_marker=""
-           blk_counters_host_marker=""
-           blk_reset_host_marker=""
-           if [[ -f "${serial_log}" ]]; then
-             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
-             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
-             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+          net_msix_host_marker=""
+          blk_msix_host_marker=""
+          snd_msix_host_marker=""
+          input_msix_host_marker=""
+          blk_recovery_host_marker=""
+          blk_counters_host_marker=""
+          blk_reset_host_marker=""
+          if [[ -f "${serial_log}" ]]; then
+            config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
+            result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_offload_csum_marker="$(
@@ -595,13 +777,17 @@ jobs:
               net_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|' "${harness_log}" | tail -n 1 || true)"
               snd_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|' "${harness_log}" | tail -n 1 || true)"
               input_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|' "${harness_log}" | tail -n 1 || true)"
-               blk_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
-               blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
-               blk_reset_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|' "${harness_log}" | tail -n 1 || true)"
-               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
-               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
-               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
-               blk_resize_host_marker="$(
+              net_msix_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|' "${harness_log}" | tail -n 1 || true)"
+              blk_msix_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|' "${harness_log}" | tail -n 1 || true)"
+              snd_msix_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|' "${harness_log}" | tail -n 1 || true)"
+              input_msix_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|' "${harness_log}" | tail -n 1 || true)"
+              blk_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
+              blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
+              blk_reset_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|' "${harness_log}" | tail -n 1 || true)"
+              pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_host_marker="$(
                 grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|' "${harness_log}" \
                   | grep -vF '|REQUEST|' \
                   | grep -vF '|FAIL|reason=' \
@@ -650,6 +836,18 @@ jobs:
               if [[ -n "${blk_counters_host_marker}" ]]; then
                 echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
               fi
+            fi
+            if [[ "${{ inputs.require_virtio_net_msix }}" == "true" && -n "${net_msix_host_marker}" ]]; then
+              echo "- Host virtio-net MSI-X marker: \`${net_msix_host_marker}\`"
+            fi
+            if [[ "${{ inputs.require_virtio_blk_msix }}" == "true" && -n "${blk_msix_host_marker}" ]]; then
+              echo "- Host virtio-blk MSI-X marker: \`${blk_msix_host_marker}\`"
+            fi
+            if [[ "${{ inputs.require_virtio_snd_msix }}" == "true" && -n "${snd_msix_host_marker}" ]]; then
+              echo "- Host virtio-snd MSI-X marker: \`${snd_msix_host_marker}\`"
+            fi
+            if [[ "${{ inputs.require_virtio_input_msix }}" == "true" && -n "${input_msix_host_marker}" ]]; then
+              echo "- Host virtio-input MSI-X marker: \`${input_msix_host_marker}\`"
             fi
             if [[ -n "${failure_token}" ]]; then
               echo "- Harness failure token: ${failure_token}"
