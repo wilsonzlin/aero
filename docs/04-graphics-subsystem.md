@@ -262,7 +262,10 @@ Code pointers:
 - **Main thread scheduling:** `web/src/main/frameScheduler.ts` uses `ScanoutState` to decide whether to keep ticking the GPU worker even when the shared framebuffer is in the `PRESENTED` state.
 - **GPU worker output selection:** `web/src/workers/gpu-worker.ts` snapshots `ScanoutState` during `presentOnce()` and uses it to avoid “flashing back” to the legacy framebuffer after WDDM scanout is considered active.
 - **GPU worker scanout readback (guest-memory scanout):** when `ScanoutState.source` is `WDDM` or `LEGACY_VBE_LFB` and `base_paddr` points at a real guest framebuffer, `web/src/workers/gpu-worker.ts` reads pixels from either the shared VRAM aperture (BAR1 backing) or guest RAM and normalizes to a tightly-packed RGBA8 buffer (`tryReadScanoutFrame()` / `tryReadScanoutRgba8()`).
-  - Supported formats today (AeroGPU `AerogpuFormat` discriminants): `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus `_SRGB` variants). X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical; the GPU worker decodes sRGB→linear after swizzle so the intermediate RGBA8 buffer is in linear space for blending/presentation.
+  - Supported formats today (AeroGPU `AerogpuFormat` discriminants):
+    - 32bpp packed: `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus `_SRGB` variants).
+    - 16bpp packed: `B5G6R5` (opaque) and `B5G5R5A1` (1-bit alpha).
+    X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical; the GPU worker decodes sRGB→linear after swizzle so the intermediate RGBA8 buffer is in linear space for blending/presentation.
   - Shared helper used by readback paths (size checks + guest-RAM conversion): `web/src/runtime/scanout_readback.ts` (`tryComputeScanoutRgba8ByteLength`, `MAX_SCANOUT_RGBA8_BYTES`, `readScanoutRgba8FromGuestRam`).
   - Note: `base_paddr == 0` is treated as a placeholder scanout descriptor for the host-side AeroGPU path when `source=WDDM` (no guest-memory readback). Legacy VBE scanout expects a real framebuffer.
   - The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).

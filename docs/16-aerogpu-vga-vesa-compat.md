@@ -529,7 +529,8 @@ For `ScanoutState.source = Wddm` (`SCANOUT_SOURCE_WDDM`), the worker:
 
 1. Snapshots the shared scanout descriptor (`scanoutState` SAB).
 2. Computes the required byte range:
-   `requiredReadBytes = (height-1)*pitchBytes + width*4`.
+   `requiredReadBytes = (height-1)*pitchBytes + width*bytesPerPixel`, where `bytesPerPixel` is derived
+   from `ScanoutState.format` (typically 4 for `*8G8R8*8` formats and 2 for `B5G6R5` / `B5G5R5A1`).
 3. Resolves `base_paddr` to a backing store:
    - If `base_paddr ∈ [vramBasePaddr, vramBasePaddr + vramSizeBytes)`, read from the VRAM SAB
      (`vramU8`) at offset `base_paddr - vramBasePaddr`.
@@ -556,7 +557,9 @@ Workers should treat these as immutable for the lifetime of a VM instance.
 
 ### Current limitations
 
-- WDDM scanout readback currently supports `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus their sRGB variants).
+- WDDM scanout readback currently supports:
+  - 32bpp packed: `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus their sRGB variants).
+  - 16bpp packed: `B5G6R5` (opaque) and `B5G5R5A1` (1-bit alpha).
 - WDDM hardware cursor surfaces support `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8`
   (plus their sRGB variants).
 - Readback paths require `base_paddr` and derived byte ranges to fit within JS safe integer range
