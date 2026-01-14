@@ -43,6 +43,43 @@ pub struct BufferResource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinearTextureFormat {
+    /// A format representable directly by `wgpu::TextureFormat` (including BC formats even if the
+    /// device does not have the corresponding compression features enabled).
+    Wgpu(wgpu::TextureFormat),
+    /// D3D-style packed 16-bit B5G6R5 UNORM, stored in guest memory as little-endian u16 with:
+    /// `b5 | (g6 << 5) | (r5 << 11)`.
+    ///
+    /// wgpu 0.20's WebGPU `TextureFormat` does not expose this format, so we expand to RGBA8 on CPU
+    /// when uploading.
+    B5G6R5Unorm,
+    /// D3D-style packed 16-bit B5G5R5A1 UNORM, stored in guest memory as little-endian u16 with:
+    /// `b5 | (g5 << 5) | (r5 << 10) | (a1 << 15)`.
+    ///
+    /// wgpu 0.20's WebGPU `TextureFormat` does not expose this format, so we expand to RGBA8 on CPU
+    /// when uploading.
+    B5G5R5A1Unorm,
+}
+
+impl LinearTextureFormat {
+    fn as_wgpu(self) -> Option<wgpu::TextureFormat> {
+        match self {
+            Self::Wgpu(fmt) => Some(fmt),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn is_srgb(self) -> bool {
+        self.as_wgpu().is_some_and(is_srgb_format)
+    }
+
+    fn is_bc_compressed(self) -> bool {
+        self.as_wgpu().is_some_and(is_bc_compressed_format)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Texture2dDesc {
     pub width: u32,
     pub height: u32,
@@ -50,12 +87,15 @@ pub struct Texture2dDesc {
     pub array_layers: u32,
     /// Format of the texture data in the linear backing store (guest allocations and UPLOAD_RESOURCE
     /// payloads).
-    pub format: wgpu::TextureFormat,
+    pub format: LinearTextureFormat,
     /// Actual format of the host `wgpu::Texture`.
     ///
     /// This differs from [`Self::format`] when the guest requests a BC-compressed format but the
     /// device does not have `TEXTURE_COMPRESSION_BC` enabled; in that case we fall back to an
     /// RGBA8 texture and decompress BC blocks on upload.
+    ///
+    /// Additionally, 16-bit packed B5G6R5 / B5G5R5A1 formats are always expanded to RGBA8 on upload
+    /// since they are not representable as a `wgpu::TextureFormat`.
     pub texture_format: wgpu::TextureFormat,
     pub row_pitch_bytes: u32,
     pub upload_transform: TextureUploadTransform,
@@ -90,6 +130,8 @@ pub enum TextureUploadTransform {
     Bc2ToRgba8,
     Bc3ToRgba8,
     Bc7ToRgba8,
+    B5G6R5ToRgba8,
+    B5G5R5A1ToRgba8,
 }
 
 impl TextureUploadTransform {
@@ -867,27 +909,66 @@ fn hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64: u64, slot_strides: &[u32]
     hash
 }
 
-pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
+pub fn map_aerogpu_format(format: u32) -> Result<LinearTextureFormat> {
     Ok(match format {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 => wgpu::TextureFormat::Bgra8Unorm,
-        x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => wgpu::TextureFormat::Bgra8Unorm,
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
-        x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
-        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => wgpu::TextureFormat::Bgra8UnormSrgb,
-        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => wgpu::TextureFormat::Bgra8UnormSrgb,
-        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => wgpu::TextureFormat::Rgba8UnormSrgb,
-        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => wgpu::TextureFormat::Rgba8UnormSrgb,
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8Unorm)
+        }
+        x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8Unorm)
+        }
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8Unorm)
+        }
+        x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8Unorm)
+        }
+        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8UnormSrgb)
+        }
+        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8UnormSrgb)
+        }
+        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8UnormSrgb)
+        }
+        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8UnormSrgb)
+        }
 
-        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => wgpu::TextureFormat::Bc1RgbaUnorm,
-        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
-        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => wgpu::TextureFormat::Bc2RgbaUnorm,
-        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
-        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => wgpu::TextureFormat::Bc3RgbaUnorm,
-        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
-        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => wgpu::TextureFormat::Bc7RgbaUnorm,
-        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-        x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
-        x if x == AerogpuFormat::D32Float as u32 => wgpu::TextureFormat::Depth32Float,
+        x if x == AerogpuFormat::B5G6R5Unorm as u32 => LinearTextureFormat::B5G6R5Unorm,
+        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => LinearTextureFormat::B5G5R5A1Unorm,
+
+        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm)
+        }
+        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnormSrgb)
+        }
+        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc2RgbaUnorm)
+        }
+        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc2RgbaUnormSrgb)
+        }
+        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnorm)
+        }
+        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnormSrgb)
+        }
+        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc7RgbaUnorm)
+        }
+        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc7RgbaUnormSrgb)
+        }
+        x if x == AerogpuFormat::D24UnormS8Uint as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Depth24PlusStencil8)
+        }
+        x if x == AerogpuFormat::D32Float as u32 => {
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Depth32Float)
+        }
         _ => bail!("unsupported aerogpu_format {format}"),
     })
 }
@@ -968,7 +1049,7 @@ enum TextureFormatLayout {
     },
 }
 
-fn format_layout_info(format: wgpu::TextureFormat) -> Result<TextureFormatLayout> {
+fn wgpu_format_layout_info(format: wgpu::TextureFormat) -> Result<TextureFormatLayout> {
     Ok(match format {
         wgpu::TextureFormat::Bgra8Unorm
         | wgpu::TextureFormat::Bgra8UnormSrgb
@@ -1001,6 +1082,15 @@ fn format_layout_info(format: wgpu::TextureFormat) -> Result<TextureFormatLayout
     })
 }
 
+fn linear_format_layout_info(format: LinearTextureFormat) -> Result<TextureFormatLayout> {
+    Ok(match format {
+        LinearTextureFormat::Wgpu(fmt) => wgpu_format_layout_info(fmt)?,
+        LinearTextureFormat::B5G6R5Unorm | LinearTextureFormat::B5G5R5A1Unorm => {
+            TextureFormatLayout::Uncompressed { bytes_per_texel: 2 }
+        }
+    })
+}
+
 fn is_srgb_format(format: wgpu::TextureFormat) -> bool {
     matches!(
         format,
@@ -1028,44 +1118,56 @@ fn is_bc_compressed_format(format: wgpu::TextureFormat) -> bool {
 }
 
 fn select_texture_format_for_device(
-    requested: wgpu::TextureFormat,
+    requested: LinearTextureFormat,
     bc_enabled: bool,
 ) -> Result<(wgpu::TextureFormat, TextureUploadTransform)> {
-    if !is_bc_compressed_format(requested) {
-        return Ok((requested, TextureUploadTransform::Direct));
-    }
+    Ok(match requested {
+        LinearTextureFormat::B5G6R5Unorm => (
+            wgpu::TextureFormat::Rgba8Unorm,
+            TextureUploadTransform::B5G6R5ToRgba8,
+        ),
+        LinearTextureFormat::B5G5R5A1Unorm => (
+            wgpu::TextureFormat::Rgba8Unorm,
+            TextureUploadTransform::B5G5R5A1ToRgba8,
+        ),
+        LinearTextureFormat::Wgpu(requested) => {
+            if !is_bc_compressed_format(requested) {
+                return Ok((requested, TextureUploadTransform::Direct));
+            }
 
-    if bc_enabled {
-        return Ok((requested, TextureUploadTransform::Direct));
-    }
+            if bc_enabled {
+                return Ok((requested, TextureUploadTransform::Direct));
+            }
 
-    let fallback = if is_srgb_format(requested) {
-        wgpu::TextureFormat::Rgba8UnormSrgb
-    } else {
-        wgpu::TextureFormat::Rgba8Unorm
-    };
+            let fallback = if is_srgb_format(requested) {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Rgba8Unorm
+            };
 
-    let transform = match requested {
-        wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
-            TextureUploadTransform::Bc1ToRgba8
-        }
-        wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
-            TextureUploadTransform::Bc2ToRgba8
-        }
-        wgpu::TextureFormat::Bc3RgbaUnorm | wgpu::TextureFormat::Bc3RgbaUnormSrgb => {
-            TextureUploadTransform::Bc3ToRgba8
-        }
-        wgpu::TextureFormat::Bc7RgbaUnorm | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
-            TextureUploadTransform::Bc7ToRgba8
-        }
-        _ => bail!("unsupported BC format {requested:?}"),
-    };
+            let transform = match requested {
+                wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
+                    TextureUploadTransform::Bc1ToRgba8
+                }
+                wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
+                    TextureUploadTransform::Bc2ToRgba8
+                }
+                wgpu::TextureFormat::Bc3RgbaUnorm | wgpu::TextureFormat::Bc3RgbaUnormSrgb => {
+                    TextureUploadTransform::Bc3ToRgba8
+                }
+                wgpu::TextureFormat::Bc7RgbaUnorm | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
+                    TextureUploadTransform::Bc7ToRgba8
+                }
+                _ => bail!("unsupported BC format {requested:?}"),
+            };
 
-    Ok((fallback, transform))
+            (fallback, transform)
+        }
+    })
 }
 
 fn wgpu_compressed_texture_dimensions_compatible(
-    format: wgpu::TextureFormat,
+    format: LinearTextureFormat,
     width: u32,
     height: u32,
     mip_levels: u32,
@@ -1078,7 +1180,7 @@ fn wgpu_compressed_texture_dimensions_compatible(
         block_width,
         block_height,
         ..
-    } = format_layout_info(format)?
+    } = linear_format_layout_info(format)?
     else {
         return Ok(true);
     };
@@ -1123,8 +1225,11 @@ fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
     bytes_per_row.div_ceil(align) * align
 }
 
-fn texture_unpadded_bytes_per_row(format: wgpu::TextureFormat, width_texels: u32) -> Result<u32> {
-    let info = format_layout_info(format)?;
+fn texture_unpadded_bytes_per_row(
+    format: LinearTextureFormat,
+    width_texels: u32,
+) -> Result<u32> {
+    let info = linear_format_layout_info(format)?;
     Ok(match info {
         TextureFormatLayout::Uncompressed { bytes_per_texel } => width_texels
             .checked_mul(bytes_per_texel)
@@ -1168,7 +1273,7 @@ impl LinearMipLayout {
 fn texture_mip_layout(desc: &Texture2dDesc, mip_level: u32) -> Result<LinearMipLayout> {
     let width = mip_extent(desc.width, mip_level);
     let height = mip_extent(desc.height, mip_level);
-    let info = format_layout_info(desc.format)?;
+    let info = linear_format_layout_info(desc.format)?;
 
     let (unpadded_bytes_per_row, rows) = match info {
         TextureFormatLayout::Uncompressed { bytes_per_texel } => (
@@ -1282,7 +1387,7 @@ fn upload_texture_from_linear_bytes(
 
                 // `aero_gpu::decompress_bc*_rgba8` asserts on input length; validate here to avoid
                 // panicking on malformed guest data.
-                let expected_bc_len: usize = match format_layout_info(desc.format)? {
+                let expected_bc_len: usize = match linear_format_layout_info(desc.format)? {
                     TextureFormatLayout::BlockCompressed {
                         block_width,
                         block_height,
@@ -1389,9 +1494,122 @@ fn upload_texture_from_linear_bytes(
                         depth_or_array_layers: 1,
                     },
                 );
+            } else if matches!(
+                desc.upload_transform,
+                TextureUploadTransform::B5G6R5ToRgba8 | TextureUploadTransform::B5G5R5A1ToRgba8
+            ) {
+                // Expand packed 16-bit B5 formats into RGBA8 on CPU before upload.
+                //
+                // Expansion produces RGBA byte order (R, G, B, A) matching
+                // `wgpu::TextureFormat::Rgba8Unorm`.
+                if desc.texture_format != wgpu::TextureFormat::Rgba8Unorm {
+                    bail!(
+                        "B5 expansion requires Rgba8Unorm texture_format (got {:?})",
+                        desc.texture_format
+                    );
+                }
+
+                // Convert each row from the guest's row pitch (which can include padding) into a
+                // tight RGBA8 buffer.
+                let src_bpr_usize: usize = linear
+                    .row_pitch_bytes
+                    .try_into()
+                    .context("row_pitch_bytes out of range")?;
+                let src_tight_bpr_usize: usize = linear
+                    .unpadded_bytes_per_row
+                    .try_into()
+                    .context("unpadded_bytes_per_row out of range")?;
+                let dst_tight_bpr = linear
+                    .width
+                    .checked_mul(4)
+                    .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
+                let dst_tight_bpr_usize: usize = dst_tight_bpr
+                    .try_into()
+                    .context("dst bytes_per_row out of range")?;
+                let height_usize: usize = linear.height.try_into().context("height out of range")?;
+                let tight_len = dst_tight_bpr_usize
+                    .checked_mul(height_usize)
+                    .ok_or_else(|| anyhow!("expanded size overflows usize"))?;
+                let mut rgba = vec![0u8; tight_len];
+
+                for row in 0..height_usize {
+                    let src_start = row
+                        .checked_mul(src_bpr_usize)
+                        .ok_or_else(|| anyhow!("B5 src row offset overflow"))?;
+                    let src_end = src_start
+                        .checked_add(src_tight_bpr_usize)
+                        .ok_or_else(|| anyhow!("B5 src row end overflow"))?;
+                    let dst_start = row
+                        .checked_mul(dst_tight_bpr_usize)
+                        .ok_or_else(|| anyhow!("B5 dst row offset overflow"))?;
+                    let dst_end = dst_start
+                        .checked_add(dst_tight_bpr_usize)
+                        .ok_or_else(|| anyhow!("B5 dst row end overflow"))?;
+                    let src_row = data
+                        .get(src_start..src_end)
+                        .ok_or_else(|| anyhow!("B5 source too small for row"))?;
+                    let dst_row = rgba
+                        .get_mut(dst_start..dst_end)
+                        .ok_or_else(|| anyhow!("B5 output too small for row"))?;
+                    match desc.upload_transform {
+                        TextureUploadTransform::B5G6R5ToRgba8 => {
+                            expand_b5g6r5_unorm_to_rgba8(src_row, dst_row)
+                        }
+                        TextureUploadTransform::B5G5R5A1ToRgba8 => {
+                            expand_b5g5r5a1_unorm_to_rgba8(src_row, dst_row)
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                let padded_bytes_per_row = if linear.height > 1 && !dst_tight_bpr.is_multiple_of(align)
+                {
+                    align_copy_bytes_per_row(dst_tight_bpr)
+                } else {
+                    dst_tight_bpr
+                };
+
+                let upload_bytes: std::borrow::Cow<'_, [u8]> =
+                    if padded_bytes_per_row == dst_tight_bpr {
+                        std::borrow::Cow::Owned(rgba)
+                    } else {
+                        let mut tmp =
+                            vec![0u8; padded_bytes_per_row as usize * linear.height as usize];
+                        for y in 0..linear.height as usize {
+                            let src_start = y * dst_tight_bpr as usize;
+                            let dst_start = y * padded_bytes_per_row as usize;
+                            tmp[dst_start..dst_start + dst_tight_bpr as usize]
+                                .copy_from_slice(&rgba[src_start..src_start + dst_tight_bpr as usize]);
+                        }
+                        std::borrow::Cow::Owned(tmp)
+                    };
+
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: mip,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: layer,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &upload_bytes,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(linear.height),
+                    },
+                    wgpu::Extent3d {
+                        width: linear.width,
+                        height: linear.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
             } else {
                 // Direct upload (uncompressed or BC, depending on the texture format).
-                if is_bc_compressed_format(desc.format) {
+                if desc.format.is_bc_compressed() {
                     // WebGPU requires BC texture copy regions to be 4x4 block aligned unless the
                     // copy reaches the edge of the mip. This upload path always writes full mips at
                     // origin (0,0), but we still validate alignment so future refactors that add
@@ -1430,7 +1648,8 @@ fn upload_texture_from_linear_bytes(
                     std::borrow::Cow::Borrowed(data)
                 };
 
-                let (extent_width, extent_height) = match format_layout_info(desc.texture_format)? {
+                let (extent_width, extent_height) =
+                    match wgpu_format_layout_info(desc.texture_format)? {
                     TextureFormatLayout::BlockCompressed {
                         block_width,
                         block_height,
@@ -1510,6 +1729,43 @@ fn validate_bc_region_alignment(
     Ok(())
 }
 
+fn expand_b5g6r5_unorm_to_rgba8(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 2, 0);
+    debug_assert_eq!(dst.len(), (src.len() / 2) * 4);
+    for (src_px, dst_px) in src.chunks_exact(2).zip(dst.chunks_exact_mut(4)) {
+        let v = u16::from_le_bytes([src_px[0], src_px[1]]);
+        let b5 = (v & 0x1F) as u8;
+        let g6 = ((v >> 5) & 0x3F) as u8;
+        let r5 = ((v >> 11) & 0x1F) as u8;
+        let r8 = (r5 << 3) | (r5 >> 2);
+        let g8 = (g6 << 2) | (g6 >> 4);
+        let b8 = (b5 << 3) | (b5 >> 2);
+        dst_px[0] = r8;
+        dst_px[1] = g8;
+        dst_px[2] = b8;
+        dst_px[3] = 0xFF;
+    }
+}
+
+fn expand_b5g5r5a1_unorm_to_rgba8(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 2, 0);
+    debug_assert_eq!(dst.len(), (src.len() / 2) * 4);
+    for (src_px, dst_px) in src.chunks_exact(2).zip(dst.chunks_exact_mut(4)) {
+        let v = u16::from_le_bytes([src_px[0], src_px[1]]);
+        let b5 = (v & 0x1F) as u8;
+        let g5 = ((v >> 5) & 0x1F) as u8;
+        let r5 = ((v >> 10) & 0x1F) as u8;
+        let a1 = (v >> 15) as u8;
+        let r8 = (r5 << 3) | (r5 >> 2);
+        let g8 = (g5 << 3) | (g5 >> 2);
+        let b8 = (b5 << 3) | (b5 >> 2);
+        dst_px[0] = r8;
+        dst_px[1] = g8;
+        dst_px[2] = b8;
+        dst_px[3] = if a1 != 0 { 0xFF } else { 0x00 };
+    }
+}
+
 const FNV1A64_OFFSET_BASIS: u64 = 14695981039346656037;
 const FNV1A64_PRIME: u64 = 1099511628211;
 
@@ -1535,27 +1791,35 @@ mod tests {
     fn maps_aerogpu_formats() {
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::B8G8R8A8Unorm as u32).unwrap(),
-            wgpu::TextureFormat::Bgra8Unorm
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8Unorm)
         );
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::R8G8B8A8Unorm as u32).unwrap(),
-            wgpu::TextureFormat::Rgba8Unorm
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8Unorm)
         );
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::R8G8B8A8UnormSrgb as u32).unwrap(),
-            wgpu::TextureFormat::Rgba8UnormSrgb
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8UnormSrgb)
         );
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::B8G8R8A8UnormSrgb as u32).unwrap(),
-            wgpu::TextureFormat::Bgra8UnormSrgb
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bgra8UnormSrgb)
+        );
+        assert_eq!(
+            map_aerogpu_format(AerogpuFormat::B5G6R5Unorm as u32).unwrap(),
+            LinearTextureFormat::B5G6R5Unorm
+        );
+        assert_eq!(
+            map_aerogpu_format(AerogpuFormat::B5G5R5A1Unorm as u32).unwrap(),
+            LinearTextureFormat::B5G5R5A1Unorm
         );
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::BC1RgbaUnorm as u32).unwrap(),
-            wgpu::TextureFormat::Bc1RgbaUnorm
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm)
         );
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::BC3RgbaUnormSrgb as u32).unwrap(),
-            wgpu::TextureFormat::Bc3RgbaUnormSrgb
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnormSrgb)
         );
         assert!(map_aerogpu_format(AerogpuFormat::Invalid as u32).is_err());
     }
@@ -1620,7 +1884,7 @@ mod tests {
             height: 4,
             mip_levels: 2,
             array_layers: 1,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8Unorm),
             texture_format: wgpu::TextureFormat::Rgba8Unorm,
             row_pitch_bytes: 0,
             upload_transform: TextureUploadTransform::Direct,
@@ -1640,7 +1904,7 @@ mod tests {
             height: 4,
             mip_levels: 3,
             array_layers: 1,
-            format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            format: LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             texture_format: wgpu::TextureFormat::Bc1RgbaUnorm,
             row_pitch_bytes: 0,
             upload_transform: TextureUploadTransform::Direct,
@@ -1653,7 +1917,7 @@ mod tests {
             height: 4,
             mip_levels: 3,
             array_layers: 1,
-            format: wgpu::TextureFormat::Bc3RgbaUnorm,
+            format: LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnorm),
             texture_format: wgpu::TextureFormat::Bc3RgbaUnorm,
             row_pitch_bytes: 0,
             upload_transform: TextureUploadTransform::Direct,
@@ -1664,14 +1928,14 @@ mod tests {
     #[test]
     fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
         assert!(!wgpu_compressed_texture_dimensions_compatible(
-            wgpu::TextureFormat::Bc1RgbaUnorm,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             2,
             2,
             1
         )
         .unwrap());
         assert!(wgpu_compressed_texture_dimensions_compatible(
-            wgpu::TextureFormat::Bc1RgbaUnorm,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             4,
             4,
             2
@@ -1683,14 +1947,14 @@ mod tests {
     fn bc_dimension_compatibility_rejects_mip_levels_beyond_possible_chain_length() {
         // WebGPU does not allow mip_level_count to exceed the number of distinct mip extents.
         assert!(!wgpu_compressed_texture_dimensions_compatible(
-            wgpu::TextureFormat::Bc1RgbaUnorm,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             4,
             4,
             4
         )
         .unwrap());
         assert!(wgpu_compressed_texture_dimensions_compatible(
-            wgpu::TextureFormat::Bc1RgbaUnorm,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             4,
             4,
             3
@@ -1709,7 +1973,7 @@ mod tests {
             height: 4,
             mip_levels: 3,
             array_layers: 1,
-            format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            format: LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
             texture_format: wgpu::TextureFormat::Bc1RgbaUnorm,
             row_pitch_bytes: 16,
             upload_transform: TextureUploadTransform::Direct,
@@ -1910,7 +2174,7 @@ mod tests {
                 height: 8,
                 mip_levels: 1,
                 array_layers: 1,
-                format: wgpu::TextureFormat::Bc1RgbaUnorm,
+                format: LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm),
                 texture_format: wgpu::TextureFormat::Rgba8Unorm,
                 row_pitch_bytes: 12,
                 upload_transform: TextureUploadTransform::Bc1ToRgba8,
@@ -1965,7 +2229,10 @@ mod tests {
             )?;
 
             let tex = mgr.texture2d(1)?;
-            assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+            assert_eq!(
+                tex.desc.format,
+                LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm)
+            );
             assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
             assert_eq!(
                 tex.desc.upload_transform,

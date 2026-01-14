@@ -60,12 +60,8 @@ define_format_coverage_test! {
     R8G8B8A8Unorm => supported,
     R8G8B8X8Unorm => supported,
 
-    B5G6R5Unorm => unsupported(
-        "wgpu 0.20 does not expose the packed 16-bit B5G6R5 texture format in WebGPU; aero-d3d11 does not currently implement a CPU expand-to-RGBA8 fallback like aero-gpu's D3D9 executor"
-    ),
-    B5G5R5A1Unorm => unsupported(
-        "wgpu 0.20 does not expose the packed 16-bit B5G5R5A1 texture format in WebGPU; aero-d3d11 does not currently implement a CPU expand-to-RGBA8 fallback like aero-gpu's D3D9 executor"
-    ),
+    B5G6R5Unorm => supported,
+    B5G5R5A1Unorm => supported,
 
     // ABI 1.2+: explicit sRGB format variants.
     B8G8R8A8UnormSrgb => supported,

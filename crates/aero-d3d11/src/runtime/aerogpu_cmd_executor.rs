@@ -13909,6 +13909,18 @@ fn cs_main() {
     }
 
     #[test]
+    fn map_aerogpu_texture_format_supports_b5_formats() {
+        assert_eq!(
+            map_aerogpu_texture_format(AEROGPU_FORMAT_B5G6R5_UNORM, false).unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+        assert_eq!(
+            map_aerogpu_texture_format(AEROGPU_FORMAT_B5G5R5A1_UNORM, false).unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+    }
+
+    #[test]
     fn expansion_scratch_advances_on_present_and_flush() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
@@ -14032,6 +14044,385 @@ fn cs_main() {
                     "backends without compute/storage buffer support must not request STORAGE usage"
                 );
             }
+        });
+    }
+
+    async fn render_sample_texture_to_rgba8(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        src_view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
+        let resolved = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu_cmd b5 sample resolved"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let resolved_view = resolved.create_view(&wgpu::TextureViewDescriptor::default());
+
+        const SHADER: &str = r#"
+            @group(0) @binding(0) var src: texture_2d<f32>;
+            @group(0) @binding(1) var samp: sampler;
+
+            struct VsOut {
+                @builtin(position) pos: vec4<f32>,
+                @location(0) uv: vec2<f32>,
+            };
+
+            @vertex
+            fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
+                // Full-screen triangle with UVs that cover the full [0,1] range.
+                var positions = array<vec2<f32>, 3>(
+                    vec2<f32>(-1.0, -3.0),
+                    vec2<f32>( 3.0,  1.0),
+                    vec2<f32>(-1.0,  1.0),
+                );
+                var uvs = array<vec2<f32>, 3>(
+                    vec2<f32>(0.0, 2.0),
+                    vec2<f32>(2.0, 0.0),
+                    vec2<f32>(0.0, 0.0),
+                );
+                var out: VsOut;
+                out.pos = vec4<f32>(positions[vid], 0.0, 1.0);
+                out.uv = uvs[vid];
+                return out;
+            }
+
+            @fragment
+            fn fs(in: VsOut) -> @location(0) vec4<f32> {
+                return textureSampleLevel(src, samp, in.uv, 0.0);
+            }
+        "#;
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("aerogpu_cmd b5 sample shader"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("aerogpu_cmd b5 sample bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("aerogpu_cmd b5 sample pipeline layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("aerogpu_cmd b5 sample pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("aerogpu_cmd b5 sample sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd b5 sample bg"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow!("b5 sample: bytes_per_row overflow"))?;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = unpadded_bytes_per_row
+            .checked_add(align - 1)
+            .map(|v| v / align)
+            .and_then(|v| v.checked_mul(align))
+            .ok_or_else(|| anyhow!("b5 sample: padded bytes_per_row overflow"))?;
+        let buffer_size = (padded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("b5 sample: staging buffer size overflow"))?;
+
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd b5 sample staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("aerogpu_cmd b5 sample encoder"),
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("aerogpu_cmd b5 sample pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &resolved_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &resolved,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
+
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let mapped = slice.get_mapped_range();
+        let padded_bpr_usize: usize = padded_bytes_per_row
+            .try_into()
+            .map_err(|_| anyhow!("b5 sample: padded bytes_per_row out of range"))?;
+        let unpadded_bpr_usize: usize = unpadded_bytes_per_row
+            .try_into()
+            .map_err(|_| anyhow!("b5 sample: bytes_per_row out of range"))?;
+        let out_len = (unpadded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("b5 sample: output size overflow"))?;
+        let out_len_usize: usize =
+            out_len.try_into().map_err(|_| anyhow!("b5 sample: output size out of range"))?;
+        let mut out = Vec::with_capacity(out_len_usize);
+        for row in 0..height as usize {
+            let start = row
+                .checked_mul(padded_bpr_usize)
+                .ok_or_else(|| anyhow!("b5 sample: row offset overflow"))?;
+            let end = start
+                .checked_add(unpadded_bpr_usize)
+                .ok_or_else(|| anyhow!("b5 sample: row end overflow"))?;
+            out.extend_from_slice(
+                mapped
+                    .get(start..end)
+                    .ok_or_else(|| anyhow!("b5 sample: staging buffer too small"))?,
+            );
+        }
+        drop(mapped);
+        staging.unmap();
+        Ok(out)
+    }
+
+    #[test]
+    fn upload_b5_textures_and_sample_in_shader() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let allocs = AllocTable::new(None).unwrap();
+
+            // Helper to create a 2x2 host-owned texture of the given format.
+            fn create_texture_cmd(handle: u32, format_u32: u32, width: u32, height: u32) -> Vec<u8> {
+                let mut create = Vec::new();
+                create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+                create.extend_from_slice(&56u32.to_le_bytes());
+                create.extend_from_slice(&handle.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+                create.extend_from_slice(&format_u32.to_le_bytes());
+                create.extend_from_slice(&width.to_le_bytes());
+                create.extend_from_slice(&height.to_le_bytes());
+                create.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+                create.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+                create.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(create.len(), 56);
+                create
+            }
+
+            let width = 2u32;
+            let height = 2u32;
+
+            // B5G6R5: [red, green; blue, white]
+            const TEX_565: u32 = 1;
+            let create = create_texture_cmd(TEX_565, AEROGPU_FORMAT_B5G6R5_UNORM, width, height);
+            exec.exec_create_texture2d(&create, &allocs)
+                .expect("CREATE_TEXTURE2D(B5G6R5) should succeed");
+
+            let b5g6r5_pixels: [u16; 4] = [
+                0xF800, // red
+                0x07E0, // green
+                0x001F, // blue
+                0xFFFF, // white
+            ];
+            let mut b5g6r5_bytes = Vec::new();
+            for v in b5g6r5_pixels {
+                b5g6r5_bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            exec.upload_resource_payload(TEX_565, 0, b5g6r5_bytes.len() as u64, &b5g6r5_bytes)
+                .expect("UPLOAD_RESOURCE(B5G6R5) should succeed");
+
+            let src_view = &exec
+                .resources
+                .textures
+                .get(&TEX_565)
+                .expect("texture exists")
+                .view;
+            let sampled =
+                render_sample_texture_to_rgba8(&exec.device, &exec.queue, src_view, width, height)
+                    .await
+                    .expect("sample render should succeed");
+            let expected_565: Vec<u8> = vec![
+                // row0
+                255, 0, 0, 255, // red
+                0, 255, 0, 255, // green
+                // row1
+                0, 0, 255, 255, // blue
+                255, 255, 255, 255, // white
+            ];
+            assert_eq!(sampled, expected_565, "B5G6R5 sample output mismatch");
+
+            // B5G5R5A1: [red(a=1), green(a=1); blue(a=0), white(a=1)]
+            const TEX_5551: u32 = 2;
+            let create =
+                create_texture_cmd(TEX_5551, AEROGPU_FORMAT_B5G5R5A1_UNORM, width, height);
+            exec.exec_create_texture2d(&create, &allocs)
+                .expect("CREATE_TEXTURE2D(B5G5R5A1) should succeed");
+
+            let b5g5r5a1_pixels: [u16; 4] = [
+                0xFC00, // red, a=1
+                0x83E0, // green, a=1
+                0x001F, // blue, a=0
+                0xFFFF, // white, a=1
+            ];
+            let mut b5g5r5a1_bytes = Vec::new();
+            for v in b5g5r5a1_pixels {
+                b5g5r5a1_bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            exec.upload_resource_payload(
+                TEX_5551,
+                0,
+                b5g5r5a1_bytes.len() as u64,
+                &b5g5r5a1_bytes,
+            )
+            .expect("UPLOAD_RESOURCE(B5G5R5A1) should succeed");
+
+            let src_view = &exec
+                .resources
+                .textures
+                .get(&TEX_5551)
+                .expect("texture exists")
+                .view;
+            let sampled =
+                render_sample_texture_to_rgba8(&exec.device, &exec.queue, src_view, width, height)
+                    .await
+                    .expect("sample render should succeed");
+            let expected_5551: Vec<u8> = vec![
+                // row0
+                255, 0, 0, 255, // red, a=1
+                0, 255, 0, 255, // green, a=1
+                // row1
+                0, 0, 255, 0, // blue, a=0
+                255, 255, 255, 255, // white, a=1
+            ];
+            assert_eq!(sampled, expected_5551, "B5G5R5A1 sample output mismatch");
         });
     }
 

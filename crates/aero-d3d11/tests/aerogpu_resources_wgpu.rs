@@ -1,7 +1,7 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_resources::{
-    AerogpuResourceManager, DirtyRange, Texture2dCreateDesc,
+    AerogpuResourceManager, DirtyRange, LinearTextureFormat, Texture2dCreateDesc,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
@@ -415,7 +415,10 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Rgba8Unorm)
+        );
         let readback =
             read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 2, 2).await?;
         assert_eq!(readback, tex_data);
@@ -477,7 +480,10 @@ fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
 
         // Device features in these tests are empty, so BC formats must fall back to RGBA8.
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
 
         let expected_rgba8 = aero_gpu::decompress_bc1_rgba8(4, 4, &bc1_data);
@@ -533,7 +539,10 @@ fn upload_resource_bc1_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnormSrgb);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnormSrgb)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8UnormSrgb);
 
         let expected_rgba8 = aero_gpu::decompress_bc1_rgba8(4, 4, &bc1_data);
@@ -591,7 +600,10 @@ fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc1RgbaUnorm)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Bc1RgbaUnorm);
 
         Ok(())
@@ -744,7 +756,7 @@ fn upload_resource_bc_srgb_direct_roundtrip_when_bc_feature_enabled() -> Result<
             )?;
 
             let tex = resources.texture2d(case.handle)?;
-            assert_eq!(tex.desc.format, case.wgpu_format);
+            assert_eq!(tex.desc.format, LinearTextureFormat::Wgpu(case.wgpu_format));
             assert_eq!(tex.desc.texture_format, case.wgpu_format);
 
             let readback = read_texture_bc(
@@ -868,7 +880,10 @@ fn upload_resource_bc3_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc3RgbaUnorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnorm)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
 
         let expected_rgba8 = aero_gpu::decompress_bc3_rgba8(4, 4, &bc3_data);
@@ -928,7 +943,10 @@ fn upload_resource_bc3_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc3RgbaUnormSrgb);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc3RgbaUnormSrgb)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8UnormSrgb);
 
         let expected_rgba8 = aero_gpu::decompress_bc3_rgba8(4, 4, &bc3_data);
@@ -987,7 +1005,10 @@ fn upload_resource_bc2_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc2RgbaUnorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc2RgbaUnorm)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
 
         let expected_rgba8 = aero_gpu::decompress_bc2_rgba8(4, 4, &bc2_data);
@@ -1046,7 +1067,10 @@ fn upload_resource_bc2_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc2RgbaUnormSrgb);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc2RgbaUnormSrgb)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8UnormSrgb);
 
         let expected_rgba8 = aero_gpu::decompress_bc2_rgba8(4, 4, &bc2_data);
@@ -1101,7 +1125,10 @@ fn upload_resource_bc7_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc7RgbaUnorm);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc7RgbaUnorm)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
 
         let expected_rgba8 = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_data);
@@ -1156,7 +1183,10 @@ fn upload_resource_bc7_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
         )?;
 
         let tex = resources.texture2d(tex_handle)?;
-        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+        assert_eq!(
+            tex.desc.format,
+            LinearTextureFormat::Wgpu(wgpu::TextureFormat::Bc7RgbaUnormSrgb)
+        );
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8UnormSrgb);
 
         let expected_rgba8 = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_data);
