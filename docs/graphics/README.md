@@ -14,6 +14,10 @@ This directory contains “graphics stack” implementation notes and bring-up c
 - `win7-vblank-present-requirements.md` — minimal vblank/present timing contract needed to keep DWM (Aero) stable.
 - `win7-shared-surfaces-share-token.md` — D3D9Ex/DWM shared surface share_token strategy (stable cross-process token vs process-local user-mode `HANDLE` values).
 
+## D3D shader translation notes
+
+- `d3d9-sm2-sm3-shader-translation.md` — task-level status/limitations for the D3D9 SM2/SM3 bytecode → IR → WGSL pipeline (kept as a “don’t duplicate work” scratchpad).
+
 ## User-mode driver (UMD) API surfaces
 
 - `win7-d3d9ex-umd-minimal.md` — minimal D3D9Ex UMD/DDI surface for DWM + basic D3D9 apps.
