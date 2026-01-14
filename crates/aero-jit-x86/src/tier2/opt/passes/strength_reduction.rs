@@ -1,6 +1,194 @@
 use std::collections::{HashMap, HashSet};
 
+use aero_types::FlagSet;
+
 use crate::tier2::ir::{BinOp, Instr, Operand, TraceIr, ValueId};
+
+fn use_counts(trace: &TraceIr) -> HashMap<ValueId, u32> {
+    let mut uses: HashMap<ValueId, u32> = HashMap::new();
+    for inst in trace.iter_instrs() {
+        inst.for_each_operand(|op| {
+            if let Operand::Value(v) = op {
+                *uses.entry(v).or_insert(0) += 1;
+            }
+        });
+    }
+    uses
+}
+
+fn decode_bool_not(inst: &Instr) -> Option<(ValueId, ValueId)> {
+    let Instr::BinOp {
+        dst,
+        op,
+        lhs,
+        rhs,
+        flags,
+    } = *inst
+    else {
+        return None;
+    };
+    if !flags.is_empty() {
+        return None;
+    }
+
+    match op {
+        BinOp::Eq => match (lhs, rhs) {
+            (Operand::Value(v), Operand::Const(0)) | (Operand::Const(0), Operand::Value(v)) => {
+                Some((dst, v))
+            }
+            _ => None,
+        },
+        BinOp::Xor => match (lhs, rhs) {
+            (Operand::Value(v), Operand::Const(1)) | (Operand::Const(1), Operand::Value(v)) => {
+                Some((dst, v))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn decode_mul_by_value(inst: &Instr, by: ValueId) -> Option<(ValueId, Operand)> {
+    let Instr::BinOp {
+        dst,
+        op: BinOp::Mul,
+        lhs,
+        rhs,
+        flags,
+    } = *inst
+    else {
+        return None;
+    };
+    if !flags.is_empty() {
+        return None;
+    }
+
+    match (lhs, rhs) {
+        (Operand::Value(v), other) if v == by => Some((dst, other)),
+        (other, Operand::Value(v)) if v == by => Some((dst, other)),
+        _ => None,
+    }
+}
+
+fn decode_add_pair(inst: &Instr, a: ValueId, b: ValueId) -> Option<ValueId> {
+    let Instr::BinOp {
+        dst,
+        op: BinOp::Add,
+        lhs,
+        rhs,
+        flags,
+    } = *inst
+    else {
+        return None;
+    };
+    if !flags.is_empty() {
+        return None;
+    }
+
+    match (lhs, rhs) {
+        (Operand::Value(x), Operand::Value(y)) if (x == a && y == b) || (x == b && y == a) => {
+            Some(dst)
+        }
+        _ => None,
+    }
+}
+
+fn reduce_select_mul_pattern(
+    instrs: &mut [Instr],
+    uses: &HashMap<ValueId, u32>,
+    bool_values: &HashSet<ValueId>,
+) -> bool {
+    // Pattern match the Tier-2 `Select` lowering sequence (after boolean_simplify may have run):
+    //
+    //   cond_bool = (cond_is_zero == 0) or (cond_is_zero ^ 1)
+    //   then_val  = if_true  * cond_bool
+    //   else_val  = if_false * cond_is_zero
+    //   sum       = then_val + else_val
+    //
+    // and rewrite to avoid MUL:
+    //   mask      = 0 - cond_is_zero                  // 0 or -1
+    //   diff      = if_false - if_true
+    //   masked    = diff & mask
+    //   sum       = if_true + masked
+    //
+    // This keeps the same instruction count but replaces `i64.mul` with cheaper ops.
+    let mut changed = false;
+    let mut i = 0usize;
+    while i + 3 < instrs.len() {
+        let Some((cond_bool, cond_is_zero)) = decode_bool_not(&instrs[i]) else {
+            i += 1;
+            continue;
+        };
+
+        // `cond_is_zero` must be known boolean (0/1); otherwise `Eq(cond_is_zero, 0)` is a
+        // comparison-to-zero test rather than a boolean NOT.
+        if !bool_values.contains(&cond_is_zero) {
+            i += 1;
+            continue;
+        }
+
+        if uses.get(&cond_bool).copied().unwrap_or(0) != 1 {
+            i += 1;
+            continue;
+        }
+
+        let Some((then_dst, if_true)) = decode_mul_by_value(&instrs[i + 1], cond_bool) else {
+            i += 1;
+            continue;
+        };
+        let Some((else_dst, if_false)) = decode_mul_by_value(&instrs[i + 2], cond_is_zero) else {
+            i += 1;
+            continue;
+        };
+
+        if uses.get(&then_dst).copied().unwrap_or(0) != 1
+            || uses.get(&else_dst).copied().unwrap_or(0) != 1
+        {
+            i += 1;
+            continue;
+        }
+
+        let Some(sum_dst) = decode_add_pair(&instrs[i + 3], then_dst, else_dst) else {
+            i += 1;
+            continue;
+        };
+
+        // Rewrite the 4-instruction window in-place.
+        instrs[i] = Instr::BinOp {
+            dst: cond_bool,
+            op: BinOp::Sub,
+            lhs: Operand::Const(0),
+            rhs: Operand::Value(cond_is_zero),
+            flags: FlagSet::EMPTY,
+        };
+        instrs[i + 1] = Instr::BinOp {
+            dst: then_dst,
+            op: BinOp::Sub,
+            lhs: if_false,
+            rhs: if_true,
+            flags: FlagSet::EMPTY,
+        };
+        instrs[i + 2] = Instr::BinOp {
+            dst: else_dst,
+            op: BinOp::And,
+            lhs: Operand::Value(then_dst),
+            rhs: Operand::Value(cond_bool),
+            flags: FlagSet::EMPTY,
+        };
+        instrs[i + 3] = Instr::BinOp {
+            dst: sum_dst,
+            op: BinOp::Add,
+            lhs: if_true,
+            rhs: Operand::Value(else_dst),
+            flags: FlagSet::EMPTY,
+        };
+
+        changed = true;
+        i += 4;
+    }
+
+    changed
+}
 
 fn is_bool_operand(op: Operand, bool_values: &HashSet<ValueId>) -> bool {
     match op {
@@ -42,6 +230,11 @@ pub fn run(trace: &mut TraceIr) -> bool {
     //   (x & m1) & m2  =>  x & (m1 & m2)
     // This is especially common after lowering of narrow-width operations.
     let mut and_defs: HashMap<ValueId, (Operand, u64)> = HashMap::new();
+
+    let bool_values_pre = compute_bool_values(trace);
+    let uses = use_counts(trace);
+    changed |= reduce_select_mul_pattern(&mut trace.prologue, &uses, &bool_values_pre);
+    changed |= reduce_select_mul_pattern(&mut trace.body, &uses, &bool_values_pre);
 
     let bool_values = compute_bool_values(trace);
 

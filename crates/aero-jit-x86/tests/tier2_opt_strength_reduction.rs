@@ -288,6 +288,112 @@ fn mul_of_boolean_values_is_strength_reduced_to_and() {
 }
 
 #[test]
+fn select_lowering_mul_add_is_strength_reduced() {
+    // Mimic the Tier-2 lowering for `Select`:
+    //   cond_is_zero = (cond == 0)
+    //   cond_bool    = (cond_is_zero == 0)
+    //   result       = if_true * cond_bool + if_false * cond_is_zero
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            // Values to select between.
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rbx, // if_true
+            },
+            Instr::LoadReg {
+                dst: v(1),
+                reg: Gpr::Rcx, // if_false
+            },
+            // Condition.
+            Instr::LoadReg {
+                dst: v(2),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(3),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(2)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(4),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(3)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(5),
+                op: BinOp::Mul,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(4)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(6),
+                op: BinOp::Mul,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Value(v(3)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(7),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(5)),
+                rhs: Operand::Value(v(6)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rdx,
+                src: Operand::Value(v(7)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut bus0 = SimpleBus::new(64);
+    let mut bus1 = bus0.clone();
+
+    let mut base_state = T2State::default();
+    base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    base_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0xAAAA;
+    base_state.cpu.gpr[Gpr::Rcx.as_u8() as usize] = 0xBBBB;
+    let mut opt_state = base_state.clone();
+
+    // Test both cond==0 and cond!=0.
+    for cond in [0u64, 5u64] {
+        base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = cond;
+        opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = cond;
+
+        let base = run_trace(&trace, &env, &mut bus0, &mut base_state, 1);
+
+        let mut optimized = trace.clone();
+        optimize_trace(&mut optimized, &OptConfig::default());
+
+        // The strength reduction should remove both muls from the select lowering.
+        assert!(
+            !optimized
+                .iter_instrs()
+                .any(|i| matches!(i, Instr::BinOp { op: BinOp::Mul, .. })),
+            "unexpected Mul remaining after select lowering strength reduction"
+        );
+
+        let opt = run_trace(&optimized, &env, &mut bus1, &mut opt_state, 1);
+        assert_eq!(base.exit, RunExit::Returned);
+        assert_eq!(opt.exit, RunExit::Returned);
+        assert_eq!(base_state, opt_state);
+        assert_eq!(bus0.mem(), bus1.mem());
+        assert_eq!(
+            opt_state.cpu.gpr[Gpr::Rdx.as_u8() as usize],
+            if cond != 0 { 0xAAAA } else { 0xBBBB }
+        );
+    }
+}
+
+#[test]
 fn add_sub_const_is_strength_reduced_to_addr() {
     let trace = TraceIr {
         prologue: vec![],
