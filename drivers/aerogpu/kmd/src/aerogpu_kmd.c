@@ -4621,11 +4621,6 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
          DxgkDevicePowerStateD0)
             ? TRUE
             : FALSE;
-    if (!poweredOnNow) {
-        /* Avoid touching MMIO while powered down. */
-        return STATUS_SUCCESS;
-    }
-
     const BOOLEAN wasReleased = adapter->PostDisplayOwnershipReleased ? TRUE : FALSE;
     if (wasReleased) {
         /*
@@ -4634,6 +4629,33 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
          * can re-enable scanout.
          */
         adapter->PostDisplayOwnershipReleased = FALSE;
+    }
+
+    if (!poweredOnNow) {
+        /*
+         * Avoid touching MMIO while powered down.
+         *
+         * Still record that ownership has been reacquired so the next D0 resume
+         * can restore scanout/cursor via DxgkDdiSetPowerState.
+         */
+        if (wasReleased && adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            /*
+             * Best-effort: restore the cached vblank enable mask without touching
+             * MMIO so SetPowerState(D0) can reapply it.
+             */
+            if (!adapter->VblankInterruptTypeValid) {
+                adapter->VblankInterruptType = DXGK_INTERRUPT_TYPE_CRTC_VSYNC;
+                KeMemoryBarrier();
+                adapter->VblankInterruptTypeValid = TRUE;
+            }
+
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+            adapter->IrqEnableMask |= AEROGPU_IRQ_SCANOUT_VBLANK;
+            KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+        }
+        return STATUS_SUCCESS;
     }
 
     /* Re-program scanout registers using the last cached mode + FB address. */
