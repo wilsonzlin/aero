@@ -69,7 +69,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 ### Still stubbed / known gaps
 
 - Geometry shaders (GS):
-  - D3D10/D3D10.1: GS DDIs are stubbed (`GsSetShader*` no-op).
+  - D3D10/D3D10.1: `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`), but GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are stubbed.
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets, but geometry-stage bindings are currently accepted-but-ignored by the host executor (until GS DXBC execution lands).
