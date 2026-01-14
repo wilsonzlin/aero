@@ -181,3 +181,44 @@ fn parse_signatures_prefers_pcg1_over_pcsg_when_both_present() {
     assert_eq!(sig.parameters[0].semantic_name, "NEW");
     assert_eq!(sig.parameters[0].register, 1);
 }
+
+#[test]
+fn parse_signatures_falls_back_to_pcsg_when_all_pcg1_chunks_are_malformed() {
+    // `parse_signatures` should skip malformed preferred chunks and fall back to the older `PCSG`
+    // variant when possible (mirroring ISG1 -> ISGN behavior).
+    let mut bad_pcg1 = Vec::new();
+    bad_pcg1.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_pcg1.extend_from_slice(&4u32.to_le_bytes()); // param_offset (invalid; points into header)
+
+    let good_pcsg = build_signature_chunk_v0_one_entry("FALLBACK", 0, 0, 3, 7, 0b1111, 0b1111, 0);
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_PCG1, &bad_pcg1), (FOURCC_PCSG, &good_pcsg)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sigs = parse_signatures(&dxbc).expect("signature parse should succeed");
+    let sig = sigs.pcsg.expect("expected patch-constant signature");
+
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].semantic_name, "FALLBACK");
+    assert_eq!(sig.parameters[0].register, 7);
+}
+
+#[test]
+fn parse_signatures_skips_malformed_duplicate_pcg1_chunks() {
+    // If multiple `PCG1` chunks exist, choose the first one that parses successfully.
+    let mut bad_pcg1 = Vec::new();
+    bad_pcg1.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_pcg1.extend_from_slice(&4u32.to_le_bytes()); // param_offset (invalid)
+
+    let good_pcg1 = build_signature_chunk_v1_one_entry("GOOD", 0, 0, 3, 3, 0b1111, 0b1111, 0);
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_PCG1, &bad_pcg1), (FOURCC_PCG1, &good_pcg1)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sigs = parse_signatures(&dxbc).expect("signature parse should succeed");
+    let sig = sigs.pcsg.expect("expected patch-constant signature");
+
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].semantic_name, "GOOD");
+    assert_eq!(sig.parameters[0].register, 3);
+}
