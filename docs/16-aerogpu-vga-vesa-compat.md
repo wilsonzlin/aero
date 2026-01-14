@@ -267,17 +267,21 @@ Define a scanout description readable by the presentation pipeline:
 
 ```rust
 #[repr(C)]
- pub struct ScanoutState {
-     pub generation: u32,          // increment on every complete update
-     pub source: u32,              // 0=LegacyText, 1=LegacyVbeLfb, 2=Wddm
-     pub base_paddr_lo: u32,       // guest physical address (low)
-     pub base_paddr_hi: u32,       // guest physical address (high)
-     pub width: u32,
-     pub height: u32,
-     pub pitch_bytes: u32,
-     pub format: u32,              // enum aerogpu_format (e.g. AEROGPU_FORMAT_B8G8R8X8_UNORM)
- }
+pub struct ScanoutState {
+    pub generation: u32,          // increment on every complete update
+    pub source: u32,              // 0=LegacyText, 1=LegacyVbeLfb, 2=Wddm
+    pub base_paddr_lo: u32,       // guest physical address (low)
+    pub base_paddr_hi: u32,       // guest physical address (high)
+    pub width: u32,
+    pub height: u32,
+    pub pitch_bytes: u32,
+    pub format: u32,              // AerogpuFormat / enum aerogpu_format (e.g. B8G8R8X8Unorm = 2)
+}
 ```
+
+`format` must store the AeroGPU format discriminant, matching
+[`drivers/aerogpu/protocol/aerogpu_pci.h`](../drivers/aerogpu/protocol/aerogpu_pci.h)
+`enum aerogpu_format` (i.e. it is *not* a bespoke 0-based scanout-only enum).
 
 The update rule:
 
@@ -290,6 +294,13 @@ descriptor, implementations may temporarily mark `generation` as “busy” (e.g
 bit) during an update. Readers should retry if `generation` is marked busy.
 
 This makes scanout switching glitch-free without locks.
+
+### Scanout format semantics (presentation)
+
+- **sRGB vs UNORM:** sRGB variants are byte-identical to their UNORM counterparts. Scanout presentation
+  may treat them identically unless explicit colorspace conversion is implemented.
+- **X8 alpha semantics:** `B8G8R8X8*` / `R8G8B8X8*` formats must be treated as fully opaque when
+  presenting. If converting to RGBA (e.g. browser canvas), alpha is implicitly `1.0` / `0xFF`.
 
 ### Required WDDM scanout programming surface (BAR0)
 
@@ -305,7 +316,7 @@ Scanout 0 registers (BAR0):
 | `0x0400` | `SCANOUT0_ENABLE` (`AEROGPU_MMIO_REG_SCANOUT0_ENABLE`) | 32 | 0/1 |
 | `0x0404` | `SCANOUT0_WIDTH` (`AEROGPU_MMIO_REG_SCANOUT0_WIDTH`) | 32 | Width in pixels |
 | `0x0408` | `SCANOUT0_HEIGHT` (`AEROGPU_MMIO_REG_SCANOUT0_HEIGHT`) | 32 | Height in pixels |
-| `0x040C` | `SCANOUT0_FORMAT` (`AEROGPU_MMIO_REG_SCANOUT0_FORMAT`) | 32 | `enum aerogpu_format` |
+| `0x040C` | `SCANOUT0_FORMAT` (`AEROGPU_MMIO_REG_SCANOUT0_FORMAT`) | 32 | `enum aerogpu_format` / `AerogpuFormat` (e.g. `B8G8R8X8Unorm = 2`) |
 | `0x0410` | `SCANOUT0_PITCH_BYTES` (`AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`) | 32 | Bytes per scanline |
 | `0x0414` | `SCANOUT0_FB_GPA_LO` (`AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO`) | 32 | Framebuffer guest physical address (low 32) |
 | `0x0418` | `SCANOUT0_FB_GPA_HI` (`AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI`) | 32 | Framebuffer guest physical address (high 32) |
