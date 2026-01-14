@@ -3871,7 +3871,21 @@ static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
 {
     // Short sequence to guarantee visible state changes even if the current LED
     // state is unknown.
-    static const BYTE seq[] = {0x00, 0x01, 0x00, 0x02, 0x00, 0x04, 0x00, 0x07, 0x00};
+    static const BYTE seq[] = {
+        0x00,
+        0x01, // NumLock
+        0x00,
+        0x02, // CapsLock
+        0x00,
+        0x04, // ScrollLock
+        0x00,
+        0x08, // Compose (optional HID boot keyboard LED bit)
+        0x00,
+        0x10, // Kana (optional HID boot keyboard LED bit)
+        0x00,
+        0x1F, // All 5 defined HID boot keyboard LED bits
+        0x00,
+    };
     int i;
 
     if (dev->handle == INVALID_HANDLE_VALUE) {
