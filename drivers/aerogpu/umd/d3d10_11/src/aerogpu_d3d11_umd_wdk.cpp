@@ -9037,6 +9037,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
 
     const bool full_row_update = (left == 0) && (right == mip_w);
+    const bool full_subresource_update = full_row_update && (top == 0) && (bottom == mip_h);
     if (block_left > UINT32_MAX / layout.bytes_per_block) {
       SetError(dev, E_INVALIDARG);
       return;
@@ -9136,10 +9137,21 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
 
     if (!is_guest_backed) {
-      // Texture updates are not guaranteed to be contiguous in memory (unless the
-      // full subresource is updated). For the bring-up path, upload the whole
-      // resource after applying the CPU-side update.
-      EmitUploadLocked(dev, res, 0, res->storage.size());
+      if (full_subresource_update) {
+        EmitUploadLocked(dev, res, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
+      } else {
+        // Boxed updates are not contiguous; upload one segment per updated row
+        // so we do not clobber unrelated texels with any stale CPU-side mirror
+        // data.
+        const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_sub_layout.row_pitch_bytes);
+        const uint64_t x_off_u64 =
+            static_cast<uint64_t>(block_left) * static_cast<uint64_t>(layout.bytes_per_block);
+        for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+          const uint64_t upload_offset =
+              dst_sub_layout.offset_bytes + static_cast<uint64_t>(block_top + y) * row_pitch_u64 + x_off_u64;
+          EmitUploadLocked(dev, res, upload_offset, static_cast<uint64_t>(row_bytes));
+        }
+      }
       return;
     }
 
