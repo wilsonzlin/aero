@@ -559,6 +559,16 @@ typedef struct _AEROGPU_ADAPTER {
     AEROGPU_ALLOC_TABLE_SCRATCH AllocTableScratch;
 } AEROGPU_ADAPTER;
 
+/*
+ * Interlocked*64 requires 8-byte aligned targets on x86. These static asserts
+ * protect against future struct layout changes that could break atomic fence
+ * state reads/writes.
+ */
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastSubmittedFence) & 7u) == 0);
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastCompletedFence) & 7u) == 0);
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastErrorFence) & 7u) == 0);
+C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastNotifiedErrorFence) & 7u) == 0);
+
 static __forceinline ULONG AeroGpuReadRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset)
 {
     return READ_REGISTER_ULONG((volatile ULONG*)(Adapter->Bar0 + Offset));
