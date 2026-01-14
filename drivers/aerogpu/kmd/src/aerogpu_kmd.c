@@ -2599,12 +2599,25 @@ static __forceinline VOID AeroGpuLegacyRingUpdateHeadSeqLocked(_Inout_ AEROGPU_A
         return;
     }
 
-    const ULONG oldIndex = Adapter->LegacyRingHeadIndex;
+    const ULONG ringEntryCount = Adapter->RingEntryCount;
+
+    ULONG oldIndex = Adapter->LegacyRingHeadIndex;
+    if (oldIndex >= ringEntryCount) {
+        /* Defensive: clamp corrupted cached index into range. */
+        oldIndex %= ringEntryCount;
+        Adapter->LegacyRingHeadIndex = oldIndex;
+    }
+
+    if (HeadIndex >= ringEntryCount) {
+        /* Defensive: legacy head index is a masked register. */
+        HeadIndex %= ringEntryCount;
+    }
+
     if (HeadIndex == oldIndex) {
         return;
     }
 
-    const ULONG delta = (HeadIndex > oldIndex) ? (HeadIndex - oldIndex) : (HeadIndex + Adapter->RingEntryCount - oldIndex);
+    const ULONG delta = (HeadIndex > oldIndex) ? (HeadIndex - oldIndex) : (HeadIndex + ringEntryCount - oldIndex);
     Adapter->LegacyRingHeadSeq += delta;
     Adapter->LegacyRingHeadIndex = HeadIndex;
 }
@@ -2837,6 +2850,7 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     ULONG head = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
     AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, head);
+    head = Adapter->LegacyRingHeadIndex;
 
     ULONG tail = Adapter->RingTail;
     if (tail >= Adapter->RingEntryCount) {
@@ -12194,6 +12208,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             } else {
                 ULONG head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 AeroGpuLegacyRingUpdateHeadSeqLocked(adapter, head);
+                head = adapter->LegacyRingHeadIndex;
                 ULONG tail = adapter->RingTail;
                 if (tail >= adapter->RingEntryCount) {
                     /*
