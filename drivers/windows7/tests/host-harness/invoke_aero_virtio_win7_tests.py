@@ -3518,7 +3518,7 @@ def _detect_virtio_snd_device(qemu_system: str) -> str:
 
     raise RuntimeError(
         "QEMU does not advertise a virtio-snd PCI device (expected 'virtio-sound-pci' or 'virtio-snd-pci'). "
-        "Upgrade QEMU or omit --with-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
+        "Upgrade QEMU or omit --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
     )
 
 
@@ -4094,7 +4094,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Require the guest virtio-snd-buffer-limits stress test marker to PASS. "
             "This requires a guest image provisioned with --test-snd-buffer-limits "
             "(or env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1) and also requires "
-            "--with-virtio-snd/--enable-virtio-snd so a virtio-snd device is attached."
+            "--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd so a virtio-snd device is attached."
         ),
     )
     parser.add_argument(
@@ -4114,7 +4114,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "After QEMU exits, verify the captured wav file contains non-silent audio "
             "(thresholds are expressed in 16-bit PCM units) "
-            "(requires --enable-virtio-snd and --virtio-snd-audio-backend=wav)"
+            "(requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd and --virtio-snd-audio-backend=wav)"
         ),
     )
     parser.add_argument(
@@ -4129,7 +4129,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=50,
         help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
     )
-    # NOTE: `--with-virtio-input-events`/`--enable-virtio-input-events` used to be separate flags; they remain accepted
+    # NOTE: `--with-virtio-input-events`/`--require-virtio-input-events`/`--enable-virtio-input-events` used to be separate flags; they remain accepted
     # as aliases for `--with-input-events` for backwards compatibility.
     parser.add_argument(
         "--follow-serial",
