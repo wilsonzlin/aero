@@ -11169,10 +11169,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   }
 
   if (dev->cursor_bitmap == res) {
+    const bool was_hw_active = dev->cursor_hw_active;
     dev->cursor_bitmap = nullptr;
     dev->cursor_visible = FALSE;
     dev->cursor_hw_active = false;
-    if (dev->adapter) {
+    if (was_hw_active && dev->adapter) {
       aerogpu_escape_set_cursor_visibility_in vis{};
       vis.hdr.version = AEROGPU_ESCAPE_VERSION;
       vis.hdr.op = AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY;
@@ -17317,8 +17318,11 @@ static bool build_cursor_shape_escape_packet(Device* dev,
   pkt->hot_x = hot_x;
   pkt->hot_y = hot_y;
   pkt->pitch_bytes = dst_pitch;
-  // Advisory: the KMD also scans alpha bytes to decide between BGRA vs BGRX.
-  pkt->format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+  // Advisory: the KMD scans alpha bytes to decide between BGRA vs BGRX. For XRGB
+  // cursor surfaces, sanitize alpha bytes to 0 so KMD heuristics are
+  // deterministic (some apps leave X8R8G8B8 alpha uninitialized).
+  const uint32_t fmt = static_cast<uint32_t>(cursor->format);
+  pkt->format = (fmt == kD3d9FmtX8R8G8B8) ? AEROGPU_FORMAT_B8G8R8X8_UNORM : AEROGPU_FORMAT_B8G8R8A8_UNORM;
   pkt->reserved0 = 0;
   pkt->reserved1 = 0;
 
@@ -17355,7 +17359,6 @@ static bool build_cursor_shape_escape_packet(Device* dev,
 #endif
 
   // Copy (and convert when needed) into a tightly-packed BGRA/BGRX payload.
-  const uint32_t fmt = static_cast<uint32_t>(cursor->format);
   for (uint32_t y = 0; y < h; ++y) {
     const uint8_t* src_row = src_base + static_cast<size_t>(y) * static_cast<size_t>(src_pitch);
     uint8_t* dst_row = dst_base + static_cast<size_t>(y) * static_cast<size_t>(dst_pitch);
@@ -17366,6 +17369,13 @@ static bool build_cursor_shape_escape_packet(Device* dev,
       for (uint32_t x = 0; x < w; ++x) {
         const size_t i = static_cast<size_t>(x) * 4u;
         std::swap(dst_row[i + 0], dst_row[i + 2]);
+      }
+    }
+    if (fmt == kD3d9FmtX8R8G8B8) {
+      // Force alpha to 0 (BGRX) so KMD cursor format detection doesn't treat an
+      // uninitialized X channel as ARGB alpha.
+      for (uint32_t x = 0; x < w; ++x) {
+        dst_row[static_cast<size_t>(x) * 4u + 3u] = 0;
       }
     }
   }
@@ -17433,6 +17443,9 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
   std::vector<uint8_t> shape_packet;
   bool shape_packet_ok = false;
   bool prev_hw_active = false;
+  int32_t cur_x = 0;
+  int32_t cur_y = 0;
+  BOOL cur_visible = FALSE;
   uint64_t serial = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -17442,6 +17455,9 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
     dev->cursor_bitmap_serial++;
     serial = dev->cursor_bitmap_serial;
     prev_hw_active = dev->cursor_hw_active;
+    cur_x = dev->cursor_x;
+    cur_y = dev->cursor_y;
+    cur_visible = dev->cursor_visible;
     shape_packet_ok = build_cursor_shape_escape_packet(dev, cursor, hot_x, hot_y, &shape_packet);
     stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
   }
@@ -17449,6 +17465,23 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
   bool hw_ok = false;
   if (adapter && shape_packet_ok && !shape_packet.empty()) {
     hw_ok = adapter->kmd_query.SendEscape(shape_packet.data(), static_cast<uint32_t>(shape_packet.size()));
+  }
+
+  // If we successfully programmed the hardware cursor shape, also synchronize the
+  // current cached position/visibility so we don't rely on the runtime to
+  // redundantly call SetCursorPosition/ShowCursor after SetCursorProperties.
+  if (hw_ok && adapter) {
+    aerogpu_escape_set_cursor_visibility_in vis{};
+    init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
+    vis.visible = cur_visible ? 1u : 0u;
+    vis.reserved0 = 0;
+    (void)adapter->kmd_query.SendEscape(&vis, sizeof(vis));
+
+    aerogpu_escape_set_cursor_position_in pos{};
+    init_escape_header(&pos.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION, sizeof(pos));
+    pos.x = static_cast<uint32_t>(cur_x);
+    pos.y = static_cast<uint32_t>(cur_y);
+    (void)adapter->kmd_query.SendEscape(&pos, sizeof(pos));
   }
 
   // If we previously had an active hardware cursor and failed to update the
@@ -17544,14 +17577,17 @@ HRESULT device_set_cursor_position_values_impl(D3DDDI_HDEVICE hDevice, X x, Y y,
   Adapter* adapter = dev ? dev->adapter : nullptr;
   int32_t x_i32 = static_cast<int32_t>(x);
   int32_t y_i32 = static_cast<int32_t>(y);
+  bool hw_active = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->cursor_x = x_i32;
     dev->cursor_y = y_i32;
+    hw_active = dev->cursor_hw_active;
     stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
   }
 
-  if (adapter) {
+  // Only emit hardware cursor updates when the hardware cursor path is active.
+  if (adapter && hw_active) {
     aerogpu_escape_set_cursor_position_in pos{};
     init_escape_header(&pos.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION, sizeof(pos));
     pos.x = static_cast<uint32_t>(x_i32);
@@ -17628,13 +17664,16 @@ HRESULT device_show_cursor_impl(D3DDDI_HDEVICE hDevice, ShowT show) {
   auto* dev = as_device(hDevice);
   Adapter* adapter = dev ? dev->adapter : nullptr;
   const BOOL visible = d3d9_to_u32(show) ? TRUE : FALSE;
+  bool hw_active = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->cursor_visible = visible;
+    hw_active = dev->cursor_hw_active;
     stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   }
 
-  if (adapter) {
+  // Only emit hardware cursor updates when the hardware cursor path is active.
+  if (adapter && hw_active) {
     aerogpu_escape_set_cursor_visibility_in vis{};
     init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
     vis.visible = visible ? 1u : 0u;
