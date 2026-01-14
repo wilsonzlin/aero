@@ -95,6 +95,14 @@ pub struct AeroGpuPciDevice {
     /// This avoids exposing a torn 64-bit framebuffer address to scanout readers; drivers
     /// typically write LO then HI.
     scanout0_fb_gpa_lo_pending: bool,
+    /// Whether to surface `scanout0_fb_gpa_pending_lo` via MMIO reads while the HI dword is still
+    /// pending.
+    ///
+    /// Normal runtime behavior is to return the last written LO dword when a guest reads
+    /// `SCANOUT0_FB_GPA_LO` mid-update. After snapshot restore, however, we want reads to reflect
+    /// the committed snapshot state while still allowing a subsequent HI write to commit using the
+    /// preserved pending LO dword.
+    scanout0_fb_gpa_lo_pending_visible: bool,
 
     /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
     cursor_fb_gpa_pending_lo: u32,
@@ -103,6 +111,9 @@ pub struct AeroGpuPciDevice {
     /// This avoids exposing a torn 64-bit cursor framebuffer address; drivers typically write LO
     /// then HI.
     cursor_fb_gpa_lo_pending: bool,
+    /// Whether to surface `cursor_fb_gpa_pending_lo` via MMIO reads while the HI dword is still
+    /// pending. See `scanout0_fb_gpa_lo_pending_visible`.
+    cursor_fb_gpa_lo_pending_visible: bool,
 
     doorbell_pending: bool,
     ring_reset_pending_dma: bool,
@@ -198,8 +209,10 @@ impl AeroGpuPciDevice {
             vblank_irq_enable_pending: false,
             scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
+            scanout0_fb_gpa_lo_pending_visible: false,
             cursor_fb_gpa_pending_lo: 0,
             cursor_fb_gpa_lo_pending: false,
+            cursor_fb_gpa_lo_pending_visible: false,
             doorbell_pending: false,
             ring_reset_pending_dma: false,
             pending_fence_completions: VecDeque::new(),
@@ -534,7 +547,7 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_FB_GPA_LO => {
                 // Expose the pending LO value while keeping `fb_gpa` stable to avoid consumers
                 // observing a torn 64-bit address mid-update.
-                if self.scanout0_fb_gpa_lo_pending {
+                if self.scanout0_fb_gpa_lo_pending && self.scanout0_fb_gpa_lo_pending_visible {
                     self.scanout0_fb_gpa_pending_lo
                 } else {
                     self.regs.scanout0.fb_gpa as u32
@@ -558,7 +571,7 @@ impl AeroGpuPciDevice {
             mmio::CURSOR_HEIGHT => self.regs.cursor.height,
             mmio::CURSOR_FORMAT => self.regs.cursor.format as u32,
             mmio::CURSOR_FB_GPA_LO => {
-                if self.cursor_fb_gpa_lo_pending {
+                if self.cursor_fb_gpa_lo_pending && self.cursor_fb_gpa_lo_pending_visible {
                     self.cursor_fb_gpa_pending_lo
                 } else {
                     self.regs.cursor.fb_gpa as u32
@@ -637,6 +650,7 @@ impl AeroGpuPciDevice {
                     // Reset torn-update tracking so a stale LO write can't affect future updates.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
+                    self.scanout0_fb_gpa_lo_pending_visible = false;
                 }
                 self.regs.scanout0.enable = new_enable;
             }
@@ -657,6 +671,7 @@ impl AeroGpuPciDevice {
                 // new update and commit the combined value on the subsequent HI write.
                 self.scanout0_fb_gpa_pending_lo = value;
                 self.scanout0_fb_gpa_lo_pending = true;
+                self.scanout0_fb_gpa_lo_pending_visible = true;
             }
             mmio::SCANOUT0_FB_GPA_HI => {
                 // Drivers typically write LO then HI; treat HI as the commit point.
@@ -667,6 +682,7 @@ impl AeroGpuPciDevice {
                 };
                 self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | lo;
                 self.scanout0_fb_gpa_lo_pending = false;
+                self.scanout0_fb_gpa_lo_pending_visible = false;
             }
 
             mmio::CURSOR_ENABLE => {
@@ -677,6 +693,7 @@ impl AeroGpuPciDevice {
                     // Reset torn-update tracking so a stale LO write can't affect future updates.
                     self.cursor_fb_gpa_pending_lo = 0;
                     self.cursor_fb_gpa_lo_pending = false;
+                    self.cursor_fb_gpa_lo_pending_visible = false;
                 }
             }
             mmio::CURSOR_X => self.regs.cursor.x = value as i32,
@@ -691,6 +708,7 @@ impl AeroGpuPciDevice {
                 // new update and commit the combined value on the subsequent HI write.
                 self.cursor_fb_gpa_pending_lo = value;
                 self.cursor_fb_gpa_lo_pending = true;
+                self.cursor_fb_gpa_lo_pending_visible = true;
             }
             mmio::CURSOR_FB_GPA_HI => {
                 // Drivers typically write LO then HI; treat HI as the commit point.
@@ -701,6 +719,7 @@ impl AeroGpuPciDevice {
                 };
                 self.regs.cursor.fb_gpa = (u64::from(value) << 32) | lo;
                 self.cursor_fb_gpa_lo_pending = false;
+                self.cursor_fb_gpa_lo_pending_visible = false;
             }
             mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes = value,
 
@@ -736,8 +755,10 @@ impl PciDevice for AeroGpuPciDevice {
         self.irq_level = false;
         self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
+        self.scanout0_fb_gpa_lo_pending_visible = false;
         self.cursor_fb_gpa_pending_lo = 0;
         self.cursor_fb_gpa_lo_pending = false;
+        self.cursor_fb_gpa_lo_pending_visible = false;
         self.doorbell_pending = false;
         self.ring_reset_pending_dma = false;
         self.pending_fence_completions.clear();
@@ -1117,8 +1138,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         // writes from a previous execution do not affect MMIO reads or future HI write commits.
         self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
+        self.scanout0_fb_gpa_lo_pending_visible = false;
         self.cursor_fb_gpa_pending_lo = 0;
         self.cursor_fb_gpa_lo_pending = false;
+        self.cursor_fb_gpa_lo_pending_visible = false;
 
         // Executor state is optional for forward/backward compatibility; missing means "reset".
         if let Some(exec_bytes) = r.bytes(TAG_EXECUTOR) {
