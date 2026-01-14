@@ -79,6 +79,18 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         match inst.opcode {
             Opcode::Comment | Opcode::Dcl | Opcode::Def | Opcode::DefI | Opcode::DefB => continue,
             Opcode::End => break,
+            Opcode::Ret => {
+                // Some real-world SM3 shaders terminate the main program with an explicit `ret`
+                // instruction before the final END token. Since we don't currently support SM3
+                // subroutines (`call`/`callnz`/`label`), treat a top-level `ret` as end-of-shader.
+                //
+                // `ret` inside structured control flow would imply an early exit and requires a
+                // dedicated IR construct; reject that for now.
+                if stack.len() != 1 {
+                    return Err(err(inst, "ret inside control flow is not supported"));
+                }
+                break;
+            }
             Opcode::Nop => {}
             Opcode::If => {
                 if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
@@ -457,7 +469,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::TexLdl => push_texldl(&mut stack, inst)?,
             Opcode::TexLdd => push_texldd(&mut stack, inst)?,
 
-            Opcode::Call | Opcode::Ret => return Err(err(inst, "call/ret not supported")),
+            Opcode::Call => return Err(err(inst, "call/callnz not supported")),
 
             Opcode::Unknown(op) => {
                 return Err(err(inst, format!("unsupported opcode 0x{op:04x}")))

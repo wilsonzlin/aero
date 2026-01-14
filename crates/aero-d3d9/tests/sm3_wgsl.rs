@@ -1665,6 +1665,46 @@ fn wgsl_abs_compiles() {
 }
 
 #[test]
+fn wgsl_ret_ends_shader_compiles() {
+    // vs_3_0:
+    //   dcl_position v0
+    //   mov oPos, v0
+    //   ret
+    //   end
+    //
+    // Some real-world SM3 shaders use `ret` to exit the main program (subroutines unsupported).
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        // dcl_position v0
+        opcode_token(31, 1),
+        dst_token(1, 0, 0xF),
+        // mov oPos, v0
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // ret
+        opcode_token(28, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("@vertex"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_ps3_vface_misctype_builtin_compiles() {
     // ps_3_0:
     //   mov oC0, misc1  (vFace)
