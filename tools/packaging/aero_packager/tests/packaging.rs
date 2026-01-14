@@ -1956,6 +1956,75 @@ fn os_metadata_files_are_excluded_from_config_and_licenses_dirs() -> anyhow::Res
 }
 
 #[test]
+fn guest_tools_tools_dir_is_packaged_filtered_and_reproducible() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+
+    // Inject a dummy guest-side tool payload. `.pdb` should be excluded by default.
+    let tools_dir = guest_tools_tmp.path().join("tools");
+    fs::create_dir_all(&tools_dir)?;
+    fs::write(tools_dir.join("dummy.exe"), b"dummy exe\n")?;
+    fs::write(tools_dir.join("dummy.pdb"), b"dummy pdb\n")?;
+
+    let out1 = tempfile::tempdir()?;
+    let out2 = tempfile::tempdir()?;
+
+    let config1 = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out1.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+    let config2 = aero_packager::PackageConfig {
+        out_dir: out2.path().to_path_buf(),
+        ..config1.clone()
+    };
+
+    let outputs1 = aero_packager::package_guest_tools(&config1)?;
+    let outputs2 = aero_packager::package_guest_tools(&config2)?;
+
+    // Deterministic outputs, even when optional guest tools are present.
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs2.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs2.zip_path)?);
+    assert_eq!(
+        fs::read(&outputs1.manifest_path)?,
+        fs::read(&outputs2.manifest_path)?
+    );
+
+    let iso_bytes = fs::read(&outputs1.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    assert!(tree.contains("tools/dummy.exe"));
+    assert!(!tree.contains("tools/dummy.pdb"));
+
+    let zip_file = fs::File::open(&outputs1.zip_path)?;
+    let mut zip = zip::ZipArchive::new(zip_file)?;
+    let mut zip_paths = BTreeSet::new();
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        zip_paths.insert(entry.name().to_string());
+    }
+    assert!(zip_paths.contains("tools/dummy.exe"));
+    assert!(!zip_paths.contains("tools/dummy.pdb"));
+
+    Ok(())
+}
+
+#[test]
 fn default_excluded_driver_extensions_are_excluded_from_driver_dirs() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

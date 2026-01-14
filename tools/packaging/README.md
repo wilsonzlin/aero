@@ -49,17 +49,18 @@ cd tools/packaging/aero_packager
 #     uninstall.cmd
 #     verify.cmd
 #     verify.ps1
- #     README.md
- #     THIRD_PARTY_NOTICES.md
- #     config/devices.cmd
- #     certs/*.{cer,crt,p7b}   (required for --signing-policy test; must be absent for production/none)
- #     licenses/** (optional; third-party license texts / attribution files)
- #
- # Note: the output ISO uses Joliet. Individual file/directory names are limited to 220 bytes
- # when encoded as UCS-2BE (≈110 UTF-16 code units). Extremely long names will cause packaging
- # to fail.
- #
- # spec.json declares which drivers to include (required + optional) and expected HWID regexes.
+#     README.md
+#     THIRD_PARTY_NOTICES.md
+#     config/devices.cmd
+#     certs/*.{cer,crt,p7b}   (required for --signing-policy test; must be absent for production/none)
+#     licenses/** (optional; third-party license texts / attribution files)
+#     tools/** (optional; additional guest-side utilities; filtered for safety/reproducibility)
+#
+# Note: the output ISO uses Joliet. Individual file/directory names are limited to 220 bytes
+# when encoded as UCS-2BE (≈110 UTF-16 code units). Extremely long names will cause packaging
+# to fail.
+#
+# spec.json declares which drivers to include (required + optional) and expected HWID regexes.
 
 cargo run --release --locked -- \
   --drivers-dir /path/to/drivers \
