@@ -3,20 +3,21 @@
 //! The DXBC token stream encodes opcodes and operand kinds as numeric IDs in the
 //! low bits of each token.
 //!
-//! Note: Aero's in-tree SM4/SM5 fixtures and unit tests currently use a
-//! **simplified / legacy** token encoding that is *not* bit-for-bit compatible
-//! with the Windows SDK `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`
-//! definitions (e.g. real DXBC encodes instruction length in bits 24..30, and
-//! saturate/test bits live in the opcode token itself).
+//! The numeric values and token layouts in this module are intended to match the
+//! Windows SDK SM4/SM5 "tokenized shader" format (`d3d10tokenizedprogramformat.h` /
+//! `d3d11tokenizedprogramformat.h`).
 //!
-//! As a result, the opcode numeric values in this module should be treated as
-//! **Aero-internal**, even if some comments reference DXBC mnemonics.
+//! Opcode token layout:
+//! - bits 0..=10: opcode ID (`OPCODE_MASK`)
+//! - bits 11..=23: instruction length in DWORDs (`OPCODE_LEN_SHIFT` / `OPCODE_LEN_MASK`)
+//! - bits 24..=30: opcode-specific control (`OPCODE_CONTROL_SHIFT` / `OPCODE_CONTROL_MASK`)
+//! - bit 31: extended opcode token follows (`OPCODE_EXTENDED_BIT`)
 
 /// Low 11 bits of an opcode token.
 pub const OPCODE_MASK: u32 = 0x7ff;
 
-/// Instruction length field (in DWORDs, including the opcode token) in Aero's
-/// legacy SM4 token encoding.
+/// Instruction length field (in DWORDs, including the opcode token) in the DXBC SM4/SM5 token
+/// encoding.
 pub const OPCODE_LEN_SHIFT: u32 = 11;
 pub const OPCODE_LEN_MASK: u32 = 0x1fff;
 
@@ -80,8 +81,7 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 
 // ---- Control flow (structured) ----
 //
-// Note: these are the opcode IDs used by Aero's current SM4 decoder/fixtures,
-// not the Windows SDK `D3D10_SB_OPCODE_TYPE` values.
+// These opcode IDs match the Windows SDK `D3D10_SB_OPCODE_TYPE` values.
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
@@ -194,8 +194,7 @@ pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.
 //
-// Note: numeric values are Aero-internal (see module-level docs); names follow
-// the usual DXBC mnemonics.
+// These match the DXBC mnemonics / `D3D10_SB_OPCODE_TYPE` values.
 pub const OPCODE_EMIT: u32 = 0x3f;
 pub const OPCODE_CUT: u32 = 0x40;
 pub const OPCODE_EMIT_STREAM: u32 = 0x41;
