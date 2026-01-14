@@ -559,6 +559,40 @@ test("stage_ex encode/decode helpers roundtrip (nonzero only)", () => {
   assert.throws(() => encodeStageEx(0 as unknown as AerogpuShaderStageEx));
 });
 
+test("AerogpuCmdWriter.createShaderDxbcEx rejects stageEx=0 (DXBC Pixel program type)", () => {
+  const w = new AerogpuCmdWriter();
+  const dxbc = new Uint8Array([0xaa]);
+  // stageEx=0 is reserved for legacy compute (reserved0==0), so Pixel cannot be encoded via stage_ex.
+  assert.throws(() => w.createShaderDxbcEx(1, 0 as unknown as AerogpuShaderStageEx, dxbc));
+});
+
+test("AerogpuCmdWriter stage_ex optional parameters reject stageEx=0 (DXBC Pixel program type)", () => {
+  const zero = 0 as unknown as AerogpuShaderStageEx;
+  assert.throws(() => new AerogpuCmdWriter().setTexture(AerogpuShaderStage.Vertex, 0, 99, zero));
+  assert.throws(() => new AerogpuCmdWriter().setSamplers(AerogpuShaderStage.Vertex, 0, new Uint32Array([1]), zero));
+  assert.throws(() =>
+    new AerogpuCmdWriter().setConstantBuffers(AerogpuShaderStage.Vertex, 0, [{ buffer: 3, offsetBytes: 0, sizeBytes: 16 }], zero),
+  );
+  assert.throws(() =>
+    new AerogpuCmdWriter().setShaderResourceBuffers(
+      AerogpuShaderStage.Vertex,
+      0,
+      [{ buffer: 4, offsetBytes: 0, sizeBytes: 32 }],
+      zero,
+    ),
+  );
+  assert.throws(() =>
+    new AerogpuCmdWriter().setUnorderedAccessBuffers(
+      AerogpuShaderStage.Compute,
+      1,
+      [{ buffer: 5, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }],
+      zero,
+    ),
+  );
+  assert.throws(() =>
+    new AerogpuCmdWriter().setShaderConstantsF(AerogpuShaderStage.Vertex, 0, new Float32Array([1, 2, 3, 4]), zero),
+  );
+});
 test("AerogpuCmdWriter legacy binding packets keep reserved0=0", () => {
   const w = new AerogpuCmdWriter();
   w.setTexture(AerogpuShaderStage.Pixel, 0, 99);
