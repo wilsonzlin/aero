@@ -17,6 +17,8 @@ This directory contains “graphics stack” implementation notes and bring-up c
 ## D3D shader translation notes
 
 - `d3d9-sm2-sm3-shader-translation.md` — task-level status/limitations for the D3D9 SM2/SM3 bytecode → IR → WGSL pipeline (kept as a “don’t duplicate work” scratchpad).
+- `geometry-shader-emulation.md` — D3D10/11 geometry shader (GS) emulation via compute expansion.
+- `tessellation-emulation.md` — D3D11 tessellation (HS/DS) emulation via compute expansion.
 
 ## User-mode driver (UMD) API surfaces
 
