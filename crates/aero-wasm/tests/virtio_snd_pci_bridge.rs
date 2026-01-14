@@ -434,6 +434,134 @@ fn virtio_snd_pci_bridge_legacy_only_delivers_speaker_jack_event_into_cached_buf
 }
 
 #[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_legacy_only_eventq_is_gated_on_pci_bus_master_enable() {
+    // Synthetic guest RAM region outside the wasm heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let mut bridge = VirtioSndPciBridge::new(
+        guest_base,
+        guest_size,
+        Some(JsValue::from_str("legacy")),
+    )
+    .expect("VirtioSndPciBridge::new");
+    // Enable legacy I/O decoding but keep bus mastering disabled.
+    bridge.set_pci_command(0x0001);
+
+    // Legacy feature negotiation (low 32 bits only).
+    let host_features = bridge.io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES as u32, 4);
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_GUEST_FEATURES as u32,
+        4,
+        host_features,
+    );
+
+    // Set device status.
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_STATUS as u32,
+        1,
+        u32::from(
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+        ),
+    );
+
+    // Configure event queue 1 via legacy registers.
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_QUEUE_SEL as u32,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+    let qsz = bridge.io_read(VIRTIO_PCI_LEGACY_QUEUE_NUM as u32, 2) as u16;
+    assert!(qsz >= 1);
+
+    // Program the queue at PFN=1 (base 0x1000).
+    let pfn = 1u32;
+    bridge.io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN as u32, 4, pfn);
+
+    // Legacy vring layout (see `aero_virtio::pci::legacy_vring_addresses`).
+    let base = u64::from(pfn) << 12;
+    let desc_table = base as u32;
+    let avail = (base + 16 * u64::from(qsz)) as u32;
+    let used_unaligned = u64::from(avail) + 4 + 2 * u64::from(qsz) + 2;
+    let used = ((used_unaligned + VIRTIO_PCI_LEGACY_VRING_ALIGN - 1)
+        & !(VIRTIO_PCI_LEGACY_VRING_ALIGN - 1)) as u32;
+
+    // Post a single event buffer.
+    let buf = 0x4000u32;
+    guest.fill(buf, 8, 0xAA);
+    write_desc(
+        &guest,
+        desc_table,
+        0,
+        buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
+
+    // Kick eventq while BME is disabled. This must not DMA.
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_QUEUE_NOTIFY as u32,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+
+    // Queue an event while BME is still disabled.
+    let ring = WorkletBridge::new(8, 2).unwrap();
+    let sab = ring.shared_buffer();
+    bridge
+        .set_audio_ring_buffer(Some(sab), 8, 2)
+        .expect("set_audio_ring_buffer(Some)");
+
+    bridge.poll();
+
+    assert!(
+        !bridge.irq_asserted(),
+        "irq should remain deasserted while PCI bus mastering is disabled"
+    );
+    assert_eq!(
+        guest.read_u16(used + 2),
+        0,
+        "used.idx should not advance without bus mastering"
+    );
+    let mut buf_before = [0u8; 8];
+    guest.read_into(buf, &mut buf_before);
+    assert_eq!(
+        &buf_before, &[0xAAu8; 8],
+        "eventq buffer should not be DMA-written while PCI bus mastering is disabled"
+    );
+
+    // Enable bus mastering and poll again: the pending buffer+event should now be delivered.
+    bridge.set_pci_command(0x0005);
+    bridge.poll();
+
+    assert_eq!(guest.read_u16(used + 2), 1);
+    assert_eq!(guest.read_u32(used + 8), 8);
+
+    let expected_connected = {
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
+        evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
+        evt
+    };
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_connected);
+    assert!(
+        bridge.irq_asserted(),
+        "irq should assert after completing the eventq buffer once bus mastering is enabled"
+    );
+}
+
+#[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_transitional_delivers_speaker_jack_event_via_legacy_io() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
