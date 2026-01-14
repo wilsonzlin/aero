@@ -153,6 +153,7 @@ using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
+using aerogpu::d3d10_11::AllocateGlobalHandle;
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
@@ -524,155 +525,6 @@ struct AeroGpuAdapter {
   aerogpu_umd_private_v1 umd_private = {};
   bool umd_private_valid = false;
 };
-
-#if defined(_WIN32)
-static uint64_t splitmix64(uint64_t x) {
-  x += 0x9E3779B97F4A7C15ULL;
-  x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
-  return x ^ (x >> 31);
-}
-
-static bool fill_random_bytes(void* out, size_t len) {
-  if (!out || len == 0) {
-    return false;
-  }
-
-  using RtlGenRandomFn = BOOLEAN(WINAPI*)(PVOID, ULONG);
-  using BCryptGenRandomFn = LONG(WINAPI*)(void* hAlgorithm, unsigned char* pbBuffer, ULONG cbBuffer, ULONG dwFlags);
-
-  static RtlGenRandomFn rtl_gen_random = []() -> RtlGenRandomFn {
-    HMODULE advapi = GetModuleHandleW(L"advapi32.dll");
-    if (!advapi) {
-      advapi = LoadLibraryW(L"advapi32.dll");
-    }
-    if (!advapi) {
-      return nullptr;
-    }
-    return reinterpret_cast<RtlGenRandomFn>(GetProcAddress(advapi, "SystemFunction036"));
-  }();
-
-  if (rtl_gen_random) {
-    if (rtl_gen_random(out, static_cast<ULONG>(len)) != FALSE) {
-      return true;
-    }
-  }
-
-  static BCryptGenRandomFn bcrypt_gen_random = []() -> BCryptGenRandomFn {
-    HMODULE bcrypt = GetModuleHandleW(L"bcrypt.dll");
-    if (!bcrypt) {
-      bcrypt = LoadLibraryW(L"bcrypt.dll");
-    }
-    if (!bcrypt) {
-      return nullptr;
-    }
-    return reinterpret_cast<BCryptGenRandomFn>(GetProcAddress(bcrypt, "BCryptGenRandom"));
-  }();
-
-  if (bcrypt_gen_random) {
-    constexpr ULONG kBcryptUseSystemPreferredRng = 0x00000002UL; // BCRYPT_USE_SYSTEM_PREFERRED_RNG
-    const LONG st = bcrypt_gen_random(nullptr,
-                                     reinterpret_cast<unsigned char*>(out),
-                                     static_cast<ULONG>(len),
-                                     kBcryptUseSystemPreferredRng);
-    if (st >= 0) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-static uint64_t fallback_entropy(uint64_t counter) {
-  uint64_t entropy = counter;
-  entropy ^= (static_cast<uint64_t>(GetCurrentProcessId()) << 32);
-  entropy ^= static_cast<uint64_t>(GetCurrentThreadId());
-
-  LARGE_INTEGER qpc{};
-  if (QueryPerformanceCounter(&qpc)) {
-    entropy ^= static_cast<uint64_t>(qpc.QuadPart);
-  }
-
-  entropy ^= static_cast<uint64_t>(GetTickCount64());
-  return entropy;
-}
-
-static aerogpu_handle_t allocate_rng_fallback_handle() {
-  static std::atomic<uint64_t> g_counter{1};
-  static const uint64_t g_salt = []() -> uint64_t {
-    uint64_t salt = 0;
-    if (fill_random_bytes(&salt, sizeof(salt)) && salt != 0) {
-      return salt;
-    }
-    return splitmix64(fallback_entropy(0));
-  }();
-
-  for (;;) {
-    const uint64_t ctr = g_counter.fetch_add(1, std::memory_order_relaxed);
-    const uint64_t mixed = splitmix64(g_salt ^ fallback_entropy(ctr));
-    const uint32_t low31 = static_cast<uint32_t>(mixed & 0x7FFFFFFFu);
-    if (low31 != 0) {
-      return static_cast<aerogpu_handle_t>(0x80000000u | low31);
-    }
-  }
-}
-
-static void log_global_handle_fallback_once() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    OutputDebugStringA(
-        "aerogpu-d3d10_11: GlobalHandleCounter mapping unavailable; using RNG fallback\n");
-  });
-}
-#endif // defined(_WIN32)
-
-static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
-  if (!adapter) {
-    return kInvalidHandle;
-  }
-#if defined(_WIN32)
-  static std::mutex g_mutex;
-  static HANDLE g_mapping = nullptr;
-  static void* g_view = nullptr;
-
-  std::lock_guard<std::mutex> lock(g_mutex);
-
-  if (!g_view) {
-    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-
-    HANDLE mapping =
-        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
-            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
-    if (mapping) {
-      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
-      if (view) {
-        g_mapping = mapping;
-        g_view = view;
-      } else {
-        CloseHandle(mapping);
-      }
-    }
-  }
-
-  if (g_view) {
-    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
-    LONG64 token = InterlockedIncrement64(counter);
-    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
-      token = InterlockedIncrement64(counter);
-    }
-    return static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
-  }
-
-  log_global_handle_fallback_once();
-  return allocate_rng_fallback_handle();
-#endif
-
-  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  if (handle == kInvalidHandle) {
-    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  }
-  return handle;
-}
 
 struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
@@ -1590,7 +1442,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = allocate_global_handle(dev->adapter);
+    res->handle = AllocateGlobalHandle(dev->adapter);
     res->kind = ResourceKind::Buffer;
     res->usage = pDesc->Usage;
     res->cpu_access_flags = pDesc->CPUAccessFlags;
@@ -1750,7 +1602,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = allocate_global_handle(dev->adapter);
+    res->handle = AllocateGlobalHandle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
     res->usage = pDesc->Usage;
     res->cpu_access_flags = pDesc->CPUAccessFlags;
@@ -3882,7 +3734,7 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  sh->handle = allocate_global_handle(dev->adapter);
+  sh->handle = AllocateGlobalHandle(dev->adapter);
   try {
     sh->dxbc.resize(pDesc->CodeSize);
   } catch (...) {
@@ -3994,7 +3846,7 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  layout->handle = allocate_global_handle(dev->adapter);
+  layout->handle = AllocateGlobalHandle(dev->adapter);
 
   if (pDesc->NumElements > (SIZE_MAX - sizeof(aerogpu_input_layout_blob_header)) / sizeof(aerogpu_input_layout_element_dxgi)) {
     layout->handle = kInvalidHandle;

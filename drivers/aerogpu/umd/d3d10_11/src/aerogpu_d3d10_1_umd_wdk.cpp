@@ -67,6 +67,7 @@ HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenD
 namespace {
 
 using aerogpu::d3d10_11::kInvalidHandle;
+using aerogpu::d3d10_11::AllocateGlobalHandle;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
@@ -78,78 +79,6 @@ struct AeroGpuAdapter;
 
 using aerogpu::d3d10_11::AlignUpU64;
 using aerogpu::d3d10_11::AlignUpU32;
-
-uint64_t AllocateGlobalToken() {
-  static std::mutex g_mutex;
-  static HANDLE g_mapping = nullptr;
-  static void* g_view = nullptr;
-
-  std::lock_guard<std::mutex> lock(g_mutex);
-
-  if (!g_view) {
-    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-    HANDLE mapping =
-        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
-            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
-    if (mapping) {
-      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
-      if (view) {
-        g_mapping = mapping;
-        g_view = view;
-      } else {
-        CloseHandle(mapping);
-      }
-    }
-  }
-
-  if (g_view) {
-    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
-    LONG64 token = InterlockedIncrement64(counter);
-    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
-      token = InterlockedIncrement64(counter);
-    }
-    return static_cast<uint64_t>(token);
-  }
-
-  return 0;
-}
-
-static uint64_t splitmix64(uint64_t x) {
-  x += 0x9E3779B97F4A7C15ULL;
-  x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
-  return x ^ (x >> 31);
-}
-
-static uint64_t fallback_entropy(uint64_t counter) {
-  uint64_t entropy = counter;
-  entropy ^= (static_cast<uint64_t>(GetCurrentProcessId()) << 32);
-  entropy ^= static_cast<uint64_t>(GetCurrentThreadId());
-
-  LARGE_INTEGER qpc{};
-  if (QueryPerformanceCounter(&qpc)) {
-    entropy ^= static_cast<uint64_t>(qpc.QuadPart);
-  }
-
-  entropy ^= static_cast<uint64_t>(GetTickCount64());
-  return entropy;
-}
-
-static aerogpu_handle_t allocate_rng_fallback_handle() {
-  static std::atomic<uint64_t> counter{1};
-  static const uint64_t salt = splitmix64(fallback_entropy(0));
-
-  for (;;) {
-    const uint64_t ctr = counter.fetch_add(1, std::memory_order_relaxed);
-    const uint64_t mixed = splitmix64(salt ^ fallback_entropy(ctr));
-    const uint32_t low31 = static_cast<uint32_t>(mixed & 0x7FFFFFFFu);
-    if (low31 != 0) {
-      return static_cast<aerogpu_handle_t>(0x80000000u | low31);
-    }
-  }
-}
-
-aerogpu_handle_t AllocateGlobalHandle(AeroGpuAdapter* adapter);
 
 // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
 // correct UMD bitness was loaded (System32 vs SysWOW64).
@@ -320,18 +249,6 @@ struct AeroGpuAdapter {
   // runtime callbacks and context-owned sync objects instead.
   D3DKMT_HANDLE kmt_adapter = 0;
 };
-
-aerogpu_handle_t AllocateGlobalHandle(AeroGpuAdapter* adapter) {
-  if (!adapter) {
-    return kInvalidHandle;
-  }
-
-  const uint64_t token = AllocateGlobalToken();
-  if (token) {
-    return static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
-  }
-  return allocate_rng_fallback_handle();
-}
 
 static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
   if (!out) {

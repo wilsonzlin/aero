@@ -547,7 +547,8 @@ inline void log_global_handle_fallback_once() {
 } // namespace detail
 #endif // defined(_WIN32)
 
-inline aerogpu_handle_t AllocateGlobalHandle(Adapter* adapter) {
+template <typename TAdapter>
+inline aerogpu_handle_t AllocateGlobalHandle(TAdapter* adapter) {
   if (!adapter) {
     return kInvalidHandle;
   }
@@ -588,13 +589,14 @@ inline aerogpu_handle_t AllocateGlobalHandle(Adapter* adapter) {
 
   detail::log_global_handle_fallback_once();
   return detail::allocate_rng_fallback_handle();
-#endif
+#else
 
   aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
   if (handle == kInvalidHandle) {
     handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
   }
   return handle;
+#endif
 }
 
 struct Resource {
