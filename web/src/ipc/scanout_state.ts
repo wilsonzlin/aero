@@ -20,6 +20,9 @@ export const SCANOUT_SOURCE_WDDM = 2 as const;
 // - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting to RGBA
 //   (e.g. for scanout presentation/cursor blending), treat alpha as fully opaque (`0xff`)
 //   and ignore the stored `X` byte.
+// - `B5G6R5` is a 16bpp opaque format; when converting to RGBA treat alpha as fully opaque (`0xff`).
+// - `B5G5R5A1` is a 16bpp format with 1-bit alpha; when converting to RGBA expand alpha to either
+//   `0x00` or `0xff`.
 // - `*_SRGB` variants are layout-identical to their UNORM counterparts; only the color space
 //   interpretation differs. Presenters must avoid double-applying gamma when handling sRGB
 //   scanout formats.
@@ -27,6 +30,8 @@ export const SCANOUT_FORMAT_B8G8R8X8: AerogpuFormat = AerogpuFormat.B8G8R8X8Unor
 export const SCANOUT_FORMAT_B8G8R8A8: AerogpuFormat = AerogpuFormat.B8G8R8A8Unorm;
 export const SCANOUT_FORMAT_R8G8B8A8: AerogpuFormat = AerogpuFormat.R8G8B8A8Unorm;
 export const SCANOUT_FORMAT_R8G8B8X8: AerogpuFormat = AerogpuFormat.R8G8B8X8Unorm;
+export const SCANOUT_FORMAT_B5G6R5: AerogpuFormat = AerogpuFormat.B5G6R5Unorm;
+export const SCANOUT_FORMAT_B5G5R5A1: AerogpuFormat = AerogpuFormat.B5G5R5A1Unorm;
 export const SCANOUT_FORMAT_B8G8R8X8_SRGB: AerogpuFormat = AerogpuFormat.B8G8R8X8UnormSrgb;
 export const SCANOUT_FORMAT_B8G8R8A8_SRGB: AerogpuFormat = AerogpuFormat.B8G8R8A8UnormSrgb;
 export const SCANOUT_FORMAT_R8G8B8A8_SRGB: AerogpuFormat = AerogpuFormat.R8G8B8A8UnormSrgb;

@@ -33,6 +33,10 @@ pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 /// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting
 ///   to RGBA (e.g. for scanout presentation/cursor blending), treat alpha as
 ///   fully opaque (`0xFF`) and ignore the stored `X` byte.
+/// - `B5G6R5` is a 16bpp opaque format; when converting to RGBA treat alpha as
+///   fully opaque (`0xFF`).
+/// - `B5G5R5A1` is a 16bpp format with 1-bit alpha; when converting to RGBA
+///   expand alpha to either `0x00` or `0xFF`.
 /// - `*_SRGB` variants are layout-identical to their UNORM counterparts; only
 ///   the color space interpretation differs. Presenters must avoid
 ///   double-applying gamma when handling sRGB scanout formats.
@@ -42,6 +46,8 @@ pub const SCANOUT_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
 pub const SCANOUT_FORMAT_B8G8R8A8: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
 pub const SCANOUT_FORMAT_R8G8B8A8: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 pub const SCANOUT_FORMAT_R8G8B8X8: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
+pub const SCANOUT_FORMAT_B5G6R5: u32 = AerogpuFormat::B5G6R5Unorm as u32;
+pub const SCANOUT_FORMAT_B5G5R5A1: u32 = AerogpuFormat::B5G5R5A1Unorm as u32;
 pub const SCANOUT_FORMAT_B8G8R8X8_SRGB: u32 = AerogpuFormat::B8G8R8X8UnormSrgb as u32;
 pub const SCANOUT_FORMAT_B8G8R8A8_SRGB: u32 = AerogpuFormat::B8G8R8A8UnormSrgb as u32;
 pub const SCANOUT_FORMAT_R8G8B8A8_SRGB: u32 = AerogpuFormat::R8G8B8A8UnormSrgb as u32;
@@ -422,6 +428,11 @@ mod tests {
         assert_eq!(SCANOUT_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
         assert_eq!(SCANOUT_FORMAT_R8G8B8A8, AerogpuFormat::R8G8B8A8Unorm as u32);
         assert_eq!(SCANOUT_FORMAT_R8G8B8X8, AerogpuFormat::R8G8B8X8Unorm as u32);
+        assert_eq!(SCANOUT_FORMAT_B5G6R5, AerogpuFormat::B5G6R5Unorm as u32);
+        assert_eq!(
+            SCANOUT_FORMAT_B5G5R5A1,
+            AerogpuFormat::B5G5R5A1Unorm as u32
+        );
         assert_eq!(
             SCANOUT_FORMAT_B8G8R8X8_SRGB,
             AerogpuFormat::B8G8R8X8UnormSrgb as u32

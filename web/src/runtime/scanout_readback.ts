@@ -3,6 +3,8 @@ import {
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_FORMAT_B5G5R5A1,
+  SCANOUT_FORMAT_B5G6R5,
   SCANOUT_FORMAT_R8G8B8A8,
   SCANOUT_FORMAT_R8G8B8A8_SRGB,
   SCANOUT_FORMAT_R8G8B8X8,
@@ -116,7 +118,11 @@ export function tryComputeScanoutRgba8ByteLength(
 }
 
 /**
- * Convert a guest scanout buffer (BGRA/BGRX/RGBA/RGBX, incl. sRGB variants) into a packed RGBA8 buffer.
+ * Convert a guest scanout buffer into a packed RGBA8 buffer.
+ *
+ * Supported formats:
+ * - 32bpp packed: BGRA/BGRX/RGBA/RGBX (incl. sRGB variants)
+ * - 16bpp packed: B5G6R5 (opaque) and B5G5R5A1 (1-bit alpha)
  *
  * Notes:
  * - `BGRX` / `RGBX` formats treat the unused `X` byte as fully opaque (`A=0xFF`) when converting to RGBA.
@@ -143,23 +149,38 @@ export function readScanoutRgba8FromGuestRam(
   const pitchBytes = toU32(desc.pitchBytes, "pitchBytes");
   const format = toU32(desc.format, "format");
 
-  let kind: ScanoutSwizzleKind;
+  let kind: ScanoutSwizzleKind | null = null;
+  let srcBytesPerPixel: number;
+  let isB5G6R5 = false;
+  let isB5G5R5A1 = false;
   switch (format) {
     case SCANOUT_FORMAT_B8G8R8X8:
     case SCANOUT_FORMAT_B8G8R8X8_SRGB:
       kind = "bgrx";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_B8G8R8A8:
     case SCANOUT_FORMAT_B8G8R8A8_SRGB:
       kind = "bgra";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_R8G8B8A8:
     case SCANOUT_FORMAT_R8G8B8A8_SRGB:
       kind = "rgba";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_R8G8B8X8:
     case SCANOUT_FORMAT_R8G8B8X8_SRGB:
       kind = "rgbx";
+      srcBytesPerPixel = 4;
+      break;
+    case SCANOUT_FORMAT_B5G6R5:
+      srcBytesPerPixel = 2;
+      isB5G6R5 = true;
+      break;
+    case SCANOUT_FORMAT_B5G5R5A1:
+      srcBytesPerPixel = 2;
+      isB5G5R5A1 = true;
       break;
     default:
       throw new Error(`Unsupported scanout format ${aerogpuFormatToString(format)}`);
@@ -169,18 +190,21 @@ export function readScanoutRgba8FromGuestRam(
     return { width, height, rgba8: new Uint8Array(new ArrayBuffer(0)) };
   }
 
-  const rowBytes = width * 4;
-  if (!Number.isSafeInteger(rowBytes)) {
+  const srcRowBytes = width * srcBytesPerPixel;
+  if (!Number.isSafeInteger(srcRowBytes)) {
     throw new RangeError(`scanout row size exceeds JS safe integer range: width=${width}`);
   }
 
-  if (pitchBytes < rowBytes) {
-    throw new RangeError(`scanout pitchBytes is too small: pitchBytes=${pitchBytes} < width*4=${rowBytes}`);
+  if (pitchBytes < srcRowBytes) {
+    throw new RangeError(
+      `scanout pitchBytes is too small: pitchBytes=${pitchBytes} < width*${srcBytesPerPixel}=${srcRowBytes}`,
+    );
   }
-  if (pitchBytes % 4 !== 0) {
-    throw new RangeError(`scanout pitchBytes must be a multiple of 4 (got ${pitchBytes})`);
+  if (pitchBytes % srcBytesPerPixel !== 0) {
+    throw new RangeError(`scanout pitchBytes must be a multiple of ${srcBytesPerPixel} (got ${pitchBytes})`);
   }
 
+  const rowBytes = width * 4;
   const totalBytes = rowBytes * height;
   if (!Number.isSafeInteger(totalBytes)) {
     throw new RangeError(`scanout output size exceeds JS safe integer range: ${width}x${height}`);
@@ -225,15 +249,52 @@ export function readScanoutRgba8FromGuestRam(
     }
 
     const src = guestRam.subarray(ramOffset, end);
-    convertScanoutToRgba8({
-      src,
-      srcStrideBytes: pitchBytes,
-      dst: rgba8,
-      dstStrideBytes: rowBytes,
-      width,
-      height,
-      kind,
-    });
+    if (kind) {
+      convertScanoutToRgba8({
+        src,
+        srcStrideBytes: pitchBytes,
+        dst: rgba8,
+        dstStrideBytes: rowBytes,
+        width,
+        height,
+        kind,
+      });
+    } else if (isB5G6R5 || isB5G5R5A1) {
+      for (let y = 0; y < height; y += 1) {
+        let srcOff = y * pitchBytes;
+        let dstOff = y * rowBytes;
+        for (let x = 0; x < width; x += 1) {
+          const lo = src[srcOff++]!;
+          const hi = src[srcOff++]!;
+          const pix = (lo | (hi << 8)) >>> 0;
+          if (isB5G6R5) {
+            const b = pix & 0x1f;
+            const g = (pix >>> 5) & 0x3f;
+            const r = (pix >>> 11) & 0x1f;
+            const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+            const g8 = ((g << 2) | (g >>> 4)) & 0xff;
+            const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+            rgba8[dstOff + 0] = r8;
+            rgba8[dstOff + 1] = g8;
+            rgba8[dstOff + 2] = b8;
+            rgba8[dstOff + 3] = 0xff;
+          } else {
+            const b = pix & 0x1f;
+            const g = (pix >>> 5) & 0x1f;
+            const r = (pix >>> 10) & 0x1f;
+            const a = (pix >>> 15) & 0x1;
+            const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+            const g8 = ((g << 3) | (g >>> 2)) & 0xff;
+            const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+            rgba8[dstOff + 0] = r8;
+            rgba8[dstOff + 1] = g8;
+            rgba8[dstOff + 2] = b8;
+            rgba8[dstOff + 3] = a ? 0xff : 0;
+          }
+          dstOff += 4;
+        }
+      }
+    }
     return { width, height, rgba8 };
   }
 
@@ -241,9 +302,9 @@ export function readScanoutRgba8FromGuestRam(
     const rowPaddrBig = basePaddr + BigInt(y) * pitchBig;
     const rowPaddr = u64BigintToSafeNumber(rowPaddrBig, "scanout row paddr");
 
-    if (!guestRangeInBounds(guestRam.byteLength, rowPaddr, rowBytes)) {
+    if (!guestRangeInBounds(guestRam.byteLength, rowPaddr, srcRowBytes)) {
       throw new RangeError(
-        `scanout row is out of bounds: basePaddr=0x${basePaddr.toString(16)} y=${y} rowPaddr=0x${rowPaddrBig.toString(16)} rowBytes=0x${rowBytes.toString(16)} guest_size=0x${guestRam.byteLength.toString(16)}`,
+        `scanout row is out of bounds: basePaddr=0x${basePaddr.toString(16)} y=${y} rowPaddr=0x${rowPaddrBig.toString(16)} rowBytes=0x${srcRowBytes.toString(16)} guest_size=0x${guestRam.byteLength.toString(16)}`,
       );
     }
 
@@ -254,17 +315,52 @@ export function readScanoutRgba8FromGuestRam(
       );
     }
 
-    const srcRow = guestRam.subarray(rowOff, rowOff + rowBytes);
+    const srcRow = guestRam.subarray(rowOff, rowOff + srcRowBytes);
     const dstRow = rgba8.subarray(y * rowBytes, y * rowBytes + rowBytes);
-    convertScanoutToRgba8({
-      src: srcRow,
-      srcStrideBytes: rowBytes,
-      dst: dstRow,
-      dstStrideBytes: rowBytes,
-      width,
-      height: 1,
-      kind,
-    });
+    if (kind) {
+      convertScanoutToRgba8({
+        src: srcRow,
+        srcStrideBytes: srcRowBytes,
+        dst: dstRow,
+        dstStrideBytes: rowBytes,
+        width,
+        height: 1,
+        kind,
+      });
+    } else if (isB5G6R5 || isB5G5R5A1) {
+      let srcOff = 0;
+      let dstOff = 0;
+      for (let x = 0; x < width; x += 1) {
+        const lo = srcRow[srcOff++]!;
+        const hi = srcRow[srcOff++]!;
+        const pix = (lo | (hi << 8)) >>> 0;
+        if (isB5G6R5) {
+          const b = pix & 0x1f;
+          const g = (pix >>> 5) & 0x3f;
+          const r = (pix >>> 11) & 0x1f;
+          const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+          const g8 = ((g << 2) | (g >>> 4)) & 0xff;
+          const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+          dstRow[dstOff + 0] = r8;
+          dstRow[dstOff + 1] = g8;
+          dstRow[dstOff + 2] = b8;
+          dstRow[dstOff + 3] = 0xff;
+        } else {
+          const b = pix & 0x1f;
+          const g = (pix >>> 5) & 0x1f;
+          const r = (pix >>> 10) & 0x1f;
+          const a = (pix >>> 15) & 0x1;
+          const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+          const g8 = ((g << 3) | (g >>> 2)) & 0xff;
+          const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+          dstRow[dstOff + 0] = r8;
+          dstRow[dstOff + 1] = g8;
+          dstRow[dstOff + 2] = b8;
+          dstRow[dstOff + 3] = a ? 0xff : 0;
+        }
+        dstOff += 4;
+      }
+    }
   }
 
   return { width, height, rgba8 };

@@ -111,8 +111,8 @@ use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_shared::cursor_state::{CursorState, CursorStateUpdate, CURSOR_FORMAT_B8G8R8A8};
 #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
-    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8X8,
+    SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
 use aero_snapshot as snapshot;
 use aero_storage::{MemBackend, RawDisk};
@@ -10419,15 +10419,21 @@ impl Machine {
                     Some(mode) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
                             // This legacy VBE scanout publication path currently only supports the
-                            // canonical boot pixel format: 32bpp packed pixels `B8G8R8X8`.
+                            // canonical boot pixel formats:
+                            // - 32bpp packed pixels `B8G8R8X8`
+                            // - 16bpp packed pixels `B5G6R5`
                             //
                             // If the guest selected a palettized VBE mode (e.g. 8bpp), fall back to
                             // the implicit legacy path rather than publishing a misleading 32bpp
                             // descriptor.
-                            if mode_info.bpp != 32 {
-                                scanout_state.publish(legacy_text);
-                                return;
-                            }
+                            let (format, bytes_per_pixel) = match mode_info.bpp {
+                                32 => (SCANOUT_FORMAT_B8G8R8X8, 4u64),
+                                16 => (SCANOUT_FORMAT_B5G6R5, 2u64),
+                                _ => {
+                                    scanout_state.publish(legacy_text);
+                                    return;
+                                }
+                            };
 
                             // Keep the published legacy scanout descriptor consistent with the BIOS VBE
                             // state used by the AeroGPU VBE/text fallback renderer
@@ -10442,9 +10448,6 @@ impl Machine {
                                     .bytes_per_scan_line
                                     .max(mode_info.bytes_per_scan_line()),
                             );
-                            // 32bpp direct-color VBE modes use little-endian packed pixels
-                            // B8G8R8X8.
-                            let bytes_per_pixel = 4u64;
                             let base = u64::from(self.bios.video.vbe.lfb_base)
                                 .saturating_add(
                                     u64::from(self.bios.video.vbe.display_start_y)
@@ -10461,7 +10464,7 @@ impl Machine {
                                 width: u32::from(mode_info.width),
                                 height: u32::from(mode_info.height),
                                 pitch_bytes: pitch as u32,
-                                format: SCANOUT_FORMAT_B8G8R8X8,
+                                format,
                             });
                         }
                     }

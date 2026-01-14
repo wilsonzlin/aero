@@ -65,6 +65,8 @@ import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_FORMAT_B5G5R5A1,
+  SCANOUT_FORMAT_B5G6R5,
   SCANOUT_FORMAT_R8G8B8A8,
   SCANOUT_FORMAT_R8G8B8X8,
   SCANOUT_FORMAT_R8G8B8A8_SRGB,
@@ -1445,23 +1447,40 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   // - BGRX/RGBX: force alpha=255 so presenters (which may render with blending enabled) do not show
   //              random transparency from uninitialized X bytes.
   // - BGRA/RGBA: preserve alpha (required for correctness + matches `scanout_swizzle.ts` behavior).
-  let kind: ScanoutSwizzleKind;
+  // - B5G6R5: opaque 16bpp; expand to RGBA with alpha=255.
+  // - B5G5R5A1: 16bpp with 1-bit alpha; expand alpha to 0 or 255.
+  let kind: ScanoutSwizzleKind | null = null;
+  let srcBytesPerPixel: number;
+  let isB5G6R5 = false;
+  let isB5G5R5A1 = false;
   switch (fmt) {
     case SCANOUT_FORMAT_B8G8R8X8:
     case SCANOUT_FORMAT_B8G8R8X8_SRGB:
       kind = "bgrx";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_B8G8R8A8:
     case SCANOUT_FORMAT_B8G8R8A8_SRGB:
       kind = "bgra";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_R8G8B8A8:
     case SCANOUT_FORMAT_R8G8B8A8_SRGB:
       kind = "rgba";
+      srcBytesPerPixel = 4;
       break;
     case SCANOUT_FORMAT_R8G8B8X8:
     case SCANOUT_FORMAT_R8G8B8X8_SRGB:
       kind = "rgbx";
+      srcBytesPerPixel = 4;
+      break;
+    case SCANOUT_FORMAT_B5G6R5:
+      srcBytesPerPixel = 2;
+      isB5G6R5 = true;
+      break;
+    case SCANOUT_FORMAT_B5G5R5A1:
+      srcBytesPerPixel = 2;
+      isB5G5R5A1 = true;
       break;
     default:
       emitScanoutReadbackInvalid(snap, "Scanout: unsupported format", {
@@ -1470,6 +1489,8 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
           SCANOUT_FORMAT_B8G8R8A8,
           SCANOUT_FORMAT_B8G8R8X8_SRGB,
           SCANOUT_FORMAT_B8G8R8A8_SRGB,
+          SCANOUT_FORMAT_B5G6R5,
+          SCANOUT_FORMAT_B5G5R5A1,
           SCANOUT_FORMAT_R8G8B8A8,
           SCANOUT_FORMAT_R8G8B8A8_SRGB,
           SCANOUT_FORMAT_R8G8B8X8,
@@ -1499,20 +1520,24 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
     return null;
   }
 
-  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
-    emitScanoutReadbackInvalid(snap, "Scanout: invalid rowBytes", { rowBytes, width });
+  const srcRowBytes = width * srcBytesPerPixel;
+  if (!Number.isSafeInteger(srcRowBytes) || srcRowBytes <= 0) {
+    emitScanoutReadbackInvalid(snap, "Scanout: invalid srcRowBytes", { srcRowBytes, width, srcBytesPerPixel });
     return null;
   }
-  if (pitchBytes < rowBytes) {
-    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes < rowBytes", { rowBytes, pitchBytes });
+  if (pitchBytes < srcRowBytes) {
+    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes < rowBytes", { rowBytes: srcRowBytes, pitchBytes });
     return null;
   }
-  if ((pitchBytes & 3) !== 0) {
-    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes must be 4-byte aligned", { pitchBytes });
+  if (pitchBytes % srcBytesPerPixel !== 0) {
+    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes must be aligned to bytes-per-pixel", {
+      pitchBytes,
+      srcBytesPerPixel,
+    });
     return null;
   }
 
+  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
   const outputBytesU64 = BigInt(width) * BigInt(height) * BigInt(BYTES_PER_PIXEL_RGBA8);
   const outputBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
   if (outputBytes === null) {
@@ -1538,7 +1563,7 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   }
   const basePaddrNum = Number(basePaddr);
 
-  const requiredReadBytesU64 = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(rowBytes);
+  const requiredReadBytesU64 = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(srcRowBytes);
   if (requiredReadBytesU64 > BigInt(Number.MAX_SAFE_INTEGER)) {
     emitScanoutReadbackInvalid(snap, "Scanout: framebuffer byte range exceeds JS safe integer range", {
       requiredReadBytes: requiredReadBytesU64.toString(),
@@ -1635,78 +1660,117 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   if (!out) return null;
 
   const canUseU32 =
+    kind !== null &&
     (srcOffset & 3) === 0 &&
     !!srcU32 &&
     !!outU32 &&
     (out.byteOffset & 3) === 0;
 
-  if (canUseU32) {
-    const src32 = srcU32!;
-    const dst32 = outU32!;
-    const baseIndex = srcOffset >>> 2;
-    const pitchWords = pitchBytes >>> 2;
-    let dstRowBase = 0;
-    switch (kind) {
-      case "rgba":
-        for (let y = 0; y < height; y += 1) {
-          const srcRowBase = baseIndex + y * pitchWords;
-          for (let x = 0; x < width; x += 1) {
-            dst32[dstRowBase + x] = src32[srcRowBase + x]!;
+  if (kind !== null) {
+    // -------------------------------------------------------------------------
+    // 32bpp scanout conversion (BGRX/BGRA/RGBA/RGBX).
+    // -------------------------------------------------------------------------
+    if (canUseU32) {
+      const src32 = srcU32!;
+      const dst32 = outU32!;
+      const baseIndex = srcOffset >>> 2;
+      const pitchWords = pitchBytes >>> 2;
+      let dstRowBase = 0;
+      switch (kind) {
+        case "rgba":
+          for (let y = 0; y < height; y += 1) {
+            const srcRowBase = baseIndex + y * pitchWords;
+            for (let x = 0; x < width; x += 1) {
+              dst32[dstRowBase + x] = src32[srcRowBase + x]!;
+            }
+            dstRowBase += width;
           }
-          dstRowBase += width;
-        }
-        break;
-      case "rgbx":
-        for (let y = 0; y < height; y += 1) {
-          const srcRowBase = baseIndex + y * pitchWords;
-          for (let x = 0; x < width; x += 1) {
-            dst32[dstRowBase + x] = (src32[srcRowBase + x]! | 0xff000000) >>> 0;
+          break;
+        case "rgbx":
+          for (let y = 0; y < height; y += 1) {
+            const srcRowBase = baseIndex + y * pitchWords;
+            for (let x = 0; x < width; x += 1) {
+              dst32[dstRowBase + x] = (src32[srcRowBase + x]! | 0xff000000) >>> 0;
+            }
+            dstRowBase += width;
           }
-          dstRowBase += width;
-        }
-        break;
-      case "bgra":
-        for (let y = 0; y < height; y += 1) {
-          const srcRowBase = baseIndex + y * pitchWords;
-          for (let x = 0; x < width; x += 1) {
-            const v = src32[srcRowBase + x]!;
-            // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
-            dst32[dstRowBase + x] =
-              ((v & 0xff000000) | ((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16)) >>> 0;
+          break;
+        case "bgra":
+          for (let y = 0; y < height; y += 1) {
+            const srcRowBase = baseIndex + y * pitchWords;
+            for (let x = 0; x < width; x += 1) {
+              const v = src32[srcRowBase + x]!;
+              // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
+              dst32[dstRowBase + x] =
+                ((v & 0xff000000) | ((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16)) >>> 0;
+            }
+            dstRowBase += width;
           }
-          dstRowBase += width;
-        }
-        break;
-      case "bgrx":
-        for (let y = 0; y < height; y += 1) {
-          const srcRowBase = baseIndex + y * pitchWords;
-          for (let x = 0; x < width; x += 1) {
-            const v = src32[srcRowBase + x]!;
-            // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
-            dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+          break;
+        case "bgrx":
+          for (let y = 0; y < height; y += 1) {
+            const srcRowBase = baseIndex + y * pitchWords;
+            for (let x = 0; x < width; x += 1) {
+              const v = src32[srcRowBase + x]!;
+              // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
+              dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+            }
+            dstRowBase += width;
           }
-          dstRowBase += width;
+          break;
+      }
+    } else {
+      const swapRb = kind === "bgrx" || kind === "bgra";
+      const preserveAlpha = kind === "bgra" || kind === "rgba";
+      for (let y = 0; y < height; y += 1) {
+        const srcRowStart = srcOffset + y * pitchBytes;
+        const dstRowStart = y * rowBytes;
+        for (let x = 0; x < rowBytes; x += BYTES_PER_PIXEL_RGBA8) {
+          const c0 = src[srcRowStart + x]!;
+          const c1 = src[srcRowStart + x + 1]!;
+          const c2 = src[srcRowStart + x + 2]!;
+          const r = swapRb ? c2 : c0;
+          const g = c1;
+          const b = swapRb ? c0 : c2;
+          const a = preserveAlpha ? src[srcRowStart + x + 3]! : 255;
+          out[dstRowStart + x + 0] = r;
+          out[dstRowStart + x + 1] = g;
+          out[dstRowStart + x + 2] = b;
+          out[dstRowStart + x + 3] = a;
         }
-        break;
+      }
     }
-  } else {
-    const swapRb = kind === "bgrx" || kind === "bgra";
-    const preserveAlpha = kind === "bgra" || kind === "rgba";
+  } else if (isB5G6R5 || isB5G5R5A1) {
+    // -------------------------------------------------------------------------
+    // 16bpp scanout conversion (B5G6R5 / B5G5R5A1).
+    // -------------------------------------------------------------------------
+    if (!outU32) return null;
+    const dst32 = outU32;
     for (let y = 0; y < height; y += 1) {
-      const srcRowStart = srcOffset + y * pitchBytes;
-      const dstRowStart = y * rowBytes;
-      for (let x = 0; x < rowBytes; x += BYTES_PER_PIXEL_RGBA8) {
-        const c0 = src[srcRowStart + x]!;
-        const c1 = src[srcRowStart + x + 1]!;
-        const c2 = src[srcRowStart + x + 2]!;
-        const r = swapRb ? c2 : c0;
-        const g = c1;
-        const b = swapRb ? c0 : c2;
-        const a = preserveAlpha ? src[srcRowStart + x + 3]! : 255;
-        out[dstRowStart + x + 0] = r;
-        out[dstRowStart + x + 1] = g;
-        out[dstRowStart + x + 2] = b;
-        out[dstRowStart + x + 3] = a;
+      let srcOff = srcOffset + y * pitchBytes;
+      const dstRowBase = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const lo = src[srcOff++]!;
+        const hi = src[srcOff++]!;
+        const pix = (lo | (hi << 8)) >>> 0;
+        if (isB5G6R5) {
+          const b = pix & 0x1f;
+          const g = (pix >>> 5) & 0x3f;
+          const r = (pix >>> 11) & 0x1f;
+          const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+          const g8 = ((g << 2) | (g >>> 4)) & 0xff;
+          const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+          dst32[dstRowBase + x] = (r8 | (g8 << 8) | (b8 << 16) | (0xff << 24)) >>> 0;
+        } else {
+          const b = pix & 0x1f;
+          const g = (pix >>> 5) & 0x1f;
+          const r = (pix >>> 10) & 0x1f;
+          const a = (pix >>> 15) & 0x1;
+          const r8 = ((r << 3) | (r >>> 2)) & 0xff;
+          const g8 = ((g << 3) | (g >>> 2)) & 0xff;
+          const b8 = ((b << 3) | (b >>> 2)) & 0xff;
+          dst32[dstRowBase + x] = (r8 | (g8 << 8) | (b8 << 16) | ((a ? 0xff : 0) << 24)) >>> 0;
+        }
       }
     }
   }
@@ -4478,27 +4542,42 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
 
-              const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-              if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
+              // Supported scanout formats (AeroGPU formats).
+              const srcBytesPerPixel = (() => {
+                switch (format) {
+                  case SCANOUT_FORMAT_B8G8R8X8:
+                  case SCANOUT_FORMAT_B8G8R8X8_SRGB:
+                  case SCANOUT_FORMAT_B8G8R8A8:
+                  case SCANOUT_FORMAT_B8G8R8A8_SRGB:
+                  case SCANOUT_FORMAT_R8G8B8A8:
+                  case SCANOUT_FORMAT_R8G8B8A8_SRGB:
+                  case SCANOUT_FORMAT_R8G8B8X8:
+                  case SCANOUT_FORMAT_R8G8B8X8_SRGB:
+                    return 4;
+                  case SCANOUT_FORMAT_B5G6R5:
+                  case SCANOUT_FORMAT_B5G5R5A1:
+                    return 2;
+                  default:
+                    return 0;
+                }
+              })();
+              if (srcBytesPerPixel === 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              // Supported scanout formats (AeroGPU formats).
-              switch (format) {
-                case SCANOUT_FORMAT_B8G8R8X8:
-                case SCANOUT_FORMAT_B8G8R8X8_SRGB:
-                case SCANOUT_FORMAT_B8G8R8A8:
-                case SCANOUT_FORMAT_B8G8R8A8_SRGB:
-                case SCANOUT_FORMAT_R8G8B8A8:
-                case SCANOUT_FORMAT_R8G8B8A8_SRGB:
-                case SCANOUT_FORMAT_R8G8B8X8:
-                case SCANOUT_FORMAT_R8G8B8X8_SRGB:
-                  break;
-                default:
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
+
+              const srcRowBytes = width * srcBytesPerPixel;
+              if (!Number.isSafeInteger(srcRowBytes) || srcRowBytes <= 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
               }
-              if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) {
+              if (pitchBytes < srcRowBytes || pitchBytes % srcBytesPerPixel !== 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+              if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
@@ -4514,10 +4593,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const scanoutIsInVram = (() => {
                 if (!vram || vramSizeBytes === 0) return false;
 
-                // The scanout surface occupies `rowBytes` bytes on the last row, not the full `pitchBytes`.
+                // The scanout surface occupies `srcRowBytes` bytes on the last row, not the full `pitchBytes`.
                 // This matches `tryReadScanoutRgba8` (and typical linear framebuffer semantics): the
-                // framebuffer byte length is `(height-1)*pitchBytes + rowBytes`.
-                const requiredSrcBytesBig = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(rowBytes);
+                // framebuffer byte length is `(height-1)*pitchBytes + srcRowBytes`.
+                const requiredSrcBytesBig = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(srcRowBytes);
                 if (requiredSrcBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return false;
                 const requiredSrcBytes = Number(requiredSrcBytesBig);
 
@@ -4540,6 +4619,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
                 format === SCANOUT_FORMAT_B8G8R8A8 ||
                 format === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
+                format === SCANOUT_FORMAT_B5G6R5 ||
+                format === SCANOUT_FORMAT_B5G5R5A1 ||
                 format === SCANOUT_FORMAT_R8G8B8A8 ||
                 format === SCANOUT_FORMAT_R8G8B8A8_SRGB ||
                 format === SCANOUT_FORMAT_R8G8B8X8 ||
@@ -4592,7 +4673,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       return true;
                     }
                     try {
-                      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+                      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, srcRowBytes)) {
                         postStub(typeof seq === "number" ? seq : undefined);
                         return true;
                       }
@@ -4601,7 +4682,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       return true;
                     }
                     const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-                    if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
+                    if (rowOff === null || rowOff + srcRowBytes > guest.byteLength) {
                       postStub(typeof seq === "number" ? seq : undefined);
                       return true;
                     }

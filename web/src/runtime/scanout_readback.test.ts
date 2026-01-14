@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SCANOUT_FORMAT_B5G5R5A1,
+  SCANOUT_FORMAT_B5G6R5,
   SCANOUT_FORMAT_B8G8R8A8,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_R8G8B8X8_SRGB,
@@ -96,6 +98,62 @@ describe("runtime/scanout_readback", () => {
     });
 
     expect(Array.from(out.rgba8)).toEqual([3, 2, 1, 4, 7, 6, 5, 8]);
+  });
+
+  it("converts B5G6R5 (RGB565) -> RGBA and forces alpha=255", () => {
+    const width = 2;
+    const height = 1;
+    const pitchBytes = width * 2;
+
+    const guest = new Uint8Array([
+      // pixel0: RGB565 red = 0xF800 (LE: 00 F8)
+      0x00, 0xf8,
+      // pixel1: RGB565 green = 0x07E0 (LE: E0 07)
+      0xe0, 0x07,
+    ]);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B5G6R5,
+    });
+
+    expect(Array.from(out.rgba8)).toEqual([
+      // pixel0
+      255, 0, 0, 255,
+      // pixel1
+      0, 255, 0, 255,
+    ]);
+  });
+
+  it("converts B5G5R5A1 -> RGBA and expands alpha bit", () => {
+    const width = 2;
+    const height = 1;
+    const pitchBytes = width * 2;
+
+    const guest = new Uint8Array([
+      // pixel0: B5G5R5A1 red, alpha=1 => 0xFC00 (LE: 00 FC)
+      0x00, 0xfc,
+      // pixel1: B5G5R5A1 red, alpha=0 => 0x7C00 (LE: 00 7C)
+      0x00, 0x7c,
+    ]);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B5G5R5A1,
+    });
+
+    expect(Array.from(out.rgba8)).toEqual([
+      // pixel0
+      255, 0, 0, 255,
+      // pixel1
+      255, 0, 0, 0,
+    ]);
   });
 
   it("throws for invalid pitchBytes (< width*4)", () => {

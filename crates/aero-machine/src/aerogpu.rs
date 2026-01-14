@@ -761,7 +761,9 @@ impl AeroGpuMmioDevice {
                 || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B5G6R5Unorm as u32
+                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
             {
                 Some(x)
             }
@@ -787,9 +789,17 @@ impl AeroGpuMmioDevice {
             return Self::scanout0_disabled_update();
         }
 
-        // The shared scanout descriptor assumes 4 bytes per pixel (32bpp). Enforce that assumption
-        // here so consumers don't misinterpret memory.
-        let bytes_per_pixel = 4u64;
+        // The shared scanout descriptor stores pitch in bytes, and scanout consumers interpret the
+        // framebuffer layout based on the published `format`. Validate that the stride is large
+        // enough for the implied bytes-per-pixel and does not land mid-pixel between rows.
+        let bytes_per_pixel = match format {
+            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
+                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
+            {
+                2u64
+            }
+            _ => 4u64,
+        };
 
         let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {
             return Self::scanout0_disabled_update();
@@ -846,14 +856,11 @@ impl AeroGpuMmioDevice {
             return false;
         }
 
-        // WDDM scanout is currently limited to 32-bit pixel formats that the host scanout/present
-        // paths can render deterministically.
-        //
-        // Note: the shared scanout descriptor (`ScanoutStateUpdate`) is still more restrictive
-        // than the full AeroGPU format set; it only supports the packed 32bpp formats that scanout
-        // consumers can render deterministically. Keep this validation aligned with what the
-        // machine can actually render via `AeroGpuScanout0State::read_rgba8888`.
-        match self.scanout0_format {
+        // WDDM scanout is currently limited to the subset of packed formats that the host scanout
+        // pipeline (shared scanout state consumers) can render deterministically. Keep this
+        // validation aligned with what we can publish in `ScanoutStateUpdate`, and with what the
+        // machine can render via `AeroGpuScanout0State::read_rgba8888`.
+        let bytes_per_pixel = match self.scanout0_format {
             x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
                 || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
@@ -861,12 +868,15 @@ impl AeroGpuMmioDevice {
                 || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
                 || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {}
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => 4u64,
+            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
+                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
+            {
+                2u64
+            }
             _ => return false,
-        }
+        };
 
-        // Today we only accept 32-bit pixel formats.
-        let bytes_per_pixel = 4u64;
         let Some(row_bytes) = u64::from(self.scanout0_width).checked_mul(bytes_per_pixel) else {
             return false;
         };

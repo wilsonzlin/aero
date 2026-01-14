@@ -7,9 +7,9 @@ use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_shared::scanout_state::{
     ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
-    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8A8_SRGB,
-    SCANOUT_FORMAT_R8G8B8X8, SCANOUT_FORMAT_R8G8B8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_WDDM,
+    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5,
+    SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8A8_SRGB, SCANOUT_FORMAT_R8G8B8X8,
+    SCANOUT_FORMAT_R8G8B8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
 
@@ -148,11 +148,42 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     let snap = scanout_state.snapshot();
     assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8X8_SRGB);
 
+    // Program 16bpp scanout formats; these should publish the corresponding protocol discriminants.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        640 * 2,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::B5G6R5Unorm as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), fb_gpa);
+    assert_eq!(snap.width, 640);
+    assert_eq!(snap.height, 480);
+    assert_eq!(snap.pitch_bytes, 640 * 2);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B5G6R5);
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::B5G5R5A1Unorm as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), fb_gpa);
+    assert_eq!(snap.width, 640);
+    assert_eq!(snap.height, 480);
+    assert_eq!(snap.pitch_bytes, 640 * 2);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B5G5R5A1);
+
     // Program an unsupported scanout format; this must not panic and must publish a deterministic
     // disabled descriptor rather than leaking an unsupported format value to the shared state.
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
-        pci::AerogpuFormat::B5G6R5Unorm as u32,
+        pci::AerogpuFormat::D24UnormS8Uint as u32,
     );
     m.process_aerogpu();
 
