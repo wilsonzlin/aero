@@ -70,8 +70,8 @@ impl ShaderStage {
             // user (D3D) binding model stays within the baseline 4 bind groups (0..=3).
             //
             // Internal/emulation-only pipelines (vertex pulling / expansion scratch) also share
-            // `@group(3)` and use a reserved binding-number range starting at
-            // `BINDING_BASE_INTERNAL`.
+            // `@group(3)` (`BIND_GROUP_INTERNAL_EMULATION`) and use a reserved binding-number range
+            // starting at `BINDING_BASE_INTERNAL`.
             Self::Compute => 2,
             Self::Geometry | Self::Hull | Self::Domain => 3,
         }
