@@ -1498,12 +1498,11 @@ impl AeroGpuMmioDevice {
         // drivers may reuse fence values for internal submissions (e.g. NO_IRQ "best effort"
         // work). Those submissions can still contain ACMD that should be executed for correct
         // rendering, even though they do not advance the guest's completed fence.
+        // Note: we capture submissions based on the presence of a command stream, not on the fence
+        // value. Some guest drivers may submit best-effort internal work with `signal_fence=0` (or
+        // duplicate fences) that still carries important side effects (e.g. shared-surface release).
         let mut queued_for_external = false;
-        if self.backend.is_none()
-            && desc.signal_fence != 0
-            && desc.cmd_gpa != 0
-            && desc.cmd_size_bytes != 0
-        {
+        if self.backend.is_none() && desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
             let cmd_stream = capture_cmd_stream(mem, desc);
             if !cmd_stream.is_empty() {
                 let alloc_table = capture_alloc_table(mem, self.abi_version, desc);
