@@ -193,7 +193,7 @@ After publishing, you can re-download and validate the published artifacts end-t
 - chunk sizes (`Content-Length` and streamed length)
 - optional per-chunk `sha256` (streamed hashing)
 - optional `latest.json` pointer (if present under `images/<imageId>/latest.json`)
-- safety guard for absurd manifests: reject `chunkCount` above `--max-chunks` (default: 100,000,000)
+- safety guard for absurd manifests: reject `chunkCount` above `--max-chunks` (default: 500,000; matches Aero reference client bounds)
 
 `verify` supports three sources:
 
