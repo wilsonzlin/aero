@@ -691,11 +691,15 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
     PDEVICE_CONTEXT devCtx;
 
     q = StatusQ;
-    if (q == NULL || q->Vq == NULL) {
+    if (q == NULL) {
         return;
     }
 
     VirtioStatusQLock(q);
+    if (q->Vq == NULL) {
+        VirtioStatusQUnlock(q);
+        return;
+    }
 
     devCtx = (q->Device != NULL) ? VirtioInputGetDeviceContext(q->Device) : NULL;
 
