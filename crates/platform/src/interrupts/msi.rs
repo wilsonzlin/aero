@@ -138,8 +138,9 @@ mod tests {
     }
 
     fn enable_lapic_svr(ints: &PlatformInterrupts) {
-        for apic_id in 0..ints.cpu_count() {
-            enable_lapic_svr_for_apic(ints, apic_id as u8);
+        for cpu_index in 0..ints.cpu_count() {
+            let apic_id = u8::try_from(cpu_index).expect("cpu_count should fit in u8");
+            enable_lapic_svr_for_apic(ints, apic_id);
         }
     }
 
@@ -265,11 +266,8 @@ mod tests {
         // Logical destination mask bit1 -> APIC ID 1.
         ints.trigger_msi(msi_message_logical(0b10, 0x66));
 
-        assert_eq!(ints.lapic(0).get_pending_vector(), None);
-        assert_eq!(
-            ints.lapic(1).get_pending_vector(),
-            Some(0x66)
-        );
+        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x66));
     }
 
     #[test]
