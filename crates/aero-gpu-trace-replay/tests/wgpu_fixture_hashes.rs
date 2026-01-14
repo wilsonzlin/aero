@@ -316,6 +316,24 @@ fn replays_aerogpu_cmd_clear_b8g8r8x8_fixture_and_matches_hash() {
 }
 
 #[test]
+fn replays_aerogpu_cmd_clear_b8g8r8a8_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path("aerogpu_cmd_clear_b8g8r8a8.aerogputrace"))
+        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Expected frame is solid red with *transparent* alpha (A=0).
+        assert_eq!(
+            hash,
+            "cfebc54f35a07ec1e0ca01bf02e8336a69023a3a3dce2dcd34c037281a70a1b9"
+        );
+    });
+}
+
+#[test]
 fn replays_aerogpu_cmd_copy_texture2d_subrect_fixture_and_matches_hash() {
     let bytes = fs::read(fixture_path(
         "aerogpu_cmd_copy_texture2d_subrect.aerogputrace",
