@@ -739,9 +739,9 @@ To enable end-to-end testing:
       - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
         `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
       - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
-        to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by the legacy alias INF in
-        `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to enable), and the
-        driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+        to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by the optional legacy
+        virtio-input INF filename alias under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the
+        `.disabled` suffix to enable), and the driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
       - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
         an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
         to exercise the contract tablet binding specifically).
