@@ -3084,7 +3084,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Disable MSI-X for virtio-pci devices created by the harness (virtio-net/blk/input/snd) "
             "so Windows 7 must use legacy INTx + ISR paths. This appends ',vectors=0' to each virtio "
-            "`-device` arg. Aliases: --force-intx/--intx-only."
+            "`-device` arg. Requires a QEMU build that supports the virtio 'vectors' property and "
+            "accepts `vectors=0`. Aliases: --force-intx/--intx-only."
         ),
     )
     parser.add_argument(
