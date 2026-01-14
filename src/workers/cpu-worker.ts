@@ -729,6 +729,10 @@ async function runTieredVm(iterations: number, threshold: number) {
   // publishes it via two `u32` fields (relative to `cpuPtr`) so JS can bump code page versions
   // without calling back into WASM for every committed store.
   //
+  // Entries are treated as modulo-2^32 counters (`u32::MAX + 1 == 0`). When the wasm memory is a
+  // `SharedArrayBuffer`, bumps/reads use `Atomics.*` (which also wraps) for correctness under
+  // concurrency.
+  //
   // This worker caches the ptr/len + a `Uint32Array` view when possible. If the table is
   // unavailable (ptr/len == 0), we fall back to the legacy `vm.on_guest_write` callback when
   // available.
