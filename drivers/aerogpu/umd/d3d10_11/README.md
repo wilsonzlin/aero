@@ -129,7 +129,7 @@ Host-side unit tests (portable; no WDK required) for command-stream encoding and
 - `drivers/aerogpu/umd/d3d10_11/tests/gs_shader_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_shader_packets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/gs_resource_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_resource_packets_tests`) cover:
   - GS create/bind and geometry-stage resource binding packet encoding using the preferred direct `AEROGPU_SHADER_STAGE_GEOMETRY` encoding, and
   - forward-compat encoding for HS/DS via the `stage_ex` ABI extension plus the append-only extended `BIND_SHADERS` layout.
-- Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets, GS translation (`runtime/gs_translate.rs`), and strip restart semantics (`runtime/strip_to_list.rs`).
+- Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including command-stream execution smoke coverage for `AEROGPU_CMD_*` packets plus unit tests for GS translation (`runtime/gs_translate.rs`) and strip restart semantics (`runtime/strip_to_list.rs`).
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
