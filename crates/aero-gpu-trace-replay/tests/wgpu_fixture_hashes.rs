@@ -352,3 +352,20 @@ fn replays_aerogpu_cmd_cull_front_fixture_and_matches_hash() {
         );
     });
 }
+
+#[test]
+fn replays_aerogpu_cmd_present_ex_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path("aerogpu_cmd_present_ex.aerogputrace"))
+        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        assert_eq!(
+            hash,
+            "599489cc485b64aa070b1e21e8f3624f6b15c25cb408045db4ef892b3e521c17"
+        );
+    });
+}
