@@ -6789,6 +6789,12 @@ impl Machine {
                 format: SCANOUT_FORMAT_B8G8R8X8,
             });
         }
+
+        // If firmware POST failed and halted the CPU via `Bios::bios_panic`, mirror the panic text
+        // into COM1 so host runtimes that monitor serial output can surface the failure reason.
+        if self.cpu.state.halted {
+            self.mirror_bios_panic_to_serial();
+        }
         self.mem.clear_dirty();
     }
 
@@ -7381,6 +7387,12 @@ impl Machine {
         }
         let ax_after = self.cpu.state.gpr[gpr::RAX] as u16;
 
+        // If the BIOS halts the CPU during an interrupt (currently only via `bios_panic`), mirror
+        // the panic message into COM1 so host callers can surface it via the serial log.
+        if self.cpu.state.halted {
+            self.mirror_bios_panic_to_serial();
+        }
+
         // If we forced "no clear" for AeroGPU (MMIO-backed VRAM) mode sets, perform the clear
         // directly on the VRAM backing store instead of letting the BIOS run a slow byte loop.
         //
@@ -7665,6 +7677,41 @@ impl Machine {
         if !tx.is_empty() {
             self.serial_log.extend_from_slice(&tx);
         }
+    }
+
+    fn mirror_bios_panic_to_serial(&mut self) {
+        let Some(uart) = &self.serial else {
+            return;
+        };
+        let tty = self.bios.tty_output();
+        if tty.is_empty() {
+            return;
+        }
+
+        // Best-effort: extract the last non-empty line so we don't spam the full rolling TTY log
+        // (which may contain unrelated debug output).
+        let mut end = tty.len();
+        while end > 0 && tty[end - 1] == b'\n' {
+            end -= 1;
+        }
+        if end == 0 {
+            return;
+        }
+        let start = tty[..end]
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let line = &tty[start..end];
+
+        let mut uart = uart.borrow_mut();
+        for &b in b"BIOS panic: " {
+            uart.write_u8(0x3F8, b);
+        }
+        for &b in line {
+            uart.write_u8(0x3F8, b);
+        }
+        uart.write_u8(0x3F8, b'\n');
     }
 }
 
