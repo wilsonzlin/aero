@@ -6766,6 +6766,19 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
+  if (num_views == 0) {
+    return;
+  }
+  const uint64_t end_slot = static_cast<uint64_t>(start_slot) + static_cast<uint64_t>(num_views);
+  if (start_slot >= kAeroGpuD3D10MaxSrvSlots || end_slot > kAeroGpuD3D10MaxSrvSlots) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (shader_stage != AEROGPU_SHADER_STAGE_VERTEX && shader_stage != AEROGPU_SHADER_STAGE_PIXEL) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   for (UINT i = 0; i < num_views; i++) {
