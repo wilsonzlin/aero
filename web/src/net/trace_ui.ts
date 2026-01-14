@@ -175,8 +175,17 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
           : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       const handle = await openFileHandle(path, { create: true });
       const writable = await handle.createWritable();
-      await writable.write(bytesForIo);
-      await writable.close();
+      try {
+        await writable.write(bytesForIo);
+        await writable.close();
+      } catch (err) {
+        try {
+          await writable.abort(err);
+        } catch {
+          // ignore abort failures
+        }
+        throw err;
+      }
       status.textContent = `Saved capture to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
       await refreshStats?.();
     } catch (err) {
@@ -202,8 +211,17 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
             : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
         const handle = await openFileHandle(path, { create: true });
         const writable = await handle.createWritable();
-        await writable.write(bytesForIo);
-        await writable.close();
+        try {
+          await writable.write(bytesForIo);
+          await writable.close();
+        } catch (err) {
+          try {
+            await writable.abort(err);
+          } catch {
+            // ignore abort failures
+          }
+          throw err;
+        }
         status.textContent = `Saved snapshot to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
         // Snapshot does not drain; still refresh in case the backend updated stats.
         await refreshStats?.();

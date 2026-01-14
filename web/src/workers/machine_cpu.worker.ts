@@ -983,8 +983,17 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
         }
         const handle = await openFileHandle(op.path, { create: true });
         const writable = await handle.createWritable({ keepExistingData: false });
-        await writable.write(toArrayBufferUint8(bytes));
-        await writable.close();
+        try {
+          await writable.write(toArrayBufferUint8(bytes));
+          await writable.close();
+        } catch (err) {
+          try {
+            await writable.abort(err);
+          } catch {
+            // ignore abort failures
+          }
+          throw err;
+        }
       }
       postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
       return;
