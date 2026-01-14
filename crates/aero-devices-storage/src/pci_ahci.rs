@@ -153,7 +153,6 @@ impl AhciPciDevice {
         // For masked MSI vectors, `MsiCapability::trigger()` records a pending bit but does not
         // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
         // guests can observe delivery after unmask.
-        let mut mutated_msi_state = false;
         if level && (!self.last_irq_level || pending) {
             if let (Some(target), Some(msi)) = (
                 self.msi_target.as_mut(),
@@ -162,14 +161,7 @@ impl AhciPciDevice {
                 // Ignore the return value: if the guest masked the vector, the capability will set
                 // its pending bit and we should not fall back to INTx while MSI is enabled.
                 let _ = msi.trigger(&mut **target);
-                mutated_msi_state = true;
             }
-        }
-
-        if mutated_msi_state {
-            // Ensure any device-updated MSI fields (e.g. pending bit) are reflected in the backing
-            // config-space bytes so a subsequent config write (e.g. unmask) doesn't clobber them.
-            self.config.sync_capabilities();
         }
 
         self.last_irq_level = level;
