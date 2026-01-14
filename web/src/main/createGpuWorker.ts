@@ -517,7 +517,11 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
       readyReject(shutdownErr);
     }
     rejectAllPending(shutdownErr);
-    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+    try {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
+    } catch {
+      // ignore
+    }
     worker.terminate();
   }
 

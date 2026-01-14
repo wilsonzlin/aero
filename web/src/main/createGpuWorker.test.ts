@@ -118,6 +118,38 @@ describe("main/createGpuWorker", () => {
     vi.useRealTimers();
   });
 
+  it("forwards submitAerogpu opts (flags/engineId)", async () => {
+    vi.useFakeTimers();
+
+    const canvas = {
+      transferControlToOffscreen: () => ({}) as unknown as OffscreenCanvas,
+    } as unknown as HTMLCanvasElement;
+
+    const handle = createGpuWorker({ canvas, width: 2, height: 2, devicePixelRatio: 1 });
+    await handle.ready;
+
+    const submitPromise = handle.submitAerogpu(new ArrayBuffer(4), 1n, undefined, 0, { flags: 0x12, engineId: 3 });
+    // The submit message is posted in a `ready.then(...)` microtask; yield once so it runs.
+    await Promise.resolve();
+
+    let submitMsg: { flags?: unknown; engineId?: unknown } | undefined = undefined;
+    for (let i = posted.length - 1; i >= 0; i -= 1) {
+      const msg = posted[i]?.message as { type?: unknown; flags?: unknown; engineId?: unknown } | undefined;
+      if (msg?.type === "submit_aerogpu") {
+        submitMsg = msg;
+        break;
+      }
+    }
+    expect(submitMsg?.flags).toBe(0x12);
+    expect(submitMsg?.engineId).toBe(3);
+
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(submitPromise).resolves.toMatchObject({ completedFence: 1n });
+
+    handle.shutdown();
+    vi.useRealTimers();
+  });
+
   it("rejects submitAerogpu if shutdown races with submit registration", async () => {
     vi.useFakeTimers();
 
@@ -159,5 +191,28 @@ describe("main/createGpuWorker", () => {
     handle.shutdown();
 
     await expect(readyPromise).rejects.toThrow(/shutdown/i);
+  });
+
+  it("does not throw if the worker rejects the shutdown postMessage", async () => {
+    class ThrowOnShutdownWorker extends MockWorker {
+      override postMessage(message: unknown, transfer?: unknown[]): void {
+        const m = message as { type?: unknown };
+        if (m.type === "shutdown") {
+          throw new Error("shutdown rejected");
+        }
+        super.postMessage(message, transfer);
+      }
+    }
+
+    globalThis.Worker = ThrowOnShutdownWorker as unknown as typeof Worker;
+
+    const canvas = {
+      transferControlToOffscreen: () => ({}) as unknown as OffscreenCanvas,
+    } as unknown as HTMLCanvasElement;
+
+    const handle = createGpuWorker({ canvas, width: 2, height: 2, devicePixelRatio: 1 });
+    await handle.ready;
+
+    expect(() => handle.shutdown()).not.toThrow();
   });
 });
