@@ -258,7 +258,8 @@ mod tests {
     fn apic_mode_logical_destination_msi_delivers_to_matching_lapics() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
-        enable_lapic_svr(&ints);
+        enable_lapic_svr_for_apic(&ints, 0);
+        enable_lapic_svr_for_apic(&ints, 1);
 
         // Logical destination mask bit1 -> APIC ID 1.
         ints.trigger_msi(msi_message_logical(0b10, 0x66));
@@ -271,7 +272,7 @@ mod tests {
     fn apic_mode_non_fixed_delivery_mode_is_treated_as_fixed() {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
-        enable_lapic_svr(&ints);
+        enable_lapic_svr_for_apic(&ints, 0);
 
         // Delivery Mode = Lowest Priority (0b001). We currently treat it as Fixed.
         let bsp_id = ints.lapic_apic_id();
