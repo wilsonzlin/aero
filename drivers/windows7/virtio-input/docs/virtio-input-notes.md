@@ -27,9 +27,8 @@ Commonly observed IDs:
 The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pci
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
-The in-tree Aero virtio-input INFs intentionally match only **contract v1**
-hardware IDs (revision-gated `REV_01`). Subsystem-qualified IDs provide distinct
-Device Manager names:
+The in-tree Aero virtio-input INFs intentionally match only **contract v1** hardware IDs (revision-gated `REV_01`).
+Subsystem-qualified IDs provide distinct Device Manager names:
 
 - Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
 - Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`

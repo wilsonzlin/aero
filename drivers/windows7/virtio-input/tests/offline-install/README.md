@@ -17,6 +17,7 @@ test images where you want input working immediately).
 >   - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
 >   - Alias sync policy: identical to `aero_virtio_input.inf` from `[Version]` onward **except** the models sections
 >     (`[Aero.NTx86]` / `[Aero.NTamd64]`), where the alias adds the fallback match. Banner/comments may differ.
+>     See `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:

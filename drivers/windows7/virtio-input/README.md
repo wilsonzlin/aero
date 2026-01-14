@@ -116,15 +116,15 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (rev
 - `inf/aero_virtio_input.inf` (keyboard/mouse; **SUBSYS-only**):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
- - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
-   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
- - Optional legacy filename alias (disabled by default): `inf/virtio-input.inf.disabled` (rename to `inf/virtio-input.inf` to enable)
-   - For workflows/tools that still reference `virtio-input.inf`.
-   - Adds an opt-in strict revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager name:
-     **Aero VirtIO Input Device**).
-   - Allowed to diverge from `inf/aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
-     fallback entry; outside the models sections it must remain byte-for-byte identical (see `scripts/check-inf-alias.py`).
-   - Do **not** ship/install it alongside `aero_virtio_input.inf` (ship/install only one of the two filenames).
+- `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
+  - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
+- Optional legacy filename alias (disabled by default): `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+  - For workflows/tools that still reference `virtio-input.inf`.
+  - Adds an opt-in strict revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager name:
+    **Aero VirtIO Input Device**).
+  - Allowed to diverge from `inf/aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
+    fallback entry; outside the models sections it must remain byte-for-byte identical (see `scripts/check-inf-alias.py`).
+  - Do **not** ship/install it alongside `aero_virtio_input.inf` (ship/install only one of the two filenames).
 
 The subsystem-qualified IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). When binding via the

@@ -59,6 +59,12 @@ When validating the legacy filename alias INF (`virtio-input.inf{,.disabled}`), 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.
 
+If a legacy filename alias INF exists (`virtio-input.inf` / `virtio-input.inf.disabled`), the validator also checks that it:
+
+- stays byte-for-byte identical to the canonical INF outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) from the first
+  section header (`[Version]`) onward (banner/comments may differ), and
+- includes the opt-in strict generic fallback model entry (`PCI\VEN_1AF4&DEV_1052&REV_01`) in both models sections.
+
 Run it from any PowerShell prompt:
 
 ```powershell
