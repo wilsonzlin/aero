@@ -1421,6 +1421,85 @@ function Try-EmitAeroVirtioNetLargeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioSndEventqMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($matches.Count -eq 0) { return }
+
+  $line = $matches[$matches.Count - 1].Value
+  $toks = $line.Split("|")
+
+  # The guest marker is informational and typically uses INFO or SKIP, but accept PASS/FAIL
+  # if a future guest selftest implementation uses them.
+  $status = "INFO"
+  foreach ($t in $toks) {
+    if ($t.Trim() -eq "FAIL") { $status = "FAIL"; break }
+    if ($t.Trim() -eq "PASS") { $status = "PASS"; break }
+    if ($t.Trim() -eq "SKIP") { $status = "SKIP"; break }
+    if ($t.Trim() -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|$status"
+
+  # The guest SKIP marker uses a plain token (e.g. `...|SKIP|device_missing`) rather than a
+  # `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+  if ($status -eq "SKIP" -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim() -eq "SKIP") {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $out += "|reason=$(Sanitize-AeroMarkerValue $reasonTok)"
+          }
+        }
+        break
+      }
+    }
+  }
+
+  # Keep ordering stable for log scraping.
+  $ordered = @(
+    "completions",
+    "parsed",
+    "short",
+    "unknown",
+    "jack_connected",
+    "jack_disconnected",
+    "pcm_period",
+    "xrun",
+    "ctl_notify"
+  )
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  foreach ($k in ($fields.Keys | Where-Object { (-not $orderedSet.ContainsKey($_)) -and $_ -ne "reason" } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -2840,6 +2919,7 @@ try {
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
+  Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   switch ($result.Result) {

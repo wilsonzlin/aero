@@ -675,7 +675,7 @@ Newer guest selftest binaries also emit an informational marker reporting eventq
 
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`
 
-The Python host harness mirrors this into a stable host-side marker for log scraping:
+The host harness mirrors this into a stable host-side marker for log scraping:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|...`
 
