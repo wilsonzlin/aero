@@ -296,14 +296,14 @@ impl AhciPciDevice {
         config.set_u16(0x00, pci_profile.vendor_id);
         config.set_u16(0x02, pci_profile.device_id);
 
-        config.write(0x08, 1, u32::from(pci_profile.revision_id));
-        config.write(0x09, 1, u32::from(pci_profile.class.prog_if));
-        config.write(0x0a, 1, u32::from(pci_profile.class.sub_class));
-        config.write(0x0b, 1, u32::from(pci_profile.class.base_class));
+        config.set_u8(0x08, pci_profile.revision_id);
+        config.set_u8(0x09, pci_profile.class.prog_if);
+        config.set_u8(0x0a, pci_profile.class.sub_class);
+        config.set_u8(0x0b, pci_profile.class.base_class);
         config.set_u8(0x0e, pci_profile.header_type);
 
-        config.write(0x2c, 2, u32::from(pci_profile.subsystem_vendor_id));
-        config.write(0x2e, 2, u32::from(pci_profile.subsystem_id));
+        config.set_u16(0x2c, pci_profile.subsystem_vendor_id);
+        config.set_u16(0x2e, pci_profile.subsystem_id);
 
         let abar_mask = !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
         let abar = abar_base & abar_mask;

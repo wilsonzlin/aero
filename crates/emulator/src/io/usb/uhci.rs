@@ -58,9 +58,9 @@ impl UhciPciDevice {
         config.set_u16(0x02, 0x7020);
 
         // Class code: serial bus / USB / UHCI.
-        config.write(0x09, 1, 0x00); // prog IF
-        config.write(0x0a, 1, 0x03); // subclass
-        config.write(0x0b, 1, 0x0c); // class
+        config.set_u8(0x09, 0x00); // prog IF
+        config.set_u8(0x0a, 0x03); // subclass
+        config.set_u8(0x0b, 0x0c); // class
 
         // BAR4 (I/O) at 0x20.
         config.set_u32(0x20, (io_base as u32) | 0x1);

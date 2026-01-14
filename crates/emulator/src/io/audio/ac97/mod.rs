@@ -367,8 +367,8 @@ impl Ac97PciDevice {
         config.set_u16(0x02, PCI_DEVICE_ID_ICH_AC97);
 
         // Class code: multimedia / audio controller.
-        config.write(0x0a, 1, 0x01); // subclass
-        config.write(0x0b, 1, 0x04); // class
+        config.set_u8(0x0a, 0x01); // subclass
+        config.set_u8(0x0b, 0x04); // class
 
         // BAR0 (NAM) + BAR1 (NABM) are I/O space.
         let nam_base = nam_base & !(NAM_SIZE - 1);

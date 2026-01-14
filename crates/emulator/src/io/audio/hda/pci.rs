@@ -28,12 +28,12 @@ impl HdaPciDevice {
         config.set_u16(0x02, 0x2668);
 
         // Revision ID.
-        config.write(0x08, 1, 0x01);
+        config.set_u8(0x08, 0x01);
 
         // Class code: Multimedia controller / HD Audio.
-        config.write(0x09, 1, 0x00); // prog IF
-        config.write(0x0a, 1, 0x03); // subclass (HD Audio)
-        config.write(0x0b, 1, 0x04); // class (multimedia)
+        config.set_u8(0x09, 0x00); // prog IF
+        config.set_u8(0x0a, 0x03); // subclass (HD Audio)
+        config.set_u8(0x0b, 0x04); // class (multimedia)
 
         // Subsystem vendor/device.
         config.set_u16(0x2c, 0x8086);

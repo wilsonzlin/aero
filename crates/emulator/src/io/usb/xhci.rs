@@ -81,14 +81,14 @@ impl XhciPciDevice {
         // that bind based on class code).
         config.set_u16(0x00, PCI_VENDOR_ID_REDHAT_QEMU);
         config.set_u16(0x02, PCI_DEVICE_ID_QEMU_XHCI);
-        config.write(0x08, 1, 0x01); // revision ID (AERO xHCI contract)
+        config.set_u8(0x08, 0x01); // revision ID (AERO xHCI contract)
         config.set_u16(0x2c, PCI_VENDOR_ID_REDHAT_QEMU);
         config.set_u16(0x2e, PCI_DEVICE_ID_QEMU_XHCI);
 
         // Class code: serial bus / USB / xHCI.
-        config.write(0x09, 1, 0x30); // prog IF (xHCI)
-        config.write(0x0a, 1, 0x03); // subclass (USB)
-        config.write(0x0b, 1, 0x0c); // class (serial bus)
+        config.set_u8(0x09, 0x30); // prog IF (xHCI)
+        config.set_u8(0x0a, 0x03); // subclass (USB)
+        config.set_u8(0x0b, 0x0c); // class (serial bus)
 
         // BAR0 (MMIO) at 0x10.
         config.set_u32(0x10, mmio_base);

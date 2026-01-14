@@ -62,9 +62,9 @@ impl EhciPciDevice {
         config.set_u16(0x02, 0x293a);
 
         // Class code: serial bus / USB / EHCI.
-        config.write(0x09, 1, 0x20); // prog IF
-        config.write(0x0a, 1, 0x03); // subclass
-        config.write(0x0b, 1, 0x0c); // class
+        config.set_u8(0x09, 0x20); // prog IF
+        config.set_u8(0x0a, 0x03); // subclass
+        config.set_u8(0x0b, 0x0c); // class
 
         // BAR0 (MMIO).
         let mmio_base = mmio_base & !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;

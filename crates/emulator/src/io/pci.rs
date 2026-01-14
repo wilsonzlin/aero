@@ -81,15 +81,26 @@ impl PciConfigSpace {
         // Treat the Status bytes as write-ignored here to keep legacy emulator wrappers closer to
         // real PCI behavior.
         let status_range = 0x06..0x08;
-        // Header Type (0x0E) and Interrupt Pin (0x3D) are read-only. Guests may issue wider writes
-        // that overlap these bytes (e.g. dword stores at 0x0C or 0x3C); those writes must not
-        // clobber device-reported values.
+        // Identity / header bytes are read-only on real PCI hardware. Guests may issue wider
+        // writes that overlap these bytes (e.g. dword stores at 0x0C or 0x3C); those writes must
+        // not clobber device-reported values.
+        let read_only_range0 = 0x00..0x04; // vendor/device ID
+        let read_only_range1 = 0x08..0x0c; // revision + class code
+        let read_only_range2 = 0x2c..0x30; // subsystem IDs
         let header_type = 0x0e;
         let interrupt_pin = 0x3d;
+        let cap_ptr = 0x34;
 
         for i in 0..size {
             let addr = offset + i;
-            if status_range.contains(&addr) || addr == header_type || addr == interrupt_pin {
+            if status_range.contains(&addr)
+                || read_only_range0.contains(&addr)
+                || read_only_range1.contains(&addr)
+                || read_only_range2.contains(&addr)
+                || addr == header_type
+                || addr == interrupt_pin
+                || addr == cap_ptr
+            {
                 continue;
             }
             self.data[addr] = ((value >> (8 * i)) & 0xFF) as u8;

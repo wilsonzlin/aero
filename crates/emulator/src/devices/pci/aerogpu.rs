@@ -138,9 +138,9 @@ impl AeroGpuPciDevice {
         config_space.set_u16(0x2c, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID);
         config_space.set_u16(0x2e, AEROGPU_PCI_SUBSYSTEM_ID);
 
-        config_space.write(0x09, 1, AEROGPU_PCI_PROG_IF as u32);
-        config_space.write(0x0a, 1, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE as u32);
-        config_space.write(0x0b, 1, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER as u32);
+        config_space.set_u8(0x09, AEROGPU_PCI_PROG_IF);
+        config_space.set_u8(0x0a, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
+        config_space.set_u8(0x0b, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER);
 
         // BAR0 (MMIO regs), non-prefetchable 32-bit.
         let bar0 = bar0 & !(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
