@@ -1078,6 +1078,91 @@ def _test_if_range_matches_etag(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+def _test_if_range_matches_last_modified(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    max_body_bytes: int,
+    size: int | None,
+    last_modified: str | None,
+    strict: bool,
+) -> TestResult:
+    name = "GET: Range + If-Range (Last-Modified date) returns 206"
+    if size is None:
+        return TestResult(name=name, status="SKIP", details="skipped (size unknown)")
+    if last_modified is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified from HEAD)")
+
+    # The HTTP-date form of If-Range is optional but useful when a server advertises Last-Modified
+    # without a strong ETag. Treat non-206 behavior as WARN (unless strict mode is enabled).
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
+            "Range": "bytes=0-0",
+            "If-Range": last_modified,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
+        )
+        _require_cors(resp, origin)
+
+        if resp.status != 206:
+            if resp.status in (200, 412):
+                truncated = " (body truncated by safety cap)" if resp.body_truncated else ""
+                content_length = _header(resp, "Content-Length")
+                content_length_msg = (
+                    f"; Content-Length={content_length}" if content_length is not None else ""
+                )
+                message = (
+                    "server did not accept If-Range in HTTP-date form; "
+                    f"expected 206 but got {resp.status} (Range likely ignored)"
+                )
+                if strict:
+                    return TestResult(
+                        name=name,
+                        status="FAIL",
+                        details=f"{message}; read {len(resp.body)} bytes{truncated} (cap {_fmt_bytes(max_body_bytes)}){content_length_msg}",
+                    )
+                return TestResult(
+                    name=name,
+                    status="WARN",
+                    details=f"{message}; read {len(resp.body)} bytes{truncated} (cap {_fmt_bytes(max_body_bytes)}){content_length_msg}",
+                )
+            raise TestFailure(f"expected 206, got {resp.status}")
+
+        # Validate the ranged response similarly to `_test_get_range`, but keep the error surface
+        # minimal since this is an optional check.
+        content_range = _header(resp, "Content-Range")
+        _require(content_range is not None, "missing Content-Range header")
+        start, end, total = _parse_content_range(content_range)
+        _require(start == 0 and end == 0, f"expected bytes 0-0, got {start}-{end}")
+        _require(total == size, f"expected total size {size}, got {total}")
+
+        if resp.body_truncated:
+            raise TestFailure(
+                "response body was truncated by safety cap; "
+                f"expected 1 byte but only read {len(resp.body)} bytes "
+                f"(cap {_fmt_bytes(max_body_bytes)}). "
+                "Fix server to respect Range/If-Range, or increase --max-body-bytes to debug."
+            )
+        _require(len(resp.body) == 1, f"expected body length 1, got {len(resp.body)}")
+
+        return TestResult(name=name, status="PASS", details=f"Content-Range={content_range!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
 def _test_etag_strength(etag: str | None) -> TestResult:
     name = "HEAD: ETag is strong (recommended for If-Range)"
     if etag is None:
@@ -2649,6 +2734,18 @@ def main(argv: Sequence[str]) -> int:
             max_body_bytes=max_body_bytes,
             size=size,
             etag=etag,
+            strict=strict,
+        )
+    )
+    results.append(
+        _test_if_range_matches_last_modified(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
+            size=size,
+            last_modified=last_modified,
             strict=strict,
         )
     )

@@ -26,6 +26,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - `If-Range` semantics (defence against mixed-version bytes):
   - `GET Range` with `If-Range: <strong-etag>` returns `206` (skipped if ETag is missing or weak)
   - `GET Range` with `If-Range: "mismatch"` returns `200` (preferred) or `412`
+  - (Optional) `GET Range` with `If-Range: <last-modified>` (HTTP-date form) returns `206` (WARN if not)
 - (Recommended) `ETag` is a strong validator (not `W/"..."`) so `If-Range` can be used safely
 - Conditional caching works when validators are present:
   - `GET` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
