@@ -926,7 +926,18 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
-    GuestMemorySizeMismatch { expected: u64, actual: u64 },
+    GuestMemorySizeMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    /// Legacy VGA/VBE LFB range falls outside the ACPI-reported PCI MMIO window, which means the
+    /// linear framebuffer will not be reachable via the PCI MMIO router when the PC platform is
+    /// enabled.
+    VgaLfbOutsidePciMmioWindow {
+        requested_base: u32,
+        aligned_base: u32,
+        size: u32,
+    },
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -966,6 +977,22 @@ impl fmt::Display for MachineError {
                 f,
                 "guest RAM backing size mismatch: expected {expected} bytes, got {actual} bytes"
             ),
+            MachineError::VgaLfbOutsidePciMmioWindow {
+                requested_base,
+                aligned_base,
+                size,
+            } => {
+                let requested_base = *requested_base;
+                let aligned_base = *aligned_base;
+                let size = *size;
+                let window_start = PCI_MMIO_BASE;
+                let window_end = PCI_MMIO_BASE + PCI_MMIO_SIZE;
+                let lfb_end = u64::from(aligned_base).saturating_add(u64::from(size));
+                write!(
+                    f,
+                    "invalid vga_lfb_base for enable_pc_platform=true: requested={requested_base:#010x}, aligned={aligned_base:#010x}, size={size:#x} => LFB window [{aligned_base:#010x}, {lfb_end:#010x}) must fit inside PCI MMIO window [{window_start:#010x}, {window_end:#010x})"
+                )
+            }
             MachineError::AeroGpuRequiresPcPlatform => {
                 write!(
                     f,
@@ -4803,6 +4830,24 @@ impl Machine {
             }
             if cfg.enable_vga {
                 return Err(MachineError::AeroGpuConflictsWithVga);
+            }
+        }
+        if cfg.enable_pc_platform && cfg.enable_vga && !cfg.enable_aerogpu {
+            // The standalone legacy VGA/VBE LFB aperture is mapped directly inside the ACPI PCI
+            // MMIO window by the full PCI MMIO router. Validate that the configured base can be
+            // reached via that window.
+            let bar_size = Self::legacy_vga_pci_bar_size_bytes_for_cfg(cfg);
+            let (requested_base, aligned_base) = Self::legacy_vga_lfb_base_for_cfg(cfg, bar_size);
+            let base_u64 = u64::from(aligned_base);
+            let end_u64 = base_u64.saturating_add(u64::from(bar_size));
+            let window_start = PCI_MMIO_BASE;
+            let window_end = PCI_MMIO_BASE + PCI_MMIO_SIZE;
+            if base_u64 < window_start || end_u64 > window_end {
+                return Err(MachineError::VgaLfbOutsidePciMmioWindow {
+                    requested_base,
+                    aligned_base,
+                    size: bar_size,
+                });
             }
         }
         if (cfg.enable_ahci
@@ -12101,9 +12146,12 @@ impl Machine {
     }
 
     fn legacy_vga_pci_bar_size_bytes(&self) -> u32 {
+        Self::legacy_vga_pci_bar_size_bytes_for_cfg(&self.cfg)
+    }
+
+    fn legacy_vga_pci_bar_size_bytes_for_cfg(cfg: &MachineConfig) -> u32 {
         // PCI BAR sizing must be a power of two, and the `Mmio32` definition expects a `u32`.
-        let vram_size = self
-            .cfg
+        let vram_size = cfg
             .vga_vram_size_bytes
             .unwrap_or(aero_gpu_vga::DEFAULT_VRAM_SIZE)
             .max(aero_gpu_vga::VGA_VRAM_SIZE);
@@ -12116,21 +12164,26 @@ impl Machine {
     }
 
     fn legacy_vga_lfb_base(&self) -> u32 {
-        // Keep the device model and PCI BAR base coherent by aligning down to the BAR size (PCI
-        // config space masks BAR bases to the size's alignment).
-        let lfb_offset = self
-            .cfg
+        let bar_size = self.legacy_vga_pci_bar_size_bytes();
+        Self::legacy_vga_lfb_base_for_cfg(&self.cfg, bar_size).1
+    }
+
+    fn legacy_vga_lfb_base_for_cfg(cfg: &MachineConfig, bar_size: u32) -> (u32, u32) {
+        // Keep the device model and LFB aperture base coherent by aligning down to the window size
+        // (PCI config space masks BAR bases to the size's alignment, and the legacy VGA LFB uses
+        // the same power-of-two alignment requirement).
+        let lfb_offset = cfg
             .vga_lfb_offset
             .unwrap_or(aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32);
-        let base = if let Some(base) = self.cfg.vga_lfb_base {
+        let requested_base = if let Some(base) = cfg.vga_lfb_base {
             base
-        } else if let Some(vram_bar_base) = self.cfg.vga_vram_bar_base {
+        } else if let Some(vram_bar_base) = cfg.vga_vram_bar_base {
             vram_bar_base.wrapping_add(lfb_offset)
         } else {
             aero_gpu_vga::SVGA_LFB_BASE
         };
-        let bar_size = self.legacy_vga_pci_bar_size_bytes();
-        base & !(bar_size.saturating_sub(1))
+        let aligned_base = requested_base & !(bar_size.saturating_sub(1));
+        (requested_base, aligned_base)
     }
 
     fn legacy_vga_device_config(&self) -> VgaConfig {

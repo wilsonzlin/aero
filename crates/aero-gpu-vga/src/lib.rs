@@ -69,7 +69,7 @@ pub const VGA_PCI_DEVICE_ID: u16 = 0x1111;
 pub const VGA_PCI_CLASS_CODE: u8 = 0x03;
 /// PCI subclass for a VGA-compatible controller.
 pub const VGA_PCI_SUBCLASS: u8 = 0x00;
-/// PCI programming interface for the Bochs/QEMU VGA stub.
+/// PCI programming interface for the Bochs/QEMU "Standard VGA" device.
 pub const VGA_PCI_PROG_IF: u8 = 0x00;
 
 /// Full legacy VGA I/O decode range, including the mono + color CRTC aliasing ranges.

@@ -195,6 +195,34 @@ fn enable_aerogpu_requires_enable_pc_platform() {
 }
 
 #[test]
+fn vga_lfb_base_must_live_inside_pci_mmio_window_when_pc_platform_enabled() {
+    // `0xB000_0000` is the canonical PCIe ECAM base, which is outside the ACPI PCI MMIO BAR window
+    // (`0xC000_0000..0xFEC0_0000`). The standalone legacy VGA/VBE LFB must not be placed here when
+    // the PC platform is enabled because it would be unreachable via the PCI MMIO router.
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_lfb_base: Some(0xB000_0000),
+        ..Default::default()
+    };
+
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("vga_lfb_base outside PCI MMIO window must be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(
+        err,
+        MachineError::VgaLfbOutsidePciMmioWindow { .. }
+    ));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("vga_lfb_base") && msg.contains("PCI MMIO"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[test]
 fn enable_virtio_net_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
