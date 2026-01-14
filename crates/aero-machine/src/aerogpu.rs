@@ -2,7 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use aero_devices::clock::ManualClock;
+use aero_devices::clock::{Clock as _, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use aero_devices_gpu::ring::{
@@ -1272,6 +1272,11 @@ impl AeroGpuMmioDevice {
 
     pub fn process(&mut self, mem: &mut dyn MemoryBus) {
         let dma_enabled = self.bus_master_enabled();
+        let now_ns = self
+            .clock
+            .as_ref()
+            .map(|clock| clock.now_ns())
+            .unwrap_or(self.now_ns);
 
         // Poll backend completions before ticking vblank so vsync-paced fences can complete on the
         // current vblank edge when ready.
@@ -1282,7 +1287,7 @@ impl AeroGpuMmioDevice {
         // Preserve the emulator device model ordering: keep the vblank clock caught up to "now"
         // before processing newly-submitted work, so vsync pacing can't complete on an already-
         // elapsed vblank edge.
-        self.tick_vblank(self.now_ns);
+        self.tick_vblank(now_ns);
 
         // Ring control RESET is an MMIO write-side effect, but touching the ring header requires
         // DMA; perform the actual memory update from the machine's device tick path when bus
