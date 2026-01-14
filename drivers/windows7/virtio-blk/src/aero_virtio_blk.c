@@ -120,22 +120,23 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   }
 
   /*
-   * Vector programming failed (readback NO_VECTOR): fall back to INTx.
+   * Vector programming failed (readback NO_VECTOR).
    *
-   * Note: on Aero contract devices, MSI-X is exclusive when enabled at the PCI layer.
-   * Therefore we must not proceed with MSI-X enabled but virtio vectors left at
-   * NO_VECTOR (interrupts would be suppressed). We explicitly disable MSI-X routing
-   * and switch to the INTx path instead.
+   * On Aero contract devices, MSI-X is exclusive when enabled at the PCI layer:
+   * leaving msix_config/queue_msix_vector at NO_VECTOR suppresses interrupts
+   * (and there is no INTx fallback). If Windows assigned message interrupts but
+   * the device refuses vector routing, the adapter cannot operate safely.
+   *
+   * Best-effort cleanup: clear virtio MSI-X routing registers, then fail
+   * initialization so StorPort does not proceed with an interrupt-less adapter.
    */
-  devExt->UseMsi = FALSE;
-  devExt->MsiMessageCount = 0;
   devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
   devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
 #if DBG
-  AEROVBLK_LOG("msix routing failed st=0x%08lx; falling back to INTx", (unsigned long)st);
+  AEROVBLK_LOG("msix routing failed st=0x%08lx; failing bring-up", (unsigned long)st);
 #endif
   (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
-  return TRUE;
+  return FALSE;
 }
 
 static __forceinline virtio_bool_t AerovblkVirtqueueKickPrepareContractV1(_Inout_ virtqueue_split_t* Vq) {
