@@ -239,4 +239,29 @@ describe("workers/vm_snapshot_wasm", () => {
 
     expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
   });
+
+  it("parses gpu.vram chunk payload header as legacy AERO (version/flags)", () => {
+    // gpu.vram chunks intentionally start with an 8-byte legacy `AERO` header so the WASM snapshot
+    // builder derives unique `(version, flags)` tuples for each chunk (flags = chunk_index).
+    //
+    // The payload is larger than 16 bytes and includes a non-ASCII marker in the io-snapshot
+    // `device_id` slot, so this must *not* be interpreted as an aero-io-snapshot TLV header.
+    const bytes = new Uint8Array(24);
+    bytes[0] = 0x41;
+    bytes[1] = 0x45;
+    bytes[2] = 0x52;
+    bytes[3] = 0x4f;
+    // version=1, flags=7
+    bytes[4] = 0x01;
+    bytes[5] = 0x00;
+    bytes[6] = 0x07;
+    bytes[7] = 0x00;
+    // Non-ASCII "magic" in the would-be device-id slot (matches `gpu.vram` chunk magic: 0x01415256).
+    bytes[8] = 0x56;
+    bytes[9] = 0x52;
+    bytes[10] = 0x41;
+    bytes[11] = 0x01;
+
+    expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 1, flags: 7 });
+  });
 });
