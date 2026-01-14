@@ -3,6 +3,7 @@ mod aerogpu_format_conformance;
 mod command_processor;
 mod dirty_rect;
 mod frame_source;
+mod presenter_dirty_rect;
 mod protocol_parser;
 mod shader_validation;
 mod shared_surface;
