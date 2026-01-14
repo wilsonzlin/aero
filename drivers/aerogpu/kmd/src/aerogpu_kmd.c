@@ -1515,6 +1515,29 @@ static __forceinline BOOLEAN AeroGpuContigPoolClassForSize(_In_ SIZE_T Size, _Ou
     return TRUE;
 }
 
+static __forceinline BOOLEAN AeroGpuRoundUpToPageSize(_In_ SIZE_T Size, _Out_ SIZE_T* RoundedOut)
+{
+    if (!RoundedOut) {
+        return FALSE;
+    }
+    *RoundedOut = 0;
+
+    if (Size == 0) {
+        return FALSE;
+    }
+
+    if (Size > ((SIZE_T)-1) - ((SIZE_T)PAGE_SIZE - 1)) {
+        return FALSE;
+    }
+
+    const SIZE_T rounded = (Size + (SIZE_T)PAGE_SIZE - 1) & ~((SIZE_T)PAGE_SIZE - 1);
+    if (rounded == 0) {
+        return FALSE;
+    }
+    *RoundedOut = rounded;
+    return TRUE;
+}
+
 static VOID AeroGpuContigPoolInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     if (!Adapter) {
@@ -1656,6 +1679,19 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
     SIZE_T allocSize = 0;
     const BOOLEAN poolEligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
 
+    SIZE_T requestBytes = 0;
+    if (poolEligible) {
+        requestBytes = allocSize;
+    } else {
+        /*
+         * MmAllocateContiguousMemorySpecifyCache ultimately deals in pages. Always round up so our
+         * alloc/free sizes match and we can deterministically clear any tail slack bytes.
+         */
+        if (!AeroGpuRoundUpToPageSize(Size, &requestBytes)) {
+            return NULL;
+        }
+    }
+
     PVOID va = NULL;
     BOOLEAN poolHit = FALSE;
     if (poolEligible) {
@@ -1695,7 +1731,6 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
     }
 
     if (!va) {
-        const SIZE_T requestBytes = allocSize ? allocSize : Size;
         va = MmAllocateContiguousMemorySpecifyCache(requestBytes, low, high, boundary, MmNonCached);
         if (va) {
 #if DBG
@@ -1709,14 +1744,14 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
     }
 
     /*
-     * Pool allocations are page-rounded. Ensure the tail slack (bytes beyond the requested Size)
-     * is zeroed so no stale kernel data is left in memory that might be observed by the device
-     * (for example if a host-side implementation were to DMA whole pages).
+     * Contiguous allocations are page-rounded. Ensure the tail slack (bytes beyond the requested
+     * Size) is zeroed so no stale kernel data is left in memory that might be observed by the
+     * device (for example if a host-side implementation were to DMA whole pages).
      *
      * This preserves the "no-init" contract for [0, Size) while making the page tail deterministic.
      */
-    if (poolEligible && allocSize > Size) {
-        RtlZeroMemory((PUCHAR)va + Size, allocSize - Size);
+    if (requestBytes > Size) {
+        RtlZeroMemory((PUCHAR)va + Size, requestBytes - Size);
     }
 
     *Pa = MmGetPhysicalAddress(va);
@@ -1740,7 +1775,18 @@ static PVOID AeroGpuAllocContiguous(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ SIZE_
     UINT classIndex = 0;
     SIZE_T allocSize = 0;
     const BOOLEAN eligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
-    const SIZE_T zeroBytes = (eligible && allocSize) ? allocSize : Size;
+    SIZE_T zeroBytes = 0;
+    if (eligible && allocSize) {
+        zeroBytes = allocSize;
+    } else {
+        if (!AeroGpuRoundUpToPageSize(Size, &zeroBytes)) {
+            /*
+             * The allocation already succeeded, so failing to round here would be unexpected.
+             * Fall back to best-effort initialization of the requested range.
+             */
+            zeroBytes = Size;
+        }
+    }
     RtlZeroMemory(va, zeroBytes);
     return va;
 }
@@ -1759,16 +1805,23 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
     UINT classIndex = 0;
     SIZE_T allocSize = 0;
     const BOOLEAN eligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
-    const SIZE_T freeBytes = allocSize ? allocSize : Size;
+    SIZE_T freeBytes = 0;
+    if (eligible && allocSize) {
+        freeBytes = allocSize;
+    } else {
+        if (!AeroGpuRoundUpToPageSize(Size, &freeBytes)) {
+            /* Best-effort teardown: fall back to the caller-provided size. */
+            freeBytes = Size;
+        }
+    }
 
     if (!Adapter) {
         /*
          * Even though the pool is adapter-scoped, keep freeing correct when an adapter context
          * isn't available (e.g. best-effort cleanup during partial init/teardown paths).
          *
-         * Note: allocations made by AeroGpuAllocContiguous* are page-rounded when eligible for
-         * pooling, so the size passed to MmFreeContiguousMemorySpecifyCache must match the
-         * rounded allocation size.
+         * Note: allocations made by AeroGpuAllocContiguous* are page-rounded, so the size passed
+         * to MmFreeContiguousMemorySpecifyCache must match the rounded allocation size.
          */
         MmFreeContiguousMemorySpecifyCache(Va, freeBytes, MmNonCached);
         return;
