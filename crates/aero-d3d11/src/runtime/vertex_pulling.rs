@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::binding_model::BINDING_BASE_INTERNAL;
+use crate::binding_model::{BINDING_BASE_INTERNAL, BIND_GROUP_INTERNAL_EMULATION};
 use crate::input_layout::{
     dxgi_format_info, InputLayoutBinding, InputLayoutError, SignatureSemanticKey,
     VsInputSignatureElement, MAX_WGPU_VERTEX_ATTRIBUTES, MAX_WGPU_VERTEX_BUFFERS,
@@ -21,11 +21,12 @@ use crate::input_layout::{
 
 /// Reserved bind-group index for IA vertex pulling resources.
 ///
-/// Group indices `0..=2` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS
-/// resources. Extended D3D11 stages (GS/HS/DS) also map to `@group(3)` so we stay within WebGPU's
-/// baseline `maxBindGroups >= 4` limit. Vertex pulling uses the same group for compute pipelines
-/// that need IA buffers, so it must use a disjoint `@binding` range within the group.
-pub const VERTEX_PULLING_GROUP: u32 = 3;
+/// Group indices `0..=3` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS and
+/// extended D3D11 stage (GS/HS/DS) resources.
+///
+/// Vertex pulling is an internal/emulation-only mechanism, so it uses a dedicated bind group index
+/// (`@group(4)`) reserved for internal emulation pipelines.
+pub const VERTEX_PULLING_GROUP: u32 = BIND_GROUP_INTERNAL_EMULATION;
 
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources
 /// within [`VERTEX_PULLING_GROUP`].

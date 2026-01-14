@@ -3,10 +3,8 @@ mod common;
 use std::collections::BTreeMap;
 
 use aero_d3d11::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
-use aero_d3d11::runtime::vertex_pulling::{
-    VertexPullingLayout, VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING,
-    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
-};
+use aero_d3d11::runtime::bindings::ShaderStage as RuntimeShaderStage;
+use aero_d3d11::runtime::vertex_pulling::{VertexPullingLayout, VERTEX_PULLING_GROUP};
 use anyhow::{anyhow, Result};
 
 async fn create_device(bool_fallback: bool) -> Result<(wgpu::Device, bool)> {
@@ -101,7 +99,11 @@ fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
         let gs_t0_binding = BINDING_BASE_TEXTURE + 0;
         let gs_s0_binding = BINDING_BASE_SAMPLER + 0;
 
-        assert_eq!(VERTEX_PULLING_GROUP, 3);
+        // Extended D3D11 stages (GS/HS/DS) share bind group 3 in the binding model, while vertex
+        // pulling uses a dedicated internal emulation bind group.
+        let gs_group = RuntimeShaderStage::Geometry.as_bind_group_index();
+        assert_eq!(gs_group, 3);
+        assert_eq!(VERTEX_PULLING_GROUP, 4);
 
         let wgsl = format!(
             r#"
@@ -111,9 +113,9 @@ struct GsCb0 {{
   v: vec4<u32>,
 }};
 
-@group({group}) @binding({cb0}) var<uniform> gs_cb0: GsCb0;
-@group({group}) @binding({t0}) var gs_t0: texture_2d<f32>;
-@group({group}) @binding({s0}) var gs_s0: sampler;
+@group({gs_group}) @binding({cb0}) var<uniform> gs_cb0: GsCb0;
+@group({gs_group}) @binding({t0}) var gs_t0: texture_2d<f32>;
+@group({gs_group}) @binding({s0}) var gs_s0: sampler;
 
 @compute @workgroup_size(1)
 fn main() {{
@@ -125,21 +127,22 @@ fn main() {{
   let _mix: f32 = c.x + f32(x + y + z);
 }}
 "#,
-            group = VERTEX_PULLING_GROUP,
+            gs_group = gs_group,
             cb0 = gs_cb0_binding,
             t0 = gs_t0_binding,
             s0 = gs_s0_binding,
         );
 
-        // Bind group layouts for groups 0..2 are empty; group 3 carries the combined bindings.
+        // Bind group layouts for groups 0..2 are empty; group 3 carries the GS bindings; group 4
+        // carries the vertex pulling bindings.
         let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gs+vertex pulling empty bgl"),
             entries: &[],
         });
 
-        // Group 3 layout must contain both the per-stage D3D bindings and the vertex pulling bindings.
+        // Group 3 layout contains the per-stage D3D bindings for GS.
         let group3_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gs+vertex pulling group3 bgl"),
+            label: Some("gs binding bgl"),
             entries: &[
                 // GS cbuffer b0.
                 wgpu::BindGroupLayoutEntry {
@@ -169,29 +172,9 @@ fn main() {{
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Vertex pulling slot 0 + uniform.
-                wgpu::BindGroupLayoutEntry {
-                    binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: VERTEX_PULLING_UNIFORM_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
+        let vp_bgl = pulling.create_bind_group_layout(&device);
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -199,8 +182,8 @@ fn main() {{
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        let layouts: [&wgpu::BindGroupLayout; 4] =
-            [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl];
+        let layouts: [&wgpu::BindGroupLayout; 5] =
+            [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl, &vp_bgl];
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gs+vertex pulling pipeline layout"),
             bind_group_layouts: &layouts,
@@ -219,7 +202,7 @@ fn main() {{
         let err = device.pop_error_scope().await;
         assert!(
             err.is_none(),
-            "expected pipeline creation to succeed with disjoint group3 bindings, got: {err:?}"
+            "expected pipeline creation to succeed with disjoint GS+vertex pulling bindings, got: {err:?}"
         );
     });
 }
