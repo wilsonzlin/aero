@@ -4977,6 +4977,10 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       try {
+        const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+        if (vmRuntime === "machine") {
+          throw new Error("HDA codec state export is unavailable in vmRuntime=machine.");
+        }
         const ioWorker = workerCoordinator.getIoWorker();
         if (!ioWorker) {
           throw new Error("I/O worker is not running. Start workers before exporting HDA codec state.");
@@ -5028,6 +5032,10 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       try {
+        const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+        if (vmRuntime === "machine") {
+          throw new Error("HDA controller state export is unavailable in vmRuntime=machine.");
+        }
         const ioWorker = workerCoordinator.getIoWorker();
         if (!ioWorker) {
           throw new Error("I/O worker is not running. Start workers before exporting HDA controller state.");
@@ -5333,6 +5341,10 @@ function renderAudioPanel(): HTMLElement {
 
         // HDA codec debug state (best-effort).
         try {
+          const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+          if (vmRuntime === "machine") {
+            throw new Error("HDA codec state is unavailable in vmRuntime=machine.");
+          }
           const ioWorker = workerCoordinator.getIoWorker();
           if (!ioWorker) throw new Error("I/O worker is not running.");
           const requestId = hdaCodecDebugRequestId++;
@@ -5386,6 +5398,10 @@ function renderAudioPanel(): HTMLElement {
         // HDA controller snapshot bytes (best-effort). Useful for debugging guest driver behavior;
         // this is a small deterministic blob (no guest RAM).
         try {
+          const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+          if (vmRuntime === "machine") {
+            throw new Error("HDA controller state is unavailable in vmRuntime=machine.");
+          }
           const ioWorker = workerCoordinator.getIoWorker();
           if (!ioWorker) throw new Error("I/O worker is not running.");
           const requestId = hdaSnapshotStateRequestId++;
@@ -5428,6 +5444,10 @@ function renderAudioPanel(): HTMLElement {
         // HDA tick clamp stats (best-effort). These are useful even when tracing is disabled,
         // because they surface whether the IO worker has been clamping large host time deltas.
         try {
+          const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+          if (vmRuntime === "machine") {
+            throw new Error("HDA tick stats are unavailable in vmRuntime=machine.");
+          }
           const ioWorker = workerCoordinator.getIoWorker();
           if (!ioWorker) throw new Error("I/O worker is not running.");
           const requestId = hdaTickStatsRequestId++;
@@ -5481,6 +5501,10 @@ function renderAudioPanel(): HTMLElement {
         // virtio-snd PCI function snapshot bytes (best-effort). Useful when the runtime is using
         // virtio-snd (e.g. HDA omitted) or when debugging the virtio driver stack.
         try {
+          const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+          if (vmRuntime === "machine") {
+            throw new Error("virtio-snd state is unavailable in vmRuntime=machine.");
+          }
           const ioWorker = workerCoordinator.getIoWorker();
           if (!ioWorker) throw new Error("I/O worker is not running.");
           const requestId = virtioSndSnapshotStateRequestId++;
