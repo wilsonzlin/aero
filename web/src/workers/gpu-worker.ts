@@ -2126,24 +2126,24 @@ const presentOnce = async (): Promise<boolean> => {
       const predictedDirtyCount = chosenDirtyRects ? chosenDirtyRects.length : 0;
       const result = await presentFn(chosenDirtyRects);
       const didPresent = didPresenterPresent(result);
-      if (didPresent) {
-        lastPresentUploadKind = predictedKind;
-        lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
-        const hasBasePaddr =
-          !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
-        // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
-        // does not clobber the active scanout with a stale shared framebuffer upload.
-        aerogpuLastOutputSource = wddmOwnsScanout
-          ? hasBasePaddr
-            ? "wddm_scanout"
-            : "aerogpu"
-          : (frame?.outputSource ?? "framebuffer");
-        clearSharedFramebufferDirty();
-      } else if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback)) {
-        // Even if the custom present() declined to draw, WDDM ownership means the legacy
-        // shared framebuffer must not "steal" the output later.
-        clearSharedFramebufferDirty();
-      }
+        if (didPresent) {
+          lastPresentUploadKind = predictedKind;
+          lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
+          const hasBasePaddr =
+            !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+          // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
+          // does not clobber the active scanout with a stale shared framebuffer upload.
+          aerogpuLastOutputSource = wddmOwnsScanout
+            ? hasBasePaddr
+              ? "wddm_scanout"
+              : "aerogpu"
+            : (frame?.outputSource ?? "framebuffer");
+        }
+        // Even when a frame is intentionally dropped (e.g. surface timeout/outdated), clear the
+        // shared framebuffer dirty flag: the frame was consumed by the worker and retrying
+        // immediately can cause tick storms / stall producers. Drops are still accounted for via
+      // the returned boolean and worker metrics.
+      clearSharedFramebufferDirty();
       return didPresent;
     }
 
