@@ -1354,3 +1354,42 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
 fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
     start_a < end_b && start_b < end_a
 }
+
+// Compile-time guard: QCOW2 parent disks must not require `Send` on wasm32 so browser backends can
+// wrap JS/OPFS handles (which are typically `!Send`).
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+mod wasm_backing_send_bounds_check {
+    use std::rc::Rc;
+
+    use crate::{MemBackend, Result, VirtualDisk};
+
+    use super::Qcow2Disk;
+
+    #[derive(Debug)]
+    struct NotSendDisk(Rc<()>);
+
+    impl VirtualDisk for NotSendDisk {
+        fn capacity_bytes(&self) -> u64 {
+            0
+        }
+
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> Result<()> {
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn assert_qcow2_parent_can_be_non_send() {
+        let backend = MemBackend::new();
+        let parent: Box<dyn VirtualDisk> = Box::new(NotSendDisk(Rc::new(())));
+        let _ = Qcow2Disk::open_with_parent(backend, parent);
+    }
+}
