@@ -300,9 +300,10 @@ pub struct VgaDevice {
     /// The Bochs VBE_DISPI interface represents the logical scanline length in *pixels* via the
     /// `virt_width` register. BIOS VBE (INT 10h AX=4F06) can set the scanline length in *bytes*.
     ///
-    /// Aero's HLE BIOS rounds the requested byte length up to a whole number of pixels for packed
-    /// pixel modes, but we still keep this as an explicit byte override so scanout/panning can
-    /// follow BIOS-driven stride changes (and to support other integrations that may supply a
+    /// Aero's HLE BIOS allows `INT 10h AX=4F06` to set the scanline length in *bytes*, including
+    /// values that are not representable as an integral number of pixels (e.g. 32bpp pitch not
+    /// divisible by 4). Keep this as an explicit byte override so scanout/panning can follow
+    /// BIOS-driven stride changes (and to support other integrations that may supply a
     /// byte-granular pitch).
     ///
     /// When this value is non-zero, the SVGA scanout renderer uses it as the exact scanline

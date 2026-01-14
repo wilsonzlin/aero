@@ -558,9 +558,13 @@ fn boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel() -> [u8; 512] {
     // - override the logical scanline length in *bytes* via AX=4F06 BL=0x02
     //
     // This exercises the BIOS "scanline override" path. We intentionally request an odd byte
-    // length (4101) because it is not representable by the Bochs VBE_DISPI `virt_width` register
-    // (which is pixel-granular), so the scanout path must honor the BIOS byte-granular pitch
-    // configured via `INT 10h AX=4F06 BL=0x02`.
+    // length (4101) so the scanline stride is byte-granular (not divisible by 4 bytes-per-pixel)
+    // and cannot be represented by the Bochs VBE_DISPI `virt_width` register (pixel-granular).
+    //
+    // In the threaded WASM build, `aero-wasm` publishes legacy VBE scanout descriptors via
+    // `VgaDevice::active_scanout_update()`. That helper only publishes scanout descriptors when
+    // the packed-pixel pitch is whole-pixel aligned; unaligned pitches fall back to LegacyText so
+    // the host presents the VGA/VBE renderer output instead of attempting scanout readback.
 
     // xor ax, ax
     sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
@@ -590,8 +594,9 @@ fn boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel() -> [u8; 512] {
     i += 2;
 
     // VBE Set/Get Logical Scan Line Length (AX=4F06), subfunction "set in bytes" (BL=0x02).
-    // Choose an odd pitch (4101) so it cannot be represented as `virt_width * bytes_per_pixel`
-    // (pixel-granular), forcing the BIOS to preserve byte pitch.
+    // Choose an odd pitch (4101) so the stride is byte-granular (not divisible by 4
+    // bytes-per-pixel) and cannot be represented as `virt_width * bytes_per_pixel`
+    // (pixel-granular).
     // mov ax, 0x4F06
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x06, 0x4F]);
     i += 3;
@@ -973,7 +978,8 @@ fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
 }
 
 #[wasm_bindgen_test]
-fn wasm_machine_vbe_scanline_override_is_reflected_in_scanout_state_pitch() {
+fn wasm_machine_vbe_scanline_override_with_unaligned_pitch_falls_back_to_legacy_text_scanout_state()
+{
     #[cfg(feature = "wasm-threaded")]
     ensure_runtime_reserved_floor();
 
@@ -1011,12 +1017,15 @@ fn wasm_machine_vbe_scanline_override_is_reflected_in_scanout_state_pitch() {
 
     if scanout_ptr != 0 {
         let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
-        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-        assert_eq!(snap.base_paddr, u64::from(machine.vbe_lfb_base()));
-        assert_eq!(snap.width, 640);
-        assert_eq!(snap.height, 480);
-        // INT 10h AX=4F06 BL=2 pitches are byte-granular; the BIOS preserves the requested stride.
-        assert_eq!(snap.pitch_bytes, 4101);
+        // The BIOS preserves the requested byte-granular pitch, but the shared scanout descriptor
+        // path requires whole-pixel pitch alignment for packed pixels. When the pitch is not
+        // pixel-aligned, `aero-wasm` publishes a LegacyText scanout so the host uses the VGA/VBE
+        // renderer output instead of attempting scanout readback.
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+        assert_eq!(snap.base_paddr, 0);
+        assert_eq!(snap.width, 0);
+        assert_eq!(snap.height, 0);
+        assert_eq!(snap.pitch_bytes, 0);
         assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
     }
 

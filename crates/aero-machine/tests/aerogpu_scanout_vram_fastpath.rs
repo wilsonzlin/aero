@@ -193,7 +193,7 @@ fn aerogpu_scanout_reads_from_bar1_vram_without_mmio_reads_during_present() {
 #[test]
 fn aerogpu_vbe_lfb_fastpath_honors_panning_and_stride() {
     // Ensure the VRAM present fast-path honors both:
-    // - the VBE scanline length override (AX=4F06, set in bytes; BIOS rounds to whole pixels), and
+    // - the VBE scanline length override (AX=4F06, set in bytes), and
     // - VBE display start (panning) offsets.
     //
     // We write distinct sentinel pixels at the addresses corresponding to several common bugs:
