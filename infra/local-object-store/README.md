@@ -29,6 +29,10 @@ Default CORS origin:
 
 - `CORS_ALLOWED_ORIGIN=http://localhost:5173` (Vite default)
 
+Default CORP policy (proxy only):
+
+- `CROSS_ORIGIN_RESOURCE_POLICY=cross-origin`
+
 ## Start / stop
 
 From this directory:
@@ -85,6 +89,8 @@ just object-store-up-proxy
 ```
 
 The proxy is useful for reproducing “edge” behaviors (for example, overriding CORS headers and handling preflights at the proxy instead of the origin).
+
+It also injects a `Cross-Origin-Resource-Policy` (CORP) header (configurable via `CROSS_ORIGIN_RESOURCE_POLICY`) to make it easier to test disk streaming under `Cross-Origin-Embedder-Policy: require-corp`.
 
 ## Upload a large file
 
