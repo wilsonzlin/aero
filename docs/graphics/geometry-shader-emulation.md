@@ -1,8 +1,8 @@
 # Geometry Shader Emulation (D3D10/11 GS → WebGPU)
 
 WebGPU does **not** expose a geometry shader (GS) stage. Aero’s strategy is to **emulate GS via compute**
-by expanding primitives into intermediate vertex/index buffers, then drawing those buffers with a normal
-WebGPU render pipeline.
+by expanding primitives into intermediate buffers, then drawing those buffers with a normal WebGPU render
+pipeline.
 
 This document describes:
 
@@ -53,6 +53,8 @@ When a geometry shader is active, a draw is executed as:
    - Assemble input primitives (point/line/triangle) from the post-VS data.
    - Execute the D3D GS logic as compute, using `EmitVertex` / `CutVertex` semantics.
    - Write expanded vertices into an output vertex buffer (storage).
+   - Some prepasses also write an expanded index buffer (for `draw_indexed_indirect`), while the current
+     synthetic-expansion fallback prepass only emits non-indexed vertices and uses `draw_indirect`.
    - Write an **indirect draw args** struct so the subsequent render pass can draw without CPU readback.
 
 3. **Render expanded geometry**
@@ -177,15 +179,32 @@ Implemented today:
   append-only tail (when present, the appended handles are authoritative), and draws route through a
   dedicated “compute prepass” path when any of these stages are bound.
 - **Compute→indirect→render pipeline plumbing**: the executor runs a compute prepass to write an
-   expanded vertex/index buffer + indirect args, then renders via `draw_indirect` /
-   `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-  - A built-in WGSL prepass (“synthetic expansion”) is used as a fallback and for bring-up coverage
-    tests (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in
-    `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-  - A translator-backed GS prepass exists for **point-list and triangle-list draws (`Draw` and
-    `DrawIndexed`)**: a supported subset of SM4 GS DXBC is translated to WGSL compute and executed
-    to produce expanded geometry (see `exec_geometry_shader_prepass_pointlist` and
+   expanded buffer(s) + indirect args, then renders via `draw_indirect` / `draw_indexed_indirect`
+   (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+  - **Translated GS prepass (real GS subset):** for **point-list and triangle-list draws** (`Draw` and
+    `DrawIndexed`), a supported subset of SM4 GS DXBC is translated to WGSL compute and executed to
+    produce expanded geometry (see `exec_geometry_shader_prepass_pointlist` and
     `exec_geometry_shader_prepass_trianglelist`).
+    This prepass writes:
+    - expanded vertices,
+    - expanded indices, and
+    - indirect args (packed with counters into a single storage buffer binding to stay within the
+      downlevel WebGPU `max_storage_buffers_per_shader_stage = 4` budget).
+
+    The subsequent render pass draws via `draw_indexed_indirect`.
+  - **Synthetic-expansion prepass (fallback/scaffolding):** the built-in WGSL prepass is used as a
+    fallback and for bring-up coverage tests (see `GEOMETRY_PREPASS_CS_WGSL` /
+    `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in
+    `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+
+    This prepass writes:
+    - expanded vertices, and
+    - a packed `out_state` storage buffer containing indirect args + counters (sized by
+      `GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES`).
+
+    It intentionally does **not** write expanded indices (to reduce storage buffer bindings under
+    downlevel limits), so the executor always renders this path via `draw_indirect` (even for
+    `DRAW_INDEXED` commands).
 - **GS DXBC → WGSL compute translation (minimal subset)**:
   - GS DXBC is decoded to SM4 IR and translated to WGSL compute in
     `crates/aero-d3d11/src/runtime/gs_translate.rs` (invoked from `CREATE_SHADER_DXBC` for GS).
@@ -396,6 +415,25 @@ compute prepass (`GEOMETRY_PREPASS_CS_WGSL` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`) for cases where the command stream must
 route through the emulation path but there is no real GS/HS/DS kernel to run yet.
 
+### Output layout (packed state) and indirect draw behavior
+
+The synthetic-expansion fallback prepasses (`GEOMETRY_PREPASS_CS_WGSL` and
+`GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL`) write:
+
+- `out_vertices`: the expanded vertex buffer consumed by the emulation passthrough VS.
+- `out_state`: a single packed storage buffer containing:
+  - indirect args, and
+  - a small counter block reserved for future GS/HS/DS emulation bookkeeping.
+
+The packed `out_state` buffer is sized by `GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES` (see
+`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`). Packing args + counters into a single
+binding (and omitting an expanded index buffer in this fallback path) is motivated by downlevel
+WebGPU’s tight storage-buffer binding budget (`max_storage_buffers_per_shader_stage = 4` in
+`wgpu::Limits::downlevel_defaults()`).
+
+Because this fallback prepass does not produce an expanded index buffer, the executor always draws it
+via `draw_indirect` (including when the original command was `DRAW_INDEXED`).
+
 Current uses:
 
 - **HS/DS scaffolding:** bring-up work for tessellation uses the same “compute prepass + indirect draw”
@@ -552,7 +590,8 @@ GS emulation is significantly more expensive than native GS hardware support bec
 - **Extra passes**: one or more compute passes (GS-input fill (IA-fill or VS-as-compute), GS itself, and
   potentially additional expansion passes as tessellation/adjacency coverage grows)
   before the render pass.
-- **Intermediate buffers**: VS output + expanded vertex/index buffers + indirect args.
+- **Intermediate buffers**: VS output + expanded vertex buffer (+ optional expanded index buffer) +
+  indirect args/state.
 - **Strip→list expansion cost**:
   - `triangle_strip` with `N` emitted vertices produces `(N-2)` triangles, i.e. **`3*(N-2)` list vertices**.
   - `line_strip` with `N` emitted vertices produces `(N-1)` segments, i.e. **`2*(N-1)` list vertices**.
