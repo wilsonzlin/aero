@@ -1262,34 +1262,35 @@ pub fn parse(bytes: &[u8]) -> Result<ShaderProgram, ShaderError> {
         });
     }
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
-    match parse_token_stream(token_stream) {
+    // First pass: parse with canonical SM2/SM3 total-length encoding.
+    //
+    // Some historical shader blobs encode the opcode token length field as an *operand count*
+    // (excluding the opcode token) instead. We detect that form heuristically and retry parsing
+    // after normalizing the stream.
+    //
+    // Important: the normalization heuristic can mis-detect malformed shaders (e.g. bogus length
+    // fields) as operand-count encoded. In that case, prefer the original parse error to keep
+    // diagnostics stable (and avoid confusing errors caused by interpreting the `end` marker as an
+    // operand token).
+    let err = match parse_token_stream(token_stream) {
+        Ok(program) => return Ok(program),
+        Err(err) => err,
+    };
+
+    let normalized = match crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream) {
+        Ok(normalized) => normalized,
+        Err(_) => return Err(err),
+    };
+
+    // Avoid re-running the parser when normalization concluded that the stream already uses
+    // total-length encoding.
+    if matches!(normalized, std::borrow::Cow::Borrowed(_)) {
+        return Err(err);
+    }
+
+    match parse_token_stream(normalized.as_ref()) {
         Ok(program) => Ok(program),
-        Err(err) => {
-            // Some historical shader blobs encode opcode token length as the number of operand
-            // tokens rather than the total instruction length. `parse_token_stream` expects the
-            // SM2/SM3 spec's total-length encoding, so retry parsing after normalizing legacy
-            // operand-count streams.
-            let normalized =
-                match crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream) {
-                    Ok(normalized) => normalized,
-                    Err(_) => return Err(err),
-                };
-
-            // Avoid re-running the parser when normalization concluded that the stream already uses
-            // total-length encoding.
-            if matches!(normalized, std::borrow::Cow::Borrowed(_)) {
-                return Err(err);
-            }
-
-            // Only accept the normalized parse result if it succeeds. Normalization is a best-effort
-            // compatibility path for historical operand-count length encodings; for malformed or
-            // ambiguous token streams it can produce less useful errors (e.g. consuming the final
-            // `end` token as an operand). In those cases, preserve the original parser error.
-            match parse_token_stream(normalized.as_ref()) {
-                Ok(program) => Ok(program),
-                Err(_) => Err(err),
-            }
-        }
+        Err(_) => Err(err),
     }
 }
 
