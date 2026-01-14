@@ -100,3 +100,41 @@ func TestL2Bridge_QuotaDropIncrementsMetric(t *testing.T) {
 		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDroppedRateLimitedTotal, got, 1)
 	}
 }
+
+func TestL2Bridge_DialCanceledDoesNotIncrementDialErrorMetric(t *testing.T) {
+	m := metrics.New()
+	sm := relay.NewSessionManager(config.Config{}, m, nil)
+	sess, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	t.Cleanup(sess.Close)
+
+	// Provide a syntactically valid backend URL. The dial should short-circuit due
+	// to context cancellation, so the server should never see a request.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unexpected dial", http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/l2"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	b := &l2Bridge{
+		ctx:       ctx,
+		cancel:    cancel,
+		dialCfg:   l2BackendDialConfig{BackendWSURL: wsURL},
+		quota:     sess,
+		toBackend: make(chan []byte, 1),
+	}
+
+	_, _ = b.dialBackend()
+
+	if got := m.Get(metrics.L2BridgeDialsTotal); got != 1 {
+		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDialsTotal, got, 1)
+	}
+	if got := m.Get(metrics.L2BridgeDialErrorsTotal); got != 0 {
+		t.Fatalf("%s=%d, want %d (canceled dial)", metrics.L2BridgeDialErrorsTotal, got, 0)
+	}
+}
