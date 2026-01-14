@@ -610,3 +610,32 @@ fn tier2_inline_tlb_loads_code_version_table_locals_for_same_page_store_fast_pat
         "expected same-page store trace to load code-version table ptr/len locals"
     );
 }
+
+#[test]
+fn tier2_inline_tlb_skips_code_version_table_locals_for_load_only_traces() {
+    // Load fast paths do not bump the code-version table; ensure we don't load the table ptr/len
+    // locals for traces that only perform loads.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::LoadMem {
+            dst: ValueId(0),
+            addr: Operand::Const(0),
+            width: Width::W32,
+        }],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !loads_code_version_table_locals(&wasm),
+        "expected load-only trace to not load code-version table ptr/len locals"
+    );
+}
