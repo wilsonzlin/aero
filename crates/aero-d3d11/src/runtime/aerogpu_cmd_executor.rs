@@ -12790,7 +12790,6 @@ mod tests {
         AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage,
     };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     fn require_webgpu() -> bool {
@@ -12816,14 +12815,10 @@ mod tests {
         // GS emulation renders from a host-generated vertex buffer using an internal passthrough
         // VS. Depth clipping must be emulated *after* GS, so verify that the VS rewrite inserts
         // the clip-space depth clamp next to the position assignment.
-        let mut locations: BTreeSet<u32> = BTreeSet::new();
-        locations.insert(0);
-        locations.insert(2);
-        let passthrough = wgsl_gs_passthrough_vertex_shader(&locations).unwrap();
-        let clamped = wgsl_depth_clamp_variant(&passthrough);
+        let clamped = wgsl_depth_clamp_variant(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL);
 
         let assign_idx = clamped
-            .find("out.pos = input.pos;")
+            .find("out.pos =")
             .expect("passthrough VS should assign out.pos");
         let clamp_idx = clamped
             .find("out.pos.z = clamp(out.pos.z, 0.0, out.pos.w);")
@@ -13435,6 +13430,7 @@ mod tests {
                     dirty: false,
                     guest_backing_is_current: true,
                     host_shadow: None,
+                    host_shadow_valid: Vec::new(),
                 },
             );
 

@@ -12,6 +12,7 @@ pub mod scratch_allocator;
 mod reflection_bindings;
 pub mod resources;
 pub mod state;
+pub mod strip_to_list;
 pub mod vertex_pulling;
 mod wgsl_link;
 
