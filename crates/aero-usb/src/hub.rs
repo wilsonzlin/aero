@@ -503,6 +503,11 @@ impl RootHubPortSlot {
                     port.device = None;
                 }
 
+                // Ensure the device model observes the restored suspended state.
+                if let Some(dev) = port.device.as_mut() {
+                    dev.model_mut().set_suspended(port.suspended);
+                }
+
                 Ok(())
             }
             RootHubPortSlot::Usb2Mux { mux, port } => {
@@ -1230,6 +1235,12 @@ impl IoSnapshot for UsbHubDevice {
             }
             d.finish()?;
         }
+
+        // Ensure downstream device models observe restored upstream/port suspend state.
+        //
+        // Some device models (e.g. host-integrated passthrough devices) are not snapshot-capable,
+        // so their `suspended` state must be re-derived from hub/port state during restore.
+        self.set_suspended(self.upstream_suspended);
 
         Ok(())
     }

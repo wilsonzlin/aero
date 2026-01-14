@@ -639,6 +639,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
     }
 
     fn set_suspended(&mut self, suspended: bool) {
+        if self.suspended == suspended {
+            return;
+        }
         self.suspended = suspended;
         self.remote_wakeup_pending = false;
     }

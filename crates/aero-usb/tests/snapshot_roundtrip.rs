@@ -122,6 +122,37 @@ impl UsbDeviceModel for DummyUsbDevice {
     }
 }
 
+#[derive(Clone)]
+struct SuspendedSpy(Rc<RefCell<bool>>);
+
+impl SuspendedSpy {
+    fn new() -> Self {
+        Self(Rc::new(RefCell::new(false)))
+    }
+
+    fn suspended(&self) -> bool {
+        *self.0.borrow()
+    }
+}
+
+impl UsbDeviceModel for SuspendedSpy {
+    fn reset(&mut self) {
+        *self.0.borrow_mut() = false;
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        *self.0.borrow_mut() = suspended;
+    }
+}
+
 #[test]
 fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     let report_desc = sample_report_descriptor_output_with_id();
@@ -621,6 +652,100 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
         portsc1 & PORTSC_PED,
         0,
         "port should be enabled after reset"
+    );
+}
+
+#[test]
+fn uhci_snapshot_restore_propagates_root_port_suspended_state_to_device_model() {
+    // UHCI root hub PORTSC bits.
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut ctrl = UhciController::new();
+    let spy = SuspendedSpy::new();
+    ctrl.hub_mut().attach(0, Box::new(spy.clone()));
+
+    // Suspend root port 0 and snapshot.
+    let cur_portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    ctrl.io_write(REG_PORTSC1, 2, (cur_portsc | PORTSC_SUSP) as u32);
+    assert!(spy.suspended(), "device should observe initial suspend");
+
+    let snapshot = ctrl.save_state();
+
+    // Restore into a new controller with a pre-attached (non-snapshot-capable) device.
+    let mut restored = UhciController::new();
+    let spy = SuspendedSpy::new();
+    restored.hub_mut().attach(0, Box::new(spy.clone()));
+    restored
+        .load_state(&snapshot)
+        .expect("uhci snapshot restore should succeed");
+
+    assert!(
+        spy.suspended(),
+        "restored root port suspended state should be propagated to the device model"
+    );
+}
+
+#[test]
+fn hub_snapshot_restore_propagates_downstream_port_suspended_state_to_device_model() {
+    let spy = SuspendedSpy::new();
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(spy.clone()));
+
+    // Power, enable, and suspend downstream port 1.
+    assert_eq!(
+        hub.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x23, // HostToDevice | Class | Other (port)
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 8,            // PORT_POWER
+                w_index: 1,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x23,
+                b_request: 0x03,
+                w_value: 1, // PORT_ENABLE
+                w_index: 1,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x23,
+                b_request: 0x03,
+                w_value: 2, // PORT_SUSPEND
+                w_index: 1,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+    assert!(spy.suspended(), "device should observe initial suspend");
+
+    let snapshot = hub.save_state();
+
+    // Restore into a new hub with a pre-attached (non-snapshot-capable) device.
+    let spy = SuspendedSpy::new();
+    let mut restored = UsbHubDevice::new();
+    restored.attach(1, Box::new(spy.clone()));
+    restored
+        .load_state(&snapshot)
+        .expect("hub snapshot restore should succeed");
+
+    assert!(
+        spy.suspended(),
+        "restored hub port suspended state should be propagated to the device model"
     );
 }
 

@@ -774,6 +774,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
     }
 
     fn set_suspended(&mut self, suspended: bool) {
+        if self.suspended == suspended {
+            return;
+        }
         self.suspended = suspended;
         // Only wake events that occur *during* suspend should trigger remote wake; drop any stale
         // pending flag when the suspend state changes.
