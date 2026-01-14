@@ -310,21 +310,19 @@ impl CommandRingProcessor {
                 return work;
             }
 
-            match trb.trb_type() {
-                TrbType::Link => {
-                    consecutive_link_trbs = consecutive_link_trbs.saturating_add(1);
-                    if consecutive_link_trbs > MAX_CONSECUTIVE_LINK_TRBS {
-                        self.host_controller_error = true;
-                        return work;
-                    }
-                    if !self.handle_link_trb(mem, trb_addr, trb) {
-                        self.host_controller_error = true;
-                        return work;
-                    }
-                    work.trbs_processed += 1;
-                    continue;
+            let trb_type = trb.trb_type();
+            if trb_type == TrbType::Link {
+                consecutive_link_trbs = consecutive_link_trbs.saturating_add(1);
+                if consecutive_link_trbs > MAX_CONSECUTIVE_LINK_TRBS {
+                    self.host_controller_error = true;
+                    return work;
                 }
-                _ => {}
+                if !self.handle_link_trb(mem, trb_addr, trb) {
+                    self.host_controller_error = true;
+                    return work;
+                }
+                work.trbs_processed += 1;
+                continue;
             }
 
             // All non-Link commands produce a single Command Completion Event TRB. If we cannot
@@ -335,7 +333,7 @@ impl CommandRingProcessor {
             }
 
             let slot_id = trb.slot_id();
-            let completion = match trb.trb_type() {
+            let completion = match trb_type {
                 TrbType::EnableSlotCommand => {
                     consecutive_link_trbs = 0;
                     let (code, slot_id) = self.handle_enable_slot(mem);

@@ -681,15 +681,12 @@ impl IdeController {
     /// but marks the tray open / no media. If the secondary master is not an ATAPI device, this is
     /// a no-op.
     pub fn eject_secondary_master_atapi_media(&mut self) {
-        match self.secondary.devices[0].as_mut() {
-            Some(IdeDevice::Atapi(dev)) => {
-                dev.eject_media();
-                // `supports_dma` is a device capability, not a property of the inserted media, but
-                // keep the bus-master view coherent regardless.
-                self.bus_master[1].set_drive_dma_capable(0, dev.supports_dma());
-                self.secondary.drive_present[0] = true;
-            }
-            _ => {}
+        if let Some(IdeDevice::Atapi(dev)) = self.secondary.devices[0].as_mut() {
+            dev.eject_media();
+            // `supports_dma` is a device capability, not a property of the inserted media, but
+            // keep the bus-master view coherent regardless.
+            self.bus_master[1].set_drive_dma_capable(0, dev.supports_dma());
+            self.secondary.drive_present[0] = true;
         }
     }
 

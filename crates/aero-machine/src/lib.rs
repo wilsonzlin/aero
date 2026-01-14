@@ -280,19 +280,14 @@ impl LegacyVgaFrontend for AeroGpuDevice {
 ///
 /// `Cdrom` corresponds to booting from the conventional BIOS CD-ROM drive range (`DL=0xE0..=0xEF`)
 /// when used via [`Machine::set_boot_device`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BootDevice {
     /// Boot from the primary HDD (the machine's canonical [`SharedDisk`]).
+    #[default]
     Hdd,
     /// Prefer booting from the install media ISO (IDE secondary master ATAPI) when present,
     /// otherwise fall back to the primary HDD.
     Cdrom,
-}
-
-impl Default for BootDevice {
-    fn default() -> Self {
-        Self::Hdd
-    }
 }
 
 /// Configuration for [`Machine`].
@@ -5628,7 +5623,7 @@ impl Machine {
     /// [`Machine::attach_install_media_iso_and_set_overlay_ref`].
     pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         let disk = RawDisk::open(MemBackend::from_vec(bytes))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
         // Raw/in-memory ISOs do not have a stable "base_image" identifier, so do not update the
         // snapshot overlay ref. Clear any existing ref so callers do not accidentally snapshot with
         // stale disk reopen metadata.
@@ -6363,7 +6358,7 @@ impl Machine {
                 let clock_ns = self
                     .platform_clock
                     .as_ref()
-                    .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
+                    .map(aero_interrupts::clock::Clock::now_ns)
                     .unwrap_or(0);
 
                 let mut level = {
@@ -8409,7 +8404,7 @@ impl Machine {
         let bus: &mut dyn BiosBus = &mut self.mem;
         // Optional ISO install media: expose it to the BIOS as a CD-ROM backend (2048-byte
         // sectors), alongside the primary HDD BlockDevice.
-        let mut cdrom = self.install_media.as_ref().map(|iso| iso.clone());
+        let mut cdrom = self.install_media.clone();
         let cdrom_ref = cdrom
             .as_mut()
             .map(|cdrom| cdrom as &mut dyn firmware::bios::CdromDevice);
@@ -9364,7 +9359,7 @@ impl Machine {
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
-            let mut cdrom = self.install_media.as_ref().map(Clone::clone);
+            let mut cdrom = self.install_media.clone();
             let cdrom = cdrom
                 .as_mut()
                 .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);

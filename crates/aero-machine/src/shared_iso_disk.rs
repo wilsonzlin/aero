@@ -20,7 +20,7 @@ type SharedIsoDiskBackend = Box<dyn VirtualDisk + Send>;
 /// This adapter is intentionally defined in `aero-machine` so both:
 /// - the IDE/ATAPI CD-ROM device model (`aero_devices_storage::atapi::AtapiCdrom`), and
 /// - firmware BIOS boot code (El Torito) / INT dispatch
-/// can share the same underlying ISO image.
+///   can share the same underlying ISO image.
 #[derive(Clone)]
 pub struct SharedIsoDisk {
     #[cfg(target_arch = "wasm32")]

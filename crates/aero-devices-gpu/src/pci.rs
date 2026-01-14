@@ -302,18 +302,16 @@ impl AeroGpuPciDevice {
         }
 
         // Process any pending doorbell writes (which may DMA to guest memory).
-        if self.doorbell_pending {
-            if dma_enabled {
-                self.executor.process_doorbell(&mut self.regs, mem);
-                self.update_irq_level();
-                // Doorbells are edge-triggered: once DMA is permitted and we've consumed the
-                // notification, clear the pending flag. If bus mastering is disabled, preserve the
-                // pending doorbell so it can be processed once the guest enables COMMAND.BME.
-                //
-                // This matches the canonical machine behavior and avoids requiring guests to
-                // re-ring the doorbell after enabling bus mastering.
-                self.doorbell_pending = false;
-            }
+        if self.doorbell_pending && dma_enabled {
+            self.executor.process_doorbell(&mut self.regs, mem);
+            self.update_irq_level();
+            // Doorbells are edge-triggered: once DMA is permitted and we've consumed the
+            // notification, clear the pending flag. If bus mastering is disabled, preserve the
+            // pending doorbell so it can be processed once the guest enables COMMAND.BME.
+            //
+            // This matches the canonical machine behavior and avoids requiring guests to
+            // re-ring the doorbell after enabling bus mastering.
+            self.doorbell_pending = false;
         }
 
         // Only suppress vblank IRQ latching for a single `tick` call after the enable transition.

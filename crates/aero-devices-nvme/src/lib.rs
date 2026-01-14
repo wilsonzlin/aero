@@ -1354,8 +1354,8 @@ impl NvmeController {
         match fid {
             // Number of Queues: request in CDW11, 0-based (value 0 means 1 queue).
             0x07 => {
-                let req_cqs = (cmd.cdw11 & 0xffff) as u32 + 1;
-                let req_sqs = ((cmd.cdw11 >> 16) & 0xffff) as u32 + 1;
+                let req_cqs = (cmd.cdw11 & 0xffff) + 1;
+                let req_sqs = ((cmd.cdw11 >> 16) & 0xffff) + 1;
                 let max = NVME_MAX_IO_QUEUES as u32;
                 let alloc_cqs = req_cqs.min(max);
                 let alloc_sqs = req_sqs.min(max);
@@ -2292,7 +2292,7 @@ fn sgl_segments(
                     return Err(NvmeStatus::INVALID_FIELD);
                 }
                 let seg_bytes = desc.length as usize;
-                if seg_bytes == 0 || seg_bytes % 16 != 0 {
+                if seg_bytes == 0 || !seg_bytes.is_multiple_of(16) {
                     return Err(NvmeStatus::INVALID_FIELD);
                 }
                 let count = seg_bytes / 16;
@@ -2619,8 +2619,8 @@ impl MmioHandler for NvmePciDevice {
                     let mut data = [0u8; 8];
                     msix.table_read(offset - base, &mut data[..size]);
                     let mut out = 0u64;
-                    for i in 0..size {
-                        out |= u64::from(data[i]) << (i * 8);
+                    for (i, byte) in data.iter().take(size).enumerate() {
+                        out |= u64::from(*byte) << (i * 8);
                     }
                     return out;
                 }
@@ -2632,8 +2632,8 @@ impl MmioHandler for NvmePciDevice {
                     let mut data = [0u8; 8];
                     msix.pba_read(offset - base, &mut data[..size]);
                     let mut out = 0u64;
-                    for i in 0..size {
-                        out |= u64::from(data[i]) << (i * 8);
+                    for (i, byte) in data.iter().take(size).enumerate() {
+                        out |= u64::from(*byte) << (i * 8);
                     }
                     return out;
                 }
@@ -2658,8 +2658,8 @@ impl MmioHandler for NvmePciDevice {
                 let end = base.saturating_add(msix.table_len_bytes() as u64);
                 if offset >= base && offset < end {
                     let mut data = [0u8; 8];
-                    for i in 0..size {
-                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    for (i, byte) in data.iter_mut().take(size).enumerate() {
+                        *byte = ((value >> (i * 8)) & 0xff) as u8;
                     }
                     msix.table_write(offset - base, &data[..size]);
                     if let Some(target) = self.msi_target.as_mut() {
@@ -2673,8 +2673,8 @@ impl MmioHandler for NvmePciDevice {
                 let end = base.saturating_add(msix.pba_len_bytes() as u64);
                 if offset >= base && offset < end {
                     let mut data = [0u8; 8];
-                    for i in 0..size {
-                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    for (i, byte) in data.iter_mut().take(size).enumerate() {
+                        *byte = ((value >> (i * 8)) & 0xff) as u8;
                     }
                     msix.pba_write(offset - base, &data[..size]);
                     return;

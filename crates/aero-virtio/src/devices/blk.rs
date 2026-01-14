@@ -1046,15 +1046,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                                 .read_at(scan_off, &mut read_buf[..take])
                                             {
                                                 Ok(()) => {
-                                                    if read_buf[..take].iter().any(|b| *b != 0) {
-                                                        if self
+                                                    if read_buf[..take].iter().any(|b| *b != 0)
+                                                        && self
                                                             .backend
                                                             .write_at(scan_off, &zero_buf[..take])
                                                             .is_err()
-                                                        {
-                                                            status = VIRTIO_BLK_S_IOERR;
-                                                            break;
-                                                        }
+                                                    {
+                                                        status = VIRTIO_BLK_S_IOERR;
+                                                        break;
                                                     }
                                                 }
                                                 Err(_) => {
@@ -1208,15 +1207,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                                 .read_at(scan_off, &mut read_buf[..take])
                                             {
                                                 Ok(()) => {
-                                                    if read_buf[..take].iter().any(|b| *b != 0) {
-                                                        if self
+                                                    if read_buf[..take].iter().any(|b| *b != 0)
+                                                        && self
                                                             .backend
                                                             .write_at(scan_off, &zero_buf[..take])
                                                             .is_err()
-                                                        {
-                                                            status = VIRTIO_BLK_S_IOERR;
-                                                            break 'seg_loop;
-                                                        }
+                                                    {
+                                                        status = VIRTIO_BLK_S_IOERR;
+                                                        break 'seg_loop;
                                                     }
                                                 }
                                                 Err(_) => {

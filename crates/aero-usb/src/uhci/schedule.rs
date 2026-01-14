@@ -209,7 +209,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             budget_exhausted = false;
             break;
         }
-        if visited.iter().any(|&a| a == td_addr) {
+        if visited.contains(&td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             budget_exhausted = false;
             break;
@@ -260,7 +260,7 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
             // Treat null pointers as terminated.
             return LinkPointer(LINK_PTR_TERMINATE);
         }
-        if visited.iter().any(|&a| a == td_addr) {
+        if visited.contains(&td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return LinkPointer(LINK_PTR_TERMINATE);
         }
@@ -288,9 +288,7 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
                         if addr == 0 {
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }
-                        if visited.iter().any(|&a| a == addr)
-                            || skip_visited.iter().any(|&a| a == addr)
-                        {
+                        if visited.contains(&addr) || skip_visited.contains(&addr) {
                             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }

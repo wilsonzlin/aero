@@ -91,6 +91,12 @@ pub const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
 pub const FENCE_PAGE_RESERVED0_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuFencePage, reserved0) as u64;
 
+const _: () = {
+    assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+    assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+    assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
+};
+
 #[derive(Clone, Debug)]
 pub struct AeroGpuRingHeader {
     pub magic: u32,
@@ -1165,10 +1171,6 @@ impl AeroGpuAllocTable {
 }
 
 pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    debug_assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
-    debug_assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
-    debug_assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
-
     mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
     mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
     mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);

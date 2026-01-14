@@ -42,6 +42,11 @@ pub const ATA_MAX_MWDMA_MODE: u8 = 2;
 const ATA_SUPPORTED_UDMA_MASK: u8 = (1u8 << (ATA_MAX_UDMA_MODE + 1)) - 1;
 const ATA_SUPPORTED_MWDMA_MASK: u8 = (1u8 << (ATA_MAX_MWDMA_MODE + 1)) - 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferModeSelectError {
+    Unsupported,
+}
+
 pub struct AtaDrive {
     disk: Box<dyn VirtualDisk>,
     identify: [u8; SECTOR_SIZE],
@@ -123,13 +128,16 @@ impl AtaDrive {
     /// Apply the ATA SET FEATURES (subcommand 0x03) transfer mode select byte.
     ///
     /// The transfer mode select byte is written to the Sector Count register.
-    pub fn set_transfer_mode_select(&mut self, mode_select: u8) -> Result<(), ()> {
+    pub fn set_transfer_mode_select(
+        &mut self,
+        mode_select: u8,
+    ) -> Result<(), TransferModeSelectError> {
         match mode_select {
             0x40..=0x47 => {
                 // Ultra DMA: 0x40 | mode
                 let mode = mode_select & 0x07;
                 if mode > ATA_MAX_UDMA_MODE {
-                    return Err(());
+                    return Err(TransferModeSelectError::Unsupported);
                 }
                 self.udma_enabled = true;
                 self.udma_mode = mode;
@@ -138,12 +146,12 @@ impl AtaDrive {
                 // Multiword DMA: 0x20 | mode
                 let mode = mode_select & 0x07;
                 if mode > ATA_MAX_MWDMA_MODE {
-                    return Err(());
+                    return Err(TransferModeSelectError::Unsupported);
                 }
                 self.udma_enabled = false;
                 self.mwdma_mode = mode;
             }
-            _ => return Err(()),
+            _ => return Err(TransferModeSelectError::Unsupported),
         }
 
         self.update_identify_transfer_mode_words();

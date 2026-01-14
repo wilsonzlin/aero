@@ -204,7 +204,7 @@ pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
         // `E1000Device::enqueue_rx_frame` already drops invalid frames, but we
         // pre-filter here so `PumpCounts::rx_frames` accurately reflects frames
         // actually queued into the NIC.
-        if len < aero_net_e1000::MIN_L2_FRAME_LEN || len > aero_net_e1000::MAX_L2_FRAME_LEN {
+        if !(aero_net_e1000::MIN_L2_FRAME_LEN..=aero_net_e1000::MAX_L2_FRAME_LEN).contains(&len) {
             continue;
         }
         nic.enqueue_rx_frame(frame);

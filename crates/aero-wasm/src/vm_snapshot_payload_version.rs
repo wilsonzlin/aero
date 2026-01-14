@@ -51,9 +51,8 @@ pub(crate) fn parse_vm_snapshot_device_version_flags(bytes: &[u8]) -> Option<(u1
 
     if bytes.len() >= IO_HEADER_LEN {
         let id = &bytes[8..12];
-        let is_ascii_tag = id.iter().all(|b| match *b {
-            b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' => true,
-            _ => false,
+        let is_ascii_tag = id.iter().all(|b| {
+            matches!(*b, b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_')
         });
         if is_ascii_tag {
             let major = u16::from_le_bytes([bytes[12], bytes[13]]);

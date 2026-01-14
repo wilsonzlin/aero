@@ -391,7 +391,7 @@ mod tests {
             vec![0xA0, 0xA1, 0xA2, 0xA3]
         );
         // Ensure the hole write did not create entries for the hole region.
-        assert!(bus.mem.bytes.get(&(PCIE_ECAM_BASE as u32)).is_none());
+        assert!(!bus.mem.bytes.contains_key(&(PCIE_ECAM_BASE as u32)));
     }
 
     #[test]
