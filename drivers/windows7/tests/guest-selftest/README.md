@@ -108,6 +108,16 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|...` (Shift/Ctrl/Alt + F1)
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|...` (mouse side/extra buttons)
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|...` (wheel + horizontal wheel)
+  - Optional end-to-end **Consumer Control / media keys** event delivery smoke test (`virtio-input-media-keys`):
+    - Disabled by default (requires host-side QMP injection).
+    - Enable with `--test-input-media-keys` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`).
+    - The selftest opens the virtio-input Consumer Control HID interface (if exposed as a separate HID collection) and reads
+      input reports via `ReadFile` (no window focus required).
+    - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
+      - PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
+      - Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
+    - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`), then waits
+      for host-injected events and emits `...|PASS|...` or `...|FAIL|reason=...|...`.
   - Optional virtio-input MSI-X requirement (`virtio-input-msix`):
     - The selftest emits a `virtio-input-msix` marker describing interrupt mode (`mode=intx/msix`) and vector mapping.
     - Use `--require-input-msix` to fail the overall selftest when virtio-input is not using MSI-X.

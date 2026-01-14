@@ -43,6 +43,11 @@ on:
         required: false
         default: false
         type: boolean
+      with_virtio_input_media_keys:
+        description: Inject deterministic virtio-input Consumer Control (media key) events via QMP and require virtio-input-media-keys to PASS (requires a guest image provisioned with --test-input-media-keys)
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events_extended:
         description: Inject extended virtio-input events via QMP (modifiers/buttons/wheel) and require virtio-input-events-* markers to PASS (requires a guest image provisioned with --test-input-events and --test-input-events-extended)
         required: false
@@ -134,6 +139,7 @@ jobs:
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
+            echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
             echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
@@ -197,6 +203,7 @@ jobs:
             virtio_snd_wav_rms_threshold="${{ inputs.virtio_snd_wav_rms_threshold }}"
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
+            with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
             with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
 
@@ -223,6 +230,9 @@ jobs:
             fi
             if [[ "${with_virtio_input_wheel}" == "true" ]]; then
               args+=(--with-input-wheel)
+            fi
+            if [[ "${with_virtio_input_media_keys}" == "true" ]]; then
+              args+=(--with-input-media-keys)
             fi
             if [[ "${with_virtio_input_events_extended}" == "true" ]]; then
               args+=(--with-input-events-extended)

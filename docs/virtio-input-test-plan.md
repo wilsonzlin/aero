@@ -338,10 +338,16 @@ Full reference:
 Optional self-hosted CI wrapper:
 
 - [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml) (`workflow_dispatch`)
-  - Use workflow inputs `with_virtio_input_events=true`, `with_virtio_input_wheel=true`, `with_virtio_input_events_extended=true`,
-    and/or `with_virtio_input_tablet_events=true` to enable the optional QMP injection-based end-to-end virtio-input tests.
-    (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-events-extended` for the
-    extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
+  - Use workflow inputs:
+    - `with_virtio_input_events=true`
+    - `with_virtio_input_wheel=true`
+    - `with_virtio_input_media_keys=true`
+    - `with_virtio_input_events_extended=true`
+    - `with_virtio_input_tablet_events=true`
+    to enable the optional QMP injection-based end-to-end virtio-input tests.
+    (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-media-keys` for media keys,
+    also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`)
+    for tablet.)
 
 ### 4.1 Basic invocation (PowerShell)
 
@@ -468,7 +474,39 @@ may be multiples of the injected values.
 If the running QEMU build rejects all tested axis name combinations (`wheel`/`vscroll` × `hscroll`/`hwheel`), the harness
 fails with a clear error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
-### 4.3.2 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+### 4.3.2 Optional: end-to-end Consumer Control (media keys) (QMP injection + guest HID report read)
+
+This is the Consumer Control / media keys companion to `virtio-input-events` (keyboard + relative mouse).
+
+Guest marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY/PASS/FAIL/...`
+
+Guest image requirement:
+
+- Provision the guest selftest to run with `--test-input-media-keys` (or set guest env var
+  `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`).
+
+Host harness flags:
+
+- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
+- Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
+
+When enabled, the harness:
+
+1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`
+2. Injects a deterministic media key sequence via QMP `input-send-event`:
+   - `qcode=volumeup` press + release
+3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...`
+
+If the guest was not provisioned with `--test-input-media-keys`, the guest will emit:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set` and the harness will fail
+(PowerShell: `VIRTIO_INPUT_MEDIA_KEYS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: ...`).
+
+If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support multimedia qcodes), the harness
+fails (PowerShell: `QMP_MEDIA_KEYS_UNSUPPORTED`; Python: `FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: ...`).
+
+### 4.3.3 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
 
 The base `virtio-input-events` marker validates basic keyboard + mouse motion/click delivery, and `virtio-input-wheel`
 validates scrolling. To also validate additional HID report paths deterministically, the guest selftest can emit three
