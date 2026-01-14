@@ -4,6 +4,7 @@ use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs as uhci_regs;
 use aero_usb::uhci::UhciController;
 use aero_usb::xhci::regs as xhci_regs;
+use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::transfer::{Ep0TransferEngine, XhciTransferExecutor};
 use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
@@ -117,6 +118,36 @@ fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
         mf1,
         (mf0 + 8) & 0x3fff,
         "xHCI MFINDEX should still advance while DMA is disabled"
+    );
+}
+
+#[test]
+fn xhci_service_event_ring_does_not_touch_guest_memory_without_dma() {
+    let mut mem = NoDmaCountingMem::default();
+    let mut xhci = XhciController::new();
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    xhci.service_event_ring(&mut mem);
+
+    assert_eq!(
+        mem.reads, 0,
+        "xHCI service_event_ring must not DMA-read guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        mem.writes, 0,
+        "xHCI service_event_ring must not DMA-write guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "xHCI service_event_ring should not drain host-queued events while DMA is disabled"
+    );
+    assert!(
+        !xhci.interrupter0().interrupt_pending(),
+        "xHCI should not assert interrupter pending while DMA is disabled"
     );
 }
 
