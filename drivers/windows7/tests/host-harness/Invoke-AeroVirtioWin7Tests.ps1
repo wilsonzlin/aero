@@ -1003,25 +1003,28 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if ($fields.Count -eq 0) { return }
 
   $mode = $null
-  if ($fields.ContainsKey("mode")) { $mode = $fields["mode"] }
-  elseif ($fields.ContainsKey("irq_mode")) { $mode = $fields["irq_mode"] }
+  # Prefer `irq_mode` from the per-test marker (IOCTL-derived) over `mode` from the standalone diagnostics,
+  # since the IOCTL-based path can distinguish MSI vs MSI-X based on vector assignment.
+  if ($fields.ContainsKey("irq_mode")) { $mode = $fields["irq_mode"] }
+  elseif ($fields.ContainsKey("mode")) { $mode = $fields["mode"] }
   elseif ($fields.ContainsKey("interrupt_mode")) { $mode = $fields["interrupt_mode"] }
 
   $messages = $null
-  if ($fields.ContainsKey("messages")) { $messages = $fields["messages"] }
+  # Prefer canonical `irq_message_count` when present.
+  if ($fields.ContainsKey("irq_message_count")) { $messages = $fields["irq_message_count"] }
+  elseif ($fields.ContainsKey("message_count")) { $messages = $fields["message_count"] }
+  elseif ($fields.ContainsKey("messages")) { $messages = $fields["messages"] }
   elseif ($fields.ContainsKey("irq_messages")) { $messages = $fields["irq_messages"] }
   elseif ($fields.ContainsKey("msi_messages")) { $messages = $fields["msi_messages"] }
-  elseif ($fields.ContainsKey("irq_message_count")) { $messages = $fields["irq_message_count"] }
-  elseif ($fields.ContainsKey("message_count")) { $messages = $fields["message_count"] }
 
   $vectors = $null
-  if ($fields.ContainsKey("vectors")) { $vectors = $fields["vectors"] }
-  elseif ($fields.ContainsKey("irq_vectors")) { $vectors = $fields["irq_vectors"] }
-  elseif ($fields.ContainsKey("vector")) { $vectors = $fields["vector"] }
-  elseif ($fields.ContainsKey("irq_vector")) { $vectors = $fields["irq_vector"] }
+  if ($fields.ContainsKey("irq_vectors")) { $vectors = $fields["irq_vectors"] }
+  elseif ($fields.ContainsKey("vectors")) { $vectors = $fields["vectors"] }
 
   $msiVector = $null
   if ($fields.ContainsKey("msi_vector")) { $msiVector = $fields["msi_vector"] }
+  elseif ($fields.ContainsKey("vector")) { $msiVector = $fields["vector"] }
+  elseif ($fields.ContainsKey("irq_vector")) { $msiVector = $fields["irq_vector"] }
 
   $msixConfigVector = $null
   if ($fields.ContainsKey("msix_config_vector")) { $msixConfigVector = $fields["msix_config_vector"] }
