@@ -7585,11 +7585,17 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
      * GetRasterStatus at very high frequency.
      */
     {
-        ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
-        if (mmioSafe && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
-            /* Prefer the device's IRQ_ENABLE register over the cached mask (see ISR path). */
-            irqEnableMask = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
-        }
+        /*
+         * Avoid touching MMIO on the fast path: D3D9-era apps may poll
+         * GetRasterStatus thousands of times per second, so even a single MMIO
+         * read here can be a measurable regression.
+         *
+         * Use the cached IRQ mask as our "interrupts enabled" gate instead. If
+         * the device/driver lose interrupt state (for example across a reset),
+         * the cached vblank anchor will go stale and we'll fall back to the
+         * MMIO-based or synthetic cadence paths.
+         */
+        const ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
         const BOOLEAN vblankIrqEnabled = (irqEnableMask & AEROGPU_IRQ_SCANOUT_VBLANK) != 0;
 
         const ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
