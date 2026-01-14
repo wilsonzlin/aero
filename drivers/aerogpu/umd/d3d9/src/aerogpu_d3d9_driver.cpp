@@ -6134,11 +6134,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // subset here to support fixed-function default values (e.g. diffuse=white
   // when requested by the destination decl) and basic TEX0 relocation.
   //
-  // The fixed-function XYZ (transform) path produces fully deterministic output,
-  // and clears the destination vertex so output padding / extra decl elements are
-  // predictable. For XYZRHW pass-through we preserve destination bytes we do not
-  // explicitly write, matching the memcpy-style fallback behavior and the unit
-  // test expectations for "extra" output fields.
+  // For deterministic output, the fixed-function subset clears the full
+  // destination vertex stride (including padding / extra decl elements) when
+  // D3DPV_DONOTCOPYDATA is not set. When D3DPV_DONOTCOPYDATA is set, the UMD
+  // writes only POSITIONT and preserves all other destination bytes.
   if (!(fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }

@@ -197,7 +197,7 @@ Below is the minimal functional surface. Many functions are “simple state sett
 
 | Func pointer | Required? | Minimal semantics | What can be stubbed |
 |---|---:|---|---|
-| `pfnCreateResource` | Yes | Create textures/surfaces/buffers with correct bind flags: render target, texture sampling, dynamic/lockable. Must support **non-power-of-two** sizes. | Reject resource types you don’t advertise (volume/cube). |
+| `pfnCreateResource` | Yes | Create textures/surfaces/buffers with correct bind flags: render target, texture sampling, dynamic/lockable. Must support **non-power-of-two** sizes. | Reject resource types you don’t advertise (e.g. volume textures; cubemaps if unsupported). |
 | `pfnOpenResource` / `pfnOpenResource2` (version-dependent) | Yes for Aero | Open a shared resource created in another process. This is critical for redirected surfaces. | If you don’t support cross-process sharing, DWM won’t compose real apps. |
 | `pfnDestroyResource` | Yes | Free resource and associated allocations; handle refcounting for shared resources (close vs destroy). | N/A |
 | `pfnSetPriority` / `pfnQueryResourceResidency` | Optional | Priorities/residency queries can be conservative. | Safe stub: treat everything as resident, fixed priority. |
