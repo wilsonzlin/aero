@@ -354,10 +354,15 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    # 0x1F sets all 5 HID boot keyboard LED bits (Num/Caps/Scroll/Compose/Kana).
    hidtest.exe --keyboard --led 0x1F
    ```
-   This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
-   For the Aero contract v1 requirement that the device consumes/completes all virtio-input `statusq` buffers, also check the driver
-   counters (see below): `LedWritesSubmitted`, `StatusQSubmits`, and `StatusQCompletions` should advance and `StatusQCompletions` should
-   catch up to `StatusQSubmits` (outstanding count should not grow without bound).
+    This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
+    For the Aero contract v1 requirement that the device consumes/completes all virtio-input `statusq` buffers, also check the driver
+    counters (see below): `LedWritesSubmitted`, `StatusQSubmits`, and `StatusQCompletions` should advance and `StatusQCompletions` should
+    catch up to `StatusQSubmits` (outstanding count should not grow without bound).
+
+   Or, cycle LEDs through a short sequence to exercise the write path (Num/Caps/Scroll/Compose/Kana, then `0x1F`):
+   ```bat
+   hidtest.exe --keyboard --led-cycle
+   ```
 
 5. (Optional) send a keyboard LED output report via `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
    ```bat
