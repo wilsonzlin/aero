@@ -32,7 +32,7 @@ import {
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
-import { AerogpuFormat, parseAndValidateAbiVersionU32 } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { AerogpuFormat, aerogpuFormatToString, parseAndValidateAbiVersionU32 } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import {
   AEROGPU_ALLOC_ENTRY_SIZE as AEROGPU_ALLOC_ENTRY_BYTES,
   AEROGPU_ALLOC_FLAG_READONLY,
@@ -530,7 +530,9 @@ const readTexelIntoRgba = (format: number, src: Uint8Array, srcOff: number, dst:
       break;
     }
     default:
-      throw new Error(`aerogpu: unsupported texture format ${format} (BC formats require GPU backend)`);
+      throw new Error(
+        `aerogpu: unsupported texture format ${aerogpuFormatToString(format)} (BC formats require GPU backend)`,
+      );
   }
 };
 
@@ -574,7 +576,9 @@ const writeTexelFromRgba = (format: number, src: Uint8Array, srcOff: number, dst
       break;
     }
     default:
-      throw new Error(`aerogpu: unsupported texture format ${format} (BC formats require GPU backend)`);
+      throw new Error(
+        `aerogpu: unsupported texture format ${aerogpuFormatToString(format)} (BC formats require GPU backend)`,
+      );
   }
 };
 
@@ -876,7 +880,9 @@ export const executeAerogpuCmdStream = (
           format !== AEROGPU_FORMAT_B8G8R8X8_UNORM &&
           format !== AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB
         ) {
-          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format} (BC formats require GPU backend)`);
+          throw new Error(
+            `aerogpu: CREATE_TEXTURE2D unsupported format ${aerogpuFormatToString(format)} (BC formats require GPU backend)`,
+          );
         }
 
         const rowBytes = width * 4;
@@ -924,7 +930,7 @@ export const executeAerogpuCmdStream = (
             existing.rowPitchBytes !== rowPitchBytes
           ) {
             throw new Error(
-              `aerogpu: CREATE_TEXTURE2D rebind mismatch for handle ${handle} (expected ${existing.width}x${existing.height} mipLevels=${existing.mipLevels} arrayLayers=${existing.arrayLayers} fmt=${existing.format} usage=0x${existing.usageFlags.toString(16)} rowPitch=${existing.rowPitchBytes}, got ${width}x${height} mipLevels=${mipLevels} arrayLayers=${arrayLayers} fmt=${format} usage=0x${usageFlags.toString(16)} rowPitch=${rowPitchBytes})`,
+              `aerogpu: CREATE_TEXTURE2D rebind mismatch for handle ${handle} (expected ${existing.width}x${existing.height} mipLevels=${existing.mipLevels} arrayLayers=${existing.arrayLayers} fmt=${aerogpuFormatToString(existing.format)} usage=0x${existing.usageFlags.toString(16)} rowPitch=${existing.rowPitchBytes}, got ${width}x${height} mipLevels=${mipLevels} arrayLayers=${arrayLayers} fmt=${aerogpuFormatToString(format)} usage=0x${usageFlags.toString(16)} rowPitch=${rowPitchBytes})`,
             );
           }
           existing.backing = backing;
@@ -1249,7 +1255,9 @@ export const executeAerogpuCmdStream = (
         const dst = state.textures.get(dstTexture);
         if (!dst) throw new Error(`aerogpu: COPY_TEXTURE2D unknown dst texture ${dstTextureRaw} (resolved=${dstTexture})`);
         if (src.format !== dst.format) {
-          throw new Error("aerogpu: COPY_TEXTURE2D format mismatch");
+          throw new Error(
+            `aerogpu: COPY_TEXTURE2D format mismatch (src=${aerogpuFormatToString(src.format)}, dst=${aerogpuFormatToString(dst.format)})`,
+          );
         }
         if (srcMipLevel >= src.mipLevels || dstMipLevel >= dst.mipLevels) {
           throw new Error("aerogpu: COPY_TEXTURE2D mip_level out of bounds");
