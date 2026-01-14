@@ -645,6 +645,8 @@ In particular:
   - `D3DDEVCAPS_NPATCHES` and `D3DDEVCAPS_QUINTICRTPATCHES` are not advertised.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`).
-- **TextureOpCaps**: the fixed-function fallback path can interpret a small stage0 `D3DTSS_*` subset (including a few ops
-  beyond what is advertised in caps), but `GetCaps().TextureOpCaps` is intentionally conservative so apps don't assume
-  full fixed-function combiner coverage (see the `TextureOpCaps` comment in `aerogpu_d3d9_caps.cpp`).
+- **TextureOpCaps**: keep `D3DCAPS9.TextureOpCaps` intentionally conservative (advertise only
+  `DISABLE`/`SELECTARG1`/`SELECTARG2`/`MODULATE`) so apps don't assume full fixed-function combiner coverage. The UMD's
+  stage0 fixed-function fallback can recognize a few additional bring-up patterns (ADD/SUBTRACT/MODULATE2X/4X, plus
+  `TFACTOR` tinting), but not all op/source combinations are handled end-to-end (see the `TextureOpCaps` comment in
+  `aerogpu_d3d9_caps.cpp`).
