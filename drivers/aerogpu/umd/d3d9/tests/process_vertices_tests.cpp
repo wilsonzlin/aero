@@ -832,18 +832,30 @@ void test_copy_xyzrhw_diffuse_offsets() {
   // Source VB: XYZRHW|DIFFUSE (float4 + u32) = 20 bytes.
   Resource src;
   src.kind = ResourceKind::Buffer;
-  src.size_bytes = 4 * 20;
+  src.size_bytes = 5 * 20;
   src.storage.resize(src.size_bytes);
 
-  // Vertex 0 is a distinctive sentinel; we process starting at vertex 1 so a
-  // SrcStartIndex bug is caught.
-  write_f32(src.storage, 0, -1000.0f);
-  write_f32(src.storage, 4, -1000.0f);
-  write_f32(src.storage, 8, -1000.0f);
-  write_f32(src.storage, 12, 1.0f);
-  write_u32(src.storage, 16, 0x01020304u);
+  // Vertices 0..1 are distinctive sentinels. The test uses BOTH a non-zero stream
+  // offset and a non-zero SrcStartIndex, so ignoring either one should copy the
+  // wrong slice.
+  {
+    const size_t base = 0 * 20;
+    write_f32(src.storage, base + 0, -1000.0f);
+    write_f32(src.storage, base + 4, -1000.0f);
+    write_f32(src.storage, base + 8, -1000.0f);
+    write_f32(src.storage, base + 12, 1.0f);
+    write_u32(src.storage, base + 16, 0x01020304u);
+  }
+  {
+    const size_t base = 1 * 20;
+    write_f32(src.storage, base + 0, 1000.0f);
+    write_f32(src.storage, base + 4, -1000.0f);
+    write_f32(src.storage, base + 8, -1000.0f);
+    write_f32(src.storage, base + 12, 1.0f);
+    write_u32(src.storage, base + 16, 0x05060708u);
+  }
 
-  // Vertices 1..3 are a small triangle.
+  // Vertices 2..4 are the expected copied slice.
   const float verts[3][4] = {
       {10.0f, 20.0f, 0.5f, 1.0f},
       {30.0f, 40.0f, 0.5f, 1.0f},
@@ -851,7 +863,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
   };
   const uint32_t colors[3] = {0xAABBCCDDu, 0x11223344u, 0x55667788u};
   for (size_t i = 0; i < 3; ++i) {
-    const size_t base = (i + 1) * 20;
+    const size_t base = (i + 2) * 20;
     write_f32(src.storage, base + 0, verts[i][0]);
     write_f32(src.storage, base + 4, verts[i][1]);
     write_f32(src.storage, base + 8, verts[i][2]);
@@ -879,7 +891,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
   dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].offset_bytes = 20; // non-zero stream offset
   dev.streams[0].stride_bytes = 20;
 
   D3DDDIARG_PROCESSVERTICES pv{};
@@ -911,7 +923,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
   }
 
   // Destination indices [3..5] should match source indices [1..3].
-  const size_t src_off = 1 * 20;
+  const size_t src_off = 2 * 20;
   const size_t dst_off = static_cast<size_t>(pv.DestIndex) * dst_stride;
   assert(std::memcmp(dst.storage.data() + dst_off,
                      src.storage.data() + src_off,
