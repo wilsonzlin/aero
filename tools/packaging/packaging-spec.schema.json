@@ -53,7 +53,7 @@
           "type": "string",
           "description": "Driver directory name under drivers/{x86,amd64}/<name>/.",
           "minLength": 1,
-          "pattern": "^(?!\\.?\\.?$)[^\\\\/]+$"
+          "pattern": "^(?!\\s)(?!.*\\s$)(?!\\.?\\.?$)[^\\\\/]+$"
         },
         "required": {
           "type": "boolean",
@@ -101,7 +101,7 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[^\\\\/]+\\.[iI][nN][fF]$"
+            "pattern": "^(?!\\s)(?!.*\\s$)[^\\\\/]+\\.[iI][nN][fF]$"
           },
           "uniqueItems": true
         },
@@ -131,7 +131,7 @@
           "type": "string",
           "description": "Legacy required driver directory name under drivers/{x86,amd64}/<name>/.",
           "minLength": 1,
-          "pattern": "^(?!\\.?\\.?$)[^\\\\/]+$"
+          "pattern": "^(?!\\s)(?!.*\\s$)(?!\\.?\\.?$)[^\\\\/]+$"
         },
         "expected_hardware_ids": {
           "type": "array",
