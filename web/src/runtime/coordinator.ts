@@ -2380,28 +2380,28 @@ export class WorkerCoordinator {
       return;
     }
 
-    const maybeAerogpuSubmit = data as Partial<AerogpuSubmitMessage>;
-    if (
-      maybeAerogpuSubmit?.kind === "aerogpu.submit" &&
-      typeof maybeAerogpuSubmit.contextId === "number" &&
-      typeof maybeAerogpuSubmit.signalFence === "bigint" &&
-      maybeAerogpuSubmit.cmdStream instanceof ArrayBuffer
-    ) {
-      // Defensive: ignore malformed optional allocTable payloads.
-      if (maybeAerogpuSubmit.allocTable !== undefined && !(maybeAerogpuSubmit.allocTable instanceof ArrayBuffer)) {
-        return;
-      }
-      if (maybeAerogpuSubmit.flags !== undefined && typeof maybeAerogpuSubmit.flags !== "number") {
-        return;
-      }
-      if (maybeAerogpuSubmit.engineId !== undefined && typeof maybeAerogpuSubmit.engineId !== "number") {
-        return;
-      }
-      this.forwardAerogpuSubmit(maybeAerogpuSubmit as AerogpuSubmitMessage);
-      return;
-    }
-
     if (role === "cpu") {
+      const maybeAerogpuSubmit = data as Partial<AerogpuSubmitMessage>;
+      if (
+        maybeAerogpuSubmit?.kind === "aerogpu.submit" &&
+        typeof maybeAerogpuSubmit.contextId === "number" &&
+        typeof maybeAerogpuSubmit.signalFence === "bigint" &&
+        maybeAerogpuSubmit.cmdStream instanceof ArrayBuffer
+      ) {
+        // Defensive: ignore malformed optional allocTable payloads.
+        if (maybeAerogpuSubmit.allocTable !== undefined && !(maybeAerogpuSubmit.allocTable instanceof ArrayBuffer)) {
+          return;
+        }
+        if (maybeAerogpuSubmit.flags !== undefined && typeof maybeAerogpuSubmit.flags !== "number") {
+          return;
+        }
+        if (maybeAerogpuSubmit.engineId !== undefined && typeof maybeAerogpuSubmit.engineId !== "number") {
+          return;
+        }
+        this.forwardAerogpuSubmit(maybeAerogpuSubmit as AerogpuSubmitMessage);
+        return;
+      }
+
       const bootDeviceMsg = data as Partial<{ type: unknown; bootDevice: unknown }>;
       if (bootDeviceMsg?.type === "machineCpu.bootDeviceSelected") {
         const bootDevice = bootDeviceMsg.bootDevice;
