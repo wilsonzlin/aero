@@ -3138,6 +3138,26 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     // first 32 bytes are observable/meaningful.
     out.extend_from_slice(&vram.attr_regs[..0x20]);
 
+    // Optional trailing VGA DAC latches (indices + partial RGB triplet).
+    //
+    // This preserves deterministic snapshot/restore semantics even if the VM is checkpointed
+    // mid-update (e.g. after writing `DAC_WRITE_INDEX` / one `DAC_DATA` byte but before the full
+    // RGB triplet is complete).
+    out.extend_from_slice(b"DACI");
+    out.push(vram.dac_read_index);
+    out.push(vram.dac_read_subindex);
+    out.push(vram.dac_write_index);
+    out.push(vram.dac_write_subindex);
+    out.extend_from_slice(&vram.dac_write_latch);
+
+    // Optional trailing VGA Attribute Controller flip-flop state.
+    //
+    // Similar to `DACI`, this keeps the `0x3C0` index/data sequencing deterministic across
+    // snapshot/restore.
+    out.extend_from_slice(b"ATST");
+    out.push(vram.attr_index);
+    out.push(vram.attr_flip_flop as u8);
+
     out
 }
 
@@ -3454,6 +3474,37 @@ fn apply_aerogpu_snapshot_v2(
             }
             if let Some(regs) = bytes.get((off + 4)..(off + 4 + ATTR_LEN)) {
                 vram.attr_regs[..ATTR_LEN].copy_from_slice(regs);
+            }
+            off = off.saturating_add(TOTAL_LEN);
+            continue;
+        }
+
+        if tag == b"DACI" {
+            const PAYLOAD_LEN: usize = 1 + 1 + 1 + 1 + 3;
+            const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+            if bytes.len() < off.saturating_add(TOTAL_LEN) {
+                break;
+            }
+            if let Some(payload) = bytes.get((off + 4)..(off + 4 + PAYLOAD_LEN)) {
+                vram.dac_read_index = payload[0];
+                vram.dac_read_subindex = payload[1];
+                vram.dac_write_index = payload[2];
+                vram.dac_write_subindex = payload[3];
+                vram.dac_write_latch.copy_from_slice(&payload[4..7]);
+            }
+            off = off.saturating_add(TOTAL_LEN);
+            continue;
+        }
+
+        if tag == b"ATST" {
+            const PAYLOAD_LEN: usize = 2;
+            const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+            if bytes.len() < off.saturating_add(TOTAL_LEN) {
+                break;
+            }
+            if let Some(payload) = bytes.get((off + 4)..(off + 4 + PAYLOAD_LEN)) {
+                vram.attr_index = payload[0] & 0x1F;
+                vram.attr_flip_flop = payload[1] != 0;
             }
             off = off.saturating_add(TOTAL_LEN);
             continue;
