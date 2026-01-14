@@ -72,3 +72,11 @@ When adding a fixture that is safe to store in-repo:
 ## CI enforcement
 
 CI runs `scripts/ci/check-repo-policy.sh` on PRs and pushes. If it fails, remove the disallowed file(s) and use one of the alternatives above.
+
+In addition, CI enforces **determinism** for the allowlisted tiny binary fixtures by running:
+
+```bash
+cargo xtask fixtures --check
+```
+
+This fails if any generated fixture is missing or out-of-date (regenerate via `cargo xtask fixtures`).
