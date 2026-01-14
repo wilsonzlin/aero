@@ -1830,6 +1830,43 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
   }
 
+#ifdef SRB_FUNCTION_FLUSH_QUEUE
+  /*
+   * Flush the adapter queue (error recovery). We treat this like ABORT_COMMAND:
+   * stop DMA via reset, abort all outstanding SRBs deterministically, and
+   * reinitialize the device/queue.
+   */
+  case SRB_FUNCTION_FLUSH_QUEUE: {
+    if (!devExt->Removed) {
+      if (!AerovblkDeviceBringUp(devExt, FALSE)) {
+        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+        return TRUE;
+      }
+    } else {
+      STOR_LOCK_HANDLE lock;
+      StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+      AerovblkAbortOutstandingRequestsLocked(devExt);
+      if (devExt->Vq.queue_size != 0) {
+        AerovblkResetVirtqueueLocked(devExt);
+      }
+      StorPortReleaseSpinLock(devExt, &lock);
+    }
+
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+#endif
+
+#ifdef SRB_FUNCTION_RELEASE_QUEUE
+  /*
+   * Queue release is a no-op for this driver because we do not implement an
+   * internal frozen state machine; StorPort will resume dispatch naturally.
+   */
+  case SRB_FUNCTION_RELEASE_QUEUE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
   case SRB_FUNCTION_RESET_DEVICE:
 #ifdef SRB_FUNCTION_RESET_LOGICAL_UNIT
   /*
