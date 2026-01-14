@@ -11,6 +11,7 @@ use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{WasmBackend, WasmtimeBackend, WriteObserver};
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
+use aero_jit_x86::Tier1Bus;
 use aero_types::Width;
 
 #[test]
@@ -139,4 +140,71 @@ fn wasmtime_backend_write_observer_can_keep_jit_runtime_page_versions_coherent()
         assert!(!jit.is_compiled(entry_rip));
     }
     assert_eq!(compile_queue.drain(), vec![entry_rip]);
+}
+
+#[test]
+fn wasmtime_backend_write_observer_does_not_report_rolled_back_writes() {
+    let rollback_entry = 0x1000u64;
+    let commit_entry = 0x2000u64;
+
+    let writes: Rc<RefCell<Vec<(u64, usize)>>> = Rc::new(RefCell::new(Vec::new()));
+    let observer: WriteObserver = Box::new({
+        let writes = writes.clone();
+        move |paddr, len| writes.borrow_mut().push((paddr, len))
+    });
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    backend.set_write_observer(Some(observer));
+
+    // Rollback block: perform a store via `env.mem_write_u8`, then force a runtime bailout via a
+    // helper call (`env.jit_exit`). The backend should roll back the store and discard any
+    // write-observer events.
+    let mut rb = IrBuilder::new(rollback_entry);
+    let rb_addr = rb.const_int(Width::W64, 0x10);
+    let rb_val = rb.const_int(Width::W8, 0xaa);
+    rb.store(Width::W8, rb_addr, rb_val);
+    rb.call_helper("dummy_helper", Vec::new(), None);
+    let rollback_block = rb.finish(IrTerminator::Jump { target: 0x9999 });
+    rollback_block.validate().unwrap();
+    let rollback_wasm = Tier1WasmCodegen::new().compile_block(&rollback_block);
+    let rollback_idx = backend.add_compiled_block(&rollback_wasm);
+
+    let mut cpu = CpuState {
+        rip: rollback_entry,
+        ..Default::default()
+    };
+    let rollback_exit = backend.execute(rollback_idx, &mut cpu);
+    assert!(rollback_exit.exit_to_interpreter);
+    assert_eq!(rollback_exit.next_rip, rollback_entry);
+    assert!(!rollback_exit.committed);
+    assert_eq!(
+        backend.read_u8(0x10),
+        0,
+        "rolled-back blocks must restore guest RAM"
+    );
+    assert!(
+        writes.borrow().is_empty(),
+        "write observer must not fire for rolled-back blocks"
+    );
+
+    // Committed block: verify the observer still reports writes and does not include any buffered
+    // events from the previous rolled-back block.
+    let mut cb = IrBuilder::new(commit_entry);
+    let cb_addr = cb.const_int(Width::W64, 0x20);
+    let cb_val = cb.const_int(Width::W8, 0xbb);
+    cb.store(Width::W8, cb_addr, cb_val);
+    let commit_block = cb.finish(IrTerminator::Jump { target: 0x3000 });
+    commit_block.validate().unwrap();
+    let commit_wasm = Tier1WasmCodegen::new().compile_block(&commit_block);
+    let commit_idx = backend.add_compiled_block(&commit_wasm);
+
+    let mut cpu2 = CpuState {
+        rip: commit_entry,
+        ..Default::default()
+    };
+    let commit_exit = backend.execute(commit_idx, &mut cpu2);
+    assert_eq!(commit_exit.next_rip, 0x3000);
+    assert!(commit_exit.committed);
+    assert_eq!(backend.read_u8(0x20), 0xbb);
+    assert_eq!(*writes.borrow(), vec![(0x20, 1)]);
 }

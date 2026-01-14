@@ -17,11 +17,14 @@ use crate::wasm::{
 };
 use crate::Tier1Bus;
 
-/// Optional callback invoked after Tier-1 code writes guest memory via the imported slow-path
-/// helpers (`env.mem_write_*`).
+/// Optional callback invoked after a Tier-1 block *commits* guest memory writes performed via the
+/// imported slow-path helpers (`env.mem_write_*`).
 ///
 /// This can be used by embedders/tests to forward guest writes into a host-side tracker such as
 /// [`aero_cpu_core::jit::runtime::JitRuntime::on_guest_write`] (self-modifying code coherence).
+///
+/// Writes from blocks that exit via MMIO/runtime bailout and are rolled back by the backend are
+/// not reported.
 ///
 /// Note: this callback is only invoked for the imported helper path. It does **not** cover the
 /// inline-TLB direct-store fast path.
@@ -48,6 +51,7 @@ impl HostExitState {
 struct HostState {
     exit: HostExitState,
     write_observer: Option<WriteObserver>,
+    pending_writes: Vec<(u64, usize)>,
 }
 
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
@@ -356,6 +360,7 @@ where
         };
 
         self.store.data_mut().exit.reset();
+        self.store.data_mut().pending_writes.clear();
         self.sync_cpu_to_wasm(cpu.tier1_state());
 
         let ret = func
@@ -384,6 +389,23 @@ where
         }
 
         self.sync_cpu_from_wasm(cpu.tier1_state_mut());
+
+        // Deliver write-observer notifications for committed slow-path stores.
+        //
+        // The backend may roll back guest state on MMIO/runtime exits (committed=false); in that
+        // case any imported `env.mem_write_*` side effects must *not* be forwarded to external
+        // observers (e.g. a host-side page-version tracker).
+        let (mut observer, pending_writes) = {
+            let host = self.store.data_mut();
+            let pending = std::mem::take(&mut host.pending_writes);
+            (host.write_observer.take(), pending)
+        };
+        if let Some(obs) = observer.as_mut() {
+            for (paddr, len) in pending_writes {
+                obs(paddr, len);
+            }
+        }
+        self.store.data_mut().write_observer = observer;
 
         let next_rip = if exit_to_interpreter {
             cpu.tier1_state().rip
@@ -532,8 +554,9 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
                         bump_code_versions(mem_mut, cpu_ptr, addr_u, 1);
                     }
 
-                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
-                        obs(addr_u, 1);
+                    let host = caller.data_mut();
+                    if host.write_observer.is_some() {
+                        host.pending_writes.push((addr_u, 1));
                     }
                 },
             )
@@ -552,8 +575,9 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
                         write::<2>(mem_mut, addr_u as usize, value as u64);
                         bump_code_versions(mem_mut, cpu_ptr, addr_u, 2);
                     }
-                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
-                        obs(addr_u, 2);
+                    let host = caller.data_mut();
+                    if host.write_observer.is_some() {
+                        host.pending_writes.push((addr_u, 2));
                     }
                 },
             )
@@ -572,8 +596,9 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
                         write::<4>(mem_mut, addr_u as usize, value as u64);
                         bump_code_versions(mem_mut, cpu_ptr, addr_u, 4);
                     }
-                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
-                        obs(addr_u, 4);
+                    let host = caller.data_mut();
+                    if host.write_observer.is_some() {
+                        host.pending_writes.push((addr_u, 4));
                     }
                 },
             )
@@ -592,8 +617,9 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
                         write::<8>(mem_mut, addr_u as usize, value as u64);
                         bump_code_versions(mem_mut, cpu_ptr, addr_u, 8);
                     }
-                    if let Some(obs) = caller.data_mut().write_observer.as_mut() {
-                        obs(addr_u, 8);
+                    let host = caller.data_mut();
+                    if host.write_observer.is_some() {
+                        host.pending_writes.push((addr_u, 8));
                     }
                 },
             )
