@@ -1574,10 +1574,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   //
   // Track boot-device preference separately from disk attachment so the ISO can remain mounted
   // (for file access) while still booting from HDD after installation.
+  const hasHdd =
+    !!msg.hdd || (typeof msg.mounts?.hddId === "string" && msg.mounts.hddId.trim().length > 0);
   const desiredBootDrive =
     pendingBootDevice === "cdrom" && msg.cd
       ? BIOS_DRIVE_CD0
-      : pendingBootDevice === "hdd" && msg.hdd
+      : pendingBootDevice === "hdd" && hasHdd
         ? BIOS_DRIVE_HDD0
         : msg.cd
           ? BIOS_DRIVE_CD0
@@ -1589,7 +1591,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   const canCdFirstPolicy =
     typeof (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present === "function" ||
     typeof (m as unknown as { setBootFromCdIfPresent?: unknown }).setBootFromCdIfPresent === "function";
-  const useCdFirstPolicy = desiredBootDrive === BIOS_DRIVE_CD0 && !!msg.cd && !!msg.hdd && canCdFirstPolicy;
+  const useCdFirstPolicy = desiredBootDrive === BIOS_DRIVE_CD0 && !!msg.cd && hasHdd && canCdFirstPolicy;
   const configuredBootDrive = useCdFirstPolicy ? BIOS_DRIVE_HDD0 : desiredBootDrive;
 
   if (msg.hdd) {
