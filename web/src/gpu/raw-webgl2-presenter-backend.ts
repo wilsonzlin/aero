@@ -283,8 +283,27 @@ export class RawWebGl2Presenter implements Presenter {
     const w = canvas.width;
     const h = canvas.height;
     const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    assertWebGlOk(gl, 'readPixels');
+    const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING) as WebGLBuffer | null;
+    const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT) as number;
+    const prevPackRowLength = gl.getParameter(gl.PACK_ROW_LENGTH) as number;
+    const prevPackSkipPixels = gl.getParameter(gl.PACK_SKIP_PIXELS) as number;
+    const prevPackSkipRows = gl.getParameter(gl.PACK_SKIP_ROWS) as number;
+    try {
+      // Ensure readPixels writes into client memory with a tight, top-left-oriented packing.
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      assertWebGlOk(gl, 'readPixels');
+    } finally {
+      gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, prevPackRowLength);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, prevPackSkipPixels);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, prevPackSkipRows);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
+    }
 
     // WebGL readPixels has a bottom-left origin; convert to top-left for stable hashing.
     const flipped = flipImageVertically(pixels, w, h);
@@ -317,6 +336,11 @@ export class RawWebGl2Presenter implements Presenter {
     const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     const prevDrawFbo = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     const prevReadBuffer = gl.getParameter(gl.READ_BUFFER) as number;
+    const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING) as WebGLBuffer | null;
+    const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT) as number;
+    const prevPackRowLength = gl.getParameter(gl.PACK_ROW_LENGTH) as number;
+    const prevPackSkipPixels = gl.getParameter(gl.PACK_SKIP_PIXELS) as number;
+    const prevPackSkipRows = gl.getParameter(gl.PACK_SKIP_ROWS) as number;
 
     const fbo = gl.createFramebuffer();
     if (!fbo) {
@@ -336,12 +360,23 @@ export class RawWebGl2Presenter implements Presenter {
         );
       }
 
+      // Ensure readPixels writes into client memory with a tight packing.
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
       assertWebGlOk(gl, 'readPixels');
     } finally {
       // Restore state to avoid leaking FBO bindings into future draws.
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDrawFbo);
+      gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, prevPackRowLength);
+      gl.pixelStorei(gl.PACK_SKIP_PIXELS, prevPackSkipPixels);
+      gl.pixelStorei(gl.PACK_SKIP_ROWS, prevPackSkipRows);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
       try {
         gl.readBuffer(prevReadBuffer);
       } catch {
