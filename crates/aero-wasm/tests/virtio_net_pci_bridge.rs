@@ -35,16 +35,6 @@ fn make_io_ipc_sab() -> SharedArrayBuffer {
     sab
 }
 
-fn write_u16(mem: &mut [u8], addr: u32, value: u16) {
-    let addr = addr as usize;
-    mem[addr..addr + 2].copy_from_slice(&value.to_le_bytes());
-}
-
-fn read_u16(mem: &[u8], addr: u32) -> u16 {
-    let addr = addr as usize;
-    u16::from_le_bytes([mem[addr], mem[addr + 1]])
-}
-
 fn get_bigint(obj: &JsValue, key: &str) -> BigInt {
     Reflect::get(obj, &JsValue::from_str(key))
         .expect("Reflect::get")
@@ -52,30 +42,30 @@ fn get_bigint(obj: &JsValue, key: &str) -> BigInt {
         .expect("expected BigInt")
 }
 
-fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
-    let addr = addr as usize;
-    mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_u64(mem: &mut [u8], addr: u32, value: u64) {
-    let addr = addr as usize;
-    mem[addr..addr + 8].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_desc(mem: &mut [u8], table: u32, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    guest: &common::GuestRegion,
+    table: u32,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u32::from(index) * 16;
-    write_u64(mem, base, addr);
-    write_u32(mem, base + 8, len);
-    write_u16(mem, base + 12, flags);
-    write_u16(mem, base + 14, next);
+    guest.write_u64(base, addr);
+    guest.write_u32(base + 8, len);
+    guest.write_u16(base + 12, flags);
+    guest.write_u16(base + 14, next);
 }
 
 #[wasm_bindgen_test]
 fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let io_ipc_sab = make_io_ipc_sab();
     let net_tx_ring = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0).expect("open NET_TX ring");
@@ -168,12 +158,12 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     // Post a single TX descriptor chain: [virtio_net_hdr][ethernet frame].
     let hdr_addr = 0x7000u32;
     let payload_addr = 0x7100u32;
-    guest[hdr_addr as usize..hdr_addr as usize + VirtioNetHdr::BASE_LEN].fill(0);
+    guest.fill(hdr_addr, VirtioNetHdr::BASE_LEN as u32, 0);
     let payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
-    guest[payload_addr as usize..payload_addr as usize + payload.len()].copy_from_slice(payload);
+    guest.write_bytes(payload_addr, payload);
 
     write_desc(
-        guest,
+        &guest,
         tx_desc,
         0,
         hdr_addr as u64,
@@ -182,7 +172,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         1,
     );
     write_desc(
-        guest,
+        &guest,
         tx_desc,
         1,
         payload_addr as u64,
@@ -192,22 +182,22 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     );
 
     // avail.idx = 1, ring[0] = 0
-    write_u16(guest, tx_avail, 0);
-    write_u16(guest, tx_avail + 2, 1);
-    write_u16(guest, tx_avail + 4, 0);
+    guest.write_u16(tx_avail, 0);
+    guest.write_u16(tx_avail + 2, 1);
+    guest.write_u16(tx_avail + 4, 0);
 
     // used.idx = 0
-    write_u16(guest, tx_used, 0);
-    write_u16(guest, tx_used + 2, 0);
+    guest.write_u16(tx_used, 0);
+    guest.write_u16(tx_used + 2, 0);
 
     // Post a single RX descriptor chain: [virtio_net_hdr(write)][payload(write)].
     let rx_hdr_addr = 0x7200u32;
     let rx_payload_addr = 0x7300u32;
-    guest[rx_hdr_addr as usize..rx_hdr_addr as usize + VirtioNetHdr::BASE_LEN].fill(0xAA);
-    guest[rx_payload_addr as usize..rx_payload_addr as usize + 64].fill(0xBB);
+    guest.fill(rx_hdr_addr, VirtioNetHdr::BASE_LEN as u32, 0xAA);
+    guest.fill(rx_payload_addr, 64, 0xBB);
 
     write_desc(
-        guest,
+        &guest,
         rx_desc,
         0,
         rx_hdr_addr as u64,
@@ -216,7 +206,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         1,
     );
     write_desc(
-        guest,
+        &guest,
         rx_desc,
         1,
         rx_payload_addr as u64,
@@ -226,12 +216,12 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     );
 
     // avail.idx = 1, ring[0] = 0
-    write_u16(guest, rx_avail, 0);
-    write_u16(guest, rx_avail + 2, 1);
-    write_u16(guest, rx_avail + 4, 0);
+    guest.write_u16(rx_avail, 0);
+    guest.write_u16(rx_avail + 2, 1);
+    guest.write_u16(rx_avail + 4, 0);
     // used.idx = 0
-    write_u16(guest, rx_used, 0);
-    write_u16(guest, rx_used + 2, 0);
+    guest.write_u16(rx_used, 0);
+    guest.write_u16(rx_used + 2, 0);
 
     // Inject one host->guest frame into the NET_RX ring while BME is disabled.
     let rx_frame = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00";
@@ -254,13 +244,16 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         "NET_TX ring must remain empty while PCI bus mastering is disabled"
     );
     assert_eq!(
-        read_u16(guest, tx_used + 2),
+        guest.read_u16(tx_used + 2),
         0,
         "used.idx should not advance without bus mastering"
     );
+    let mut rx_buf = vec![0u8; rx_frame.len()];
+    guest.read_into(rx_payload_addr, &mut rx_buf);
+    let expected_rx_buf = vec![0xBB; rx_frame.len()];
     assert_eq!(
-        &guest[rx_payload_addr as usize..rx_payload_addr as usize + rx_frame.len()],
-        &[0xBB; 14],
+        rx_buf,
+        expected_rx_buf,
         "RX payload buffer should not be DMA-written while PCI bus mastering is disabled"
     );
 
@@ -269,12 +262,12 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     bridge.poll();
 
     assert_eq!(
-        read_u16(guest, tx_used + 2),
+        guest.read_u16(tx_used + 2),
         1,
         "expected used.idx to advance"
     );
     assert_eq!(
-        read_u16(guest, rx_used + 2),
+        guest.read_u16(rx_used + 2),
         1,
         "expected RX used.idx to advance"
     );
@@ -292,13 +285,18 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         net_rx_ring.try_pop().is_none(),
         "expected NET_RX ring to be drained after enabling BME"
     );
+    let mut rx_hdr = vec![0u8; VirtioNetHdr::BASE_LEN];
+    guest.read_into(rx_hdr_addr, &mut rx_hdr);
+    let expected_rx_hdr = vec![0u8; VirtioNetHdr::BASE_LEN];
     assert_eq!(
-        &guest[rx_hdr_addr as usize..rx_hdr_addr as usize + VirtioNetHdr::BASE_LEN],
-        &[0u8; VirtioNetHdr::BASE_LEN],
+        rx_hdr,
+        expected_rx_hdr,
         "expected virtio-net RX header to be zeroed by device"
     );
+    let mut rx_payload = vec![0u8; rx_frame.len()];
+    guest.read_into(rx_payload_addr, &mut rx_payload);
     assert_eq!(
-        &guest[rx_payload_addr as usize..rx_payload_addr as usize + rx_frame.len()],
+        rx_payload.as_slice(),
         rx_frame,
         "expected host RX frame to be DMA-written after enabling BME"
     );

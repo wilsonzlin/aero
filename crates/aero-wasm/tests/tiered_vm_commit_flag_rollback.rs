@@ -68,9 +68,11 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
 
     // Minimal 16-bit real-mode loop: INC AX; JMP -2.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-    guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xEB, 0xFE]);
+    {
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xEB, 0xFE]);
+    }
 
     let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
     vm.reset_real_mode(0x1000);
@@ -162,4 +164,3 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         "rollback exits must not advance TSC"
     );
 }
-

@@ -19,45 +19,30 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
 
-fn write_u16(mem: &mut [u8], addr: u32, value: u16) {
-    let addr = addr as usize;
-    mem[addr..addr + 2].copy_from_slice(&value.to_le_bytes());
-}
-
-fn read_u16(mem: &[u8], addr: u32) -> u16 {
-    let addr = addr as usize;
-    u16::from_le_bytes([mem[addr], mem[addr + 1]])
-}
-
-fn read_u32(mem: &[u8], addr: u32) -> u32 {
-    let addr = addr as usize;
-    u32::from_le_bytes(mem[addr..addr + 4].try_into().unwrap())
-}
-
-fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
-    let addr = addr as usize;
-    mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_u64(mem: &mut [u8], addr: u32, value: u64) {
-    let addr = addr as usize;
-    mem[addr..addr + 8].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_desc(mem: &mut [u8], table: u32, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
+fn write_desc(
+    guest: &common::GuestRegion,
+    table: u32,
+    index: u16,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
     let base = table + u32::from(index) * 16;
-    write_u64(mem, base, addr);
-    write_u32(mem, base + 8, len);
-    write_u16(mem, base + 12, flags);
-    write_u16(mem, base + 14, next);
+    guest.write_u64(base, addr);
+    guest.write_u32(base + 8, len);
+    guest.write_u16(base + 12, flags);
+    guest.write_u16(base + 14, next);
 }
 
 #[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut bridge =
         VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
@@ -129,13 +114,13 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
     req.extend_from_slice(&VIRTIO_SND_R_PCM_INFO.to_le_bytes());
     req.extend_from_slice(&0u32.to_le_bytes()); // start_id
     req.extend_from_slice(&2u32.to_le_bytes()); // count
-    guest[req_addr as usize..req_addr as usize + req.len()].copy_from_slice(&req);
+    guest.write_bytes(req_addr, &req);
 
     let resp_len = 128u32;
-    guest[resp_addr as usize..resp_addr as usize + resp_len as usize].fill(0xAA);
+    guest.fill(resp_addr, resp_len, 0xAA);
 
     write_desc(
-        guest,
+        &guest,
         desc_table,
         0,
         req_addr as u64,
@@ -144,7 +129,7 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
         1,
     );
     write_desc(
-        guest,
+        &guest,
         desc_table,
         1,
         resp_addr as u64,
@@ -154,13 +139,13 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
     );
 
     // avail.idx = 1, ring[0] = 0
-    write_u16(guest, avail, 0);
-    write_u16(guest, avail + 2, 1);
-    write_u16(guest, avail + 4, 0);
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
 
     // used.idx = 0
-    write_u16(guest, used, 0);
-    write_u16(guest, used + 2, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
 
     assert!(!bridge.irq_asserted(), "irq should start deasserted");
 
@@ -173,13 +158,13 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
         "irq should remain deasserted while PCI bus mastering is disabled"
     );
     assert_eq!(
-        read_u16(guest, used + 2),
+        guest.read_u16(used + 2),
         0,
         "used.idx should not advance without bus mastering"
     );
     assert_eq!(
-        &guest[resp_addr as usize..resp_addr as usize + 4],
-        &[0xAA; 4],
+        guest.read_u32(resp_addr),
+        0xAAAA_AAAA,
         "response header should not be DMA-written while PCI bus mastering is disabled"
     );
 
@@ -188,15 +173,11 @@ fn virtio_snd_pci_bridge_is_gated_on_pci_bus_master_enable() {
     bridge.poll();
 
     assert_eq!(
-        read_u16(guest, used + 2),
+        guest.read_u16(used + 2),
         1,
         "expected used.idx to advance after enabling bus mastering"
     );
-    let status = u32::from_le_bytes(
-        guest[resp_addr as usize..resp_addr as usize + 4]
-            .try_into()
-            .unwrap(),
-    );
+    let status = guest.read_u32(resp_addr);
     assert_eq!(
         status, VIRTIO_SND_S_OK,
         "unexpected control response status"
@@ -297,8 +278,10 @@ fn virtio_snd_pci_bridge_snapshot_roundtrip_is_deterministic() {
 fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_detach() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut bridge =
         VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
@@ -362,13 +345,13 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
     bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
 
     // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
-    guest[buf as usize..buf as usize + 8].fill(0xAA);
-    write_desc(guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
-    write_u16(guest, avail, 0);
-    write_u16(guest, avail + 2, 1);
-    write_u16(guest, avail + 4, 0);
-    write_u16(guest, used, 0);
-    write_u16(guest, used + 2, 0);
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
 
     // Attach the audio ring: should queue a speaker JACK_CONNECTED event.
     let ring = WorkletBridge::new(8, 2).unwrap();
@@ -385,15 +368,17 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
         u32::from(VIRTIO_SND_QUEUE_EVENT),
     );
 
-    assert_eq!(read_u16(guest, used + 2), 1);
-    assert_eq!(read_u32(guest, used + 8), 8);
+    assert_eq!(guest.read_u16(used + 2), 1);
+    assert_eq!(guest.read_u32(used + 8), 8);
     let expected_connected = {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
         evt
     };
-    assert_eq!(&guest[buf as usize..buf as usize + 8], &expected_connected);
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_connected);
 
     // Detach the audio ring: should queue a speaker JACK_DISCONNECTED event and deliver it into a
     // subsequent event buffer.
@@ -401,36 +386,37 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
         .set_audio_ring_buffer(None, 8, 2)
         .expect("set_audio_ring_buffer(None)");
 
-    guest[buf as usize..buf as usize + 8].fill(0xAA);
+    guest.fill(buf, 8, 0xAA);
     // Re-post the same descriptor (index 0).
-    write_u16(guest, avail + 6, 0); // avail.ring[1] = desc 0
-    write_u16(guest, avail + 2, 2); // avail.idx = 2
+    guest.write_u16(avail + 6, 0); // avail.ring[1] = desc 0
+    guest.write_u16(avail + 2, 2); // avail.idx = 2
     bridge.mmio_write(
         NOTIFY + notify_off * 4,
         2,
         u32::from(VIRTIO_SND_QUEUE_EVENT),
     );
 
-    assert_eq!(read_u16(guest, used + 2), 2);
-    assert_eq!(read_u32(guest, used + 16), 8);
+    assert_eq!(guest.read_u16(used + 2), 2);
+    assert_eq!(guest.read_u32(used + 16), 8);
     let expected_disconnected = {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_DISCONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
         evt
     };
-    assert_eq!(
-        &guest[buf as usize..buf as usize + 8],
-        &expected_disconnected
-    );
+    let mut got_evt2 = [0u8; 8];
+    guest.read_into(buf, &mut got_evt2);
+    assert_eq!(&got_evt2, &expected_disconnected);
 }
 
 #[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_detach() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut bridge =
         VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
@@ -494,13 +480,13 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
     bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
 
     // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
-    guest[buf as usize..buf as usize + 8].fill(0xAA);
-    write_desc(guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
-    write_u16(guest, avail, 0);
-    write_u16(guest, avail + 2, 1);
-    write_u16(guest, avail + 4, 0);
-    write_u16(guest, used, 0);
-    write_u16(guest, used + 2, 0);
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
 
     // Attach the mic ring: should queue a microphone JACK_CONNECTED event.
     let capacity_samples = 16u32;
@@ -523,15 +509,17 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
         u32::from(VIRTIO_SND_QUEUE_EVENT),
     );
 
-    assert_eq!(read_u16(guest, used + 2), 1);
-    assert_eq!(read_u32(guest, used + 8), 8);
+    assert_eq!(guest.read_u16(used + 2), 1);
+    assert_eq!(guest.read_u32(used + 8), 8);
     let expected_connected = {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_MICROPHONE.to_le_bytes());
         evt
     };
-    assert_eq!(&guest[buf as usize..buf as usize + 8], &expected_connected);
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_connected);
 
     // Detach the mic ring: should queue a microphone JACK_DISCONNECTED event and deliver it into
     // a subsequent event buffer.
@@ -539,28 +527,27 @@ fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_det
         .set_mic_ring_buffer(None)
         .expect("set_mic_ring_buffer(None)");
 
-    guest[buf as usize..buf as usize + 8].fill(0xAA);
+    guest.fill(buf, 8, 0xAA);
     // Re-post the same descriptor (index 0).
-    write_u16(guest, avail + 6, 0); // avail.ring[1] = desc 0
-    write_u16(guest, avail + 2, 2); // avail.idx = 2
+    guest.write_u16(avail + 6, 0); // avail.ring[1] = desc 0
+    guest.write_u16(avail + 2, 2); // avail.idx = 2
     bridge.mmio_write(
         NOTIFY + notify_off * 4,
         2,
         u32::from(VIRTIO_SND_QUEUE_EVENT),
     );
 
-    assert_eq!(read_u16(guest, used + 2), 2);
-    assert_eq!(read_u32(guest, used + 16), 8);
+    assert_eq!(guest.read_u16(used + 2), 2);
+    assert_eq!(guest.read_u32(used + 16), 8);
     let expected_disconnected = {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_DISCONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_MICROPHONE.to_le_bytes());
         evt
     };
-    assert_eq!(
-        &guest[buf as usize..buf as usize + 8],
-        &expected_disconnected
-    );
+    let mut got_evt2 = [0u8; 8];
+    guest.read_into(buf, &mut got_evt2);
+    assert_eq!(&got_evt2, &expected_disconnected);
 }
 
 #[wasm_bindgen_test]

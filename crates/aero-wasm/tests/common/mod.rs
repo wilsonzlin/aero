@@ -122,6 +122,12 @@ impl GuestRegion {
         let addr = self.abs(paddr, 4);
         unsafe { read_u32(addr) }
     }
+
+    pub fn read_u16(&self, paddr: u32) -> u16 {
+        let addr = self.abs(paddr, 2);
+        // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
+        unsafe { u16::from_le(core::ptr::read_unaligned(addr as *const u16)) }
+    }
 }
 
 /// Write a little-endian u32 to an absolute linear-memory address.

@@ -65,11 +65,13 @@ fn xhci_controller_bridge_step_frames_advances_controller_time() {
 #[wasm_bindgen_test]
 fn xhci_controller_bridge_step_frames_gates_dma_on_pci_bme() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     // Seed guest memory at 0x1000 with a recognizable dword.
-    guest[0x1000..0x1004].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+    guest.write_u32(0x1000, 0x1234_5678);
 
     let mut bridge = XhciControllerBridge::new(guest_base, guest_size).unwrap();
 
@@ -88,8 +90,8 @@ fn xhci_controller_bridge_step_frames_gates_dma_on_pci_bme() {
         "expected tick-driven DMA to be skipped while BME is disabled"
     );
     assert_eq!(
-        &guest[0x1000..0x1004],
-        &0x1234_5678u32.to_le_bytes(),
+        guest.read_u32(0x1000),
+        0x1234_5678,
         "expected guest RAM to remain untouched while BME is disabled"
     );
 
