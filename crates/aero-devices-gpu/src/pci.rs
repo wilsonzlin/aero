@@ -723,18 +723,29 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             return u64::MAX;
         }
 
+        let bar_size = u64::from(proto::AEROGPU_PCI_BAR1_SIZE_BYTES);
+
         let vram = self.vram.borrow();
         let mut out = 0u64;
         for i in 0..size {
             let Some(addr) = offset.checked_add(i as u64) else {
+                out |= 0xFFu64 << (i * 8);
                 continue;
             };
-            // BAR1 reads beyond the allocated backing store return 0. The guest-visible BAR size is
-            // fixed by the PCI profile, but wasm32 builds may allocate a smaller VRAM backing store.
-            let b = usize::try_from(addr)
-                .ok()
-                .and_then(|idx| vram.get(idx).copied())
-                .unwrap_or(0);
+            // BAR1 reads past the end of the guest-visible BAR aperture return all ones ("floating
+            // bus" semantics).
+            //
+            // Note: wasm32 builds may allocate a smaller backing store than the canonical BAR1
+            // aperture; reads within the BAR range but beyond the backing store return 0 (and
+            // writes are ignored).
+            let b = if addr >= bar_size {
+                0xFF
+            } else {
+                usize::try_from(addr)
+                    .ok()
+                    .and_then(|idx| vram.get(idx).copied())
+                    .unwrap_or(0)
+            };
             out |= (b as u64) << (i * 8);
         }
         out
