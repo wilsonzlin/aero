@@ -117,6 +117,13 @@ fn input_help_mentions_flags_and_steps() {
             "webhid_report_descriptor_synthesis_wasm",
         ))
         .stdout(predicate::str::contains("src/hid"))
+        .stdout(predicate::str::contains("src/hid/hid_report_ring.test.ts"))
+        .stdout(predicate::str::contains(
+            "src/hid/wasm_hid_guest_bridge.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/hid/wasm_uhci_hid_guest_bridge.test.ts",
+        ))
         .stdout(predicate::str::contains(
             "src/platform/hid_passthrough_protocol.test.ts",
         ))
