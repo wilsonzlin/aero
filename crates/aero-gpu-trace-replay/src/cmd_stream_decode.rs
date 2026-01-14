@@ -401,6 +401,50 @@ fn decode_known_fields(
                 out.insert("flags".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::CopyTexture2d => {
+            if pkt.payload.len() < 56 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            }
+            out.insert(
+                "dst_texture".into(),
+                json!(read_u32_le(pkt.payload, 0).unwrap()),
+            );
+            out.insert(
+                "src_texture".into(),
+                json!(read_u32_le(pkt.payload, 4).unwrap()),
+            );
+            out.insert(
+                "dst_mip_level".into(),
+                json!(read_u32_le(pkt.payload, 8).unwrap()),
+            );
+            out.insert(
+                "dst_array_layer".into(),
+                json!(read_u32_le(pkt.payload, 12).unwrap()),
+            );
+            out.insert(
+                "src_mip_level".into(),
+                json!(read_u32_le(pkt.payload, 16).unwrap()),
+            );
+            out.insert(
+                "src_array_layer".into(),
+                json!(read_u32_le(pkt.payload, 20).unwrap()),
+            );
+            out.insert("dst_x".into(), json!(read_u32_le(pkt.payload, 24).unwrap()));
+            out.insert("dst_y".into(), json!(read_u32_le(pkt.payload, 28).unwrap()));
+            out.insert("src_x".into(), json!(read_u32_le(pkt.payload, 32).unwrap()));
+            out.insert("src_y".into(), json!(read_u32_le(pkt.payload, 36).unwrap()));
+            out.insert("width".into(), json!(read_u32_le(pkt.payload, 40).unwrap()));
+            out.insert(
+                "height".into(),
+                json!(read_u32_le(pkt.payload, 44).unwrap()),
+            );
+            out.insert("flags".into(), json!(read_u32_le(pkt.payload, 48).unwrap()));
+            let reserved0 = read_u32_le(pkt.payload, 52).unwrap();
+            if reserved0 != 0 {
+                out.insert("reserved0".into(), json!(reserved0));
+            }
+        }
         AerogpuCmdOpcode::CreateShaderDxbc => match pkt.decode_create_shader_dxbc_payload_le() {
             Ok((cmd, dxbc)) => {
                 let shader_handle = cmd.shader_handle;

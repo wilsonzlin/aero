@@ -408,6 +408,25 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 8);
     push_packet(&mut out, AerogpuCmdOpcode::DestroyShader as u32, &payload);
 
+    // COPY_TEXTURE2D(dst_texture=0xAAAA, src_texture=0xBBBB, dst=5,6, src=7,8, size=9x10, flags=2).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0xAAAA); // dst_texture
+    push_u32_le(&mut payload, 0xBBBB); // src_texture
+    push_u32_le(&mut payload, 1); // dst_mip_level
+    push_u32_le(&mut payload, 2); // dst_array_layer
+    push_u32_le(&mut payload, 3); // src_mip_level
+    push_u32_le(&mut payload, 4); // src_array_layer
+    push_u32_le(&mut payload, 5); // dst_x
+    push_u32_le(&mut payload, 6); // dst_y
+    push_u32_le(&mut payload, 7); // src_x
+    push_u32_le(&mut payload, 8); // src_y
+    push_u32_le(&mut payload, 9); // width
+    push_u32_le(&mut payload, 10); // height
+    push_u32_le(&mut payload, 2); // flags
+    push_u32_le(&mut payload, 0); // reserved0
+    assert_eq!(payload.len(), 56);
+    push_packet(&mut out, AerogpuCmdOpcode::CopyTexture2d as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -562,6 +581,15 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     assert!(listing.contains("DestroyInputLayout"));
     assert!(listing.contains("DestroyShader"));
+
+    // COPY_TEXTURE2D should decode region fields.
+    assert!(listing.contains("CopyTexture2d"));
+    assert!(listing.contains("dst_texture=43690")); // 0xAAAA
+    assert!(listing.contains("src_texture=48059")); // 0xBBBB
+    assert!(listing.contains("dst_xy=5,6"));
+    assert!(listing.contains("src_xy=7,8"));
+    assert!(listing.contains("size=9x10"));
+    assert!(listing.contains("flags=0x00000002"));
 }
 
 #[test]
@@ -893,6 +921,21 @@ fn json_listing_decodes_new_opcodes() {
 
     let destroy_shader = find_packet("DestroyShader");
     assert_eq!(destroy_shader["decoded"]["shader_handle"], 0x1234);
+
+    let copy_texture = find_packet("CopyTexture2d");
+    assert_eq!(copy_texture["decoded"]["dst_texture"], 0xAAAA);
+    assert_eq!(copy_texture["decoded"]["src_texture"], 0xBBBB);
+    assert_eq!(copy_texture["decoded"]["dst_mip_level"], 1);
+    assert_eq!(copy_texture["decoded"]["dst_array_layer"], 2);
+    assert_eq!(copy_texture["decoded"]["src_mip_level"], 3);
+    assert_eq!(copy_texture["decoded"]["src_array_layer"], 4);
+    assert_eq!(copy_texture["decoded"]["dst_x"], 5);
+    assert_eq!(copy_texture["decoded"]["dst_y"], 6);
+    assert_eq!(copy_texture["decoded"]["src_x"], 7);
+    assert_eq!(copy_texture["decoded"]["src_y"], 8);
+    assert_eq!(copy_texture["decoded"]["width"], 9);
+    assert_eq!(copy_texture["decoded"]["height"], 10);
+    assert_eq!(copy_texture["decoded"]["flags"], 2);
 }
 
 #[test]
