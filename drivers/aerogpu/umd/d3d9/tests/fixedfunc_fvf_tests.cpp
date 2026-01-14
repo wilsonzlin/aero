@@ -2490,6 +2490,184 @@ bool TestApplyStateBlockUploadsWvpConstantsForTransformChanges() {
   return true;
 }
 
+bool TestApplyStateBlockDuringStateBlockRecordingCapturesShaderBindings() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Use a supported FVF so the PS-only interop path can always synthesize a VS.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Create two user PS objects (distinct handles; bytecode can be identical).
+  D3D9DDI_HSHADER hPsA{};
+  D3D9DDI_HSHADER hPsB{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPsA);
+  if (!Check(hr == S_OK, "CreateShader(PS A)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPsA);
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPsB);
+  if (!Check(hr == S_OK, "CreateShader(PS B)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPsB);
+
+  Shader* ps_a = nullptr;
+  Shader* ps_b = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_a = reinterpret_cast<Shader*>(hPsA.pDrvPrivate);
+    ps_b = reinterpret_cast<Shader*>(hPsB.pDrvPrivate);
+  }
+  if (!Check(ps_a != nullptr && ps_b != nullptr, "PS A/B driver pointers")) {
+    return false;
+  }
+
+  // Bind PS A.
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPsA);
+  if (!Check(hr == S_OK, "SetShader(PS=A)")) {
+    return false;
+  }
+
+  // Create a state block that redundantly binds PS A (it will be a no-op when applied).
+  D3D9DDI_HSTATEBLOCK hSbApply{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(sb_apply)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPsA);
+  if (!Check(hr == S_OK, "SetShader(PS=A) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSbApply);
+  if (!Check(hr == S_OK, "EndStateBlock(sb_apply)")) {
+    return false;
+  }
+  if (!Check(hSbApply.pDrvPrivate != nullptr, "EndStateBlock(sb_apply) returned handle")) {
+    return false;
+  }
+
+  // Record a second state block while invoking ApplyStateBlock(sb_apply).
+  //
+  // Critical behavior: ApplyStateBlock must record shader bindings into the active
+  // recording state block even if the apply is a no-op (PS A is already bound).
+  D3D9DDI_HSTATEBLOCK hSbRecorded{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(sb_recorded)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbApply);
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSbApply);
+  if (!Check(hr == S_OK, "ApplyStateBlock(sb_apply) during recording")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbApply);
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSbRecorded);
+  if (!Check(hr == S_OK, "EndStateBlock(sb_recorded)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbApply);
+    return false;
+  }
+  if (!Check(hSbRecorded.pDrvPrivate != nullptr, "EndStateBlock(sb_recorded) returned handle")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbApply);
+    return false;
+  }
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbApply);
+
+  // Switch to PS B.
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPsB);
+  if (!Check(hr == S_OK, "SetShader(PS=B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->user_ps == ps_b, "PS B is the current user PS")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+      return false;
+    }
+  }
+
+  // Applying the recorded state block should restore PS A. If ApplyStateBlock did
+  // not record the shader state during sb_recorded recording, this would be a no-op
+  // and PS B would remain bound.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSbRecorded);
+  if (!Check(hr == S_OK, "ApplyStateBlock(sb_recorded) restores PS A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->user_ps == ps_a, "ApplyStateBlock restores user PS A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+      return false;
+    }
+    if (!Check(dev->ps == ps_a, "ApplyStateBlock rebinds PS A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock during recording)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (shaders already created)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "ApplyStateBlock emits BIND_SHADERS")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->ps == ps_a->handle, "ApplyStateBlock binds PS A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSbRecorded);
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -15065,6 +15243,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockUploadsWvpConstantsForTransformChanges()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockDuringStateBlockRecordingCapturesShaderBindings()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
