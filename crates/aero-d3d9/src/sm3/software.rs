@@ -1636,24 +1636,32 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             collect_used_pixel_inputs_modifiers(modifiers, out);
         }
         // Ops with 3 source operands.
-        IrOp::Mad {
-            src0,
-            src1,
-            src2,
-            modifiers,
-            ..
-        }
-        | IrOp::Lrp {
+        IrOp::Dp2Add {
             src0,
             src1,
             src2,
             modifiers,
             ..
         } => {
-            collect_used_pixel_inputs_src(src0, out);
-            collect_used_pixel_inputs_src(src1, out);
-            collect_used_pixel_inputs_src(src2, out);
-            collect_used_pixel_inputs_modifiers(modifiers, out);
+            collect_used_pixel_inputs_src3(src0, src1, src2, modifiers, out);
+        }
+        IrOp::Mad {
+            src0,
+            src1,
+            src2,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src3(src0, src1, src2, modifiers, out);
+        }
+        IrOp::Lrp {
+            src0,
+            src1,
+            src2,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src3(src0, src1, src2, modifiers, out);
         }
         IrOp::TexSample {
             coord,
@@ -1687,6 +1695,19 @@ fn collect_used_pixel_inputs_cond(cond: &Cond, out: &mut BTreeSet<(RegFile, u32)
 
 fn collect_used_pixel_inputs_src(src: &Src, out: &mut BTreeSet<(RegFile, u32)>) {
     collect_used_pixel_inputs_reg(&src.reg, out);
+}
+
+fn collect_used_pixel_inputs_src3(
+    src0: &Src,
+    src1: &Src,
+    src2: &Src,
+    modifiers: &InstModifiers,
+    out: &mut BTreeSet<(RegFile, u32)>,
+) {
+    collect_used_pixel_inputs_src(src0, out);
+    collect_used_pixel_inputs_src(src1, out);
+    collect_used_pixel_inputs_src(src2, out);
+    collect_used_pixel_inputs_modifiers(modifiers, out);
 }
 
 fn collect_used_pixel_inputs_modifiers(
