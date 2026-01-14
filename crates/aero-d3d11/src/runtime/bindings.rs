@@ -33,10 +33,12 @@ impl ShaderStage {
     ///
     /// The AeroGPU shader stage enum historically only supported VS/PS/CS; newer protocol versions
     /// also include `Geometry = 3`. The command stream can also encode additional D3D11 stages
-    /// without
-    /// breaking older hosts via:
+    /// without breaking older hosts via:
     /// - `shader_stage == COMPUTE` (2)
     /// - `stage_ex != 0` in a packet's reserved field (opcode-specific)
+    ///
+    /// Legacy command streams may also encode GS/HS/DS directly as `shader_stage = 3/4/5`. We
+    /// accept those values for forwards/backwards compatibility and ignore `stage_ex` in that case.
     ///
     /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`).
     /// In practice, we accept a superset to keep bindings/state updates robust across host versions:
@@ -54,6 +56,7 @@ impl ShaderStage {
         match stage {
             0 => Some(Self::Vertex),
             1 => Some(Self::Pixel),
+            // Stage-ex encoding: use COMPUTE (2) + DXBC program-type numbering in `stage_ex`.
             2 => match stage_ex {
                 // `stage_ex == 0` is the legacy/default compute-stage encoding.
                 //
@@ -68,6 +71,8 @@ impl ShaderStage {
                 _ => None,
             },
             3 => Some(Self::Geometry),
+            4 => Some(Self::Hull),
+            5 => Some(Self::Domain),
             _ => None,
         }
     }

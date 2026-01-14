@@ -20881,6 +20881,45 @@ mod tests {
     }
 
     #[test]
+    fn set_texture_accepts_legacy_geometry_stage_value() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX: u32 = 1234;
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.set_texture(AerogpuShaderStage::Geometry, 0, TEX);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("SET_TEXTURE with legacy Geometry stage should succeed");
+
+            assert_eq!(
+                exec.binding_state()
+                    .stage(ShaderStage::Geometry)
+                    .texture(0)
+                    .expect("texture should be bound to geometry stage")
+                    .texture,
+                TEX
+            );
+            assert!(
+                exec.binding_state()
+                    .stage(ShaderStage::Compute)
+                    .texture(0)
+                    .is_none(),
+                "legacy geometry stage must not alias the compute binding bucket"
+            );
+        });
+    }
+
+    #[test]
     fn pipeline_cache_compute_support_is_derived_from_downlevel_flags() {
         pollster::block_on(async {
             #[cfg(unix)]
