@@ -12220,11 +12220,25 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             (abiMinor >= 3) &&
             (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
         if (poweredOn && haveErrorRegs) {
-            out->error_code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
-            out->error_fence = AeroGpuReadRegU64HiLoHi(adapter,
-                                                       AEROGPU_MMIO_REG_ERROR_FENCE_LO,
-                                                       AEROGPU_MMIO_REG_ERROR_FENCE_HI);
-            out->error_count = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+            /*
+             * Prefer device-reported error payload when the adapter is in D0, but avoid wiping out
+             * cached KMD telemetry with empty/invalid MMIO values (e.g. after a device reset).
+             */
+            const ULONG mmioCode = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
+            const ULONGLONG mmioFence = AeroGpuReadRegU64HiLoHi(adapter,
+                                                               AEROGPU_MMIO_REG_ERROR_FENCE_LO,
+                                                               AEROGPU_MMIO_REG_ERROR_FENCE_HI);
+            const ULONG mmioCount = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+
+            if (mmioCode != 0) {
+                out->error_code = mmioCode;
+            }
+            if (mmioFence != 0 && mmioFence <= 0xFFFFFFFFull) {
+                out->error_fence = (uint64_t)mmioFence;
+            }
+            if (mmioCount != 0) {
+                out->error_count = mmioCount;
+            }
         }
         return STATUS_SUCCESS;
     }
