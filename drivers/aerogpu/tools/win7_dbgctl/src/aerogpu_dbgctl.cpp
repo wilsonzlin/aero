@@ -9848,6 +9848,7 @@ int wmain(int argc, wchar_t **argv) {
   uint32_t dumpLastCmdIndexFromTail = 0;
   uint32_t dumpLastCmdCount = 1;
   bool dumpLastCmdForce = false;
+  bool dumpLastCmdOutExplicit = false;
   enum {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
@@ -10109,7 +10110,7 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      if (readGpaOutPath) {
+      if (readGpaOutPath || dumpLastCmdOutExplicit) {
         fwprintf(stderr, L"--out specified multiple times\n");
         PrintUsage();
         if (g_json_output) {
@@ -10136,7 +10137,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
+      if (dumpLastCmdOutExplicit || dumpLastCmdOutPath) {
+        fwprintf(stderr, L"--cmd-out specified multiple times (or conflicts with --out)\n");
+        PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL,
+                                 "--cmd-out specified multiple times (or conflicts with --out)",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
       dumpLastCmdOutPath = argv[++i];
+      dumpLastCmdOutExplicit = true;
       continue;
     }
 
@@ -10691,7 +10705,7 @@ int wmain(int argc, wchar_t **argv) {
 
   // `--cmd-out` and `--alloc-out` are used by `--dump-last-submit` (alias: `--dump-last-cmd`).
   // Note: `--out` is also accepted by `--dump-last-cmd` for backward compatibility.
-  if (dumpLastCmdOutPath && !readGpaOutPath && cmd != CMD_DUMP_LAST_CMD) {
+  if (dumpLastCmdOutExplicit && cmd != CMD_DUMP_LAST_CMD) {
     fwprintf(stderr, L"--cmd-out is only supported with --dump-last-submit/--dump-last-cmd\n");
     PrintUsage();
     if (g_json_output) {
