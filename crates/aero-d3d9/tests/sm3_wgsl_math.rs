@@ -39,18 +39,14 @@ fn validate_wgsl(wgsl: &str) {
     .expect("wgsl validate");
 }
 
-fn clamp_value_expr<'a>(wgsl: &'a str) -> &'a str {
+fn clamp_value_expr(wgsl: &str) -> &str {
     let clamp_pos = wgsl.find("clamp(").expect("wgsl should contain clamp()");
     let after = &wgsl[clamp_pos + "clamp(".len()..];
     let mut depth: u32 = 0;
     for (idx, ch) in after.char_indices() {
         match ch {
             '(' => depth += 1,
-            ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            ')' => depth = depth.saturating_sub(1),
             // The first argument to `clamp()` ends at the first comma that is not nested inside any
             // parentheses (e.g. commas in `pow(a, b)`).
             ',' if depth == 0 => return after[..idx].trim(),
