@@ -3326,6 +3326,10 @@ def main() -> int:
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
+        _emit_virtio_snd_playback_host_marker(tail)
+        _emit_virtio_snd_capture_host_marker(tail)
+        _emit_virtio_snd_duplex_host_marker(tail)
+        _emit_virtio_snd_buffer_limits_host_marker(tail)
 
         return result_code if result_code is not None else 2
 
@@ -3948,6 +3952,23 @@ def _emit_virtio_irq_host_markers(
         print("|".join(parts))
 
 
+def _try_extract_marker_status(marker_line: str) -> Optional[str]:
+    """
+    Return the marker status token (PASS/FAIL/SKIP) if present.
+
+    Marker lines are `|` separated and typically include an explicit token:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
+    """
+    toks = marker_line.split("|")
+    if "FAIL" in toks:
+        return "FAIL"
+    if "PASS" in toks:
+        return "PASS"
+    if "SKIP" in toks:
+        return "SKIP"
+    return None
+
+
 def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
     """
     Best-effort: emit a host-side marker describing the guest's virtio-net large transfer metrics.
@@ -4143,6 +4164,95 @@ def _emit_virtio_snd_irq_host_marker(tail: bytes) -> None:
 
 def _emit_virtio_input_irq_host_marker(tail: bytes) -> None:
     _emit_virtio_irq_host_marker(tail, device="virtio-input", host_marker="VIRTIO_INPUT_IRQ")
+
+
+def _emit_virtio_snd_playback_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-snd playback selftest.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|{status}"]
+    for k, v in fields.items():
+        parts.append(f"{k}={_sanitize_marker_value(v)}")
+    print("|".join(parts))
+
+
+def _emit_virtio_snd_capture_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-snd capture selftest.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|{status}"]
+    for k in ("method", "frames", "non_silence", "silence_only", "reason"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_snd_duplex_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-snd duplex selftest.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|{status}"]
+    for k in ("frames", "non_silence", "reason", "hr"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_snd_buffer_limits_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-snd buffer-limits selftest.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|{status}"]
+    for k in ("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
 def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_threshold: int) -> bool:
     marker_prefix = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV"
     try:
