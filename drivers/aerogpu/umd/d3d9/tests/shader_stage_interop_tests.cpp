@@ -1049,6 +1049,17 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
   if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
     return false;
   }
+
+  // Force `fixedfunc_matrix_dirty` for the next draw by toggling WORLD0 away
+  // from identity and back. This avoids relying on redundant SetTransform calls
+  // to force constant uploads (the driver may skip uploads when the matrix
+  // value is unchanged).
+  D3DMATRIX world_tmp = identity;
+  world_tmp.m[3][0] = 1.0f; // translation x
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_tmp);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0) temporary")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
   if (!Check(hr == S_OK, "SetTransform(WORLD0)")) {
     return false;

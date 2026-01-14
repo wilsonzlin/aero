@@ -13801,15 +13801,26 @@ HRESULT AEROGPU_D3D9_CALL device_set_transform(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  std::memcpy(dev->transform_matrices[state], pMatrix, 16 * sizeof(float));
 
-  if (state == 2u || state == 3u || state == 256u) {
-    dev->fixedfunc_matrix_dirty = true;
+  const bool affects_fixedfunc_matrix = (state == 2u || state == 3u || state == 256u);
+  const bool affects_fixedfunc_lighting = (state == 2u || state == 256u);
+
+  // Avoid spurious fixed-function constant uploads when D3D9 runtimes (or apps)
+  // redundantly call SetTransform with identical data.
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[state], pMatrix, 16u * sizeof(float)) != 0;
   }
-  if (state == 2u || state == 256u) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[state], pMatrix, 16u * sizeof(float));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
-  stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
+  stateblock_record_transform_locked(dev, state, pMatrix);
 
   return trace.ret(S_OK);
 }
@@ -13835,15 +13846,24 @@ HRESULT AEROGPU_D3D9_CALL device_multiply_transform(
 
   float tmp[16];
   d3d9_mul_mat4_row_major(dev->transform_matrices[state], pMatrix, tmp);
-  std::memcpy(dev->transform_matrices[state], tmp, sizeof(tmp));
 
-  if (state == 2u || state == 3u || state == 256u) {
-    dev->fixedfunc_matrix_dirty = true;
+  const bool affects_fixedfunc_matrix = (state == 2u || state == 3u || state == 256u);
+  const bool affects_fixedfunc_lighting = (state == 2u || state == 256u);
+
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[state], tmp, sizeof(tmp)) != 0;
   }
-  if (state == 2u || state == 256u) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[state], tmp, sizeof(tmp));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
-  stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
+  stateblock_record_transform_locked(dev, state, tmp);
 
   return trace.ret(S_OK);
 }
@@ -16180,12 +16200,24 @@ HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const Ma
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
-    dev->fixedfunc_matrix_dirty = true;
+  const bool affects_fixedfunc_matrix =
+      (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection);
+  const bool affects_fixedfunc_lighting = (idx == kD3dTransformWorld0 || idx == kD3dTransformView);
+
+  // Avoid spurious fixed-function constant updates when the runtime (or app)
+  // redundantly calls SetTransform with identical data.
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[idx], pMatrix, 16u * sizeof(float)) != 0;
   }
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[idx], pMatrix, 16u * sizeof(float));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
@@ -16230,12 +16262,23 @@ HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, con
   float rhs[16];
   std::memcpy(rhs, pMatrix, sizeof(rhs));
   d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
-  std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
-    dev->fixedfunc_matrix_dirty = true;
+
+  const bool affects_fixedfunc_matrix =
+      (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection);
+  const bool affects_fixedfunc_lighting = (idx == kD3dTransformWorld0 || idx == kD3dTransformView);
+
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[idx], tmp, sizeof(tmp)) != 0;
   }
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
