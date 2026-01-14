@@ -2070,10 +2070,7 @@ fn assemble_ps3_mova_write_mask_preserves_other_components() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out

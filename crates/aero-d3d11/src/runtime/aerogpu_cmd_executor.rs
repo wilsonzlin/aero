@@ -7846,205 +7846,214 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        let expanded_render_vertex_alloc: ExpansionScratchAlloc =
-            if let Some(expanded_index_alloc) = expanded_index_alloc.as_ref() {
-                // Convert the (potentially indexed) compute-prepass output into a non-indexed
-                // vertex stream so the render pass can always use `draw_indirect`.
-                //
-                // Some downlevel backends report indirect-draw support but silently drop
-                // `draw_indexed_indirect`, so avoid depending on it.
-                if !expanded_index_alloc.offset.is_multiple_of(4) {
-                    bail!(
-                        "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
-                        expanded_index_alloc.offset
-                    );
-                }
-                let expanded_vertex_size = expanded_vertex_alloc.size;
-                let expanded_index_size = expanded_index_alloc.size;
-                if !expanded_index_size.is_multiple_of(4) {
-                    bail!(
-                        "geometry prepass expanded index buffer size {} is not a multiple of 4",
-                        expanded_index_size
-                    );
-                }
-                let expanded_index_count = expanded_index_size / 4;
-                let expanded_render_vertex_count = expanded_index_count.max(1);
-                let expanded_render_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
-                    .checked_mul(expanded_render_vertex_count)
-                    .ok_or_else(|| anyhow!("geometry prepass expanded render vertex buffer size overflow"))?;
-                let expanded_render_vertex_alloc = self
-                    .expansion_scratch
-                    .alloc_vertex_output(&self.device, expanded_render_vertex_size)
-                    .map_err(|e| anyhow!("geometry prepass: alloc expanded render vertex buffer: {e}"))?;
+        let expanded_render_vertex_alloc: ExpansionScratchAlloc = if let Some(
+            expanded_index_alloc,
+        ) =
+            expanded_index_alloc.as_ref()
+        {
+            // Convert the (potentially indexed) compute-prepass output into a non-indexed
+            // vertex stream so the render pass can always use `draw_indirect`.
+            //
+            // Some downlevel backends report indirect-draw support but silently drop
+            // `draw_indexed_indirect`, so avoid depending on it.
+            if !expanded_index_alloc.offset.is_multiple_of(4) {
+                bail!(
+                    "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
+                    expanded_index_alloc.offset
+                );
+            }
+            let expanded_vertex_size = expanded_vertex_alloc.size;
+            let expanded_index_size = expanded_index_alloc.size;
+            if !expanded_index_size.is_multiple_of(4) {
+                bail!(
+                    "geometry prepass expanded index buffer size {} is not a multiple of 4",
+                    expanded_index_size
+                );
+            }
+            let expanded_index_count = expanded_index_size / 4;
+            let expanded_render_vertex_count = expanded_index_count.max(1);
+            let expanded_render_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
+                .checked_mul(expanded_render_vertex_count)
+                .ok_or_else(|| {
+                    anyhow!("geometry prepass expanded render vertex buffer size overflow")
+                })?;
+            let expanded_render_vertex_alloc = self
+                .expansion_scratch
+                .alloc_vertex_output(&self.device, expanded_render_vertex_size)
+                .map_err(|e| {
+                    anyhow!("geometry prepass: alloc expanded render vertex buffer: {e}")
+                })?;
 
-                {
-                    let expand_bgl_entries = [
-                        wgpu::BindGroupLayoutEntry {
+            {
+                let expand_bgl_entries = [
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                            ),
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(4),
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+                            ),
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                            ),
+                        },
+                        count: None,
+                    },
+                ];
+                let expand_bgl = self
+                    .bind_group_layout_cache
+                    .get_or_create(&self.device, &expand_bgl_entries);
+                let expand_layout_key = PipelineLayoutKey {
+                    bind_group_layout_hashes: vec![expand_bgl.hash],
+                };
+                let layouts = [expand_bgl.layout.as_ref()];
+                let expand_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+                    &self.device,
+                    &expand_layout_key,
+                    &layouts,
+                    Some("aerogpu_cmd geometry prepass index expand pipeline layout"),
+                );
+
+                let expand_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd geometry prepass index expand bind group"),
+                    layout: expand_bgl.layout.as_ref(),
+                    entries: &[
+                        wgpu::BindGroupEntry {
                             binding: 0,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
-                                ),
-                            },
-                            count: None,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: expanded_vertex_alloc.buffer.as_ref(),
+                                offset: expanded_vertex_alloc.offset,
+                                size: wgpu::BufferSize::new(expanded_vertex_size),
+                            }),
                         },
-                        wgpu::BindGroupLayoutEntry {
+                        wgpu::BindGroupEntry {
                             binding: 1,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(4),
-                            },
-                            count: None,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: expanded_index_alloc.buffer.as_ref(),
+                                offset: expanded_index_alloc.offset,
+                                size: wgpu::BufferSize::new(expanded_index_size),
+                            }),
                         },
-                        wgpu::BindGroupLayoutEntry {
+                        wgpu::BindGroupEntry {
                             binding: 2,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: indirect_args_alloc.buffer.as_ref(),
+                                offset: indirect_args_alloc.offset,
+                                size: wgpu::BufferSize::new(
                                     GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
                                 ),
-                            },
-                            count: None,
+                            }),
                         },
-                        wgpu::BindGroupLayoutEntry {
+                        wgpu::BindGroupEntry {
                             binding: 3,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
-                                ),
-                            },
-                            count: None,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: expanded_render_vertex_alloc.buffer.as_ref(),
+                                offset: expanded_render_vertex_alloc.offset,
+                                size: wgpu::BufferSize::new(expanded_render_vertex_size),
+                            }),
                         },
-                    ];
-                    let expand_bgl = self
-                        .bind_group_layout_cache
-                        .get_or_create(&self.device, &expand_bgl_entries);
-                    let expand_layout_key = PipelineLayoutKey {
-                        bind_group_layout_hashes: vec![expand_bgl.hash],
+                    ],
+                });
+
+                let expand_pipeline_ptr = {
+                    let expand_wgsl = if prepass_vertices_are_reg_file {
+                        GEOMETRY_PREPASS_INDEX_EXPAND_TESS_REGFILE2_CS_WGSL
+                    } else {
+                        GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL
                     };
-                    let layouts = [expand_bgl.layout.as_ref()];
-                    let expand_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+                    let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
                         &self.device,
-                        &expand_layout_key,
-                        &layouts,
-                        Some("aerogpu_cmd geometry prepass index expand pipeline layout"),
+                        aero_gpu::pipeline_key::ShaderStage::Compute,
+                        expand_wgsl,
+                        Some("aerogpu_cmd geometry prepass index expand CS"),
                     );
-
-                    let expand_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("aerogpu_cmd geometry prepass index expand bind group"),
-                        layout: expand_bgl.layout.as_ref(),
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: expanded_vertex_alloc.buffer.as_ref(),
-                                    offset: expanded_vertex_alloc.offset,
-                                    size: wgpu::BufferSize::new(expanded_vertex_size),
-                                }),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: expanded_index_alloc.buffer.as_ref(),
-                                    offset: expanded_index_alloc.offset,
-                                    size: wgpu::BufferSize::new(expanded_index_size),
-                                }),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: indirect_args_alloc.buffer.as_ref(),
-                                    offset: indirect_args_alloc.offset,
-                                    size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
-                                }),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: expanded_render_vertex_alloc.buffer.as_ref(),
-                                    offset: expanded_render_vertex_alloc.offset,
-                                    size: wgpu::BufferSize::new(expanded_render_vertex_size),
-                                }),
-                            },
-                        ],
-                    });
-
-                    let expand_pipeline_ptr = {
-                        let expand_wgsl = if prepass_vertices_are_reg_file {
-                            GEOMETRY_PREPASS_INDEX_EXPAND_TESS_REGFILE2_CS_WGSL
-                        } else {
-                            GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL
-                        };
-                        let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
-                            &self.device,
-                            aero_gpu::pipeline_key::ShaderStage::Compute,
-                            expand_wgsl,
-                            Some("aerogpu_cmd geometry prepass index expand CS"),
-                        );
-                        let key = ComputePipelineKey {
-                            shader: cs_hash,
-                            layout: expand_layout_key.clone(),
-                            entry_point: "cs_main",
-                        };
-                        let pipeline = self
-                            .pipeline_cache
-                            .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                                    label: Some("aerogpu_cmd geometry prepass index expand pipeline"),
-                                    layout: Some(expand_pipeline_layout.as_ref()),
-                                    module: cs,
-                                    entry_point: "cs_main",
-                                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                                })
-                            })
-                            .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-                        pipeline as *const wgpu::ComputePipeline
+                    let key = ComputePipelineKey {
+                        shader: cs_hash,
+                        layout: expand_layout_key.clone(),
+                        entry_point: "cs_main",
                     };
-                    let expand_pipeline = unsafe { &*expand_pipeline_ptr };
+                    let pipeline = self
+                        .pipeline_cache
+                        .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                                label: Some("aerogpu_cmd geometry prepass index expand pipeline"),
+                                layout: Some(expand_pipeline_layout.as_ref()),
+                                module: cs,
+                                entry_point: "cs_main",
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            })
+                        })
+                        .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+                    pipeline as *const wgpu::ComputePipeline
+                };
+                let expand_pipeline = unsafe { &*expand_pipeline_ptr };
 
-                    let thread_count = expanded_index_count.max(1);
-                    let wg_size = 64u64;
-                    let mut dispatch_x = thread_count
-                        .checked_add(wg_size - 1)
-                        .map(|v| v / wg_size)
-                        .unwrap_or(u64::MAX);
-                    dispatch_x = dispatch_x.max(1);
-                    let dispatch_x_u32: u32 = dispatch_x.try_into().map_err(|_| {
+                let thread_count = expanded_index_count.max(1);
+                let wg_size = 64u64;
+                let mut dispatch_x = thread_count
+                    .checked_add(wg_size - 1)
+                    .map(|v| v / wg_size)
+                    .unwrap_or(u64::MAX);
+                dispatch_x = dispatch_x.max(1);
+                let dispatch_x_u32: u32 = dispatch_x.try_into().map_err(|_| {
                         anyhow!(
                             "geometry prepass: expanded index count {expanded_index_count} is too large for index expand dispatch"
                         )
                     })?;
-                    let limit = self.device.limits().max_compute_workgroups_per_dimension;
-                    if dispatch_x_u32 > limit {
-                        bail!(
+                let limit = self.device.limits().max_compute_workgroups_per_dimension;
+                if dispatch_x_u32 > limit {
+                    bail!(
                             "geometry prepass: expanded index expand dispatch size {dispatch_x_u32} exceeds device max_compute_workgroups_per_dimension {limit}"
                         );
-                    }
-
-                    self.encoder_has_commands = true;
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("aerogpu_cmd geometry prepass index expand pass"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(expand_pipeline);
-                    pass.set_bind_group(0, &expand_bind_group, &[]);
-                    pass.dispatch_workgroups(dispatch_x_u32, 1, 1);
                 }
 
-                expanded_render_vertex_alloc
-            } else {
-                expanded_vertex_alloc.clone()
-            };
+                self.encoder_has_commands = true;
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aerogpu_cmd geometry prepass index expand pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(expand_pipeline);
+                pass.set_bind_group(0, &expand_bind_group, &[]);
+                pass.dispatch_workgroups(dispatch_x_u32, 1, 1);
+            }
+
+            expanded_render_vertex_alloc
+        } else {
+            expanded_vertex_alloc.clone()
+        };
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
         //
