@@ -34,7 +34,25 @@ pub fn write_iso9660_joliet_from_dir(
     for entry in walkdir::WalkDir::new(in_dir)
         .follow_links(false)
         .into_iter()
-    {
+        .filter_entry(|e| {
+            // Always include the root so we don't accidentally skip an input directory whose
+            // *name* begins with '.' (since that doesn't affect the package-relative paths).
+            if e.depth() == 0 {
+                return true;
+            }
+
+            // Avoid descending into hidden directories / __MACOSX at all. We also filter these
+            // paths later at the file level, but skipping traversal is faster and avoids touching
+            // host metadata trees.
+            let name = e.file_name().to_string_lossy();
+            if name.starts_with('.') {
+                return false;
+            }
+            if name.eq_ignore_ascii_case("__MACOSX") {
+                return false;
+            }
+            true
+        }) {
         let entry = entry?;
         crate::bail_if_symlink(&entry, &packaged_root)?;
         if !entry.file_type().is_file() {
