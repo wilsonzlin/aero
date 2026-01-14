@@ -528,6 +528,7 @@ pub(super) fn build_bind_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_dxbc::test_utils as dxbc_test_utils;
     use aero_gpu::bindings::samplers::SamplerCache;
     use anyhow::{anyhow, Context};
     use std::sync::Arc;
@@ -2703,16 +2704,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             };
 
             // Translate to WGSL.
-            let dxbc_bytes = {
-                let mut bytes = Vec::new();
-                bytes.extend_from_slice(b"DXBC");
-                bytes.extend_from_slice(&[0u8; 16]); // checksum
-                bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
-                bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-                bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-                debug_assert_eq!(bytes.len(), 32);
-                bytes
-            };
+            let dxbc_bytes = dxbc_test_utils::build_container(&[]);
             let dxbc = crate::DxbcFile::parse(&dxbc_bytes).expect("minimal dxbc parse");
             let signatures = crate::ShaderSignatures::default();
             let translation =

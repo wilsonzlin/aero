@@ -3807,6 +3807,7 @@ impl WgslWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_dxbc::test_utils as dxbc_test_utils;
 
     fn assert_wgsl_validates(wgsl: &str) {
         let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
@@ -4246,13 +4247,7 @@ mod tests {
 
         // The compute path doesn't depend on the DXBC container today, but the
         // public API requires one; construct the smallest valid DXBC header.
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
@@ -4310,13 +4305,7 @@ mod tests {
             ],
         };
 
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]);
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes());
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
@@ -4378,13 +4367,7 @@ mod tests {
             ],
         };
 
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]);
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes());
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
@@ -4441,13 +4424,7 @@ mod tests {
             ],
         };
 
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]);
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes());
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
@@ -4497,13 +4474,7 @@ mod tests {
             ],
         };
 
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
@@ -4534,13 +4505,7 @@ mod tests {
             ],
         };
 
-        let mut dxbc_bytes = Vec::new();
-        dxbc_bytes.extend_from_slice(b"DXBC");
-        dxbc_bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved
-        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-        assert_eq!(dxbc_bytes.len(), 32);
+        let dxbc_bytes = dxbc_test_utils::build_container(&[]);
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();

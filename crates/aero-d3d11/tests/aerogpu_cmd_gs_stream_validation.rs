@@ -1,5 +1,6 @@
 mod common;
 
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::FourCC;
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -10,41 +11,8 @@ const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 const FOURCC_SHDR: FourCC = FourCC(*b"SHDR");
 
-fn align4(len: usize) -> usize {
-    (len + 3) & !3
-}
-
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
-    let chunk_count: u32 = chunks.len().try_into().expect("too many chunks");
-
-    let header_size = 4 + 16 + 4 + 4 + 4 + 4 * chunks.len();
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_size;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor);
-        cursor += 8 + align4(data.len());
-    }
-
-    let total_size: u32 = cursor.try_into().expect("dxbc size should fit in u32");
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for offset in offsets {
-        bytes.extend_from_slice(&(offset as u32).to_le_bytes());
-    }
-
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-        bytes.resize(bytes.len() + (align4(data.len()) - data.len()), 0);
-    }
-
-    bytes
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 #[derive(Clone, Copy)]
@@ -168,4 +136,3 @@ fn aerogpu_cmd_rejects_nonzero_signature_stream_for_rasterization() {
         );
     });
 }
-
