@@ -949,6 +949,106 @@ function Invoke-PackageDriversSelfTest {
         throw "SelfTest: expected mapped output directory not found: $expected2"
     }
 
+    # Signing-policy smoke checks (no ISO / no manifests): ensure certificate and test-signing
+    # instructions are only included for SigningPolicy=test.
+    try {
+        $testInput = Resolve-RepoPath -Path "tools/packaging/aero_packager/testdata/drivers"
+        if (-not (Test-Path -LiteralPath $testInput -PathType Container)) {
+            throw "SelfTest: expected test drivers directory not found: $testInput"
+        }
+
+        $certCandidate = Resolve-RepoPath -Path "guest-tools/certs/AeroTestRoot.cer"
+        if (-not (Test-Path -LiteralPath $certCandidate -PathType Leaf)) {
+            throw "SelfTest: expected test certificate not found: $certCandidate"
+        }
+
+        $outTest = Join-Path $root "out-policy-test"
+        $outNone = Join-Path $root "out-policy-none"
+        if (Test-Path -LiteralPath $outTest) { Remove-Item -LiteralPath $outTest -Recurse -Force }
+        if (Test-Path -LiteralPath $outNone) { Remove-Item -LiteralPath $outNone -Recurse -Force }
+
+        $script:DriverNameMap = @{}
+        $rTest = Invoke-PackageDrivers -InputRoot $testInput -SigningPolicy "test" -CertPath $certCandidate -OutDir $outTest -RepoRoot "." -Version "0.0.0" -NoIso -MakeFatImage:$false -NoManifest
+        $rNone = Invoke-PackageDrivers -InputRoot $testInput -SigningPolicy "none" -CertPath $certCandidate -OutDir $outNone -RepoRoot "." -Version "0.0.0" -NoIso -MakeFatImage:$false -NoManifest
+
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop | Out-Null
+
+        function Read-ZipEntryText {
+            param(
+                [Parameter(Mandatory = $true)][string] $ZipPath,
+                [Parameter(Mandatory = $true)][string] $EntryPath
+            )
+
+            $fs = [System.IO.File]::OpenRead($ZipPath)
+            $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+            try {
+                $entry = $zip.GetEntry($EntryPath)
+                if (-not $entry) {
+                    throw "SelfTest: expected ZIP '$ZipPath' to contain entry '$EntryPath'."
+                }
+                $s = $entry.Open()
+                try {
+                    $sr = New-Object System.IO.StreamReader($s, [System.Text.Encoding]::UTF8, $true)
+                    try {
+                        return $sr.ReadToEnd()
+                    } finally {
+                        $sr.Dispose()
+                    }
+                } finally {
+                    $s.Dispose()
+                }
+            } finally {
+                $zip.Dispose()
+                $fs.Dispose()
+            }
+        }
+
+        function Test-ZipHasEntry {
+            param(
+                [Parameter(Mandatory = $true)][string] $ZipPath,
+                [Parameter(Mandatory = $true)][string] $EntryPath
+            )
+
+            $fs = [System.IO.File]::OpenRead($ZipPath)
+            $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+            try {
+                return $null -ne $zip.GetEntry($EntryPath)
+            } finally {
+                $zip.Dispose()
+                $fs.Dispose()
+            }
+        }
+
+        if (-not (Test-ZipHasEntry -ZipPath $rTest.ZipBundle -EntryPath "aero-test.cer")) {
+            throw "SelfTest: expected SigningPolicy=test bundle ZIP to include aero-test.cer."
+        }
+        if (Test-ZipHasEntry -ZipPath $rNone.ZipBundle -EntryPath "aero-test.cer") {
+            throw "SelfTest: expected SigningPolicy=none bundle ZIP to NOT include aero-test.cer."
+        }
+
+        $installTest = Read-ZipEntryText -ZipPath $rTest.ZipBundle -EntryPath "INSTALL.txt"
+        if ($installTest -notmatch "bcdedit\\s+/set\\s+testsigning\\s+on") {
+            throw "SelfTest: expected SigningPolicy=test INSTALL.txt to include testsigning instructions."
+        }
+        if ($installTest -notmatch "certutil\\s+-addstore\\s+-f\\s+Root\\s+aero-test\\.cer") {
+            throw "SelfTest: expected SigningPolicy=test INSTALL.txt to include certificate import instructions."
+        }
+
+        $installNone = Read-ZipEntryText -ZipPath $rNone.ZipBundle -EntryPath "INSTALL.txt"
+        if ($installNone -match "bcdedit\\s+/set\\s+testsigning\\s+on") {
+            throw "SelfTest: expected SigningPolicy=none INSTALL.txt to NOT include testsigning instructions."
+        }
+        if ($installNone -match "certutil\\s+-addstore\\s+-f\\s+Root\\s+aero-test\\.cer") {
+            throw "SelfTest: expected SigningPolicy=none INSTALL.txt to NOT include certificate import instructions."
+        }
+        if ($installNone -match "The certificate is included as:\\s+aero-test\\.cer") {
+            throw "SelfTest: expected SigningPolicy=none INSTALL.txt to NOT claim a certificate is included."
+        }
+    } finally {
+        if (Test-Path -LiteralPath (Join-Path $root "out-policy-test")) { Remove-Item -LiteralPath (Join-Path $root "out-policy-test") -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath (Join-Path $root "out-policy-none")) { Remove-Item -LiteralPath (Join-Path $root "out-policy-none") -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -1552,31 +1652,37 @@ function Invoke-DeterminismSelfTest {
         $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
         $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
 
-        $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
-        $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
-
-        if ($h1 -ne $h2) {
-            throw "Determinism self-test failed: bundle ZIP SHA-256 mismatch.`r`n  Run1: $($r1.ZipBundle) -> $h1`r`n  Run2: $($r2.ZipBundle) -> $h2`r`nTemp dir preserved for inspection: $tempBase"
+        $checks = @(
+            @{ Name = "x86 ZIP"; Path1 = $r1.ZipX86; Path2 = $r2.ZipX86 },
+            @{ Name = "x64 ZIP"; Path1 = $r1.ZipX64; Path2 = $r2.ZipX64 },
+            @{ Name = "bundle ZIP"; Path1 = $r1.ZipBundle; Path2 = $r2.ZipBundle }
+        )
+        if ($canTestIso) {
+            $checks += @{ Name = "bundle ISO"; Path1 = $r1.IsoBundle; Path2 = $r2.IsoBundle }
         }
 
-        if ($canTestIso) {
-            $iso1 = $r1.IsoBundle
-            $iso2 = $r2.IsoBundle
-            if (-not (Test-Path -LiteralPath $iso1 -PathType Leaf)) {
-                throw "Determinism self-test internal error: expected ISO output missing: $iso1"
+        $results = New-Object System.Collections.Generic.List[object]
+        foreach ($c in $checks) {
+            $p1 = [string]$c.Path1
+            $p2 = [string]$c.Path2
+            if (-not (Test-Path -LiteralPath $p1 -PathType Leaf)) {
+                throw "Determinism self-test internal error: expected output missing: $p1"
             }
-            if (-not (Test-Path -LiteralPath $iso2 -PathType Leaf)) {
-                throw "Determinism self-test internal error: expected ISO output missing: $iso2"
+            if (-not (Test-Path -LiteralPath $p2 -PathType Leaf)) {
+                throw "Determinism self-test internal error: expected output missing: $p2"
             }
-            $ih1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $iso1).Hash
-            $ih2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $iso2).Hash
-            if ($ih1 -ne $ih2) {
-                throw "Determinism self-test failed: bundle ISO SHA-256 mismatch.`r`n  Run1: $iso1 -> $ih1`r`n  Run2: $iso2 -> $ih2`r`nTemp dir preserved for inspection: $tempBase"
+            $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $p1).Hash
+            $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $p2).Hash
+            if ($h1 -ne $h2) {
+                throw "Determinism self-test failed: $($c.Name) SHA-256 mismatch.`r`n  Run1: $p1 -> $h1`r`n  Run2: $p2 -> $h2`r`nTemp dir preserved for inspection: $tempBase"
             }
-            Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1; bundle ISO SHA-256: $ih1)."
-        } else {
-            Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1)."
-            Write-Host "  (ISO determinism check skipped because cargo is not available.)"
+            $results.Add([pscustomobject]@{ Name = $c.Name; Sha256 = $h1 }) | Out-Null
+        }
+
+        $summary = ($results | ForEach-Object { "$($_.Name)=$($_.Sha256)" }) -join "; "
+        Write-Host "Determinism self-test passed ($summary)."
+        if (-not $canTestIso) {
+            Write-Host "  (ISO check skipped because cargo is not available.)"
         }
         Remove-Item -Recurse -Force $tempBase -ErrorAction SilentlyContinue
     } finally {
