@@ -26,6 +26,9 @@ struct HostState {
     slow_mem_reads: u64,
     slow_mem_writes: u64,
     ram_size: u64,
+    /// When set, the first `mmu_translate` call will return a translation without `TLB_FLAG_WRITE`
+    /// set. This forces the inline-TLB permission check path to re-translate.
+    drop_write_flag_on_first_call: bool,
 }
 
 fn validate_wasm(bytes: &[u8]) {
@@ -66,16 +69,25 @@ fn instantiate(
     memory_pages: u32,
     ram_size: u64,
 ) -> (Store<HostState>, Memory, TypedFunc<(i32, i32), i64>) {
-    let engine = Engine::default();
-    let module = Module::new(&engine, wasm).unwrap();
-
-    let mut store = Store::new(
-        &engine,
+    instantiate_with_host_state(
+        wasm,
+        memory_pages,
         HostState {
             ram_size,
             ..Default::default()
         },
-    );
+    )
+}
+
+fn instantiate_with_host_state(
+    wasm: &[u8],
+    memory_pages: u32,
+    host_state: HostState,
+) -> (Store<HostState>, Memory, TypedFunc<(i32, i32), i64>) {
+    let engine = Engine::default();
+    let module = Module::new(&engine, wasm).unwrap();
+
+    let mut store = Store::new(&engine, host_state);
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
@@ -340,7 +352,11 @@ fn define_mmu_translate(
                       vaddr: i64,
                       _access: i32|
                       -> i64 {
-                    caller.data_mut().mmu_translate_calls += 1;
+                    let call_idx = {
+                        let data = caller.data_mut();
+                        data.mmu_translate_calls += 1;
+                        data.mmu_translate_calls
+                    };
 
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> PAGE_SHIFT;
@@ -356,10 +372,13 @@ fn define_mmu_translate(
                     let is_ram = vaddr_u < caller.data().ram_size;
 
                     let phys_base = vaddr_u & PAGE_BASE_MASK;
-                    let flags = TLB_FLAG_READ
+                    let mut flags = TLB_FLAG_READ
                         | TLB_FLAG_WRITE
                         | TLB_FLAG_EXEC
                         | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
+                    if caller.data().drop_write_flag_on_first_call && call_idx == 1 {
+                        flags &= !TLB_FLAG_WRITE;
+                    }
                     let data = phys_base | flags;
 
                     let entry_addr = jit_ctx_ptr as usize
@@ -518,6 +537,67 @@ fn run_trace_with_code_version_table(
     }
 
     (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
+}
+
+fn run_trace_with_host_state(
+    trace: &TraceIr,
+    ram: Vec<u8>,
+    cpu_ptr: u64,
+    host_state: HostState,
+) -> (u64, Vec<u8>, [u64; 16], HostState) {
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+    let ram_size = host_state.ram_size;
+
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM at `ram_base = 0`.
+    assert!(ram.len() <= cpu_ptr as usize, "ram must fit before cpu_ptr");
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt: 0x1234_5678_9abc_def0,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    let pages = (total_len.div_ceil(65_536)) as u32;
+    let (mut store, memory, func) = instantiate_with_host_state(&wasm, pages, host_state);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let mut gpr = [0u64; 16];
+    for (dst, off) in gpr.iter_mut().zip(abi::CPU_GPR_OFF.iter()) {
+        *dst = read_u64_le(&got_mem, cpu_ptr_usize + (*off as usize));
+    }
+
+    // Ensure `ram_size` survives in the copied-out host state for debugging.
+    let mut out = *store.data();
+    out.ram_size = ram_size;
+    (ret, got_mem[..ram.len()].to_vec(), gpr, out)
 }
 
 #[test]
@@ -688,6 +768,40 @@ fn tier2_inline_tlb_store_to_out_of_range_page_does_not_bump_code_version_table(
     assert_eq!(got_ram[0x3000], 0xEE);
     assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 7);
     assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_store_permission_check_retranslates_on_missing_write_flag() {
+    // Force `mmu_translate` to return a translation without write permission on its first call.
+    // The inline-TLB permission check should detect the missing flag and re-translate, resulting
+    // in two `mmu_translate` calls for a single store.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1000),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_host_state(
+        &trace,
+        ram,
+        cpu_ptr,
+        HostState {
+            ram_size: 0x20_000,
+            drop_write_flag_on_first_call: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(got_ram[0x1000], 0xAB);
+    assert_eq!(host.mmu_translate_calls, 2);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
 }
