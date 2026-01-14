@@ -774,11 +774,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
 	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
 	fs.DurationVar(&signalingWSIdleTimeout, "signaling-ws-idle-timeout", signalingWSIdleTimeout, "Close idle signaling WebSocket connections after this duration (env "+EnvSignalingWSIdleTimeout+")")
-	fs.DurationVar(&signalingWSPingInterval, "signaling-ws-ping-interval", signalingWSPingInterval, "Send ping frames on signaling WebSocket connections at this interval (env "+EnvSignalingWSPingInterval+")")
+	fs.DurationVar(&signalingWSPingInterval, "signaling-ws-ping-interval", signalingWSPingInterval, "Send ping frames on signaling WebSocket connections at this interval (must be < --signaling-ws-idle-timeout; env "+EnvSignalingWSPingInterval+")")
 	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+EnvMaxSignalingMessageBytes+")")
 	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+EnvMaxSignalingMessagesPerSecond+")")
 	fs.DurationVar(&udpWSIdleTimeout, "udp-ws-idle-timeout", udpWSIdleTimeout, "Close idle /udp WebSocket connections after this duration (env "+EnvUDPWSIdleTimeout+")")
-	fs.DurationVar(&udpWSPingInterval, "udp-ws-ping-interval", udpWSPingInterval, "Send ping frames on /udp WebSocket connections at this interval (env "+EnvUDPWSPingInterval+")")
+	fs.DurationVar(&udpWSPingInterval, "udp-ws-ping-interval", udpWSPingInterval, "Send ping frames on /udp WebSocket connections at this interval (must be < --udp-ws-idle-timeout; env "+EnvUDPWSPingInterval+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
