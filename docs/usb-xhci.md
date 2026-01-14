@@ -95,7 +95,7 @@ Native integration (wired into the PC platform behind a config flag, but not exp
 
 - Canonical PCI profile (QEMU xHCI identity): `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`)
 - Native PCI wrapper (IRQ/MSI plumbing): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
-- Emulator crate glue (module path): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`)
+- Emulator crate glue (legacy/compat; feature-gated by `emulator/legacy-usb-xhci`): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`; tracked for deletion in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md))
 - PC platform wiring (optional): `crates/aero-pc-platform/src/lib.rs`
   (`PcPlatformConfig.enable_xhci`, default `false`)
 

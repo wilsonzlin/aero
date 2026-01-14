@@ -69,6 +69,7 @@ Current code locations:
   `crates/aero-machine/src/lib.rs`
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
 - Native PCI device wrapper (MMIO BAR + IRQ + DMA gating): `crates/devices/src/usb/ehci.rs`
+- Emulator crate glue (legacy/compat; feature-gated by `emulator/legacy-usb-ehci`): `emulator::io::usb::ehci` (thin wrapper around `aero_usb::ehci`; tracked for deletion in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md))
 
 Important: the async + periodic schedule engines now exist in `aero-usb`. The sections below document
 the intended contracts and call out remaining limitations (e.g. no iTD/siTD, no split/TT).
