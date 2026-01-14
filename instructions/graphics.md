@@ -74,6 +74,7 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 | `crates/aero-dxbc/` | DXBC bytecode parser (shared) |
 | `crates/aero-webgpu/` | WebGPU abstraction layer |
 | `emulator/protocol/` | **Canonical** AeroGPU ABI mirrors (Rust + TypeScript) |
+| `crates/aero-devices-gpu/` | Shared “device-side” AeroGPU implementation (regs/ring/executor + portable PCI wrapper) |
 | `crates/aero-machine/` | Canonical full-system machine (`aero_machine::Machine`) — currently boots via `aero-gpu-vga` |
 | `crates/emulator/` | Device-model sandbox (contains a full AeroGPU BAR0/MMIO/ring implementation used by host-side tests) |
 | `drivers/aerogpu/` | Windows 7 AeroGPU driver (KMD + UMD) |
