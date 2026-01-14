@@ -146,6 +146,8 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::EndLoop => "endloop",
         Sm4Inst::BreakC { .. } => "breakc",
         Sm4Inst::ContinueC { .. } => "continuec",
+        Sm4Inst::Break => "break",
+        Sm4Inst::Continue => "continue",
         Sm4Inst::Mov { .. } => "mov",
         Sm4Inst::Movc { .. } => "movc",
         Sm4Inst::Itof { .. } => "itof",
@@ -445,6 +447,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     &input_sivs,
                 )?;
             }
+            Sm4Inst::Break | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst, src } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 scan_src_operand(
@@ -931,14 +934,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             Sm4CmpOp::EqU | Sm4CmpOp::NeU | Sm4CmpOp::LtU | Sm4CmpOp::GeU | Sm4CmpOp::LeU
                 | Sm4CmpOp::GtU
         );
-        let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
-        let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
-        let a = format!("({a}).x");
-        let b = format!("({b}).x");
         let (a, b) = if unsigned {
-            (format!("bitcast<u32>({a})"), format!("bitcast<u32>({b})"))
+            let a_u = emit_src_vec4_u32(inst_index, opcode, a, &input_sivs)?;
+            let b_u = emit_src_vec4_u32(inst_index, opcode, b, &input_sivs)?;
+            (format!("({a_u}).x"), format!("({b_u}).x"))
         } else {
-            (a, b)
+            let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
+            let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
+            (format!("({a}).x"), format!("({b}).x"))
         };
         let op_str = match op {
             Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
@@ -1090,6 +1093,34 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 w.line("continue;");
                 w.dedent();
                 w.line("}");
+            }
+            Sm4Inst::Break => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                w.line("break;");
+            }
+            Sm4Inst::Continue => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                w.line("continue;");
             }
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;

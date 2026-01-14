@@ -1318,7 +1318,7 @@ fn gs_translate_rejects_regfile_output_depth_destination() {
 }
 
 #[test]
-fn gs_translate_supports_structured_control_flow_if_else_loop_breakc_continuec() {
+fn gs_translate_supports_structured_control_flow_if_else_loop_break_continue_breakc_continuec() {
     const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 
     let module = Sm4Module {
@@ -1414,6 +1414,66 @@ fn gs_translate_supports_structured_control_flow_if_else_loop_breakc_continuec()
                     modifier: OperandModifier::None,
                 },
             },
+            Sm4Inst::EndLoop,
+            // loop { ifc { continue; } break; }
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::X,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]), // 0.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Loop,
+            Sm4Inst::Add {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::X,
+                    saturate: false,
+                },
+                a: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000; 4]), // 1.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::IfC {
+                op: Sm4CmpOp::Eq,
+                a: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000; 4]), // 1.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Continue,
+            Sm4Inst::EndIf,
+            Sm4Inst::Break,
             Sm4Inst::EndLoop,
             Sm4Inst::Ret,
         ],
