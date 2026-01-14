@@ -364,6 +364,14 @@ function abiDump(): AbiDump {
   assert.equal(run.status, 0, `ABI dump helper failed: ${run.error ?? ""}\n${run.stderr}\n${run.stdout}`);
 
   cachedAbi = parseAbiDump(run.stdout);
+
+  // Best-effort cleanup: avoid leaving compiled helpers behind in /tmp on CI.
+  // (If assertions above fail, we intentionally leave the binary for debugging.)
+  try {
+    fs.unlinkSync(outPath);
+  } catch {
+    // ignore
+  }
   return cachedAbi;
 }
 

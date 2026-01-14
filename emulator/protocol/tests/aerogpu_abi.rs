@@ -157,9 +157,14 @@ fn compile_and_run_c_abi_dump() -> AbiDump {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    parse_c_abi_dump_output(
+    let dump = parse_c_abi_dump_output(
         String::from_utf8(output.stdout).expect("C ABI dump output was not UTF-8"),
-    )
+    );
+
+    // Best-effort cleanup: avoid leaving compiled helpers behind in /tmp on CI.
+    let _ = std::fs::remove_file(&out_path);
+
+    dump
 }
 
 fn parse_c_abi_dump_output(text: String) -> AbiDump {
