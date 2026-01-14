@@ -532,24 +532,38 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
+  const UINT min_row_pitch = (UINT)kWidth * 4;
+  const auto MapStagingRead = [&](const char* label, D3D11_MAPPED_SUBRESOURCE* out_map) -> int {
+    if (!out_map) {
+      return reporter.Fail("%s: NULL out_map", label);
+    }
+    ZeroMemory(out_map, sizeof(*out_map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, out_map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(&reporter, kTestName, label, hr, device.get());
+    }
+    if (!out_map->pData) {
+      context->Unmap(staging.get(), 0);
+      return reporter.Fail("%s returned NULL pData", label);
+    }
+    if (out_map->RowPitch < min_row_pitch) {
+      context->Unmap(staging.get(), 0);
+      return reporter.Fail("%s returned unexpected RowPitch=%ld (expected >= %d)",
+                           label,
+                           (long)out_map->RowPitch,
+                           kWidth * 4);
+    }
+    return 0;
+  };
+
   context->CopyResource(staging.get(), rt_tex.get());
   context->Flush();
 
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
-  hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
-  if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging)", hr, device.get());
-  }
-  if (!map.pData) {
-    context->Unmap(staging.get(), 0);
-    return reporter.Fail("Map(staging) returned NULL pData");
-  }
-  if ((int)map.RowPitch < kWidth * 4) {
-    context->Unmap(staging.get(), 0);
-    return reporter.Fail("Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
-                         (long)map.RowPitch,
-                         kWidth * 4);
+  int map_rc = MapStagingRead("Map(staging)", &map);
+  if (map_rc != 0) {
+    return map_rc;
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
@@ -602,6 +616,149 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
         (unsigned long)expected_blue,
         (unsigned long)right_corner,
         (unsigned long)expected_green);
+  }
+
+  // Subtest: ClearState resets depth-stencil state.
+  //
+  // Specifically validate that a non-default DepthFunc (GREATER) does not "stick"
+  // across ClearState. This helps catch missing default OM state emission in the UMD.
+  {
+    D3D11_DEPTH_STENCIL_DESC dss_greater_desc = dss_desc;
+    dss_greater_desc.DepthFunc = D3D11_COMPARISON_GREATER;
+    ComPtr<ID3D11DepthStencilState> dss_greater;
+    hr = device->CreateDepthStencilState(&dss_greater_desc, dss_greater.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateDepthStencilState(GREATER)", hr);
+    }
+
+    const D3D11_VIEWPORT vp_full = {0.0f, 0.0f, (FLOAT)kWidth, (FLOAT)kHeight, 0.0f, 1.0f};
+    UINT stride = sizeof(Vertex);
+    UINT offset = 0;
+    ID3D11Buffer* vbs[] = {vb.get()};
+
+    const auto ReadbackCenter = [&](const char* label,
+                                    const wchar_t* bmp_name,
+                                    const wchar_t* bin_name,
+                                    uint32_t* out_pixel) -> int {
+      if (!out_pixel) {
+        return reporter.Fail("%s: NULL out_pixel", label);
+      }
+      context->OMSetRenderTargets(0, NULL, NULL);
+      context->CopyResource(staging.get(), rt_tex.get());
+      context->Flush();
+
+      D3D11_MAPPED_SUBRESOURCE map2;
+      int rc = MapStagingRead(label, &map2);
+      if (rc != 0) {
+        return rc;
+      }
+      *out_pixel =
+          aerogpu_test::ReadPixelBGRA(map2.pData, (int)map2.RowPitch, kWidth / 2, kHeight / 2);
+
+      if (dump) {
+        const std::wstring bmp_path = aerogpu_test::JoinPath(dir, bmp_name);
+        std::string err;
+        if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map2.pData, (int)map2.RowPitch, &err)) {
+          aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed (%ls): %s", kTestName, bmp_name, err.c_str());
+        } else {
+          reporter.AddArtifactPathW(bmp_path);
+        }
+
+        std::vector<uint8_t> tight((size_t)kWidth * (size_t)kHeight * 4u, 0);
+        for (int y = 0; y < kHeight; ++y) {
+          const uint8_t* src_row = (const uint8_t*)map2.pData + (size_t)y * (size_t)map2.RowPitch;
+          memcpy(&tight[(size_t)y * (size_t)kWidth * 4u], src_row, (size_t)kWidth * 4u);
+        }
+        DumpBytesToFile(kTestName, &reporter, bin_name, &tight[0], (UINT)tight.size());
+      }
+
+      context->Unmap(staging.get(), 0);
+      return 0;
+    };
+
+    // Dirty the host state: set DepthFunc=GREATER, clear depth to 0.0, and draw a fullscreen triangle at z=0.8.
+    // With GREATER, this must PASS (0.8 > 0.0), producing green.
+    context->OMSetRenderTargets(1, rtvs, dsv.get());
+    context->OMSetDepthStencilState(dss_greater.get(), 0);
+    context->RSSetViewports(1, &vp_full);
+    context->IASetInputLayout(input_layout.get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+    context->VSSetShader(vs.get(), NULL, 0);
+    context->PSSetShader(ps.get(), NULL, 0);
+    context->ClearRenderTargetView(rtv.get(), clear_rgba);
+    context->ClearDepthStencilView(dsv.get(), clear_flags, 0.0f, 0);
+    context->Draw(3, 3);
+
+    uint32_t dirty_center = 0;
+    map_rc = ReadbackCenter("Map(staging) [ClearState dirty GREATER]",
+                            L"d3d11_depth_test_sanity_clear_state_dirty_greater.bmp",
+                            L"d3d11_depth_test_sanity_clear_state_dirty_greater.bin",
+                            &dirty_center);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+    if ((dirty_center & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
+      return reporter.Fail("DepthFunc(GREATER) unexpected output: center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)dirty_center,
+                           (unsigned long)expected_green);
+    }
+
+    // ClearState and then draw again WITHOUT setting a depth-stencil state.
+    // Defaults should apply (DepthEnable=TRUE, DepthFunc=LESS).
+    context->ClearState();
+
+    context->OMSetRenderTargets(1, rtvs, dsv.get());
+    context->RSSetViewports(1, &vp_full);
+    context->IASetInputLayout(input_layout.get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+    context->VSSetShader(vs.get(), NULL, 0);
+    context->PSSetShader(ps.get(), NULL, 0);
+
+    // With depth cleared to 0.0, DepthFunc=LESS should REJECT z=0.8 (0.8 < 0.0 is false), leaving red.
+    context->ClearRenderTargetView(rtv.get(), clear_rgba);
+    context->ClearDepthStencilView(dsv.get(), clear_flags, 0.0f, 0);
+    context->Draw(3, 3);
+
+    uint32_t reset_depth0_center = 0;
+    map_rc = ReadbackCenter("Map(staging) [ClearState reset depth=0]",
+                            L"d3d11_depth_test_sanity_clear_state_reset_depth0.bmp",
+                            L"d3d11_depth_test_sanity_clear_state_reset_depth0.bin",
+                            &reset_depth0_center);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+    if ((reset_depth0_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
+        ((reset_depth0_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
+      return reporter.Fail("ClearState depth-stencil reset failed (depth=0): center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)reset_depth0_center,
+                           (unsigned long)expected_red);
+    }
+
+    // With depth cleared to 1.0, DepthFunc=LESS should ACCEPT z=0.8, producing green.
+    context->OMSetRenderTargets(1, rtvs, dsv.get());
+    context->ClearRenderTargetView(rtv.get(), clear_rgba);
+    context->ClearDepthStencilView(dsv.get(), clear_flags, 1.0f, 0);
+    context->Draw(3, 3);
+
+    uint32_t reset_depth1_center = 0;
+    map_rc = ReadbackCenter("Map(staging) [ClearState reset depth=1]",
+                            L"d3d11_depth_test_sanity_clear_state_reset_depth1.bmp",
+                            L"d3d11_depth_test_sanity_clear_state_reset_depth1.bin",
+                            &reset_depth1_center);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+    if ((reset_depth1_center & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        ((reset_depth1_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
+      return reporter.Fail("ClearState depth-stencil reset failed (depth=1): center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)reset_depth1_center,
+                           (unsigned long)expected_green);
+    }
   }
 
   return reporter.Pass();
