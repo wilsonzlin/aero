@@ -41,8 +41,10 @@ const XHCI_MAX_ROUTE_TIER_COUNT: usize = XHCI_ROUTE_STRING_MAX_DEPTH;
 const MAX_XHCI_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 // Reserve the 2nd xHCI root port for the WebUSB passthrough device.
 //
-// This keeps the port assignment stable across snapshots and matches the UHCI bridge's convention
-// of leaving root port 0 available for an external hub / HID passthrough in the future.
+// This keeps the port assignment stable across snapshots and matches the shared browser USB
+// topology convention used by `aero-machine`:
+// - root port 0: external hub / topology manager (synthetic HID + WebHID passthrough)
+// - root port 1: WebUSB passthrough
 const WEBUSB_ROOT_PORT: u8 = crate::webusb_ports::WEBUSB_ROOT_PORT;
 
 /// Maximum number of 1ms frames processed per [`XhciControllerBridge::step_frames`] call.
