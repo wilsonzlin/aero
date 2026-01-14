@@ -14628,6 +14628,126 @@ bool TestSetShaderConstIBSkipsRedundantCommands() {
 }
 
 template <typename DeviceFuncsT>
+bool TestSetShaderConstIBInvalidRangeNoopsImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value) {
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      bool has_adapter = false;
+      bool has_device = false;
+
+      ~Cleanup() {
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!Check(cleanup.device_funcs.pfnSetShaderConstI != nullptr, "SetShaderConstI must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnSetShaderConstB != nullptr, "SetShaderConstB must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Seed register 255 with known values so invalid ranges cannot "clamp" and partially write it.
+    const uint32_t last_reg = 255;
+    const int32_t i255_a[4] = {1, 2, 3, 4};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, last_reg, i255_a, 1);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, i255)")) {
+      return false;
+    }
+    const BOOL b255_a[1] = {static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, last_reg, b255_a, 1);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, b255)")) {
+      return false;
+    }
+
+    const size_t base = static_cast<size_t>(last_reg) * 4;
+    int32_t i_snapshot[4]{};
+    std::memcpy(i_snapshot, dev->ps_consts_i + base, sizeof(i_snapshot));
+    const uint8_t b_snapshot = dev->ps_consts_b[last_reg];
+
+    // Invalid range: start=255, count=2.
+    dev->cmd.reset();
+    const int32_t i_invalid[8] = {-1, -2, -3, -4, -5, -6, -7, -8};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, last_reg, i_invalid, 2);
+    if (!Check(hr == kD3DErrInvalidCall, "SetShaderConstI invalid range returns INVALIDCALL")) {
+      return false;
+    }
+    const BOOL b_invalid[2] = {static_cast<BOOL>(0), static_cast<BOOL>(0)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, last_reg, b_invalid, 2);
+    if (!Check(hr == kD3DErrInvalidCall, "SetShaderConstB invalid range returns INVALIDCALL")) {
+      return false;
+    }
+    dev->cmd.finalize();
+
+    if (!Check(CountOpcode(dma.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_SHADER_CONSTANTS_I) == 0,
+               "invalid SetShaderConstI emits no SET_SHADER_CONSTANTS_I")) {
+      return false;
+    }
+    if (!Check(CountOpcode(dma.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_SHADER_CONSTANTS_B) == 0,
+               "invalid SetShaderConstB emits no SET_SHADER_CONSTANTS_B")) {
+      return false;
+    }
+
+    if (!Check(std::memcmp(dev->ps_consts_i + base, i_snapshot, sizeof(i_snapshot)) == 0,
+               "invalid SetShaderConstI does not modify cached i255")) {
+      return false;
+    }
+    return Check(dev->ps_consts_b[last_reg] == b_snapshot, "invalid SetShaderConstB does not modify cached b255");
+  }
+}
+
+bool TestSetShaderConstIBInvalidRangeNoops() {
+  return TestSetShaderConstIBInvalidRangeNoopsImpl<D3D9DDI_DEVICEFUNCS>();
+}
+
+template <typename DeviceFuncsT>
 bool TestGetShaderConstIBRoundTripImpl() {
   if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
                 !HasPfnSetShaderConstB<DeviceFuncsT>::value ||
@@ -41275,6 +41395,7 @@ int main() {
   RUN_TEST(TestSetShaderConstIBEmitsCommands);
   RUN_TEST(TestSetShaderConstIBSkipsRedundantCommands);
   RUN_TEST(TestSetShaderConstIBNormalizesStage);
+  RUN_TEST(TestSetShaderConstIBInvalidRangeNoops);
   RUN_TEST(TestGetShaderConstIBRoundTrip);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
