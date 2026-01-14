@@ -250,6 +250,16 @@ When staging from `out/packages/**`, the script maps nested driver paths (`<driv
 Guest Tools-facing driver directory names so the packager spec and the `guest-tools/` repo skeleton
 do not drift (e.g. `drivers/aerogpu` → `aerogpu`, `windows7/virtio-blk` → `virtio-blk`, `windows7/virtio-net` → `virtio-net`).
 
+Driver directory name collisions:
+
+`ci/package-guest-tools.ps1` normalizes driver directory names (lowercase + some legacy aliases like
+`aero-gpu` → `aerogpu`). When staging from a **packager layout** (`x86/` + `amd64/`) or a **bundle layout**
+(`drivers/<driver>/(x86|x64)/...`), the script now **fails fast** if two source directories normalize to the
+same destination name (to avoid silently merging/overwriting driver contents).
+
+To resolve a collision, remove/rename one of the input directories, or pass `-DriverNameMapJson` to override
+the normalized name for a specific source directory.
+
 This script is intended to be run after `ci/package-drivers.ps1` in CI so that the release
 contains both:
 

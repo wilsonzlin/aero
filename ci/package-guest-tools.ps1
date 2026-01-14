@@ -957,6 +957,26 @@ function Resolve-ArchDirName {
   return $null
 }
 
+# Name collision repro snippets (manual):
+#
+# Packager layout (`x86/` + `amd64/`):
+#
+#   $root = Join-Path $env:TEMP ("aero-gt-collision-{0}" -f [Guid]::NewGuid().ToString("N"))
+#   New-Item -ItemType Directory -Force -Path (Join-Path $root "x86\\aerogpu") | Out-Null
+#   New-Item -ItemType Directory -Force -Path (Join-Path $root "x86\\aero-gpu") | Out-Null
+#   New-Item -ItemType Directory -Force -Path (Join-Path $root "amd64\\aerogpu") | Out-Null
+#   pwsh -NoProfile -File ci/package-guest-tools.ps1 -InputRoot $root
+#
+# Bundle layout (`drivers/<driver>/(x86|x64)/...`):
+#
+#   $root = Join-Path $env:TEMP ("aero-gt-collision-{0}" -f [Guid]::NewGuid().ToString("N"))
+#   New-Item -ItemType Directory -Force -Path (Join-Path $root "drivers\\aero-gpu\\x86") | Out-Null
+#   New-Item -ItemType Directory -Force -Path (Join-Path $root "drivers\\aerogpu\\x86") | Out-Null
+#   pwsh -NoProfile -File ci/package-guest-tools.ps1 -InputRoot $root
+#
+# Expected: staging fails fast with a "Driver directory name collision" error that names both
+# source directories and suggests using -DriverNameMapJson.
+#
 function Stage-DriversFromPackagerLayout {
   param(
     [Parameter(Mandatory = $true)][string] $InputDriversRoot,
@@ -974,9 +994,32 @@ function Stage-DriversFromPackagerLayout {
     $destArchDir = Join-Path $StageDriversRoot $arch.Out
     New-Item -ItemType Directory -Force -Path $destArchDir | Out-Null
 
-    $driverDirs = Get-ChildItem -LiteralPath $arch.Src -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
+    # Detect normalized-name collisions before copying to avoid silent merges/overwrites
+    # (e.g. both `aero-gpu` and `aerogpu` normalizing to `aerogpu`).
+    $seenDstNames = @{} # dstName -> source dir full path
+
+    # Deterministic ordering so collision errors are stable in CI logs.
+    $driverDirs = @(
+      Get-ChildItem -LiteralPath $arch.Src -Directory -ErrorAction SilentlyContinue |
+        Sort-Object -Property @{ Expression = { $_.Name.ToLowerInvariant() } }, @{ Expression = { $_.FullName.ToLowerInvariant() } }
+    )
     foreach ($d in $driverDirs) {
-      $dst = Join-Path $destArchDir (Normalize-GuestToolsDriverName -Name $d.Name)
+      $dstName = Normalize-GuestToolsDriverName -Name $d.Name
+      $dstKey = $dstName.ToLowerInvariant()
+      if ($seenDstNames.ContainsKey($dstKey)) {
+        $first = $seenDstNames[$dstKey]
+        throw (@(
+            "Driver directory name collision while staging from packager layout ($($arch.Out)):",
+            "  destination name: '$dstName'",
+            "  source #1: '$($first.Name)' ($($first.Path))",
+            "  source #2: '$($d.Name)' ($($d.FullName))",
+            "",
+            "Remediation: remove/rename one of the directories, or pass -DriverNameMapJson to rename one explicitly."
+          ) -join "`n")
+      }
+      $seenDstNames[$dstKey] = [pscustomobject]@{ Name = $d.Name; Path = $d.FullName }
+
+      $dst = Join-Path $destArchDir $dstName
       Copy-Item -LiteralPath $d.FullName -Destination $dst -Recurse -Force
     }
   }
@@ -998,12 +1041,37 @@ function Stage-DriversFromBundleLayout {
   New-Item -ItemType Directory -Force -Path $destX86 | Out-Null
   New-Item -ItemType Directory -Force -Path $destAmd64 | Out-Null
 
-  $driverDirs = Get-ChildItem -LiteralPath $driversRoot -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
+  # Detect normalized-name collisions before copying to avoid silent merges/overwrites
+  # (e.g. both `aero-gpu` and `aerogpu` normalizing to `aerogpu`).
+  $seenByArch = @{
+    "x86"   = @{} # dstName -> source dir full path
+    "amd64" = @{}
+  }
+
+  # Deterministic ordering so collision errors are stable in CI logs.
+  $driverDirs = @(
+    Get-ChildItem -LiteralPath $driversRoot -Directory -ErrorAction SilentlyContinue |
+      Sort-Object -Property @{ Expression = { $_.Name.ToLowerInvariant() } }, @{ Expression = { $_.FullName.ToLowerInvariant() } }
+  )
   foreach ($d in $driverDirs) {
     $driverName = Normalize-GuestToolsDriverName -Name $d.Name
 
     $srcX86 = Join-Path $d.FullName "x86"
     if (Test-Path -LiteralPath $srcX86 -PathType Container) {
+      $k = $driverName.ToLowerInvariant()
+      if ($seenByArch["x86"].ContainsKey($k)) {
+        $first = $seenByArch["x86"][$k]
+        throw (@(
+            "Driver directory name collision while staging from bundle layout (x86):",
+            "  destination name: '$driverName'",
+            "  source #1: '$($first.Name)' ($($first.Path))",
+            "  source #2: '$($d.Name)' ($($d.FullName))",
+            "",
+            "Remediation: remove/rename one of the directories, or pass -DriverNameMapJson to rename one explicitly."
+          ) -join "`n")
+      }
+      $seenByArch["x86"][$k] = [pscustomobject]@{ Name = $d.Name; Path = $d.FullName }
+
       $dst = Join-Path $destX86 $driverName
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
       Copy-Item -Path (Join-Path $srcX86 "*") -Destination $dst -Recurse -Force
@@ -1018,6 +1086,20 @@ function Stage-DriversFromBundleLayout {
       }
     }
     if ($srcX64) {
+      $k = $driverName.ToLowerInvariant()
+      if ($seenByArch["amd64"].ContainsKey($k)) {
+        $first = $seenByArch["amd64"][$k]
+        throw (@(
+            "Driver directory name collision while staging from bundle layout (amd64):",
+            "  destination name: '$driverName'",
+            "  source #1: '$($first.Name)' ($($first.Path))",
+            "  source #2: '$($d.Name)' ($($d.FullName))",
+            "",
+            "Remediation: remove/rename one of the directories, or pass -DriverNameMapJson to rename one explicitly."
+          ) -join "`n")
+      }
+      $seenByArch["amd64"][$k] = [pscustomobject]@{ Name = $d.Name; Path = $d.FullName }
+
       $dst = Join-Path $destAmd64 $driverName
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
       Copy-Item -Path (Join-Path $srcX64 "*") -Destination $dst -Recurse -Force
