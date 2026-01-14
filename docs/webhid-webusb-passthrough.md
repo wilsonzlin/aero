@@ -407,12 +407,12 @@ To connect them, the worker maintains per-device queues:
   - if a report is queued: return it as the transfer payload
   - if the queue is empty: NAK (guest will poll again)
 
-Note: Aero models passthrough HID devices as **USB 1.1 full-speed** interfaces. Interrupt
-endpoints therefore have a maximum packet size of **64 bytes** (including the report ID prefix when
-report IDs are in use). We currently do not support splitting a single HID report across multiple
-interrupt transactions, so oversized input/output reports are rejected at attach/descriptor-synthesis
-time. (Feature reports use control transfers and can be larger; very large feature reports may fall
-back to `postMessage` on the host boundary when the SAB output ring is enabled.)
+Note: Aero currently caps passthrough HID **input reports** to fit in a single interrupt IN packet
+(**64 bytes**, including the report ID prefix when report IDs are in use). We currently do not
+support splitting a single HID input report across multiple interrupt transactions, so oversized
+input reports are rejected at attach/descriptor-synthesis time. (Output/feature reports use control
+transfers and are subject to separate caps; very large feature reports may fall back to
+`postMessage` on the host boundary when the SAB output ring is enabled.)
 
 #### Output/feature reports (guest → device)
 
