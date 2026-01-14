@@ -11,7 +11,14 @@ It is intended as an integration checklist for:
 ## Background
 
 When `MachineConfig::enable_aerogpu = true`, `aero_machine::Machine` exposes the canonical AeroGPU
-PCI function (`A3A0:0001` at `00:07.0`) and implements:
+PCI function (`A3A0:0001` at `00:07.0`).
+
+Notes:
+
+- `enable_aerogpu` requires `MachineConfig::enable_pc_platform = true` (the PCI bus must be present).
+- `enable_aerogpu` is mutually exclusive with `enable_vga` (standalone VGA/VBE device model).
+
+The machine implements:
 
 - BAR1-backed VRAM (including legacy VGA/VBE decode for boot display),
 - BAR0 MMIO registers (ring/fence transport, scanout/cursor state, vblank timing + IRQ plumbing),

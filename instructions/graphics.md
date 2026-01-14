@@ -28,6 +28,7 @@ Key docs for that bring-up:
 
 - [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) — canonical AeroGPU PCI IDs + current `aero_machine::Machine` status
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — required VGA/VBE compatibility + scanout handoff model
+- [`docs/graphics/aerogpu-executor-modes.md`](../docs/graphics/aerogpu-executor-modes.md) — how `aero_machine` drives AeroGPU submission execution + fence forward progress (no-op bring-up vs submission bridge vs in-process backends)
 - [`docs/graphics/win7-vblank-present-requirements.md`](../docs/graphics/win7-vblank-present-requirements.md) — Win7 vblank/present timing contract (DWM/Aero stability)
 - [`docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`](../docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md) — mapping from legacy “scratchpad task IDs” (SM3/DXBC/shared-surface) to in-tree implementations/tests (avoid duplicate work)
 

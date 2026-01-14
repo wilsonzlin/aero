@@ -37,7 +37,8 @@ The canonical machine supports **two mutually-exclusive** display configurations
       can complete fences without executing the command stream; browser/WASM runtimes can enable an
       out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
       `Machine::aerogpu_complete_fence`) so the GPU worker can execute submissions and report fence
-      completion, and
+      completion (see [`docs/graphics/aerogpu-executor-modes.md`](../graphics/aerogpu-executor-modes.md)
+      for the executor/fence completion modes), and
     - scanout0 register storage + vblank timing/IRQ semantics (per `drivers/aerogpu/protocol/vblank.md`;
       vblank time is a monotonic “nanoseconds since boot” value) so `Machine::display_present` can
       present the WDDM scanout framebuffer by reading its guest physical address from guest memory.
