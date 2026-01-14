@@ -916,6 +916,67 @@ fn sampler_address_mode_name(mode: u32) -> Option<String> {
     AerogpuSamplerAddressMode::from_u32(mode).map(|m| format!("{m:?}"))
 }
 
+fn d3d9_sampler_state_name(state: u32) -> Option<&'static str> {
+    Some(match state {
+        // D3DSAMPLERSTATETYPE (subset)
+        1 => "D3DSAMP_ADDRESSU",
+        2 => "D3DSAMP_ADDRESSV",
+        3 => "D3DSAMP_ADDRESSW",
+        4 => "D3DSAMP_BORDERCOLOR",
+        5 => "D3DSAMP_MAGFILTER",
+        6 => "D3DSAMP_MINFILTER",
+        7 => "D3DSAMP_MIPFILTER",
+        8 => "D3DSAMP_MIPMAPLODBIAS",
+        9 => "D3DSAMP_MAXMIPLEVEL",
+        10 => "D3DSAMP_MAXANISOTROPY",
+        11 => "D3DSAMP_SRGBTEXTURE",
+        12 => "D3DSAMP_ELEMENTINDEX",
+        13 => "D3DSAMP_DMAPOFFSET",
+        _ => return None,
+    })
+}
+
+fn d3d9_render_state_name(state: u32) -> Option<&'static str> {
+    Some(match state {
+        // D3DRENDERSTATETYPE (partial; enough to make dumps readable).
+        7 => "D3DRS_ZENABLE",
+        14 => "D3DRS_ZWRITEENABLE",
+        15 => "D3DRS_ALPHATESTENABLE",
+        18 => "D3DRS_FRONTCOUNTERCLOCKWISE",
+        19 => "D3DRS_SRCBLEND",
+        20 => "D3DRS_DESTBLEND",
+        22 => "D3DRS_CULLMODE",
+        23 => "D3DRS_ZFUNC",
+        24 => "D3DRS_ALPHAREF",
+        25 => "D3DRS_ALPHAFUNC",
+        27 => "D3DRS_ALPHABLENDENABLE",
+        52 => "D3DRS_STENCILENABLE",
+        53 => "D3DRS_STENCILFAIL",
+        54 => "D3DRS_STENCILZFAIL",
+        55 => "D3DRS_STENCILPASS",
+        56 => "D3DRS_STENCILFUNC",
+        57 => "D3DRS_STENCILREF",
+        58 => "D3DRS_STENCILMASK",
+        59 => "D3DRS_STENCILWRITEMASK",
+        168 => "D3DRS_COLORWRITEENABLE",
+        171 => "D3DRS_BLENDOP",
+        174 => "D3DRS_SCISSORTESTENABLE",
+        185 => "D3DRS_TWOSIDEDSTENCILMODE",
+        186 => "D3DRS_CCW_STENCILFAIL",
+        187 => "D3DRS_CCW_STENCILZFAIL",
+        188 => "D3DRS_CCW_STENCILPASS",
+        189 => "D3DRS_CCW_STENCILFUNC",
+        190 => "D3DRS_COLORWRITEENABLE1",
+        193 => "D3DRS_BLENDFACTOR",
+        194 => "D3DRS_SRGBWRITEENABLE",
+        206 => "D3DRS_SEPARATEALPHABLENDENABLE",
+        207 => "D3DRS_SRCBLENDALPHA",
+        208 => "D3DRS_DESTBLENDALPHA",
+        209 => "D3DRS_BLENDOPALPHA",
+        _ => return None,
+    })
+}
+
 fn rasterizer_flags_names(flags: u32) -> Option<String> {
     let mut names = Vec::new();
     if (flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE) != 0 {
@@ -1607,7 +1668,11 @@ pub fn decode_cmd_stream_listing(
                         if let Some(name) = shader_stage_name(shader_stage) {
                             let _ = write!(line, " shader_stage_name={name}");
                         }
-                        let _ = write!(line, " slot={slot} state={state} value=0x{value:08X}");
+                        let _ = write!(line, " slot={slot} state={state}");
+                        if let Some(name) = d3d9_sampler_state_name(state) {
+                            let _ = write!(line, " state_name={name}");
+                        }
+                        let _ = write!(line, " value=0x{value:08X}");
                     }
                     AerogpuCmdOpcode::SetRenderState => {
                         if pkt.payload.len() < 8 {
@@ -1619,7 +1684,11 @@ pub fn decode_cmd_stream_listing(
                         }
                         let state = u32_le_at(pkt.payload, 0).unwrap();
                         let value = u32_le_at(pkt.payload, 4).unwrap();
-                        let _ = write!(line, " state={state} value=0x{value:08X}");
+                        let _ = write!(line, " state={state}");
+                        if let Some(name) = d3d9_render_state_name(state) {
+                            let _ = write!(line, " state_name={name}");
+                        }
+                        let _ = write!(line, " value=0x{value:08X}");
                     }
                     AerogpuCmdOpcode::CreateSampler => {
                         if pkt.payload.len() < 20 {

@@ -606,10 +606,12 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("SetSamplerState"));
     assert!(listing.contains("shader_stage=1"));
     assert!(listing.contains("state=5"));
+    assert!(listing.contains("state_name=D3DSAMP_MAGFILTER"));
     assert!(listing.contains("value=0x00007777"));
 
     assert!(listing.contains("SetRenderState"));
     assert!(listing.contains("state=7"));
+    assert!(listing.contains("state_name=D3DRS_ZENABLE"));
     assert!(listing.contains("value=0x00008888"));
 
     assert!(listing.contains("DestroySampler"));
@@ -1184,10 +1186,12 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(sampler_state["decoded"]["shader_stage_name"], "Pixel");
     assert_eq!(sampler_state["decoded"]["slot"], 0);
     assert_eq!(sampler_state["decoded"]["state"], 5);
+    assert_eq!(sampler_state["decoded"]["state_name"], "D3DSAMP_MAGFILTER");
     assert_eq!(sampler_state["decoded"]["value"], 0x7777);
 
     let render_state = find_packet("SetRenderState");
     assert_eq!(render_state["decoded"]["state"], 7);
+    assert_eq!(render_state["decoded"]["state_name"], "D3DRS_ZENABLE");
     assert_eq!(render_state["decoded"]["value"], 0x8888);
 
     let destroy_sampler = find_packet("DestroySampler");
