@@ -61,6 +61,17 @@ bash ./scripts/safe-run.sh \
 
 Note: the CLI opens the disk image as a native file-backed disk. By default it is **writable** (guest writes can modify the image). Use `--disk-ro` or a copy if you want a read-only base.
 
+To keep a base image immutable while still allowing guest writes, use a copy-on-write overlay:
+
+```bash
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk /path/to/base.img \
+    --disk-overlay /tmp/overlay.aerospar \
+    --max-insts 100000 \
+    --serial-out stdout
+```
+
 Optional outputs:
 
 ```bash

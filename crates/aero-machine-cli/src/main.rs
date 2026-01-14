@@ -16,7 +16,7 @@ mod native {
     use std::time::{Duration, Instant};
 
     use aero_machine::{Machine, MachineConfig, RunExit};
-    use aero_storage::{RawDisk, StdFileBackend, VirtualDisk, SECTOR_SIZE};
+    use aero_storage::{AeroCowDisk, RawDisk, StdFileBackend, VirtualDisk, SECTOR_SIZE};
     use anyhow::{anyhow, bail, Context, Result};
     use clap::{ArgGroup, Parser};
 
@@ -37,8 +37,20 @@ mod native {
         disk: PathBuf,
 
         /// Open the disk image read-only (guest writes will fail).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "disk_overlay")]
         disk_ro: bool,
+
+        /// Optional copy-on-write overlay image (AEROSPAR).
+        ///
+        /// If provided, the base `--disk` is opened read-only and guest writes go to the overlay.
+        #[arg(long)]
+        disk_overlay: Option<PathBuf>,
+
+        /// Allocation unit (block size) used when creating a new `--disk-overlay` (bytes).
+        ///
+        /// Must be a power of two and a multiple of 512.
+        #[arg(long, default_value_t = 1024 * 1024, requires = "disk_overlay")]
+        disk_overlay_block_size: u32,
 
         /// Guest RAM size in MiB.
         #[arg(long, default_value_t = 64)]
@@ -81,7 +93,14 @@ mod native {
         let mut machine = Machine::new(MachineConfig::win7_storage_defaults(ram_bytes))
             .map_err(|e| anyhow!("{e}"))?;
 
-        let disk_backend = open_disk_backend(&args.disk, args.disk_ro)?;
+        let disk_backend = if let Some(overlay) = &args.disk_overlay {
+            let base = args.disk.display().to_string();
+            let overlay_str = overlay.display().to_string();
+            machine.set_ahci_port0_disk_overlay_ref(base, overlay_str);
+            open_disk_backend_with_overlay(&args.disk, overlay, args.disk_overlay_block_size)?
+        } else {
+            open_disk_backend(&args.disk, args.disk_ro)?
+        };
         machine
             .set_disk_backend(disk_backend)
             .map_err(|e| anyhow!("{e}"))?;
@@ -157,7 +176,7 @@ mod native {
         Ok(())
     }
 
-    fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk + Send>> {
+    fn open_raw_disk(path: &Path, read_only: bool) -> Result<RawDisk<StdFileBackend>> {
         let meta = std::fs::metadata(path)
             .with_context(|| format!("failed to stat disk image: {}", path.display()))?;
         let len = meta.len();
@@ -179,7 +198,42 @@ mod native {
         .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
         let disk = RawDisk::open(backend)
             .map_err(|e| anyhow!("failed to open raw disk backend {}: {e}", path.display()))?;
+        Ok(disk)
+    }
+
+    fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk + Send>> {
+        let disk = open_raw_disk(path, read_only)?;
         Ok(Box::new(disk))
+    }
+
+    fn open_disk_backend_with_overlay(
+        base_path: &Path,
+        overlay_path: &Path,
+        create_block_size: u32,
+    ) -> Result<Box<dyn VirtualDisk + Send>> {
+        let base = open_raw_disk(base_path, true)?;
+
+        let overlay_exists = overlay_path.exists();
+        let overlay_backend = if overlay_exists {
+            StdFileBackend::open_rw(overlay_path)
+        } else {
+            StdFileBackend::create(overlay_path, 0)
+        }
+        .map_err(|e| {
+            anyhow!(
+                "failed to open overlay image {}: {e}",
+                overlay_path.display()
+            )
+        })?;
+
+        let cow = if overlay_exists {
+            AeroCowDisk::open(base, overlay_backend)
+        } else {
+            AeroCowDisk::create(base, overlay_backend, create_block_size)
+        }
+        .map_err(|e| anyhow!("failed to initialize COW overlay disk: {e}"))?;
+
+        Ok(Box::new(cow))
     }
 
     fn open_serial_sink(serial_out: &str) -> Result<Box<dyn Write>> {
