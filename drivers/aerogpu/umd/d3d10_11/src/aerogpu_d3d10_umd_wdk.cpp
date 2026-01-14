@@ -5180,8 +5180,8 @@ static bool DxgiViewFormatTriviallyCompatible(const AeroGpuDevice* dev,
 
   // Allow only trivial bit-compatible cases (typeless->typed, srgb->unorm when
   // the device ABI does not expose explicit sRGB formats, etc).
-  const uint32_t res_aer = dxgi_format_to_aerogpu_compat(dev, resource_dxgi_format);
-  const uint32_t view_aer = dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
+  const uint32_t res_aer = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, resource_dxgi_format);
+  const uint32_t view_aer = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
   return res_aer != AEROGPU_FORMAT_INVALID && res_aer == view_aer;
 }
 
