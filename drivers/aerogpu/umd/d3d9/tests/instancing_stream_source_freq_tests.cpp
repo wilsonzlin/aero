@@ -682,6 +682,107 @@ void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
   }
 }
 
+void TestIndexedTriangleStripNegativeBaseVertex() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Triangle strip with primitive_count=2 uses 4 indices (and 4 vertices).
+  const Vec4 vertices[4] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+      {1.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x600;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x601;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  const uint16_t indices_u16[4] = {0, 1, 2, 3};
+  aerogpu::Resource ib{};
+  ib.handle = 0x602;
+  ib.kind = aerogpu::ResourceKind::Buffer;
+  ib.size_bytes = sizeof(indices_u16);
+  ib.storage.resize(sizeof(indices_u16));
+  std::memcpy(ib.storage.data(), indices_u16, sizeof(indices_u16));
+
+  // Base vertex -1 combined with a +1 vertex offset yields an effective base of 0.
+  dev.streams[0] = {&vb0, static_cast<uint32_t>(sizeof(Vec4)), sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+  dev.index_buffer = &ib;
+  dev.index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+  dev.index_offset_bytes = 0;
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_indexed_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLESTRIP,
+      /*base_vertex=*/-1,
+      /*min_index=*/0,
+      /*num_vertices=*/4,
+      /*start_index=*/0,
+      /*primitive_count=*/2);
+  assert(hr == S_OK);
+
+  // Strip instancing reuses the app index buffer by adjusting stream offsets; no
+  // expanded index upload is required.
+  assert(dev.up_index_buffer == nullptr);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw_indexed>(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  assert(draws.size() == 2);
+  assert(draws[0]->base_vertex == 0);
+  assert(draws[1]->base_vertex == 0);
+
+  // The per-vertex stream should have been rebound with offset_bytes=0 for the
+  // instanced draws, then restored to the original offset (sizeof(Vec4)).
+  const auto vbs = FindAllCmds<aerogpu_cmd_set_vertex_buffers>(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS);
+  std::vector<const aerogpu_cmd_set_vertex_buffers*> vb0_cmds;
+  for (const auto* cmd : vbs) {
+    if (cmd->start_slot == 0 && cmd->buffer_count == 1) {
+      vb0_cmds.push_back(cmd);
+    }
+  }
+  assert(vb0_cmds.size() == 2);
+  const auto* bind0 =
+      reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(vb0_cmds[0]) +
+                                                            sizeof(*vb0_cmds[0]));
+  const auto* bind1 =
+      reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(vb0_cmds[1]) +
+                                                            sizeof(*vb0_cmds[1]));
+  assert(bind0->buffer == vb0.handle);
+  assert(bind0->offset_bytes == 0);
+  assert(bind1->buffer == vb0.handle);
+  assert(bind1->offset_bytes == sizeof(Vec4));
+}
+
 } // namespace
 
 int main() {
@@ -691,5 +792,6 @@ int main() {
   TestNonIndexedTriangleListBasic();
   TestNonIndexedTriangleStripDrawsPerInstance();
   TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion();
+  TestIndexedTriangleStripNegativeBaseVertex();
   return 0;
 }
