@@ -6563,7 +6563,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dBcUniform() {
   for (const Case& c : cases) {
     // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
     D3D9DDIARG_CREATERESOURCE create_res{};
-    create_res.type = 0;
+    create_res.type = kD3dRTypeTexture;
     create_res.format = c.fmt;
     create_res.width = 4;
     create_res.height = 4;
