@@ -1795,7 +1795,7 @@ fn decode_report_map(
     for _ in 0..count {
         let report_id = d.u8()?;
         let len = d.u32()? as usize;
-        let data = d.bytes(len)?.to_vec();
+        let data = d.bytes_vec(len)?;
         map.insert(report_id, data);
     }
     d.finish()?;
@@ -2042,7 +2042,7 @@ impl IoSnapshot for UsbHidPassthrough {
             self.pending_input_reports.clear();
             for _ in 0..count {
                 let len = d.u32()? as usize;
-                self.pending_input_reports.push_back(d.bytes(len)?.to_vec());
+                self.pending_input_reports.push_back(d.bytes_vec(len)?);
             }
             d.finish()?;
         }
@@ -2090,7 +2090,7 @@ impl IoSnapshot for UsbHidPassthrough {
                 let report_type = d.u8()?;
                 let report_id = d.u8()?;
                 let len = d.u32()? as usize;
-                let data = d.bytes(len)?.to_vec();
+                let data = d.bytes_vec(len)?;
                 self.pending_output_reports
                     .push_back(UsbHidPassthroughOutputReport {
                         report_type,
