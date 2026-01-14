@@ -6033,6 +6033,9 @@ impl Machine {
             if self.display_present_aerogpu_scanout() {
                 return;
             }
+            if self.display_present_aerogpu_backend_scanout() {
+                return;
+            }
             if self.display_present_aerogpu_vbe_lfb() {
                 return;
             }
@@ -6527,6 +6530,64 @@ impl Machine {
         self.display_width = state.width;
         self.display_height = state.height;
         self.display_fb = fb;
+        true
+    }
+
+    fn display_present_aerogpu_backend_scanout(&mut self) -> bool {
+        let Some(aerogpu_mmio) = &self.aerogpu_mmio else {
+            return false;
+        };
+
+        let Some(scanout) = aerogpu_mmio.borrow_mut().read_backend_scanout_rgba8(0) else {
+            return false;
+        };
+
+        let width = scanout.width;
+        let height = scanout.height;
+
+        let Some(pixel_count) = usize::try_from(width)
+            .ok()
+            .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
+        else {
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
+        };
+
+        let Some(expected_bytes) = pixel_count.checked_mul(4) else {
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
+        };
+
+        if expected_bytes > 64 * 1024 * 1024 {
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
+        }
+
+        if scanout.rgba8.len() != expected_bytes {
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
+        }
+
+        self.display_width = width;
+        self.display_height = height;
+        self.display_fb.resize(pixel_count, 0);
+
+        for (dst, src) in self
+            .display_fb
+            .iter_mut()
+            .zip(scanout.rgba8.chunks_exact(4))
+        {
+            *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+        }
+
         true
     }
 

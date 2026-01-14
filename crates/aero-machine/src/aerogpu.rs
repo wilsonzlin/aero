@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 
 use aero_devices::clock::{Clock as _, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
-use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
+use aero_devices_gpu::backend::{AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use aero_devices_gpu::ring::{
     write_fence_page, AEROGPU_RING_HEADER_SIZE_BYTES as RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET,
     RING_TAIL_OFFSET,
@@ -963,6 +963,15 @@ impl AeroGpuMmioDevice {
 
         self.pending_submissions.push_back(sub);
         self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(bytes);
+    }
+
+    pub(crate) fn read_backend_scanout_rgba8(
+        &mut self,
+        scanout_id: u32,
+    ) -> Option<AeroGpuBackendScanout> {
+        self.backend
+            .as_mut()
+            .and_then(|backend| backend.read_scanout_rgba8(scanout_id))
     }
 
     pub(crate) fn drain_pending_submissions(&mut self) -> Vec<AerogpuSubmission> {
