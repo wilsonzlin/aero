@@ -2258,6 +2258,48 @@ async fn verify_chunk_once(
     expected_size: u64,
     expected_sha256: Option<&str>,
 ) -> Result<()> {
+    // If we don't have a checksum to validate, prefer a cheap `HEAD` request so we can validate
+    // existence + Content-Length without downloading the body.
+    if expected_sha256.is_none() {
+        let head = s3
+            .head_object()
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|err| {
+                if is_no_such_key_error(&err) {
+                    anyhow!("object not found (404)")
+                } else if is_access_denied_error(&err) {
+                    anyhow!("access denied (403): {err}")
+                } else {
+                    anyhow!(err)
+                }
+            })
+            .with_context(|| format!("HEAD s3://{bucket}/{key}"))?;
+
+        if let Some(encoding) = head.content_encoding() {
+            let encoding = encoding.trim();
+            if !encoding.eq_ignore_ascii_case("identity") {
+                bail!("unexpected Content-Encoding for s3://{bucket}/{key}: {encoding}");
+            }
+        }
+
+        if let Some(content_length) = head.content_length() {
+            let len_u64: u64 = content_length.try_into().map_err(|_| {
+                anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
+            })?;
+            if len_u64 != expected_size {
+                bail!(
+                    "size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)"
+                );
+            }
+            return Ok(());
+        }
+
+        // Fall back to streaming GET if the endpoint does not supply Content-Length on HEAD.
+    }
+
     let resp = s3
         .get_object()
         .bucket(bucket)
@@ -5651,7 +5693,9 @@ mod tests {
     fn parse_header_rejects_invalid_header_name() {
         let err = parse_header("Bad Header: value").expect_err("expected parse failure");
         assert!(
-            err.to_string().to_ascii_lowercase().contains("invalid header name"),
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("invalid header name"),
             "unexpected error: {err}"
         );
     }
