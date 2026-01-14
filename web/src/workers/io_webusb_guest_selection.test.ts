@@ -34,7 +34,6 @@ describe("webusb_guest_selection xhci_webusb guest selection (io worker)", () =>
 
     const picked = chooseWebUsbGuestBridge({ xhciBridge, ehciBridge, uhciBridge });
     expect(picked?.kind).toBe("xhci");
-    expect(picked?.bridge).toBe(xhciBridge);
 
     // Apply usb.selected to the chosen bridge; the worker should call set_connected(true).
     applyUsbSelectedToWebUsbGuestBridge(picked!.kind, picked!.bridge, {
@@ -73,7 +72,6 @@ describe("webusb_guest_selection xhci_webusb guest selection (io worker)", () =>
 
     const picked = chooseWebUsbGuestBridge({ xhciBridge: null, ehciBridge: ehci, uhciBridge: uhci });
     expect(picked?.kind).toBe("ehci");
-    expect(picked?.bridge).toBe(ehci);
 
     applyUsbSelectedToWebUsbGuestBridge(picked!.kind, picked!.bridge, {
       type: "usb.selected",
@@ -90,5 +88,29 @@ describe("webusb_guest_selection xhci_webusb guest selection (io worker)", () =>
     applyUsbSelectedToWebUsbGuestBridge(picked!.kind, picked!.bridge, { type: "usb.selected", ok: false, error: "no device" });
     expect(ehci.set_connected).toHaveBeenCalledWith(false);
     expect(ehci.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts camelCase WebUSB passthrough bridge methods (backwards compatibility)", () => {
+    const xhci = {
+      setConnected: vi.fn(),
+      drainActions: vi.fn(() => []),
+      pushCompletion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const picked = chooseWebUsbGuestBridge({ xhciBridge: xhci, ehciBridge: null, uhciBridge: null });
+    expect(picked?.kind).toBe("xhci");
+
+    applyUsbSelectedToWebUsbGuestBridge(picked!.kind, picked!.bridge, {
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: 0x1234, productId: 0x5678 },
+    });
+    expect(xhci.setConnected).toHaveBeenCalledWith(true);
+
+    applyUsbSelectedToWebUsbGuestBridge(picked!.kind, picked!.bridge, { type: "usb.selected", ok: false, error: "no device" });
+    expect(xhci.setConnected).toHaveBeenCalledWith(false);
+    expect(xhci.reset).toHaveBeenCalledTimes(1);
   });
 });

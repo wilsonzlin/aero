@@ -1144,6 +1144,11 @@ class UhciRuntimeWebUsbBridge {
   readonly #rootPort: number;
   readonly #onStateChange?: () => void;
 
+  readonly #webusbDrainActions: ((...args: unknown[]) => unknown) | null;
+  readonly #webusbPushCompletion: ((...args: unknown[]) => unknown) | null;
+  readonly #webusbDetach: ((...args: unknown[]) => unknown) | null;
+  readonly #webusbAttach: ((...args: unknown[]) => unknown) | null;
+
   #connected = false;
   #desiredConnected: boolean | null = null;
   #applyScheduled = false;
@@ -1156,6 +1161,17 @@ class UhciRuntimeWebUsbBridge {
     this.#uhci = opts.uhci;
     this.#rootPort = opts.rootPort >>> 0;
     this.#onStateChange = opts.onStateChange;
+
+    const uhciAny = opts.uhci as unknown as Record<string, unknown>;
+    const drainActions = uhciAny.webusb_drain_actions ?? uhciAny.webusbDrainActions;
+    const pushCompletion = uhciAny.webusb_push_completion ?? uhciAny.webusbPushCompletion;
+    const detach = uhciAny.webusb_detach ?? uhciAny.webusbDetach;
+    const attach = uhciAny.webusb_attach ?? uhciAny.webusbAttach;
+
+    this.#webusbDrainActions = typeof drainActions === "function" ? (drainActions as (...args: unknown[]) => unknown) : null;
+    this.#webusbPushCompletion = typeof pushCompletion === "function" ? (pushCompletion as (...args: unknown[]) => unknown) : null;
+    this.#webusbDetach = typeof detach === "function" ? (detach as (...args: unknown[]) => unknown) : null;
+    this.#webusbAttach = typeof attach === "function" ? (attach as (...args: unknown[]) => unknown) : null;
   }
 
   set_connected(connected: boolean): void {
@@ -1176,7 +1192,9 @@ class UhciRuntimeWebUsbBridge {
     // path. This avoids relying solely on timers/microtasks to run the attach/detach operation.
     this.#applyDesired();
     if (!this.#connected) return null;
-    const actions = this.#uhci.webusb_drain_actions();
+    const drain = this.#webusbDrainActions;
+    if (!drain) return null;
+    const actions = drain.call(this.#uhci) as UsbHostAction[] | null;
     if (actions == null || actions.length === 0) return null;
 
     const out: UsbHostAction[] = [];
@@ -1189,6 +1207,8 @@ class UhciRuntimeWebUsbBridge {
   }
 
   push_completion(completion: UsbHostCompletion): void {
+    const pushCompletion = this.#webusbPushCompletion;
+    if (!pushCompletion) return;
     const mapping = this.#pendingByBrokerId.get(completion.id);
     if (!mapping) return;
     this.#pendingByBrokerId.delete(completion.id);
@@ -1205,7 +1225,7 @@ class UhciRuntimeWebUsbBridge {
       rewritten = rewriteUsbHostCompletionId(completion, mapping.wasmId);
     }
 
-    this.#uhci.webusb_push_completion(rewritten);
+    pushCompletion.call(this.#uhci, rewritten);
   }
 
   reset(): void {
@@ -1220,7 +1240,9 @@ class UhciRuntimeWebUsbBridge {
     // `UsbWebUsbPassthroughDevice` doesn't currently expose a "soft reset" hook.
     // Detach+reattach clears in-flight control transfers so the guest isn't stuck NAKing forever.
     try {
-      this.#uhci.webusb_detach();
+      const detach = this.#webusbDetach;
+      if (!detach) throw new Error("UHCI runtime missing webusb_detach export");
+      detach.call(this.#uhci);
       this.#connected = false;
     } catch (err) {
       if (this.#isRecursiveBorrowError(err)) {
@@ -1233,7 +1255,9 @@ class UhciRuntimeWebUsbBridge {
     }
 
     try {
-      const assigned = this.#uhci.webusb_attach(this.#rootPort);
+      const attach = this.#webusbAttach;
+      if (!attach) throw new Error("UHCI runtime missing webusb_attach export");
+      const assigned = attach.call(this.#uhci, this.#rootPort) as number;
       this.#connected = true;
       this.#lastError = null;
       if (assigned !== this.#rootPort) {
@@ -1304,7 +1328,9 @@ class UhciRuntimeWebUsbBridge {
 
     try {
       if (!desired) {
-        this.#uhci.webusb_detach();
+        const detach = this.#webusbDetach;
+        if (!detach) throw new Error("UHCI runtime missing webusb_detach export");
+        detach.call(this.#uhci);
         this.#connected = false;
         this.#desiredConnected = null;
         this.#lastError = null;
@@ -1312,7 +1338,9 @@ class UhciRuntimeWebUsbBridge {
         return;
       }
 
-      const assigned = this.#uhci.webusb_attach(this.#rootPort);
+      const attach = this.#webusbAttach;
+      if (!attach) throw new Error("UHCI runtime missing webusb_attach export");
+      const assigned = attach.call(this.#uhci, this.#rootPort) as number;
       this.#connected = true;
       this.#desiredConnected = null;
       this.#lastError = null;
@@ -1494,15 +1522,38 @@ function maybeInitUhciRuntime(): void {
     return;
   }
 
+  const runtimeAny = runtime as unknown as Record<string, unknown>;
+  const portRead = runtimeAny.port_read ?? runtimeAny.portRead;
+  const portWrite = runtimeAny.port_write ?? runtimeAny.portWrite;
+  const stepFrame = runtimeAny.step_frame ?? runtimeAny.stepFrame;
+  const tick1ms = runtimeAny.tick_1ms ?? runtimeAny.tick1ms ?? runtimeAny.tick1Ms;
+  const irqLevel = runtimeAny.irq_level ?? runtimeAny.irqLevel;
+  const free = runtimeAny.free;
+
+  if (typeof portRead !== "function" || typeof portWrite !== "function" || typeof irqLevel !== "function" || typeof free !== "function") {
+    console.warn("[io.worker] UHCI runtime missing required port_read/port_write/irq_level/free exports");
+    try {
+      runtime.free();
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
   const bridge: UhciControllerBridgeLike = {
-    io_read: (offset, size) => runtime.port_read(offset >>> 0, size >>> 0) >>> 0,
-    io_write: (offset, size, value) => runtime.port_write(offset >>> 0, size >>> 0, value >>> 0),
-    step_frame: () => runtime.step_frame(),
-    tick_1ms: () => runtime.tick_1ms(),
-    irq_asserted: () => runtime.irq_level(),
+    io_read: (offset, size) => (portRead as (offset: number, size: number) => number).call(runtime, offset >>> 0, size >>> 0) >>> 0,
+    io_write: (offset, size, value) =>
+      (portWrite as (offset: number, size: number, value: number) => void).call(runtime, offset >>> 0, size >>> 0, value >>> 0),
+    ...(typeof stepFrame === "function"
+      ? { step_frame: () => (stepFrame as () => void).call(runtime) }
+      : {}),
+    ...(typeof tick1ms === "function"
+      ? { tick_1ms: () => (tick1ms as () => void).call(runtime) }
+      : {}),
+    irq_asserted: () => Boolean((irqLevel as () => unknown).call(runtime)),
     free: () => {
       try {
-        runtime.free();
+        (free as () => void).call(runtime);
       } catch {
         // ignore
       }
@@ -1983,26 +2034,21 @@ function maybeInitUhciDevice(): void {
     }
 
     const bridge = uhciControllerBridge;
-    const hasWebUsb =
-      bridge &&
-      typeof (bridge as unknown as { set_connected?: unknown }).set_connected === "function" &&
-      typeof (bridge as unknown as { drain_actions?: unknown }).drain_actions === "function" &&
-      typeof (bridge as unknown as { push_completion?: unknown }).push_completion === "function" &&
-      typeof (bridge as unknown as { reset?: unknown }).reset === "function";
-
-    if (bridge && hasWebUsb) {
+    const pick = chooseWebUsbGuestBridge({ xhciBridge: null, ehciBridge: null, uhciBridge: bridge });
+    if (bridge && pick && pick.kind === "uhci") {
+      const ctrl = pick.bridge;
       // `UhciPciDevice` owns the WASM bridge and calls `free()` during shutdown; wrap with a
       // no-op `free()` so `WebUsbPassthroughRuntime` does not double-free.
       const wrapped: WebUsbGuestBridge = {
-        set_connected: (connected) => bridge.set_connected(connected),
-        drain_actions: () => bridge.drain_actions(),
-        push_completion: (completion) => bridge.push_completion(completion),
-        reset: () => bridge.reset(),
+        set_connected: (connected) => ctrl.set_connected(connected),
+        drain_actions: () => ctrl.drain_actions(),
+        push_completion: (completion) => ctrl.push_completion(completion),
+        reset: () => ctrl.reset(),
         // Debug-only; tolerate older WASM builds that might not expose it.
         pending_summary: () => {
-          const fn = (bridge as unknown as { pending_summary?: unknown }).pending_summary;
+          const fn = ctrl.pending_summary;
           if (typeof fn !== "function") return null;
-          return fn.call(bridge) as unknown;
+          return fn();
         },
         free: () => {},
       };
@@ -2399,14 +2445,17 @@ function maybeInitSyntheticUsbHidDevices(): void {
   }
 
   // UHCI runtime path: attach via a runtime-exported helper, if available.
-  const runtime = uhciRuntime as unknown as { attach_usb_hid_passthrough_device?: unknown } | null;
-  if (runtime && typeof runtime.attach_usb_hid_passthrough_device === "function") {
+  const runtime = uhciRuntime as unknown as Record<string, unknown> | null;
+  const attachUsbHidPassthroughDevice = runtime
+    ? runtime.attach_usb_hid_passthrough_device ?? runtime.attachUsbHidPassthroughDevice
+    : null;
+  if (runtime && typeof attachUsbHidPassthroughDevice === "function") {
     try {
-      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
-      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
-      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
-      runtime.attach_usb_hid_passthrough_device.call(
-        runtime,
+      attachUsbHidPassthroughDevice.call(uhciRuntime, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
+      attachUsbHidPassthroughDevice.call(uhciRuntime, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
+      attachUsbHidPassthroughDevice.call(uhciRuntime, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
+      attachUsbHidPassthroughDevice.call(
+        uhciRuntime,
         SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH,
         syntheticUsbConsumerControl,
       );

@@ -39,7 +39,8 @@ export class UhciRuntimeExternalHubConfigManager {
     const cfg = this.#pending;
     if (!cfg) return;
     if (!runtime) return;
-    const fn = (runtime as { webhid_attach_hub?: unknown }).webhid_attach_hub;
+    const runtimeAny = runtime as unknown as Record<string, unknown>;
+    const fn = runtimeAny.webhid_attach_hub ?? runtimeAny.webhidAttachHub;
     if (typeof fn !== "function") return;
     try {
       fn.call(runtime, cfg.guestPath, cfg.portCount);

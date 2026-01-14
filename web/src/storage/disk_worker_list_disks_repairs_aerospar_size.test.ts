@@ -51,6 +51,13 @@ function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: num
   return out;
 }
 
+function toArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // `FileSystemWritableFileStream.write()` expects an ArrayBuffer-backed view, but under
+  // `ES2024.SharedMemory` libs TypeScript treats `Uint8Array` as potentially backed by
+  // `SharedArrayBuffer`. Copy when needed to keep types (and spec compliance) happy.
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+}
+
 async function sendListDisks(): Promise<any> {
   vi.resetModules();
 
@@ -85,7 +92,7 @@ async function sendListDisks(): Promise<any> {
   const disksDir = await opfsGetDisksDir();
   const fh = await disksDir.getFileHandle(fileName, { create: true });
   const w = await fh.createWritable({ keepExistingData: false });
-  await w.write(bytes);
+  await w.write(toArrayBufferBytes(bytes));
   await w.close();
   const physicalSize = (await fh.getFile()).size;
   expect(physicalSize).toBe(bytes.byteLength);
@@ -172,7 +179,7 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
     const disksDir = await opfsGetDisksDir();
     const fh = await disksDir.getFileHandle(fileName, { create: true });
     const w = await fh.createWritable({ keepExistingData: false });
-    await w.write(bytes);
+    await w.write(toArrayBufferBytes(bytes));
     await w.close();
     const physicalSize = (await fh.getFile()).size;
     expect(physicalSize).toBeLessThan(logicalSize);

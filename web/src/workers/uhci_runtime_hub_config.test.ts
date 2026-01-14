@@ -15,6 +15,17 @@ describe("workers/uhci_runtime_hub_config", () => {
     expect(webhid_attach_hub).toHaveBeenCalledWith([0], 16);
   });
 
+  it("accepts camelCase webhidAttachHub export (backwards compatibility)", () => {
+    const manager = new UhciRuntimeExternalHubConfigManager();
+    manager.setPending([0], 16);
+
+    const webhidAttachHub = vi.fn();
+    const runtime = { webhidAttachHub };
+    manager.apply(runtime);
+
+    expect(webhidAttachHub).toHaveBeenCalledWith([0], 16);
+  });
+
   it("clamps external hub port count so it cannot shrink below the reserved synthetic HID range", () => {
     const manager = new UhciRuntimeExternalHubConfigManager();
     manager.setPending([0], 1);

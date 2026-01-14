@@ -93,9 +93,53 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   #pendingFeatureRequests: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
   #pendingFeatureRequestsHead = 0;
 
+  readonly #webhidAttach: UhciRuntimeHidApi["webhid_attach"];
+  readonly #webhidAttachAtPath: UhciRuntimeHidApi["webhid_attach_at_path"] | null;
+  readonly #webhidDetach: UhciRuntimeHidApi["webhid_detach"];
+  readonly #webhidPushInputReport: UhciRuntimeHidApi["webhid_push_input_report"];
+  readonly #webhidDrainOutputReports: UhciRuntimeHidApi["webhid_drain_output_reports"];
+  readonly #webhidDrainFeatureReportRequests: UhciRuntimeHidApi["webhid_drain_feature_report_requests"] | null;
+  readonly #webhidCompleteFeatureReportRequest: UhciRuntimeHidApi["webhid_complete_feature_report_request"] | null;
+  readonly #webhidFailFeatureReportRequest: UhciRuntimeHidApi["webhid_fail_feature_report_request"] | null;
+  readonly #webhidPushFeatureReportResult: UhciRuntimeHidApi["webhid_push_feature_report_result"] | null;
+
   constructor(opts: { uhci: UhciRuntimeHidApi; host: HidHostSink }) {
     this.#uhci = opts.uhci;
     this.#host = opts.host;
+
+    const uhciAny = opts.uhci as unknown as Record<string, unknown>;
+    const attach = uhciAny.webhid_attach ?? uhciAny.webhidAttach;
+    const attachAtPath = uhciAny.webhid_attach_at_path ?? uhciAny.webhidAttachAtPath;
+    const detach = uhciAny.webhid_detach ?? uhciAny.webhidDetach;
+    const pushInput = uhciAny.webhid_push_input_report ?? uhciAny.webhidPushInputReport;
+    const drainOutput = uhciAny.webhid_drain_output_reports ?? uhciAny.webhidDrainOutputReports;
+    const drainFeature = uhciAny.webhid_drain_feature_report_requests ?? uhciAny.webhidDrainFeatureReportRequests;
+    const completeFeature = uhciAny.webhid_complete_feature_report_request ?? uhciAny.webhidCompleteFeatureReportRequest;
+    const failFeature = uhciAny.webhid_fail_feature_report_request ?? uhciAny.webhidFailFeatureReportRequest;
+    const legacyFeature = uhciAny.webhid_push_feature_report_result ?? uhciAny.webhidPushFeatureReportResult;
+
+    if (typeof attach !== "function") throw new Error("UHCI runtime missing `webhid_attach` (or `webhidAttach`).");
+    if (typeof detach !== "function") throw new Error("UHCI runtime missing `webhid_detach` (or `webhidDetach`).");
+    if (typeof pushInput !== "function")
+      throw new Error("UHCI runtime missing `webhid_push_input_report` (or `webhidPushInputReport`).");
+    if (typeof drainOutput !== "function")
+      throw new Error("UHCI runtime missing `webhid_drain_output_reports` (or `webhidDrainOutputReports`).");
+
+    this.#webhidAttach = attach as UhciRuntimeHidApi["webhid_attach"];
+    this.#webhidAttachAtPath = typeof attachAtPath === "function" ? (attachAtPath as UhciRuntimeHidApi["webhid_attach_at_path"]) : null;
+    this.#webhidDetach = detach as UhciRuntimeHidApi["webhid_detach"];
+    this.#webhidPushInputReport = pushInput as UhciRuntimeHidApi["webhid_push_input_report"];
+    this.#webhidDrainOutputReports = drainOutput as UhciRuntimeHidApi["webhid_drain_output_reports"];
+    this.#webhidDrainFeatureReportRequests =
+      typeof drainFeature === "function" ? (drainFeature as UhciRuntimeHidApi["webhid_drain_feature_report_requests"]) : null;
+    this.#webhidCompleteFeatureReportRequest =
+      typeof completeFeature === "function"
+        ? (completeFeature as UhciRuntimeHidApi["webhid_complete_feature_report_request"])
+        : null;
+    this.#webhidFailFeatureReportRequest =
+      typeof failFeature === "function" ? (failFeature as UhciRuntimeHidApi["webhid_fail_feature_report_request"]) : null;
+    this.#webhidPushFeatureReportResult =
+      typeof legacyFeature === "function" ? (legacyFeature as UhciRuntimeHidApi["webhid_push_feature_report_result"]) : null;
   }
 
   attach(msg: HidAttachMessage): void {
@@ -103,10 +147,12 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
     const preferredPort = normalizePreferredPort(msg.guestPath, msg.guestPort);
     try {
-      if (typeof this.#uhci.webhid_attach_at_path === "function") {
+      const attachAtPath = this.#webhidAttachAtPath;
+      if (typeof attachAtPath === "function") {
         const normalizedPath = normalizeExternalHubGuestPath(msg.guestPath, msg.guestPort);
         if (normalizedPath) {
-          this.#uhci.webhid_attach_at_path(
+          attachAtPath.call(
+            this.#uhci,
             msg.deviceId >>> 0,
             msg.vendorId >>> 0,
             msg.productId >>> 0,
@@ -115,7 +161,8 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
             normalizedPath,
           );
         } else {
-          this.#uhci.webhid_attach(
+          this.#webhidAttach.call(
+            this.#uhci,
             msg.deviceId >>> 0,
             msg.vendorId >>> 0,
             msg.productId >>> 0,
@@ -125,7 +172,8 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
           );
         }
       } else {
-        this.#uhci.webhid_attach(
+        this.#webhidAttach.call(
+          this.#uhci,
           msg.deviceId >>> 0,
           msg.vendorId >>> 0,
           msg.productId >>> 0,
@@ -148,7 +196,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   detach(msg: HidDetachMessage): void {
     this.#attached.delete(msg.deviceId);
     try {
-      this.#uhci.webhid_detach(msg.deviceId >>> 0);
+      this.#webhidDetach.call(this.#uhci, msg.deviceId >>> 0);
     } catch {
       // ignore
     }
@@ -164,7 +212,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
         out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
         return out as Uint8Array<ArrayBuffer>;
       })();
-      this.#uhci.webhid_push_input_report(msg.deviceId >>> 0, msg.reportId >>> 0, data);
+      this.#webhidPushInputReport.call(this.#uhci, msg.deviceId >>> 0, msg.reportId >>> 0, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`UHCI runtime hid.inputReport failed: ${message}`, msg.deviceId);
@@ -174,7 +222,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   poll(): void {
     let drained: Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null = null;
     try {
-      drained = this.#uhci.webhid_drain_output_reports();
+      drained = this.#webhidDrainOutputReports.call(this.#uhci);
     } catch {
       return;
     }
@@ -193,9 +241,9 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       }
     }
 
-    const drainFeatureRequests = this.#uhci.webhid_drain_feature_report_requests;
-    const completeFeatureRequest = this.#uhci.webhid_complete_feature_report_request;
-    const legacyComplete = this.#uhci.webhid_push_feature_report_result;
+    const drainFeatureRequests = this.#webhidDrainFeatureReportRequests;
+    const completeFeatureRequest = this.#webhidCompleteFeatureReportRequest;
+    const legacyComplete = this.#webhidPushFeatureReportResult;
     // The underlying runtime drain is destructive; only attempt it when supported and when we can
     // complete requests.
     if (
@@ -241,8 +289,8 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
   completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
     try {
-      const complete = this.#uhci.webhid_complete_feature_report_request;
-      const fail = this.#uhci.webhid_fail_feature_report_request;
+      const complete = this.#webhidCompleteFeatureReportRequest;
+      const fail = this.#webhidFailFeatureReportRequest;
       if (typeof complete === "function") {
         // Split API (success+fail are separate): complete(deviceId, requestId, reportId, data)
         if (typeof fail === "function" || complete.length === 4) {
@@ -267,7 +315,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
         );
         return typeof res === "boolean" ? res : true;
       }
-      const legacy = this.#uhci.webhid_push_feature_report_result;
+      const legacy = this.#webhidPushFeatureReportResult;
       if (typeof legacy === "function") {
         legacy.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
         return true;
@@ -282,26 +330,26 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
   failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
     try {
-      const fail = this.#uhci.webhid_fail_feature_report_request;
+      const fail = this.#webhidFailFeatureReportRequest;
       if (typeof fail === "function") {
         fail.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0);
         return true;
       }
 
-        const complete = this.#uhci.webhid_complete_feature_report_request;
-        if (typeof complete === "function") {
-          // Unified API (ok flag), or a runtime that doesn't provide a separate `fail` entrypoint.
-          // Best-effort: attempt the unified call shape and fall back to legacy helpers if it throws.
-          try {
-            const res = (
-              complete as (deviceId: number, requestId: number, reportId: number, ok: boolean, data?: Uint8Array) => boolean
-            ).call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
-            return typeof res === "boolean" ? res : true;
-          } catch {
-            // Fall through to legacy helpers (if any).
-          }
+      const complete = this.#webhidCompleteFeatureReportRequest;
+      if (typeof complete === "function") {
+        // Unified API (ok flag), or a runtime that doesn't provide a separate `fail` entrypoint.
+        // Best-effort: attempt the unified call shape and fall back to legacy helpers if it throws.
+        try {
+          const res = (
+            complete as (deviceId: number, requestId: number, reportId: number, ok: boolean, data?: Uint8Array) => boolean
+          ).call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+          return typeof res === "boolean" ? res : true;
+        } catch {
+          // Fall through to legacy helpers (if any).
         }
-      const legacy = this.#uhci.webhid_push_feature_report_result;
+      }
+      const legacy = this.#webhidPushFeatureReportResult;
       if (typeof legacy === "function") {
         legacy.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
         return true;

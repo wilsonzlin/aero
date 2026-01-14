@@ -9,16 +9,55 @@ export type WebUsbGuestBridgeLike = UsbPassthroughBridgeLike & {
   set_connected(connected: boolean): void;
 };
 
-export function isWebUsbGuestBridgeLike(value: unknown): value is WebUsbGuestBridgeLike {
-  if (!value || typeof value !== "object") return false;
+function normalizeWebUsbGuestBridgeLike(value: unknown): WebUsbGuestBridgeLike | null {
+  if (!value || typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  return (
-    typeof obj.set_connected === "function" &&
-    typeof obj.drain_actions === "function" &&
-    typeof obj.push_completion === "function" &&
-    typeof obj.reset === "function" &&
-    typeof obj.free === "function"
-  );
+
+  const setConnected = obj.set_connected ?? obj.setConnected;
+  const drainActions = obj.drain_actions ?? obj.drainActions;
+  const pushCompletion = obj.push_completion ?? obj.pushCompletion;
+  const reset = obj.reset;
+  const free = obj.free;
+  const pendingSummary = obj.pending_summary ?? obj.pendingSummary;
+
+  if (typeof setConnected !== "function") return null;
+  if (typeof drainActions !== "function") return null;
+  if (typeof pushCompletion !== "function") return null;
+  if (typeof reset !== "function") return null;
+  if (typeof free !== "function") return null;
+
+  // Wrap all methods to preserve wasm-bindgen `this` binding regardless of whether the underlying
+  // bridge uses snake_case or camelCase names.
+  const wrapped: WebUsbGuestBridgeLike = {
+    set_connected: (connected) => {
+      (setConnected as (connected: boolean) => void).call(value, connected);
+    },
+    drain_actions: () => {
+      return (drainActions as () => unknown).call(value);
+    },
+    push_completion: (completion) => {
+      (pushCompletion as (completion: unknown) => void).call(value, completion);
+    },
+    reset: () => {
+      (reset as () => void).call(value);
+    },
+    ...(typeof pendingSummary === "function"
+      ? {
+          pending_summary: () => {
+            return (pendingSummary as () => unknown).call(value);
+          },
+        }
+      : {}),
+    free: () => {
+      (free as () => void).call(value);
+    },
+  };
+
+  return wrapped;
+}
+
+export function isWebUsbGuestBridgeLike(value: unknown): value is WebUsbGuestBridgeLike {
+  return normalizeWebUsbGuestBridgeLike(value) !== null;
 }
 
 /**
@@ -34,15 +73,12 @@ export function chooseWebUsbGuestBridge(opts: {
   ehciBridge: unknown | null;
   uhciBridge: unknown | null;
 }): { kind: WebUsbGuestControllerKind; bridge: WebUsbGuestBridgeLike } | null {
-  if (isWebUsbGuestBridgeLike(opts.xhciBridge)) {
-    return { kind: "xhci", bridge: opts.xhciBridge };
-  }
-  if (isWebUsbGuestBridgeLike(opts.ehciBridge)) {
-    return { kind: "ehci", bridge: opts.ehciBridge };
-  }
-  if (isWebUsbGuestBridgeLike(opts.uhciBridge)) {
-    return { kind: "uhci", bridge: opts.uhciBridge };
-  }
+  const xhci = normalizeWebUsbGuestBridgeLike(opts.xhciBridge);
+  if (xhci) return { kind: "xhci", bridge: xhci };
+  const ehci = normalizeWebUsbGuestBridgeLike(opts.ehciBridge);
+  if (ehci) return { kind: "ehci", bridge: ehci };
+  const uhci = normalizeWebUsbGuestBridgeLike(opts.uhciBridge);
+  if (uhci) return { kind: "uhci", bridge: uhci };
   return null;
 }
 

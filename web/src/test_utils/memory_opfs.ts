@@ -33,9 +33,7 @@ class MemoryFile {
     const clamp = (n: number): number => Math.max(0, Math.min(size, n));
     const s = start === undefined ? 0 : start < 0 ? clamp(size + start) : clamp(start);
     const e = end === undefined ? size : end < 0 ? clamp(size + end) : clamp(end);
-    const from = Math.min(s, e);
-    const to = Math.max(s, e);
-    return new MemoryFile(this.data.subarray(from, to).slice(), this.lastModified);
+    return new MemoryFile(this.data.subarray(s, e).slice(), this.lastModified);
   }
 
   async text(): Promise<string> {
