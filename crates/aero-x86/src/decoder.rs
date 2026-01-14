@@ -2061,99 +2061,229 @@ fn mem_index_only<R: RegSpecLike>(
 }
 
 fn map_reg_real(reg: yaxpeax_x86::real_mode::RegSpec, prefixes: Prefixes) -> Option<Operand> {
-    map_reg_common(reg.class(), reg.num(), prefixes)
+    use yaxpeax_x86::real_mode::RegSpec;
+
+    let class = reg.class();
+    let idx = reg.num();
+
+    if class == RegSpec::eax().class() {
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: idx },
+            size: OperandSize::Bits32,
+            high8: false,
+        });
+    }
+    if class == RegSpec::ax().class() {
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: idx },
+            size: OperandSize::Bits16,
+            high8: false,
+        });
+    }
+    if class == RegSpec::al().class() {
+        let (base, high8) = if (4..=7).contains(&idx) && prefixes.rex.is_none() {
+            (idx - 4, true)
+        } else {
+            (idx, false)
+        };
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: base },
+            size: OperandSize::Bits8,
+            high8,
+        });
+    }
+    if class == RegSpec::xmm(0).class() {
+        return Some(Operand::Xmm {
+            reg: crate::inst::Xmm { index: idx },
+        });
+    }
+    if class == RegSpec::es().class() {
+        let seg = match idx {
+            0 => SegmentReg::ES,
+            1 => SegmentReg::CS,
+            2 => SegmentReg::SS,
+            3 => SegmentReg::DS,
+            4 => SegmentReg::FS,
+            5 => SegmentReg::GS,
+            _ => return None,
+        };
+        return Some(Operand::Segment { reg: seg });
+    }
+    if class == RegSpec::st(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Fpu,
+            index: idx,
+        });
+    }
+    if class == RegSpec::mm0().class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mmx,
+            index: idx,
+        });
+    }
+
+    Some(Operand::OtherReg {
+        class: crate::inst::OtherRegClass::Unknown,
+        index: idx,
+    })
 }
 
 fn map_reg_protected(
     reg: yaxpeax_x86::protected_mode::RegSpec,
     prefixes: Prefixes,
 ) -> Option<Operand> {
-    map_reg_common(reg.class(), reg.num(), prefixes)
-}
+    use yaxpeax_x86::protected_mode::RegSpec;
 
-fn map_reg_long(reg: yaxpeax_x86::long_mode::RegSpec, prefixes: Prefixes) -> Option<Operand> {
-    map_reg_common(reg.class(), reg.num(), prefixes)
-}
+    let class = reg.class();
+    let idx = reg.num();
 
-fn map_reg_common<C: core::fmt::Debug>(class: C, idx: u8, prefixes: Prefixes) -> Option<Operand> {
-    // We don't rely on the exact RegisterClass type; instead we match on its Debug output. This is
-    // surprisingly stable across yaxpeax-x86 versions and avoids three copies of the mapping logic
-    // for the three mode modules.
-    let dbg = format!("{class:?}");
-    let kind = dbg
-        .split("kind: ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or(dbg.as_str());
-
-    match kind {
-        "Q" => Some(Operand::Gpr {
-            reg: crate::inst::Gpr { index: idx },
-            size: OperandSize::Bits64,
-            high8: false,
-        }),
-        "D" => Some(Operand::Gpr {
+    if class == RegSpec::eax().class() {
+        return Some(Operand::Gpr {
             reg: crate::inst::Gpr { index: idx },
             size: OperandSize::Bits32,
             high8: false,
-        }),
-        "W" => Some(Operand::Gpr {
+        });
+    }
+    if class == RegSpec::ax().class() {
+        return Some(Operand::Gpr {
             reg: crate::inst::Gpr { index: idx },
             size: OperandSize::Bits16,
             high8: false,
-        }),
-        "B" | "rB" => {
-            let (base, high8) = if (4..=7).contains(&idx) && prefixes.rex.is_none() {
-                (idx - 4, true)
-            } else {
-                (idx, false)
-            };
-            Some(Operand::Gpr {
-                reg: crate::inst::Gpr { index: base },
-                size: OperandSize::Bits8,
-                high8,
-            })
-        }
-        "X" => Some(Operand::Xmm {
-            reg: crate::inst::Xmm { index: idx },
-        }),
-        "S" => {
-            let seg = match idx {
-                0 => SegmentReg::ES,
-                1 => SegmentReg::CS,
-                2 => SegmentReg::SS,
-                3 => SegmentReg::DS,
-                4 => SegmentReg::FS,
-                5 => SegmentReg::GS,
-                _ => return None,
-            };
-            Some(Operand::Segment { reg: seg })
-        }
-        "C" => Some(Operand::Control { index: idx }),
-        "Dbg" | "DBG" => Some(Operand::Debug { index: idx }),
-        _ => Some(Operand::OtherReg {
-            class: other_reg_class_from_kind(kind),
-            index: idx,
-        }),
+        });
     }
+    if class == RegSpec::al().class() {
+        let (base, high8) = if (4..=7).contains(&idx) && prefixes.rex.is_none() {
+            (idx - 4, true)
+        } else {
+            (idx, false)
+        };
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: base },
+            size: OperandSize::Bits8,
+            high8,
+        });
+    }
+    if class == RegSpec::xmm(0).class() {
+        return Some(Operand::Xmm {
+            reg: crate::inst::Xmm { index: idx },
+        });
+    }
+    if class == RegSpec::es().class() {
+        let seg = match idx {
+            0 => SegmentReg::ES,
+            1 => SegmentReg::CS,
+            2 => SegmentReg::SS,
+            3 => SegmentReg::DS,
+            4 => SegmentReg::FS,
+            5 => SegmentReg::GS,
+            _ => return None,
+        };
+        return Some(Operand::Segment { reg: seg });
+    }
+    if class == RegSpec::st(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Fpu,
+            index: idx,
+        });
+    }
+    if class == RegSpec::mm0().class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mmx,
+            index: idx,
+        });
+    }
+
+    Some(Operand::OtherReg {
+        class: crate::inst::OtherRegClass::Unknown,
+        index: idx,
+    })
 }
 
-fn other_reg_class_from_kind(kind: &str) -> crate::inst::OtherRegClass {
-    use crate::inst::OtherRegClass as C;
-    let k = kind.trim();
-    if k.starts_with("ST") {
-        C::Fpu
-    } else if k.starts_with("MM") {
-        C::Mmx
-    } else if k.starts_with('Y') {
-        C::Ymm
-    } else if k.starts_with('Z') {
-        C::Zmm
-    } else if k.starts_with('K') {
-        C::Mask
-    } else {
-        C::Unknown
+fn map_reg_long(reg: yaxpeax_x86::long_mode::RegSpec, prefixes: Prefixes) -> Option<Operand> {
+    use yaxpeax_x86::long_mode::RegSpec;
+
+    let class = reg.class();
+    let idx = reg.num();
+
+    if class == RegSpec::rax().class() {
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: idx },
+            size: OperandSize::Bits64,
+            high8: false,
+        });
     }
+    if class == RegSpec::eax().class() {
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: idx },
+            size: OperandSize::Bits32,
+            high8: false,
+        });
+    }
+    if class == RegSpec::ax().class() {
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: idx },
+            size: OperandSize::Bits16,
+            high8: false,
+        });
+    }
+    if class == RegSpec::al().class() || class == RegSpec::spl().class() {
+        let (base, high8) = if (4..=7).contains(&idx) && prefixes.rex.is_none() {
+            (idx - 4, true)
+        } else {
+            (idx, false)
+        };
+        return Some(Operand::Gpr {
+            reg: crate::inst::Gpr { index: base },
+            size: OperandSize::Bits8,
+            high8,
+        });
+    }
+    if class == RegSpec::xmm(0).class() {
+        return Some(Operand::Xmm {
+            reg: crate::inst::Xmm { index: idx },
+        });
+    }
+    if class == RegSpec::es().class() {
+        let seg = match idx {
+            0 => SegmentReg::ES,
+            1 => SegmentReg::CS,
+            2 => SegmentReg::SS,
+            3 => SegmentReg::DS,
+            4 => SegmentReg::FS,
+            5 => SegmentReg::GS,
+            _ => return None,
+        };
+        return Some(Operand::Segment { reg: seg });
+    }
+    if class == RegSpec::st(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Fpu,
+            index: idx,
+        });
+    }
+    if class == RegSpec::mm0().class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mmx,
+            index: idx,
+        });
+    }
+    if class == RegSpec::ymm(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Ymm,
+            index: idx,
+        });
+    }
+    if class == RegSpec::zmm(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Zmm,
+            index: idx,
+        });
+    }
+
+    Some(Operand::OtherReg {
+        class: crate::inst::OtherRegClass::Unknown,
+        index: idx,
+    })
 }
 
 #[cfg(test)]
