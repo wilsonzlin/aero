@@ -192,8 +192,42 @@ impl XhciPciDevice {
     }
 
     /// Advance the device by 1ms.
-    pub fn tick_1ms(&mut self, _mem: &mut MemoryBus) {
+    pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
+        enum TickMemoryBus<'a> {
+            Dma(&'a mut MemoryBus),
+            NoDma,
+        }
+
+        impl aero_usb::MemoryBus for TickMemoryBus<'_> {
+            fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+                match self {
+                    TickMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),
+                    TickMemoryBus::NoDma => buf.fill(0xFF),
+                }
+            }
+
+            fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+                match self {
+                    TickMemoryBus::Dma(inner) => inner.write_physical(paddr, buf),
+                    TickMemoryBus::NoDma => {
+                        let _ = (paddr, buf);
+                    }
+                }
+            }
+        }
+
         self.controller.tick_1ms();
+
+        // Deliver pending events into the guest-configured event ring. This requires DMA, so gate it
+        // on PCI COMMAND.BME (bit 2) like other USB controllers.
+        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+        let mut adapter = if dma_enabled {
+            TickMemoryBus::Dma(mem)
+        } else {
+            TickMemoryBus::NoDma
+        };
+        self.controller.service_event_ring(&mut adapter);
+
         self.service_interrupts();
     }
 }
