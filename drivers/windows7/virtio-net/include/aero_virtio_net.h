@@ -147,6 +147,14 @@ typedef struct _AEROVNET_TX_REQUEST {
   BOOLEAN Cancelled;
   struct _AEROVNET_ADAPTER* Adapter;
 
+  // Snapshot of NDIS-requested TX offload enablement at the time this request
+  // was accepted. These flags can change at runtime via OID_TCP_OFFLOAD_PARAMETERS,
+  // so queued/pending sends must not consult the live adapter config.
+  BOOLEAN TxChecksumV4Enabled;
+  BOOLEAN TxChecksumV6Enabled;
+  BOOLEAN TxTsoV4Enabled;
+  BOOLEAN TxTsoV6Enabled;
+
   PUCHAR HeaderVa;
   PHYSICAL_ADDRESS HeaderPa;
 
