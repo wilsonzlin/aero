@@ -874,6 +874,12 @@ In the baseline internal binding scheme, this buffer is bound at:
 
 - `@group(3) @binding(276)` (optional; only required when using this packed-input GS path).
 
+Implementation note: the current in-tree GS→WGSL translator (`runtime/gs_translate.rs`) declares
+`gs_inputs` at `@group(0) @binding(4)` as part of its fixed prepass layout. When wiring that
+translator into the executor, either adapt its declarations to the baseline internal scheme, or
+bind a separate internal group(0) for the GS pass (see the “Bind group layout strategies” note
+below in section 2.2.1).
+
 Example declaration:
 
 ```wgsl
@@ -1232,7 +1238,38 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Note: `VS_OUT_STRIDE` is derived from the VS output signature (max output register index + 1),
       not from the final PS-linked varying count.
 
-2. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
+2. **HS-out control points (`hs_out_cp_regs`, optional; full HS/DS)**
+    - Purpose: stores hull shader **output control-point** registers (per patch, per output control
+      point). DS reads these as its “control point patch” input.
+    - Usage: `STORAGE` (written/read by compute).
+    - Layout: register buffer (`array<vec4<f32>>`), indexed compatibly with the in-tree HS→WGSL
+      translator:
+      - `hs_out_cp_base = (patch_instance_id * HS_MAX_CONTROL_POINTS + output_control_point_id) * HS_CP_OUT_STRIDE`
+      - output register `r` is stored at `hs_out_cp_regs.data[hs_out_cp_base + r]`
+    - Total register count (conservative): `patch_count * instance_count * HS_MAX_CONTROL_POINTS * HS_CP_OUT_STRIDE`.
+      - Note: this uses `HS_MAX_CONTROL_POINTS = 32` even when the shader declares fewer output
+        control points, to keep indexing stable and allow a fixed `x=0..32` dispatch shape.
+    - Bring-up note (P2a): HS may be treated as pass-through and `hs_out_cp_regs` may alias
+      `vs_out_regs`.
+    - Binding (if using a stable internal layout):
+      - baseline doc scheme: `@group(3) @binding(277)`
+      - in-tree HS translator (per-pass internal group): `@group(0) @binding(1)`
+
+3. **HS-out patch constants (`hs_out_pc_regs`, optional; full HS/DS)**
+    - Purpose: stores hull shader **patch-constant** output registers (per patch). DS reads these as
+      its “patch constant” input (in addition to tess factors).
+    - Usage: `STORAGE` (written/read by compute).
+    - Layout: register buffer (`array<vec4<f32>>`):
+      - `hs_out_pc_base = patch_instance_id * HS_PC_OUT_STRIDE`
+      - output register `r` is stored at `hs_out_pc_regs.data[hs_out_pc_base + r]`
+    - Total register count: `patch_count * instance_count * HS_PC_OUT_STRIDE`.
+    - Bring-up note (P2a): only tess factors are required, so implementations may omit this buffer
+      and write tess factors directly to `tess_patch_constants` instead.
+    - Binding (if using a stable internal layout):
+      - baseline doc scheme: `@group(3) @binding(278)`
+      - in-tree HS translator (per-pass internal group): `@group(0) @binding(2)`
+
+4. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
     - Purpose: stores post-DS vertices + tessellator-generated indices (triangle list for tri/quad
       domains; required in the baseline P2 design).
     - Usage (vertices): `STORAGE | VERTEX`
@@ -1242,7 +1279,7 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Capacity sizing: derived from tess factors. For P2a tri-domain and P2b quad-domain integer
       tessellation, see “Tessellation sizing” above (`V_total`, `I_total`).
 
-3. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
+5. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
     - Purpose: stores post-GS vertices + indices suitable for final rasterization.
     - Usage (vertices): `STORAGE | VERTEX`
     - Usage (indices): `STORAGE | INDEX`
@@ -1250,16 +1287,16 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Capacity sizing: derived from `input_prim_count * instance_count * gs_maxvertexcount`, plus
       additional expansion when emitting list primitives without an index buffer (see below).
 
-4. **Indirect args (`indirect_args`)**
+6. **Indirect args (`indirect_args`)**
     - Purpose: written by compute, consumed by render pass as indirect draw parameters.
     - Usage: `STORAGE | INDIRECT`
 
-5. **Counters (`counters`)**
+7. **Counters (`counters`)**
     - Purpose: atomic counters used during expansion (output vertex count, output index count,
       overflow flags).
     - Usage: `STORAGE` (atomics) and optionally `COPY_SRC` for debugging readback.
 
-6. **Tessellation patch state (`tess_patch_state`)**
+8. **Tessellation patch state (`tess_patch_state`)**
     - Purpose: per-patch metadata produced by HS patch-constant pass and consumed by tessellator/DS
       passes:
       - computed tessellation level(s),
@@ -1268,20 +1305,73 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Layout: `array<TessPatchState>` (see below), 32 bytes per entry.
     - Entry count: `patch_count * instance_count`.
 
-7. **Tessellation patch constants (`tess_patch_constants`)**
+9. **Tessellation patch constants (`tess_patch_constants`)**
     - Purpose: per-patch tess factors (`SV_TessFactor` / `SV_InsideTessFactor`) produced by the HS
       patch-constant function and consumed by DS (and by the tessellator sizing policy).
     - Usage: `STORAGE` (read_write).
     - Layout: `array<TessPatchConstants>` (see below), 32 bytes per entry.
     - Entry count: `patch_count * instance_count`.
 
-8. **GS input payload (`gs_inputs`, optional)**
+10. **GS input payload (`gs_inputs`, optional)**
     - Purpose: packed per-primitive GS inputs when using a GS translator that expects a dense
       register-file buffer (see “GS input register payload layout”).
     - Usage: `STORAGE` (read-only).
     - Layout: `array<vec4<f32>>` registers packed by `((prim_id * verts_per_prim + vertex) * reg_count + reg)`.
     - Capacity sizing:
       - `input_prim_count * instance_count * GS_INPUT_VERTS_PER_PRIM * GS_INPUT_REG_COUNT` registers.
+
+##### 2.2.1) HS stage interface buffers (full HS/DS; concrete register IO)
+
+For full HS/DS execution (beyond the P2a pass-through HS bring-up), the HS needs explicit stage IO
+buffers:
+
+- control-point inputs (`hs_in`, typically sourced from `vs_out_regs`),
+- control-point outputs (`hs_out_cp_regs`), and
+- patch-constant outputs (`hs_out_pc_regs`).
+
+The in-tree HS translator (`translate_hs` in `crates/aero-d3d11/src/shader_translate.rs`) models
+these as **runtime-sized register buffers**:
+
+```wgsl
+struct HsRegBuffer { data: array<vec4<f32>>; }
+```
+
+**Indexing (matches in-tree translator; normative)**
+
+Let:
+
+- `patch_instance_id = instance_id * patch_count + patch_id`
+- `HS_MAX_CONTROL_POINTS = 32` (D3D11 max; used for stable indexing even when outputcontrolpoints < 32)
+
+Then:
+
+- Control-point IO (inputs and outputs) uses:
+  - `base = (patch_instance_id * HS_MAX_CONTROL_POINTS + output_control_point_id) * STRIDE`
+  - register `r` is at `data[base + r]`
+- Patch-constant outputs use:
+  - `base = patch_instance_id * STRIDE`
+  - register `r` is at `data[base + r]`
+
+**Stride derivation**
+
+Strides are **in registers** (not bytes):
+
+- `HS_IN_STRIDE`: `max_used_input_v_reg + 1` (excluding HS system-value inputs)
+- `HS_CP_OUT_STRIDE`: `max_output_control_point_o_reg + 1` (from OSGN)
+- `HS_PC_OUT_STRIDE`: `max_patch_constant_o_reg + 1` (from PCSG/PSGN)
+
+This keeps register addressing stable without having to precisely reproduce HLSL struct packing.
+
+**Bind group layout strategies**
+
+Two layouts are valid:
+
+1. **Unified internal group (baseline doc design):** place these buffers in `@group(3)` at reserved
+   `@binding >= 256`, alongside other internal expansion buffers and GS/HS/DS D3D resources.
+2. **Per-pass internal group (matches in-tree HS/DS scaffolding):** bind stage IO buffers in a
+   dedicated internal group (often `@group(0)` with small binding numbers), and keep HS/DS D3D
+   resources in `@group(3)`. This requires the pipeline layout to include empty groups 1/2 so
+   indices line up with the stage-scoped binding model.
 
 **GS output sizing: strip → list**
 
@@ -1539,7 +1629,14 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           - `patch_id = patch_instance_id % patch_count`
           - `instance_id = patch_instance_id / patch_count`
       - Writes tess factors to `tess_patch_constants[patch_instance_id]` (`SV_TessFactor` /
-        `SV_InsideTessFactor`).
+        `SV_InsideTessFactor`) for consumption by the tessellation sizing/layout policy.
+      - Full HS/DS note: when executing real HS patch-constant bytecode, the patch-constant function
+        can also write *additional* user patch constants. A practical model (matching the in-tree HS
+        translator) is to store the full patch-constant output register file in `hs_out_pc_regs`
+        (one `vec4<f32>` per output register), and either:
+        - have the tessellation layout pass read tess factors from those registers directly, or
+        - additionally copy/pack tess factors into `tess_patch_constants` as the dedicated layout-pass
+          input.
       - System values mapping (recommended):
         - `SV_PrimitiveID = patch_instance_id` (or `patch_id` if instancing is flattened).
       - Note: HS patch-constant produces the tess factors but does not inherently know output buffer
@@ -1548,7 +1645,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           layout pass”), or
         - via atomics directly in the HS patch-constant pass (more parallel, but output ordering is
           implementation-defined).
-      - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up).
+      - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up),
+        typically via `hs_out_pc_regs`.
       - Dispatch mapping (recommended):
         - Use a flattened patch ID:
           - `global_invocation_id.x` = `patch_instance_id` (`0..(patch_count * instance_count)`)
@@ -1568,7 +1666,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - one workgroup, one active lane (`@workgroup_size(1)`; `global_invocation_id.x == 0`).
     - HS control-point pass (per patch control point):
       - Reads control points from `vs_out_regs`.
-      - Writes HS output control points to scratch (may be in-place in `vs_out_regs` for bring-up).
+      - Writes HS output control points to scratch (`hs_out_cp_regs`). For P2a bring-up, HS may be a
+        pass-through and `hs_out_cp_regs` may alias `vs_out_regs`.
       - System values mapping (recommended):
         - `SV_OutputControlPointID = control_point_id`
         - `SV_PrimitiveID = patch_instance_id`
@@ -1586,8 +1685,11 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - For P2b quad-domain, see “Quad-domain grid enumeration” above.
       - Uses `tess_patch_state[patch_instance_id]` to coordinate per-patch output ranges
         (`base_vertex/base_index`) when emitting into the shared `tess_out_*` buffers.
-      - DS consumes the HS patch-constant outputs (at minimum tess factors) via
-        `tess_patch_constants[patch_instance_id]`.
+      - DS consumes HS outputs:
+        - control points from `hs_out_cp_regs` (or directly from `vs_out_regs` in pass-through HS
+          mode), and
+        - patch constants from `hs_out_pc_regs` (full HS/DS) and/or `tess_patch_constants`
+          (tess-factor-only bring-up).
       - System values mapping (recommended):
         - `SV_DomainLocation`: computed from `domain_vertex_id` and the patch’s tess level(s) using
           the concrete enumeration rules above.
@@ -1619,13 +1721,16 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Dispatch shape / ordering:
       - **Deterministic bring-up (recommended):** dispatch a single thread
         (`@workgroup_size(1)` and `global_invocation_id.x == 0`) and run nested loops:
-        - for `primitive_id` in `0..input_prim_count`:
+        - for `prim_id` in `0..(input_prim_count * instance_count)`:
+          - where `prim_id` is a flattened `(instance_id, primitive_id_in_instance)`:
+            - `instance_id = prim_id / input_prim_count`
+            - `primitive_id_in_instance = prim_id % input_prim_count`
         - for `gs_instance_id` in `0..gs_instance_count`:
         - execute the GS and append to local output counts, with capacity checks.
         - This produces deterministic output ordering without atomics, and matches the in-tree
           `gs_translate` WGSL strategy.
       - **Parallel (future optimization):** use a 2D grid where:
-        - `global_invocation_id.x` = input `primitive_id` in `0..input_prim_count`
+        - `global_invocation_id.x` = input `prim_id` in `0..(input_prim_count * instance_count)`
         - `global_invocation_id.y` = `gs_instance_id` in `0..gs_instance_count`
         - Requires atomic allocation (or a prefix-sum compaction pass) to produce a packed output
           stream.
@@ -1730,6 +1835,27 @@ already uses the reserved expansion-internal binding range (starting at `BINDING
 256`) within `VERTEX_PULLING_GROUP` (`@group(3)`), so it does not collide with the D3D register
 binding ranges. Future work is to unify all emulation kernels on the shared internal layout.
 
+##### 3.2.1) Alternative layout (current in-tree scaffolding): per-pass internal `@group(0)`
+
+Not all in-tree emulation kernels currently use the unified “internal bindings in `@group(3)`”
+scheme described below.
+
+Several scaffolding kernels instead use a **dedicated internal bind group** (typically
+`@group(0)` with small binding numbers) for stage IO / scratch buffers, and keep the translated
+GS/HS/DS **D3D resources** in `@group(3)`:
+
+- HS translation (`translate_hs` in `shader_translate.rs`): `hs_in/hs_out_cp/hs_out_pc` at
+  `@group(0) @binding(0..2)`, HS resources in `@group(3)`.
+- Tessellation DS evaluation (`runtime/tessellation/domain_eval.rs`): patch meta + HS outputs at
+  `@group(0)`, DS resources in `@group(3)`.
+- GS scaffolding (`runtime/gs_translate.rs`): expansion outputs + params + `gs_inputs` at
+  `@group(0)`, (future) GS resources in `@group(3)`.
+
+This works because WebGPU bind groups are **per pipeline**: internal compute pipelines can choose
+different group layouts than application render pipelines. When using this layout style, the
+pipeline layout should still include empty group layouts for groups 1 and 2 so indices line up with
+the stage-scoped binding model (VS/PS/CS).
+
 These are not part of the D3D binding model, so they use a reserved binding-number range starting at
 `BINDING_BASE_INTERNAL = 256`. They live in the same bind group as GS/HS/DS resources (`@group(3)`),
 but are kept disjoint from the D3D register mappings by using `@binding >= 256`.
@@ -1760,6 +1886,8 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(274)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
 - `@binding(275)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
 - `@binding(276)`: `gs_inputs` (read-only storage; optional packed GS input register payload)
+- `@binding(277)`: `hs_out_cp_regs` (read_write storage; optional HS output control-point registers)
+- `@binding(278)`: `hs_out_pc_regs` (read_write storage; optional HS patch-constant output registers)
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
