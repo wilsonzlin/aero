@@ -3624,7 +3624,7 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
-        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
+        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
 
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
@@ -16605,6 +16605,71 @@ mod tests {
                 .expect("SET_SHADER_CONSTANTS_F should succeed");
 
             assert!(exec.encoder_has_commands);
+        });
+    }
+
+    #[test]
+    fn execute_cmd_stream_clears_deferred_destroys_on_success() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const SRC: u32 = 1;
+            const DST: u32 = 2;
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_buffer(SRC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0);
+            writer.create_buffer(DST, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0);
+            writer.copy_buffer(DST, SRC, 0, 0, 16, 0);
+            writer.destroy_resource(SRC);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("execute_cmd_stream should succeed");
+
+            assert!(
+                exec.destroyed_buffers.is_empty() && exec.destroyed_textures.is_empty(),
+                "deferred destroy keep-alive lists must be cleared after stream submission"
+            );
+        });
+    }
+
+    #[test]
+    fn execute_cmd_stream_clears_deferred_destroys_on_error() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const SRC: u32 = 1;
+            const DST: u32 = 2;
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_buffer(SRC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0);
+            writer.create_buffer(DST, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0);
+            writer.copy_buffer(DST, SRC, 0, 0, 16, 0);
+            writer.destroy_resource(SRC);
+            // Follow up with an invalid copy to force an error path after DESTROY_RESOURCE.
+            writer.copy_buffer(0, DST, 0, 0, 16, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let _ = exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap_err();
+
+            assert!(
+                exec.destroyed_buffers.is_empty() && exec.destroyed_textures.is_empty(),
+                "deferred destroy keep-alive lists must be cleared when stream execution fails"
+            );
         });
     }
 
