@@ -2197,7 +2197,8 @@ impl XhciController {
 
         match aligned {
             off if off >= doorbell_base && off < doorbell_end => {
-                let target = ((off - doorbell_base) / 4) as u8;
+                let target =
+                    ((off - doorbell_base) / u64::from(regs::doorbell::DOORBELL_STRIDE)) as u8;
                 let write_val = merge(0);
                 self.write_doorbell(target, write_val);
                 // Endpoint doorbells should trigger transfer execution promptly even if the outer
