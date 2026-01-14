@@ -5,8 +5,8 @@ use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
     DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
-    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
-    Swizzle, WriteMask,
+    ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
+    SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
@@ -1312,4 +1312,132 @@ fn gs_translate_rejects_regfile_output_depth_destination() {
             msg: "unsupported destination register file RegFile::OutputDepth".to_owned()
         }
     );
+}
+
+#[test]
+fn gs_translate_supports_structured_control_flow_if_else_loop_breakc_continuec() {
+    const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle,
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip,
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_PRIMITIVE_ID,
+            },
+        ],
+        instructions: vec![
+            // Set up outputs (required by emit).
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0, 0, 0, 0x3f800000]), // (0,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000, 0, 0, 0x3f800000]), // (1,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            // if (primitive_id != 0) { emit } else { cut }
+            Sm4Inst::If {
+                cond: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Else,
+            Sm4Inst::Cut { stream: 0 },
+            Sm4Inst::EndIf,
+            // loop { continuec; breakc; }
+            Sm4Inst::Loop,
+            Sm4Inst::ContinueC {
+                op: Sm4CmpOp::Eq,
+                a: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000; 4]), // 1.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]), // 0.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::BreakC {
+                op: Sm4CmpOp::Eq,
+                a: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]), // 0.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]), // 0.0
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::EndLoop,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("if ("),
+        "expected translated WGSL to contain an if statement:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("} else {"),
+        "expected translated WGSL to contain an else clause:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("loop {"),
+        "expected translated WGSL to contain a loop statement:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("break;"),
+        "expected translated WGSL to contain a break statement:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("continue;"),
+        "expected translated WGSL to contain a continue statement:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
 }

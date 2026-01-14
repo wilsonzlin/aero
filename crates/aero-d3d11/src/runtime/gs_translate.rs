@@ -26,8 +26,8 @@ use std::collections::HashMap;
 
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst,
-    Sm4Module, SrcKind, Swizzle, WriteMask,
+    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl,
+    Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
@@ -69,6 +69,11 @@ pub enum GsTranslateError {
     UnsupportedInstruction {
         inst_index: usize,
         opcode: &'static str,
+    },
+    MalformedControlFlow {
+        inst_index: usize,
+        expected: String,
+        found: String,
     },
 }
 
@@ -117,6 +122,14 @@ impl fmt::Display for GsTranslateError {
                 f,
                 "GS translate: unsupported instruction {opcode} at index {inst_index}"
             ),
+            GsTranslateError::MalformedControlFlow {
+                inst_index,
+                expected,
+                found,
+            } => write!(
+                f,
+                "GS translate: malformed structured control flow at instruction index {inst_index}: expected {expected}, found {found}"
+            ),
         }
     }
 }
@@ -126,10 +139,13 @@ impl std::error::Error for GsTranslateError {}
 fn opcode_name(inst: &Sm4Inst) -> &'static str {
     match inst {
         Sm4Inst::If { .. } => "if",
+        Sm4Inst::IfC { .. } => "ifc",
         Sm4Inst::Else => "else",
         Sm4Inst::EndIf => "endif",
         Sm4Inst::Loop => "loop",
         Sm4Inst::EndLoop => "endloop",
+        Sm4Inst::BreakC { .. } => "breakc",
+        Sm4Inst::ContinueC { .. } => "continuec",
         Sm4Inst::Mov { .. } => "mov",
         Sm4Inst::Movc { .. } => "movc",
         Sm4Inst::Itof { .. } => "itof",
@@ -348,6 +364,85 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
+            Sm4Inst::If { cond, .. } => {
+                scan_src_operand(
+                    cond,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "if",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::IfC { a, b, .. } => {
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "ifc",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "ifc",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::BreakC { a, b, .. } => {
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "breakc",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "breakc",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::ContinueC { a, b, .. } => {
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "continuec",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "continuec",
+                    &input_sivs,
+                )?;
+            }
             Sm4Inst::Mov { dst, src } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 scan_src_operand(
@@ -793,8 +888,205 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("let gs_instance_id: u32 = gs_instance_id_in;"); // SV_GSInstanceID
     w.line("");
 
+    #[derive(Debug, Clone, Copy)]
+    enum BlockKind {
+        If { has_else: bool },
+        Loop,
+    }
+
+    impl BlockKind {
+        fn describe(&self) -> String {
+            match self {
+                BlockKind::If { has_else: false } => "if".to_owned(),
+                BlockKind::If { has_else: true } => "if (else already seen)".to_owned(),
+                BlockKind::Loop => "loop".to_owned(),
+            }
+        }
+
+        fn expected_end_token(&self) -> &'static str {
+            match self {
+                BlockKind::If { .. } => "EndIf",
+                BlockKind::Loop => "EndLoop",
+            }
+        }
+    }
+
+    let mut blocks: Vec<BlockKind> = Vec::new();
+
+    let emit_cmp = |inst_index: usize,
+                    opcode: &'static str,
+                    op: Sm4CmpOp,
+                    a: &crate::sm4_ir::SrcOperand,
+                    b: &crate::sm4_ir::SrcOperand|
+     -> Result<String, GsTranslateError> {
+        // Mirror the signature-driven shader translator: compare-based flow control performs
+        // floating-point comparisons by default, with the `*_u` variants comparing the raw integer
+        // bits as `u32`.
+        let unsigned = matches!(
+            op,
+            Sm4CmpOp::EqU | Sm4CmpOp::NeU | Sm4CmpOp::LtU | Sm4CmpOp::GeU | Sm4CmpOp::LeU
+                | Sm4CmpOp::GtU
+        );
+        let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
+        let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
+        let a = format!("({a}).x");
+        let b = format!("({b}).x");
+        let (a, b) = if unsigned {
+            (format!("bitcast<u32>({a})"), format!("bitcast<u32>({b})"))
+        } else {
+            (a, b)
+        };
+        let op_str = match op {
+            Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
+            Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
+            Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
+            Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
+            Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
+            Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
+        };
+        Ok(format!("{a} {op_str} {b}"))
+    };
+
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
+            // ---- Structured control flow ----
+            Sm4Inst::If { cond, test } => {
+                let cond_vec = emit_src_vec4(inst_index, "if", cond, &input_sivs)?;
+                let cond_scalar = format!("({cond_vec}).x");
+                // DXBC register files are untyped 32-bit lanes. `if_z` / `if_nz` are defined as a
+                // raw non-zero test on the underlying bits (not a float numeric compare).
+                let cond_bits = format!("bitcast<u32>({cond_scalar})");
+                let expr = match test {
+                    Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
+                    Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
+                };
+                w.line(&format!("if ({expr}) {{"));
+                w.indent();
+                blocks.push(BlockKind::If { has_else: false });
+            }
+            Sm4Inst::IfC { op, a, b } => {
+                let cond = emit_cmp(inst_index, "ifc", *op, a, b)?;
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                blocks.push(BlockKind::If { has_else: false });
+            }
+            Sm4Inst::Else => {
+                match blocks.last_mut() {
+                    Some(BlockKind::If { has_else }) => {
+                        if *has_else {
+                            return Err(GsTranslateError::MalformedControlFlow {
+                                inst_index,
+                                expected: "if (without an else)".to_owned(),
+                                found: BlockKind::If { has_else: true }.describe(),
+                            });
+                        }
+                        *has_else = true;
+                    }
+                    Some(other) => {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "if".to_owned(),
+                            found: other.describe(),
+                        });
+                    }
+                    None => {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "if".to_owned(),
+                            found: "none".to_owned(),
+                        });
+                    }
+                }
+
+                w.dedent();
+                w.line("} else {");
+                w.indent();
+            }
+            Sm4Inst::EndIf => match blocks.last() {
+                Some(BlockKind::If { .. }) => {
+                    blocks.pop();
+                    w.dedent();
+                    w.line("}");
+                }
+                Some(other) => {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "if".to_owned(),
+                        found: other.describe(),
+                    });
+                }
+                None => {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "if".to_owned(),
+                        found: "none".to_owned(),
+                    });
+                }
+            },
+            Sm4Inst::Loop => {
+                w.line("loop {");
+                w.indent();
+                blocks.push(BlockKind::Loop);
+            }
+            Sm4Inst::EndLoop => match blocks.last() {
+                Some(BlockKind::Loop) => {
+                    blocks.pop();
+                    w.dedent();
+                    w.line("}");
+                }
+                Some(other) => {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: other.describe(),
+                    });
+                }
+                None => {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: "none".to_owned(),
+                    });
+                }
+            },
+            Sm4Inst::BreakC { op, a, b } => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let cond = emit_cmp(inst_index, "breakc", *op, a, b)?;
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                w.line("break;");
+                w.dedent();
+                w.line("}");
+            }
+            Sm4Inst::ContinueC { op, a, b } => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let cond = emit_cmp(inst_index, "continuec", *op, a, b)?;
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+                w.line("continue;");
+                w.dedent();
+                w.line("}");
+            }
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
                 let rhs = maybe_saturate(dst.saturate, rhs);
@@ -905,6 +1197,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 });
             }
         }
+    }
+
+    if let Some(open) = blocks.last() {
+        return Err(GsTranslateError::MalformedControlFlow {
+            inst_index: module.instructions.len(),
+            expected: open.expected_end_token().to_owned(),
+            found: open.describe(),
+        });
     }
 
     w.dedent();
