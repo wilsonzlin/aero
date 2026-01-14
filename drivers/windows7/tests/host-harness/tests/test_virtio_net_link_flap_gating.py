@@ -53,6 +53,7 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
         msg = h._virtio_net_link_flap_required_failure_message(tail)
         self.assertIsNotNone(msg)
         self.assertIn("VIRTIO_NET_LINK_FLAP_FAILED", msg or "")
+        self.assertIn("reason=timeout", msg or "")
 
     def test_required_failure_message_skip_flag_not_set(self) -> None:
         h = self.harness
@@ -76,4 +77,3 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
