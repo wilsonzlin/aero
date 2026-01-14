@@ -128,8 +128,6 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_snd_buffer_limits)
 
-                self.assertTrue(args.with_snd_buffer_limits)
-
     def test_virtio_blk_reset_aliases_set_flag(self) -> None:
         for flag in (
             "--with-blk-reset",
