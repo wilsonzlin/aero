@@ -1511,6 +1511,10 @@ fn protocol_rejects_misaligned_cmd_size_bytes() {
     push_u32(&mut stream, AeroGpuOpcode::Nop as u32);
     push_u32(&mut stream, 10);
     stream.extend_from_slice(&[0u8; 2]);
+    // The command stream header now requires `size_bytes` to be 4-byte aligned. Add trailing
+    // padding so we exercise the packet-level size alignment check instead of failing header
+    // validation first.
+    stream.extend_from_slice(&[0u8; 2]);
 
     let size_bytes = stream.len() as u32;
     stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
