@@ -24,6 +24,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-wasm"))
         .stdout(predicate::str::contains("machine_uhci"))
         .stdout(predicate::str::contains("uhci_snapshot"))
+        .stdout(predicate::str::contains("machine_uhci_snapshot_roundtrip"))
         .stdout(predicate::str::contains("uhci_usb_topology_api"))
         .stdout(predicate::str::contains("machine_usb_attach_at_path"))
         .stdout(predicate::str::contains("machine_ehci"))
@@ -40,6 +41,7 @@ fn input_help_mentions_flags_and_steps() {
             "machine_uhci_synthetic_usb_hid_reports",
         ))
         .stdout(predicate::str::contains("machine_xhci"))
+        .stdout(predicate::str::contains("machine_xhci_snapshot"))
         .stdout(predicate::str::contains("xhci_snapshot"))
         .stdout(predicate::str::contains("machine_xhci_usb_attach_at_path"))
         .stdout(predicate::str::contains("webusb_uhci_bridge"))
