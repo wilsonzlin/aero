@@ -7,6 +7,7 @@ bucket="${BUCKET_NAME:-disk-images}"
 origin="${ORIGIN_URL:-http://localhost:9000}"
 proxy="${PROXY_URL:-http://localhost:9002}"
 allowed_origin="${CORS_ALLOWED_ORIGIN:-http://localhost:5173}"
+corp="${CROSS_ORIGIN_RESOURCE_POLICY:-cross-origin}"
 
 want_cleanup=0
 
@@ -126,6 +127,7 @@ echo "$head_proxy" | grep -i '^accept-ranges: *bytes'
 echo "$head_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$head_proxy" | grep -i '^access-control-expose-headers:.*content-length'
 echo "$head_proxy" | grep -i '^access-control-expose-headers:.*etag'
+echo "$head_proxy" | grep -i "^cross-origin-resource-policy: ${corp}"
 
 echo "==> Verifying Range GET against proxy..."
 range_proxy="$(curl -fsS -D - -o /dev/null -H "Origin: ${allowed_origin}" -H 'Range: bytes=0-15' "${proxy}/${bucket}/${obj}")"
@@ -134,6 +136,7 @@ echo "$range_proxy" | grep -i '^content-range:'
 echo "$range_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$range_proxy" | grep -i '^access-control-expose-headers:.*content-range'
 echo "$range_proxy" | grep -i '^access-control-expose-headers:.*etag'
+echo "$range_proxy" | grep -i "^cross-origin-resource-policy: ${corp}"
 
 echo "==> Verifying CORS preflight against proxy..."
 preflight_proxy="$(curl -fsS -D - -o /dev/null -X OPTIONS \
