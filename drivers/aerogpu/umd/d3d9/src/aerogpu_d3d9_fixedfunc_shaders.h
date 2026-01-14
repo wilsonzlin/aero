@@ -57,7 +57,9 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
 //   mov oPos, v0
 //   mov oD0, v1
 //   mov oT0, v2
-//   mov oT0.z, v0     ; Pack POSITIONT.z into TEXCOORD0.z for fixed-function fog
+//   rcp r0, v0.w
+//   mul r0, v0, r0
+//   mov oT0.z, r0     ; Pack post-projection depth (clip_z / clip_w) into TEXCOORD0.z for fixed-function fog
 //   end
 static constexpr uint32_t kVsPassthroughPosColorTex1Fog[] = {
     0xFFFE0200u, // vs_2_0
@@ -70,9 +72,16 @@ static constexpr uint32_t kVsPassthroughPosColorTex1Fog[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
+    0x03000006u, // rcp (2 operands)
+    0x000F0000u, // r0.xyzw
+    0x10FF0000u, // v0.wwww
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x00E40000u, // r0.xyzw
     0x03000001u, // mov (2 operands)
     0x60040000u, // oT0.z
-    0x10E40000u, // v0.xyzw
+    0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
 };
 
@@ -107,7 +116,9 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 //   mov oPos, v0
 //   mov oD0, c4
 //   mov oT0, v1
-//   mov oT0.z, v0     ; Pack POSITIONT.z into TEXCOORD0.z for fixed-function fog
+//   rcp r0, v0.w
+//   mul r0, v0, r0
+//   mov oT0.z, r0     ; Pack post-projection depth (clip_z / clip_w) into TEXCOORD0.z for fixed-function fog
 //   end
 static constexpr uint32_t kVsPassthroughPosWhiteTex1Fog[] = {
     0xFFFE0200u, // vs_2_0
@@ -126,9 +137,16 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1Fog[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
+    0x03000006u, // rcp (2 operands)
+    0x000F0000u, // r0.xyzw
+    0x10FF0000u, // v0.wwww
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x00E40000u, // r0.xyzw
     0x03000001u, // mov (2 operands)
     0x60040000u, // oT0.z
-    0x10E40000u, // v0.xyzw
+    0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
 };
 

@@ -15700,10 +15700,12 @@ bool TestFixedfuncFogVertexModeEmitsConstants() {
 
   dev->cmd.reset();
 
+  // Use an RHW != 1 vertex (w != 1) so fixed-function fog must divide clip_z by
+  // clip_w to recover POSITIONT.z (our fixed-function fog coordinate convention).
   const VertexXyzrhwDiffuseTex1 tri[3] = {
-      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 0.0f},
-      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 1.0f, 0.0f},
-      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 1.0f},
+      {0.0f, 0.0f, 0.25f, 0.5f, 0xFF00FF00u, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 0.5f, 0xFF00FF00u, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 0.5f, 0xFF00FF00u, 0.0f, 1.0f},
   };
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
       cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
@@ -15719,6 +15721,33 @@ bool TestFixedfuncFogVertexModeEmitsConstants() {
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColorTex1Fog),
                "fog vertex mode: selected fog VS variant")) {
       return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*rcp=*/0x03000006u), "fog vertex mode: VS divides by w (rcp)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*mul=*/0x04000005u), "fog vertex mode: VS divides by w (mul)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->vs, /*v0.wwww=*/0x10FF0000u), "fog vertex mode: VS reads v0.w")) {
+      return false;
+    }
+    if (dev->up_vertex_buffer) {
+      // Verify XYZRHW conversion produced clip_w != 1 and clip_z = ndc_z * clip_w
+      // so `clip_z / clip_w` recovers the original POSITIONT.z.
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri),
+                 "fog vertex mode: scratch VB storage contains uploaded vertices")) {
+        return false;
+      }
+      float clip_z = 0.0f;
+      float clip_w = 0.0f;
+      std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+      std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+      if (!Check(clip_w == 2.0f, "fog vertex mode: XYZRHW conversion produced clip_w == 2")) {
+        return false;
+      }
+      if (!Check(clip_z == 0.5f, "fog vertex mode: XYZRHW conversion produced clip_z == z*w")) {
+        return false;
+      }
     }
     if (!Check(dev->ps != nullptr, "fog vertex mode: PS bound")) {
       return false;
