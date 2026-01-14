@@ -109,6 +109,7 @@ const MAX_REPORT_SIZE_BITS: u32 = 255;
 const MAX_REPORT_COUNT: u32 = 65_535;
 const MAX_HID_USAGE_U16: u32 = u16::MAX as u32;
 const MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES: u32 = 64;
+const MAX_USB_CONTROL_TRANSFER_BYTES: u32 = u16::MAX as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -374,30 +375,38 @@ fn validate_report_list(
             })?;
             *entry = total_bits;
 
-            if kind != HidReportKind::Feature {
-                let data_bytes = total_bits.checked_add(7).ok_or_else(|| {
-                    HidDescriptorError::at(
-                        &item_path,
-                        "report bit length too large to round to bytes",
-                    )
-                })? / 8;
-                let report_bytes = data_bytes
-                    .checked_add(if report.report_id != 0 { 1 } else { 0 })
-                    .ok_or_else(|| {
-                        HidDescriptorError::at(&item_path, "report byte length overflows u32")
-                    })?;
-                if report_bytes > MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES {
-                    let kind_str = match kind {
-                        HidReportKind::Input => "input",
-                        HidReportKind::Output => "output",
-                        HidReportKind::Feature => unreachable!(),
-                    };
-                    return Err(HidDescriptorError::at(
-                        &item_path,
-                        format!(
-                            "{kind_str} report length {report_bytes} bytes exceeds max USB full-speed interrupt packet size {MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES}",
-                        ),
-                    ));
+            let data_bytes = total_bits.checked_add(7).ok_or_else(|| {
+                HidDescriptorError::at(&item_path, "report bit length too large to round to bytes")
+            })? / 8;
+            let report_bytes = data_bytes
+                .checked_add(if report.report_id != 0 { 1 } else { 0 })
+                .ok_or_else(|| HidDescriptorError::at(&item_path, "report byte length overflows u32"))?;
+
+            match kind {
+                HidReportKind::Input => {
+                    if report_bytes > MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES {
+                        return Err(HidDescriptorError::at(
+                            &item_path,
+                            format!(
+                                "input report length {report_bytes} bytes exceeds max USB full-speed interrupt packet size {MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES}",
+                            ),
+                        ));
+                    }
+                }
+                HidReportKind::Output | HidReportKind::Feature => {
+                    if report_bytes > MAX_USB_CONTROL_TRANSFER_BYTES {
+                        let kind_str = match kind {
+                            HidReportKind::Output => "output",
+                            HidReportKind::Feature => "feature",
+                            HidReportKind::Input => unreachable!(),
+                        };
+                        return Err(HidDescriptorError::at(
+                            &item_path,
+                            format!(
+                                "{kind_str} report length {report_bytes} bytes exceeds max USB control transfer size u16::MAX ({MAX_USB_CONTROL_TRANSFER_BYTES})",
+                            ),
+                        ));
+                    }
                 }
             }
             path.pop();
@@ -1838,37 +1847,7 @@ mod tests {
     }
 
     #[test]
-    fn synth_rejects_total_report_bits_overflow() {
-        let item = HidReportItem {
-            is_array: false,
-            is_absolute: true,
-            is_buffered_bytes: false,
-            is_volatile: false,
-            is_constant: false,
-            is_wrapped: false,
-            is_linear: true,
-            has_preferred_state: true,
-            has_null: false,
-            is_range: false,
-            logical_minimum: 0,
-            logical_maximum: 1,
-            physical_minimum: 0,
-            physical_maximum: 0,
-            unit_exponent: 0,
-            unit: 0,
-            report_size: 255,
-            report_count: MAX_REPORT_COUNT,
-            usage_page: 0x01,
-            usages: vec![],
-            strings: vec![],
-            string_minimum: None,
-            string_maximum: None,
-            designators: vec![],
-            designator_minimum: None,
-            designator_maximum: None,
-        };
-
-        let items = vec![item; 258];
+    fn synth_rejects_feature_report_larger_than_usb_control_transfer_without_report_id() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
@@ -1877,15 +1856,44 @@ mod tests {
             output_reports: vec![],
             feature_reports: vec![HidReportInfo {
                 report_id: 0,
-                items,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 16,
+                    report_count: 32_768,
+                    usage_page: 0x01,
+                    usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
+                }],
             }],
             children: vec![],
         }];
 
         match synthesize_report_descriptor(&collections) {
             Err(HidDescriptorError::Validation { path, message }) => {
-                assert_eq!(path, "collections[0].featureReports[0].items[257]");
-                assert!(message.contains("total report bit length overflows u32"));
+                assert_eq!(path, "collections[0].featureReports[0].items[0]");
+                assert!(message.contains("control"));
+                assert!(message.contains("65536"));
+                assert!(message.contains("65535"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }
@@ -1994,7 +2002,7 @@ mod tests {
     }
 
     #[test]
-    fn synth_rejects_output_report_larger_than_full_speed_interrupt_packet() {
+    fn synth_allows_output_report_larger_than_full_speed_interrupt_packet() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
@@ -2035,17 +2043,13 @@ mod tests {
             children: vec![],
         }];
 
-        match synthesize_report_descriptor(&collections) {
-            Err(HidDescriptorError::Validation { path, message }) => {
-                assert_eq!(path, "collections[0].outputReports[0].items[0]");
-                assert!(message.contains("interrupt"));
-            }
-            other => panic!("expected validation error, got {other:?}"),
-        }
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
     }
 
     #[test]
-    fn synth_rejects_output_report_id_prefix_overflowing_interrupt_packet() {
+    fn synth_allows_output_report_id_prefix_overflowing_interrupt_packet() {
         let collections = vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
@@ -2086,10 +2090,112 @@ mod tests {
             children: vec![],
         }];
 
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn synth_rejects_output_report_larger_than_usb_control_transfer() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: u16::MAX as u32,
+                    usage_page: 0x01,
+                    usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
+                }],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
         match synthesize_report_descriptor(&collections) {
             Err(HidDescriptorError::Validation { path, message }) => {
                 assert_eq!(path, "collections[0].outputReports[0].items[0]");
-                assert!(message.contains("interrupt"));
+                assert!(message.contains("control"));
+                assert!(message.contains("65536"));
+                assert!(message.contains("65535"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_rejects_feature_report_larger_than_usb_control_transfer() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![],
+            feature_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: u16::MAX as u32,
+                    usage_page: 0x01,
+                    usages: vec![],
+                    strings: vec![],
+                    string_minimum: None,
+                    string_maximum: None,
+                    designators: vec![],
+                    designator_minimum: None,
+                    designator_maximum: None,
+                }],
+            }],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].featureReports[0].items[0]");
+                assert!(message.contains("control"));
+                assert!(message.contains("65536"));
+                assert!(message.contains("65535"));
             }
             other => panic!("expected validation error, got {other:?}"),
         }
