@@ -36,7 +36,7 @@ WebUSB is a general USB API that can expose non-HID devices and arbitrary USB
 transfers (control/bulk/interrupt, multiple interfaces, etc).
 
 Aero includes an end-to-end **guest-visible WebUSB passthrough** stack, using the same “main thread owns
-the `USBDevice`, worker owns the UHCI + device model” split as WebHID:
+the `USBDevice`, worker owns the guest-visible USB controller bridge + device model” split as WebHID:
 
 - **WASM UHCI controller with WebUSB passthrough device:** `crates/aero-wasm::UhciControllerBridge`
   (`crates/aero-wasm/src/uhci_controller_bridge.rs`, re-exported from `crates/aero-wasm/src/lib.rs`)
@@ -97,7 +97,8 @@ So the design is split:
 
 - **Main thread (Window):** selects the physical device, opens it, and forwards
   reports/transfer requests across a host ↔ worker boundary.
-- **Worker (I/O / device-model):** emulates UHCI + guest-visible USB device models
+- **Worker (I/O / device-model):** emulates guest-visible USB controller(s) (UHCI by default;
+  EHCI/xHCI when available) + guest-visible USB device models
   (WebHID-backed HID devices and/or the WebUSB passthrough device wrapper) and exposes
   them to the guest OS like any other USB peripherals.
 
@@ -109,7 +110,7 @@ Physical HID device
 Main thread (owns the handle)
   ↕ (report forwarding)
 I/O worker (USB controller + device model)
-  ↕ (UHCI ports, USB transfers)
+  ↕ (USB transfers)
 Guest Windows USB/HID stack
 ```
 
