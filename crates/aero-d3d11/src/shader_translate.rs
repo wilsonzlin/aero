@@ -1478,6 +1478,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
     inputs
 }
 
+#[deny(unreachable_patterns)]
 fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSysValue> {
     let used_regs = scan_used_input_registers(module);
     let mut out = BTreeSet::<ComputeSysValue>::new();

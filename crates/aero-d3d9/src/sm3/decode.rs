@@ -203,6 +203,7 @@ impl Opcode {
     }
 
     /// Returns the raw `D3DSHADER_INSTRUCTION_OPCODE_TYPE` value.
+    #[deny(unreachable_patterns)]
     pub fn raw(&self) -> u16 {
         match self {
             Self::Nop => 0,
