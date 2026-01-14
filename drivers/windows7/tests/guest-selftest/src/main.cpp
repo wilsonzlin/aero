@@ -915,49 +915,6 @@ static const char* AerovblkIrqModeForMarker(const AEROVBLK_QUERY_INFO& info) {
   return "unknown";
 }
 
-static std::optional<AEROVNET_DIAG_INFO> QueryAerovnetInterruptDiagnostics(Logger& log) {
-  const wchar_t* path = AEROVNET_DIAG_DEVICE_PATH;
-  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
-  const DWORD flags = FILE_ATTRIBUTE_NORMAL;
-  const DWORD desired_accesses[] = {GENERIC_READ, 0};
-
-  HANDLE h = INVALID_HANDLE_VALUE;
-  for (const DWORD access : desired_accesses) {
-    h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
-    if (h != INVALID_HANDLE_VALUE) break;
-  }
-
-  if (h == INVALID_HANDLE_VALUE) {
-    log.Logf("virtio-net-msix: CreateFile(%s) failed err=%lu", WideToUtf8(path).c_str(), GetLastError());
-    return std::nullopt;
-  }
-
-  AEROVNET_DIAG_INFO diag{};
-  DWORD bytes = 0;
-  const BOOL ok =
-      DeviceIoControl(h, AEROVNET_DIAG_IOCTL_QUERY, nullptr, 0, &diag, static_cast<DWORD>(sizeof(diag)), &bytes, nullptr);
-  const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
-  CloseHandle(h);
-
-  if (!ok) {
-    log.Logf("virtio-net-msix: IOCTL query failed err=%lu", static_cast<unsigned long>(err));
-    return std::nullopt;
-  }
-  constexpr size_t kMinBytes = offsetof(AEROVNET_DIAG_INFO, MessageCount) + sizeof(ULONG);
-  if (bytes < kMinBytes) {
-    log.Logf("virtio-net-msix: IOCTL query returned too few bytes=%lu expected_min=%zu",
-             static_cast<unsigned long>(bytes), kMinBytes);
-    return std::nullopt;
-  }
-  if (diag.Version != AEROVNET_DIAG_INFO_VERSION) {
-    log.Logf("virtio-net-msix: IOCTL query returned unexpected version=%lu expected=%lu",
-             static_cast<unsigned long>(diag.Version), static_cast<unsigned long>(AEROVNET_DIAG_INFO_VERSION));
-    return std::nullopt;
-  }
-
-  return diag;
-}
-
 static std::vector<std::wstring> GetDevicePropertyMultiSz(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
                                                           DWORD property) {
   DWORD reg_type = 0;
@@ -1550,18 +1507,19 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       static_cast<unsigned long long>(info.StatRxErrors), static_cast<unsigned long long>(info.StatRxNoBuffers));
 }
 
-static void EmitVirtioNetMsixMarker(Logger& log) {
+static bool EmitVirtioNetMsixMarker(Logger& log, bool require_net_msix) {
   HANDLE h = CreateFileW(AEROVNET_DIAG_DEVICE_PATH, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     const DWORD err = GetLastError();
     if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_unavailable");
+      log.LogLine(require_net_msix ? "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|reason=diag_unavailable"
+                                   : "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_unavailable");
     } else {
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=open_failed|err=%lu",
-               static_cast<unsigned long>(err));
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|reason=open_failed|err=%lu",
+               require_net_msix ? "FAIL" : "SKIP", static_cast<unsigned long>(err));
     }
-    return;
+    return !require_net_msix;
   }
 
   AEROVNET_DIAG_INFO info{};
@@ -1572,14 +1530,14 @@ static void EmitVirtioNetMsixMarker(Logger& log) {
 
   constexpr size_t kRequiredEnd = offsetof(AEROVNET_DIAG_INFO, MsixTxVector) + sizeof(uint16_t);
   if (!ok) {
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=ioctl_failed|err=%lu",
-             static_cast<unsigned long>(err));
-    return;
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|reason=ioctl_failed|err=%lu",
+             require_net_msix ? "FAIL" : "SKIP", static_cast<unsigned long>(err));
+    return !require_net_msix;
   }
   if (bytes < kRequiredEnd) {
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_truncated|bytes=%lu",
-             static_cast<unsigned long>(bytes));
-    return;
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|reason=diag_truncated|bytes=%lu",
+             require_net_msix ? "FAIL" : "SKIP", static_cast<unsigned long>(bytes));
+    return !require_net_msix;
   }
 
   const char* mode = "unknown";
@@ -1601,9 +1559,13 @@ static void EmitVirtioNetMsixMarker(Logger& log) {
     return std::to_string(static_cast<unsigned int>(v));
   };
 
-  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
-           mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
-           vec_to_string(info.MsixRxVector).c_str(), vec_to_string(info.MsixTxVector).c_str());
+  const bool require_ok = !require_net_msix || strcmp(mode, "msix") == 0;
+  log.Logf(
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
+      require_ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(info.MessageCount),
+      vec_to_string(info.MsixConfigVector).c_str(), vec_to_string(info.MsixRxVector).c_str(),
+      vec_to_string(info.MsixTxVector).c_str());
+  return require_ok;
 }
 
 static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log,
@@ -11752,38 +11714,14 @@ int wmain(int argc, wchar_t** argv) {
     WSACleanup();
   }
 
-  EmitVirtioNetMsixMarker(log);
+  if (!EmitVirtioNetMsixMarker(log, opt.require_net_msix)) {
+    all_ok = false;
+  }
   EmitVirtioNetDiagMarker(log);
   if (net_devinst != 0) {
     EmitVirtioIrqMarkerForDevInst(log, "virtio-net", net_devinst);
   } else {
     EmitVirtioIrqMarker(log, "virtio-net", {L"PCI\\VEN_1AF4&DEV_1041"});
-  }
-
-  // virtio-net MSI-X diagnostics marker (always emitted; optional requirement via --require-net-msix).
-  {
-    const auto diag = QueryAerovnetInterruptDiagnostics(log);
-    if (!diag.has_value()) {
-      if (opt.require_net_msix) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|reason=ioctl_failed");
-        all_ok = false;
-      } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|INFO|reason=ioctl_failed");
-      }
-    } else {
-      const bool is_msix = diag->InterruptMode == AEROVNET_INTERRUPT_MODE_MSI;
-      const char* mode = is_msix ? "msix" : "intx";
-      const bool ok = !opt.require_net_msix || is_msix;
-
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|mode=%s|messages=%lu|config_vector=%u|rx_vector=%u|tx_vector=%u",
-               ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(diag->MessageCount),
-               static_cast<unsigned>(diag->MsixConfigVector), static_cast<unsigned>(diag->MsixRxVector),
-               static_cast<unsigned>(diag->MsixTxVector));
-
-      if (!ok) {
-        all_ok = false;
-      }
-    }
   }
 
   log.Logf("AERO_VIRTIO_SELFTEST|RESULT|%s", all_ok ? "PASS" : "FAIL");
