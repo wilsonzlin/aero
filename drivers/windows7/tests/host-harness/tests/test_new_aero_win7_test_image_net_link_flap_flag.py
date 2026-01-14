@@ -22,9 +22,14 @@ class NewAeroWin7TestImageNetLinkFlapFlagTests(unittest.TestCase):
         self.assertIn('$testNetLinkFlapArg = " --test-net-link-flap"', self.text)
 
         # Ensure the scheduled task commandline includes the arg variable (avoid brittle ordering assumptions).
+        # We match against the specific AeroVirtioSelftest task creation line so this doesn't accidentally
+        # bind to earlier schtasks-related comments.
         self.assertRegex(
             self.text,
-            re.compile(r"schtasks /Create.*?\$testNetLinkFlapArg", re.IGNORECASE | re.DOTALL),
+            re.compile(
+                r'schtasks /Create /F /TN "AeroVirtioSelftest".*\$testNetLinkFlapArg',
+                re.IGNORECASE | re.DOTALL,
+            ),
         )
 
     def test_readme_mentions_test_net_link_flap(self) -> None:
