@@ -195,6 +195,14 @@ Token rules:
 
 Clients must treat `udpRelay.token` as a secret and must not log it.
 
+Using the token:
+
+- For HTTP endpoints (`/webrtc/ice`, `/webrtc/offer`), clients should prefer sending the credential via headers (`Authorization: Bearer ...` or `X-API-Key: ...`).
+- For WebSocket endpoints (`/webrtc/signal`, `/udp`), clients can authenticate via:
+  - the first WebSocket message `{ "type":"auth", "token":"..." }` / `{ "type":"auth", "apiKey":"..." }` (**recommended for browser clients**; avoids leaking secrets into URLs), or
+  - the URL query string `?token=...` / `?apiKey=...` (**fallback**; can leak into browser history and proxy logs).
+  - Non-browser clients may also authenticate via upgrade request headers (same carriers as the HTTP endpoints).
+
 Relay contract:
 
 - The relay service is implemented by [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/).

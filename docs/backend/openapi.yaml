@@ -527,6 +527,16 @@ components:
           type: string
           description: |
             Short-lived relay credential (api key or JWT), depending on auth mode.
+
+            Clients must treat this as a secret and must not log it.
+
+            Credential delivery options depend on the relay endpoint:
+
+            - HTTP endpoints (`/webrtc/ice`, `/webrtc/offer`): prefer headers
+              (`Authorization: Bearer ...` or `X-API-Key: ...`).
+            - WebSocket endpoints (`/webrtc/signal`, `/udp`): authenticate via
+              either the first WebSocket auth message (recommended for browsers),
+              or query-string auth (`?token=` / `?apiKey=`) as a fallback.
         expiresAt:
           type: string
           format: date-time
