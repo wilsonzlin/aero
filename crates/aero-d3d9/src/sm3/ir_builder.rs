@@ -8,10 +8,9 @@ use crate::sm3::ir::{
     Src, Stmt, TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
 use std::collections::{BTreeSet, HashMap};
-
-const MAX_CONTROL_FLOW_NESTING: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildError {
@@ -82,11 +81,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::End => break,
             Opcode::Nop => {}
             Opcode::If => {
-                if stack.len() > MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
-                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
                         ),
                     ));
                 }
@@ -98,11 +97,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 })
             }
             Opcode::Ifc => {
-                if stack.len() > MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
-                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
                         ),
                     ));
                 }
@@ -149,11 +148,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 )?;
             }
             Opcode::Loop => {
-                if stack.len() > MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
-                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
                         ),
                     ));
                 }

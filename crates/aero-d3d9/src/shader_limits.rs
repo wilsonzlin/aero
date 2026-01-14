@@ -21,6 +21,13 @@ pub(crate) const MAX_D3D9_SHADER_BLOB_BYTES: usize = MAX_D3D9_SHADER_BYTECODE_BY
 /// Maximum accepted D3D9 shader token count (DWORDs / `u32`s).
 pub(crate) const MAX_D3D9_SHADER_TOKEN_COUNT: usize = MAX_D3D9_SHADER_BYTECODE_BYTES / 4;
 
+/// Maximum allowed nesting depth for structured control flow (`if`/`loop`) in the SM2/3 IR.
+///
+/// The SM3 IR verifier and WGSL generator traverse nested [`crate::sm3::ir::Block`] trees
+/// recursively. Without a limit, a hostile shader could craft extremely deep nesting within the
+/// overall token-size cap and trigger a Rust stack overflow during translation.
+pub(crate) const MAX_D3D9_SHADER_CONTROL_FLOW_NESTING: usize = 64;
+
 /// Maximum tolerated register index for any register file (r#/c#/s#/v#/t#/etc).
 ///
 /// Even though the DX9 token encoding can represent register indices up to 2047, the Aero

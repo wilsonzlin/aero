@@ -18,9 +18,9 @@ use crate::sm3::ir::{
     Stmt, TexSampleKind,
 };
 use super::wgsl::varying_location;
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 
 const MAX_LOOP_ITERS: usize = 1_024;
-const MAX_CONTROL_FLOW_DEPTH: usize = 64;
 const CONST_INT_REGS: usize = 16;
 const CONST_BOOL_REGS: usize = 16;
 
@@ -335,7 +335,7 @@ fn exec_block(
     o_out: &mut HashMap<u16, Vec4>,
     o_color: &mut Vec4,
 ) -> Flow {
-    if depth > MAX_CONTROL_FLOW_DEPTH {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
         return Flow::Continue;
     }
 

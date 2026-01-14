@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
-use crate::shader_limits::{MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_REGISTER_INDEX};
+use crate::shader_limits::{
+    MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
+    MAX_D3D9_SHADER_REGISTER_INDEX,
+};
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
@@ -303,7 +306,12 @@ enum RegAccess {
     Write,
 }
 
-fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
+fn collect_reg_usage(block: &Block, usage: &mut RegUsage, depth: usize) -> Result<(), WgslError> {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        return Err(err(format!(
+            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+        )));
+    }
     for stmt in &block.stmts {
         match stmt {
             Stmt::Op(op) => collect_op_usage(op, usage),
@@ -313,21 +321,22 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
                 else_block,
             } => {
                 collect_cond_usage(cond, usage);
-                collect_reg_usage(then_block, usage);
+                collect_reg_usage(then_block, usage, depth + 1)?;
                 if let Some(else_block) = else_block {
-                    collect_reg_usage(else_block, usage);
+                    collect_reg_usage(else_block, usage, depth + 1)?;
                 }
             }
             Stmt::Loop { init, body } => {
                 collect_reg_ref_usage(&init.loop_reg, usage, RegAccess::Read);
                 collect_reg_ref_usage(&init.ctrl_reg, usage, RegAccess::Read);
-                collect_reg_usage(body, usage);
+                collect_reg_usage(body, usage, depth + 1)?;
             }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_cond_usage(cond, usage),
             Stmt::Discard { src } => collect_src_usage(src, usage),
         }
     }
+    Ok(())
 }
 
 fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
@@ -582,55 +591,64 @@ fn collect_src_usage(src: &Src, usage: &mut RegUsage) {
 }
 
 fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage, access: RegAccess) {
-    match reg.file {
-        RegFile::Temp => {
-            usage.temps.insert(reg.index);
-        }
-        RegFile::Addr => {
-            usage.addrs.insert(reg.index);
-        }
-        RegFile::Loop => {
-            usage.loop_regs.insert(reg.index);
-        }
-        RegFile::Input | RegFile::Texture => {
-            usage.inputs.insert((reg.file, reg.index));
-        }
-        RegFile::MiscType => {
-            usage.misc_inputs.insert(reg.index);
-        }
-        RegFile::Sampler => {
-            usage.samplers.insert(reg.index);
-        }
-        RegFile::Predicate => {
-            usage.predicates.insert(reg.index);
-        }
-        RegFile::ColorOut
-        | RegFile::DepthOut
-        | RegFile::RastOut
-        | RegFile::AttrOut
-        | RegFile::TexCoordOut
-        | RegFile::Output => {
-            usage.outputs_used.insert((reg.file, reg.index));
-            if access == RegAccess::Write {
-                usage.outputs_written.insert((reg.file, reg.index));
+    // Treat relative-addressing registers as an untrusted linked list: decode rejects nested
+    // relative addressing for shader bytecode, but other IR construction paths (tests, future
+    // features) could create arbitrarily deep chains. Use an explicit loop to avoid recursion.
+    let mut current = reg;
+    let mut current_access = access;
+    loop {
+        match current.file {
+            RegFile::Temp => {
+                usage.temps.insert(current.index);
+            }
+            RegFile::Addr => {
+                usage.addrs.insert(current.index);
+            }
+            RegFile::Loop => {
+                usage.loop_regs.insert(current.index);
+            }
+            RegFile::Input | RegFile::Texture => {
+                usage.inputs.insert((current.file, current.index));
+            }
+            RegFile::MiscType => {
+                usage.misc_inputs.insert(current.index);
+            }
+            RegFile::Sampler => {
+                usage.samplers.insert(current.index);
+            }
+            RegFile::Predicate => {
+                usage.predicates.insert(current.index);
+            }
+            RegFile::ColorOut
+            | RegFile::DepthOut
+            | RegFile::RastOut
+            | RegFile::AttrOut
+            | RegFile::TexCoordOut
+            | RegFile::Output => {
+                usage.outputs_used.insert((current.file, current.index));
+                if current_access == RegAccess::Write {
+                    usage.outputs_written.insert((current.file, current.index));
+                }
+            }
+            RegFile::Const => {
+                usage.float_consts.insert(current.index);
+            }
+            RegFile::ConstInt => {
+                usage.int_consts.insert(current.index);
+            }
+            RegFile::ConstBool => {
+                usage.bool_consts.insert(current.index);
+            }
+            _ => {
+                // Other register files are either not represented in WGSL lowering yet
+                // or are declared opportunistically when needed (e.g. inputs).
             }
         }
-        RegFile::Const => {
-            usage.float_consts.insert(reg.index);
-        }
-        RegFile::ConstInt => {
-            usage.int_consts.insert(reg.index);
-        }
-        RegFile::ConstBool => {
-            usage.bool_consts.insert(reg.index);
-        }
-        _ => {
-            // Other register files are either not represented in WGSL lowering yet
-            // or are declared opportunistically when needed (e.g. inputs).
-        }
-    }
-    if let Some(rel) = &reg.relative {
-        collect_reg_ref_usage(&rel.reg, usage, RegAccess::Read);
+        let Some(rel) = &current.relative else {
+            break;
+        };
+        current = &rel.reg;
+        current_access = RegAccess::Read;
     }
 }
 
@@ -1453,11 +1471,17 @@ fn emit_block(
     wgsl: &mut String,
     block: &Block,
     indent: usize,
+    depth: usize,
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
 ) -> Result<(), WgslError> {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        return Err(err(format!(
+            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+        )));
+    }
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent, stage, f32_defs)?;
+        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs)?;
     }
     Ok(())
 }
@@ -1466,6 +1490,7 @@ fn emit_stmt(
     wgsl: &mut String,
     stmt: &Stmt,
     indent: usize,
+    depth: usize,
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
 ) -> Result<(), WgslError> {
@@ -1543,10 +1568,10 @@ fn emit_stmt(
         } => {
             let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
-            emit_block(wgsl, then_block, indent + 1, stage, f32_defs)?;
+            emit_block(wgsl, then_block, indent + 1, depth + 1, stage, f32_defs)?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(wgsl, "{pad}}} else {{");
-                emit_block(wgsl, else_block, indent + 1, stage, f32_defs)?;
+                emit_block(wgsl, else_block, indent + 1, depth + 1, stage, f32_defs)?;
             }
             let _ = writeln!(wgsl, "{pad}}}");
         }
@@ -1598,7 +1623,7 @@ fn emit_stmt(
                 "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
             );
 
-            emit_block(wgsl, body, indent + 2, stage, f32_defs)?;
+            emit_block(wgsl, body, indent + 2, depth + 1, stage, f32_defs)?;
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
@@ -1666,7 +1691,7 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
 pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslError> {
     // Collect usage so we can declare required locals and constant defs.
     let mut usage = RegUsage::new();
-    collect_reg_usage(&ir.body, &mut usage);
+    collect_reg_usage(&ir.body, &mut usage, 0)?;
 
     // Hostile-input hardening: decoding already caps indices using `crate::shader_limits`, but
     // keep a second line of defense here since WGSL codegen can otherwise balloon into large output
@@ -1995,7 +2020,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, ShaderStage::Vertex, &f32_defs)?;
+            emit_block(&mut wgsl, &ir.body, 1, 0, ShaderStage::Vertex, &f32_defs)?;
 
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
@@ -2182,7 +2207,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, ShaderStage::Pixel, &f32_defs)?;
+            emit_block(&mut wgsl, &ir.body, 1, 0, ShaderStage::Pixel, &f32_defs)?;
 
             wgsl.push_str("  var out: FsOut;\n");
             for idx in &color_outputs {

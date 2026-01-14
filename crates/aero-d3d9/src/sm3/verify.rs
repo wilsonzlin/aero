@@ -1,6 +1,7 @@
 use crate::sm3::decode::{ResultShift, SrcModifier};
 use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind};
 use crate::sm3::types::ShaderStage;
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyError {
@@ -16,10 +17,22 @@ impl std::fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {}
 
 pub fn verify_ir(ir: &ShaderIr) -> Result<(), VerifyError> {
-    verify_block(&ir.body, ir.version.stage, 0)
+    verify_block(&ir.body, ir.version.stage, 0, 0)
 }
 
-fn verify_block(block: &Block, stage: ShaderStage, loop_depth: usize) -> Result<(), VerifyError> {
+fn verify_block(
+    block: &Block,
+    stage: ShaderStage,
+    depth: usize,
+    loop_depth: usize,
+) -> Result<(), VerifyError> {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        return Err(VerifyError {
+            message: format!(
+                "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+            ),
+        });
+    }
     for stmt in &block.stmts {
         match stmt {
             Stmt::Op(op) => verify_op(op, stage)?,
@@ -29,9 +42,9 @@ fn verify_block(block: &Block, stage: ShaderStage, loop_depth: usize) -> Result<
                 else_block,
             } => {
                 verify_cond(cond)?;
-                verify_block(then_block, stage, loop_depth)?;
+                verify_block(then_block, stage, depth + 1, loop_depth)?;
                 if let Some(else_block) = else_block {
-                    verify_block(else_block, stage, loop_depth)?;
+                    verify_block(else_block, stage, depth + 1, loop_depth)?;
                 }
             }
             Stmt::Loop { init, body } => {
@@ -45,7 +58,7 @@ fn verify_block(block: &Block, stage: ShaderStage, loop_depth: usize) -> Result<
                         message: "loop init refers to a non-integer-constant register".to_owned(),
                     });
                 }
-                verify_block(body, stage, loop_depth + 1)?;
+                verify_block(body, stage, depth + 1, loop_depth + 1)?;
             }
             Stmt::Break => {
                 if loop_depth == 0 {

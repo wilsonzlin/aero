@@ -1,6 +1,8 @@
 use aero_d3d9::dxbc;
-use aero_d3d9::sm3::types::ShaderStage;
-use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
+use aero_d3d9::sm3::decode::{SrcModifier, Swizzle};
+use aero_d3d9::sm3::ir::{Block, Cond, RegFile, RegRef, ShaderIr, Src, Stmt};
+use aero_d3d9::sm3::types::{ShaderStage, ShaderVersion};
+use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, generate_wgsl, verify_ir};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
@@ -37,6 +39,47 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
         out.extend_from_slice(&w.to_le_bytes());
     }
     out
+}
+
+fn nested_if_ir(nesting: usize) -> ShaderIr {
+    let cond = Cond::NonZero {
+        src: Src {
+            reg: RegRef {
+                file: RegFile::Const,
+                index: 0,
+                relative: None,
+            },
+            swizzle: Swizzle::identity(),
+            modifier: SrcModifier::None,
+        },
+    };
+
+    let mut inner = Block::new();
+    for _ in 0..nesting {
+        inner = Block {
+            stmts: vec![Stmt::If {
+                cond: cond.clone(),
+                then_block: inner,
+                else_block: None,
+            }],
+        };
+    }
+
+    ShaderIr {
+        version: ShaderVersion {
+            stage: ShaderStage::Pixel,
+            major: 3,
+            minor: 0,
+        },
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        samplers: Vec::new(),
+        const_defs_f32: Vec::new(),
+        const_defs_i32: Vec::new(),
+        const_defs_bool: Vec::new(),
+        body: inner,
+        uses_semantic_locations: false,
+    }
 }
 
 #[test]
@@ -123,6 +166,26 @@ fn ir_builder_rejects_excessive_control_flow_nesting() {
     let token_bytes = to_bytes(&tokens);
     let decoded = decode_u8_le_bytes(&token_bytes).unwrap();
     let err = build_ir(&decoded).unwrap_err();
+    assert!(
+        err.message.contains("control flow nesting exceeds maximum"),
+        "{err}"
+    );
+}
+
+#[test]
+fn verify_ir_rejects_excessive_control_flow_nesting() {
+    let ir = nested_if_ir(256);
+    let err = verify_ir(&ir).unwrap_err();
+    assert!(
+        err.message.contains("control flow nesting exceeds maximum"),
+        "{err}"
+    );
+}
+
+#[test]
+fn wgsl_generation_rejects_excessive_control_flow_nesting() {
+    let ir = nested_if_ir(256);
+    let err = generate_wgsl(&ir).unwrap_err();
     assert!(
         err.message.contains("control flow nesting exceeds maximum"),
         "{err}"
