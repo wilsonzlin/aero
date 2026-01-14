@@ -3774,6 +3774,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn scanout_read_rgba8888_is_capped_to_avoid_unbounded_allocations() {
+        // Scanout readback is capped at 64MiB (16,777,216 pixels). Use a configuration just above
+        // that limit so we return `None` without attempting to allocate a huge buffer.
+        let state = AeroGpuScanout0State {
+            wddm_scanout_active: true,
+            enable: true,
+            width: 4096,
+            height: 4097,
+            format: pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+            pitch_bytes: 4096 * 4,
+            fb_gpa: 0x1000,
+        };
+
+        let mut mem = TestMem::default();
+        assert_eq!(state.read_rgba8888(&mut mem), None);
+    }
+
     #[derive(Clone, Debug, Default)]
     struct WrapDetectMemory {
         bytes: std::collections::BTreeMap<u64, u8>,
