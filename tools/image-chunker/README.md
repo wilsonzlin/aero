@@ -34,6 +34,11 @@ Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/confi
 
 Note: `--chunk-size` must be **> 0** and a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
 
+For compatibility with Aero’s reference runtime chunked-disk clients, keep:
+
+- `--chunk-size <= 64 MiB` (larger values are rejected by the clients), and
+- `chunkCount = ceil(totalSize / chunkSize) <= 500,000` (choose a larger `--chunk-size` if needed).
+
 ### Per-chunk checksums (`--checksum`)
 
 By default, `publish` computes a **SHA-256 hash for every chunk** and writes it into
