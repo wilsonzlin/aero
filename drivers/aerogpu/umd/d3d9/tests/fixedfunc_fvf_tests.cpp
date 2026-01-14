@@ -2961,6 +2961,228 @@ bool TestApplyStateBlockToleratesUnsupportedTextureStageState() {
   return true;
 }
 
+bool TestApplyStateBlockFvfChangeReuploadsWvpConstantsAfterConstClobber() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Seed stable transforms and upload fixed-function WVP constants in a matrix-using
+  // fixed-function path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "initial WVP upload cleared fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  // Switch to a non-matrix fixed-function path so subsequent VS constant writes can
+  // clobber the reserved range without automatically triggering a WVP reupload.
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Record a state block that switches back to the matrix path (SetFVF records both
+  // FVF and the internal vertex decl binding).
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(FVF=XYZ|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(FVF=XYZ|DIFFUSE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Clear the dirty bit in the recorded (matrix) path so the subsequent ApplyStateBlock
+  // must set it due to the FVF transition, not due to leftover state.
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD) clears dirty in matrix path")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "matrix path cleared fixedfunc_matrix_dirty before ApplyStateBlock")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  // Return to the non-matrix FVF and ensure fixedfunc_matrix_dirty is false.
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE) before ApplyStateBlock")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "non-matrix path has fixedfunc_matrix_dirty=false")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  // Clobber the reserved matrix constant range (c240..c243) while in a non-matrix path.
+  // This should *not* mark fixedfunc_matrix_dirty because the current FVF doesn't use it.
+  float clobber[16] = {
+      9.0f, 8.0f, 7.0f, 6.0f,
+      5.0f, 4.0f, 3.0f, 2.0f,
+      1.0f, 9.0f, 8.0f, 7.0f,
+      6.0f, 5.0f, 4.0f, 3.0f,
+  };
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                               kD3dShaderStageVs,
+                                               /*start_reg=*/kFixedfuncMatrixStartRegister,
+                                               clobber,
+                                               /*vec4_count=*/kFixedfuncMatrixVec4Count);
+  if (!Check(hr == S_OK, "SetShaderConstF clobber matrix range")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "clobber under XYZRHW does not set fixedfunc_matrix_dirty")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  // Applying the state block should switch to XYZ|DIFFUSE and re-upload WVP constants
+  // (fixing the clobbered reserved range).
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(FVF=XYZ|DIFFUSE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzDiffuse, "ApplyStateBlock updated FVF to XYZ|DIFFUSE")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(!dev->fixedfunc_matrix_dirty, "ApplyStateBlock cleared fixedfunc_matrix_dirty")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock FVF switch WVP)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (FVF switch only)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_upload = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_upload = true;
+      break;
+    }
+  }
+  if (!Check(saw_upload, "ApplyStateBlock uploads expected WVP columns after clobber")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -15878,6 +16100,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockToleratesUnsupportedTextureStageState()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockFvfChangeReuploadsWvpConstantsAfterConstClobber()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
