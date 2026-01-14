@@ -16,6 +16,7 @@ use aero_devices_gpu::ring::{
     ALLOC_ENTRY_RESERVED0_OFFSET, ALLOC_ENTRY_SIZE_BYTES_OFFSET, ALLOC_TABLE_ABI_VERSION_OFFSET,
     ALLOC_TABLE_ENTRY_COUNT_OFFSET, ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET,
     ALLOC_TABLE_MAGIC_OFFSET, ALLOC_TABLE_RESERVED0_OFFSET, ALLOC_TABLE_SIZE_BYTES_OFFSET,
+    FENCE_PAGE_COMPLETED_FENCE_OFFSET,
     RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET,
     RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET,
     RING_TAIL_OFFSET, SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET,
@@ -1071,6 +1072,52 @@ fn backend_completion_error_advances_fence_and_sets_error_irq() {
     assert_eq!(regs.error_code, AerogpuErrorCode::Backend as u32);
     assert_eq!(regs.error_fence, 9);
     assert_eq!(regs.error_count, 1);
+}
+
+#[test]
+fn fence_wrap_completion_requires_extended_64bit_fences() {
+    /*
+     * The AeroGPU ring protocol uses 64-bit fences.
+     *
+     * Win7/WDDM 1.1 submission fences are 32-bit; when they wrap, the KMD must extend them into a
+     * monotonic 64-bit domain so host-side fence scheduling keeps making progress.
+     */
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+
+    // Simulate a 32-bit wrap: 0xFFFF_FFFF -> 0x0000_0000, extended into a 64-bit epoch domain.
+    let fence0 = 0x0000_0000_FFFF_FFFFu64;
+    let fence1 = 0x0000_0001_0000_0000u64;
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc1_gpa = desc0_gpa + u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    write_submit_desc(&mut mem, desc0_gpa, 0, 0, 0, 0, fence0);
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, fence1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.fence_gpa = 0x2000u64;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
+    assert_eq!(regs.completed_fence, fence1);
+    assert!(regs.completed_fence > u64::from(u32::MAX));
+    assert_eq!(
+        mem.read_u64(regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        regs.completed_fence
+    );
+    assert_eq!(regs.stats.malformed_submissions, 0);
 }
 
 #[test]
