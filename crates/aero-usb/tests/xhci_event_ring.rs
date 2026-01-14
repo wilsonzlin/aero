@@ -121,11 +121,7 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     // Many xHCI drivers acknowledge interrupts by writing ERDP with EHB set.
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | ERDP_EHB);
     let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
-    assert_eq!(
-        erdp_lo & ERDP_EHB,
-        0,
-        "EHB should be a transient ack bit"
-    );
+    assert_eq!(erdp_lo & ERDP_EHB, 0, "EHB should be a transient ack bit");
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }
@@ -162,11 +158,7 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
     // interrupt pending latch.
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 1, ERDP_EHB);
     let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
-    assert_eq!(
-        erdp_lo & ERDP_EHB,
-        0,
-        "EHB should be a transient ack bit"
-    );
+    assert_eq!(erdp_lo & ERDP_EHB, 0, "EHB should be a transient ack bit");
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }

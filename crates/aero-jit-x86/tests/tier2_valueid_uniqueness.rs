@@ -29,7 +29,7 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
         0xeb, 0x00, // jmp +0 (to 0x7)
         0x83, 0xc0, 0x02, // add eax, 2
         0xeb, 0x00, // jmp +0 (to 0xc)
-        0x83, 0xc0, 0x03, // add eax, 3
+        0x83, 0xc0, 0x03,    // add eax, 3
         invalid, // <invalid>
     ];
 

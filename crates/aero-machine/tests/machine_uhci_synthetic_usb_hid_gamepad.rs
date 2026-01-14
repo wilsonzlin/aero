@@ -61,4 +61,3 @@ fn machine_synthetic_usb_hid_gamepad_report_injection_produces_report() {
     };
     assert_eq!(report, vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
 }
-

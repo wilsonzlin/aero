@@ -22,12 +22,18 @@ fn tier2_does_not_silently_drop_shift_flags_used_by_jcc() {
     //
     // For the given input, SHL sets CF=1, so JC must be taken.
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xC0, 0xE0, 0x01, // shl al, 1
-        0x72, 0x03, // jc +3 (to mov al, 1)
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x81, // mov al, 0x81
+        0xC0,
+        0xE0,
+        0x01, // shl al, 1
+        0x72,
+        0x03, // jc +3 (to mov al, 1)
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 

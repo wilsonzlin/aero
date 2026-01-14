@@ -4037,7 +4037,11 @@ fn emit_instructions(
             // to appear for `ifc`/`breakc`/`continuec`, but we still handle them for robustness.
             let unsigned = matches!(
                 op,
-                Sm4CmpOp::EqU | Sm4CmpOp::NeU | Sm4CmpOp::LtU | Sm4CmpOp::GeU | Sm4CmpOp::LeU
+                Sm4CmpOp::EqU
+                    | Sm4CmpOp::NeU
+                    | Sm4CmpOp::LtU
+                    | Sm4CmpOp::GeU
+                    | Sm4CmpOp::LeU
                     | Sm4CmpOp::GtU
             );
             let a = if unsigned {

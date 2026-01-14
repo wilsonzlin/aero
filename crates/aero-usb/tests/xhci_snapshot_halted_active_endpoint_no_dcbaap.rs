@@ -102,7 +102,11 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
     // Allocate a ring + buffer in guest memory.
     let ring_base = alloc.alloc((TRB_LEN as u32) * 2, 0x10) as u64;
     let buf_ptr = alloc.alloc(8, 0x10) as u64;
-    Trb::write_to(&make_normal_trb(buf_ptr, 8, true, true), &mut mem, ring_base);
+    Trb::write_to(
+        &make_normal_trb(buf_ptr, 8, true, true),
+        &mut mem,
+        ring_base,
+    );
 
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(InterruptInDevice));
@@ -167,8 +171,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
     let mut buf = [0u8; 8];
     mem.read_physical(buf_ptr, &mut buf);
     assert_eq!(
-        buf,
-        [0u8; 8],
+        buf, [0u8; 8],
         "halted active endpoint must not execute transfers after restore even when DCBAAP=0"
     );
     assert_eq!(

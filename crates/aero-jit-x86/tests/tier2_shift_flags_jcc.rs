@@ -47,12 +47,17 @@ fn tier2_shift_flag_updates_drive_jc_taken() {
     // `jc` depends on CF written by `shl`. Tier-2 lowers x86 shift flag updates explicitly, so the
     // branch should be taken and we should hit the second <invalid>.
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xD0, 0xE0, // shl al, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x80, // mov al, 0x80
+        0xD0,
+        0xE0, // shl al, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -69,12 +74,18 @@ fn tier2_shift_flag_updates_drive_jc_taken() {
 #[test]
 fn tier2_shl8_updates_cf_observed_by_jc() {
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xC0, 0xE0, 0x01, // shl al, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x81, // mov al, 0x81
+        0xC0,
+        0xE0,
+        0x01, // shl al, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
     let (func, exit, state) = run_x86(&code);
@@ -90,12 +101,18 @@ fn tier2_shl8_updates_cf_observed_by_jc() {
 #[test]
 fn tier2_shl8_updates_of_observed_by_jo() {
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xC0, 0xE0, 0x01, // shl al, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x81, // mov al, 0x81
+        0xC0,
+        0xE0,
+        0x01, // shl al, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
     let (func, exit, state) = run_x86(&code);
@@ -116,12 +133,18 @@ fn tier2_shl8_count_eq_operand_width_sets_cf_from_old_lsb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x08, // shl al, 8
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x08, // shl al, 8
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -140,12 +163,21 @@ fn tier2_shl16_count_eq_operand_width_sets_cf_from_old_lsb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE0, 0x10, // shl ax, 16
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE0,
+        0x10, // shl ax, 16
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -164,12 +196,18 @@ fn tier2_shr8_count_eq_operand_width_sets_cf_from_old_msb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xC0, 0xE8, 0x08, // shr al, 8
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x80, // mov al, 0x80
+        0xC0,
+        0xE8,
+        0x08, // shr al, 8
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -188,12 +226,21 @@ fn tier2_shr16_count_eq_operand_width_sets_cf_from_old_msb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xC1, 0xE8, 0x10, // shr ax, 16
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xC1,
+        0xE8,
+        0x10, // shr ax, 16
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -212,12 +259,18 @@ fn tier2_sar8_count_eq_operand_width_sets_cf_from_old_msb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xC0, 0xF8, 0x08, // sar al, 8
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x80, // mov al, 0x80
+        0xC0,
+        0xF8,
+        0x08, // sar al, 8
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -236,12 +289,21 @@ fn tier2_sar16_count_eq_operand_width_sets_cf_from_old_msb() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xC1, 0xF8, 0x10, // sar ax, 16
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xC1,
+        0xF8,
+        0x10, // sar ax, 16
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -262,12 +324,18 @@ fn tier2_shift_count_0_leaves_cf_unchanged() {
     //
     // x86 shifts with count==0 do not update any flags. Ensure CF stays set and `jc` is taken.
     let code = [
-        0xB0, 0x12, // mov al, 0x12
-        0xC0, 0xE0, 0x00, // shl al, 0
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x12, // mov al, 0x12
+        0xC0,
+        0xE0,
+        0x00, // shl al, 0
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -290,12 +358,18 @@ fn tier2_shift_count_0_leaves_of_unchanged() {
     //
     // x86 shifts with count==0 do not update any flags. Seed OF=1 and ensure `jo` is taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x00, // shl al, 0
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x00, // shl al, 0
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -319,12 +393,18 @@ fn tier2_shift_count_0_leaves_zf_unchanged() {
     // x86 shifts with count==0 do not update any flags. Seed ZF=1 and ensure `jz` is taken (even
     // though the shifted value is nonzero).
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x00, // shl al, 0
-        0x74, 0x03, // jz +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x00, // shl al, 0
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -347,12 +427,18 @@ fn tier2_shift_count_0_leaves_sf_unchanged() {
     //
     // x86 shifts with count==0 do not update any flags. Seed SF=1 and ensure `js` is taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x00, // shl al, 0
-        0x78, 0x03, // js +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x00, // shl al, 0
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -376,12 +462,18 @@ fn tier2_shift_count_0_leaves_pf_unchanged() {
     // x86 shifts with count==0 do not update any flags. Seed PF=1 and ensure `jp` is taken (even
     // though the shifted value would have odd parity and set PF=0 if recomputed).
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x00, // shl al, 0
-        0x7A, 0x03, // jp +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x00, // shl al, 0
+        0x7A,
+        0x03, // jp +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -405,12 +497,18 @@ fn tier2_shift_count_gt_1_leaves_of_unchanged() {
     // x86 defines OF only for shift count==1. For count>1 it is undefined; Tier-1/Tier-2 conservatively
     // leave it unchanged. Seed OF=1 and ensure `jo` is taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x02, // shl al, 2
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x02, // shl al, 2
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -434,12 +532,18 @@ fn tier2_shift_count_gt_operand_width_leaves_cf_unchanged() {
     // x86 defines CF only for shift counts in [1, width.bits()]. For larger counts it is undefined;
     // Tier-1/Tier-2 conservatively leave it unchanged. Seed CF=1 and ensure `jc` is taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x09, // shl al, 9
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x09, // shl al, 9
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -464,12 +568,21 @@ fn tier2_shift_count_gt_operand_width_leaves_cf_unchanged_16bit() {
     // CF is architecturally undefined for counts > operand width, so Tier-1/Tier-2 conservatively
     // leave it unchanged. Seed CF=1 and ensure `jc` is taken.
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE0, 0x11, // shl ax, 17
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE0,
+        0x11, // shl ax, 17
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -493,12 +606,18 @@ fn tier2_shr_count_gt_operand_width_leaves_cf_unchanged() {
     // For 8-bit shifts, x86 masks the count to 5 bits, so 9 is not reduced.
     // CF is undefined for counts > operand width, so we conservatively leave it unchanged.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE8, 0x09, // shr al, 9
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE8,
+        0x09, // shr al, 9
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -521,12 +640,18 @@ fn tier2_sar_count_gt_operand_width_leaves_cf_unchanged() {
     //
     // CF is undefined for counts > operand width; conservatively leave it unchanged.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xF8, 0x09, // sar al, 9
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xF8,
+        0x09, // sar al, 9
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -549,12 +674,21 @@ fn tier2_shr_count_gt_operand_width_leaves_cf_unchanged_16bit() {
     //
     // CF is undefined for counts > operand width; conservatively leave it unchanged.
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE8, 0x11, // shr ax, 17
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE8,
+        0x11, // shr ax, 17
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -577,12 +711,21 @@ fn tier2_sar_count_gt_operand_width_leaves_cf_unchanged_16bit() {
     //
     // CF is undefined for counts > operand width; conservatively leave it unchanged.
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xF8, 0x11, // sar ax, 17
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xF8,
+        0x11, // sar ax, 17
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -605,12 +748,17 @@ fn tier2_sar_count_1_sets_of_to_0() {
     //
     // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xD0, 0xF8, // sar al, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x81, // mov al, 0x81
+        0xD0,
+        0xF8, // sar al, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -634,12 +782,20 @@ fn tier2_sar16_count_1_sets_of_to_0() {
     //
     // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
     let code = [
-        0x66, 0xB8, 0x01, 0x80, // mov ax, 0x8001
-        0x66, 0xD1, 0xF8, // sar ax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0x66,
+        0xB8,
+        0x01,
+        0x80, // mov ax, 0x8001
+        0x66,
+        0xD1,
+        0xF8, // sar ax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -662,12 +818,20 @@ fn tier2_sar32_count_1_sets_of_to_0() {
     //
     // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
     let code = [
-        0xB8, 0x01, 0x00, 0x00, 0x80, // mov eax, 0x8000_0001
-        0xD1, 0xF8, // sar eax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB8,
+        0x01,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x8000_0001
+        0xD1,
+        0xF8, // sar eax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -690,12 +854,17 @@ fn tier2_shr_count_1_sets_cf_from_old_lsb() {
     //
     // For SHR count==1, x86 defines CF=old LSB. With old LSB=1, ensure `jc` is taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE8, // shr al, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE8, // shr al, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -715,12 +884,17 @@ fn tier2_shl_count_1_clears_cf_observed_by_jc() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE0, // shl al, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE0, // shl al, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -741,12 +915,17 @@ fn tier2_shr_count_1_clears_cf_observed_by_jc() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB0, 0x02, // mov al, 2
-        0xD0, 0xE8, // shr al, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x02, // mov al, 2
+        0xD0,
+        0xE8, // shr al, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -767,12 +946,17 @@ fn tier2_shl_count_1_clears_of_observed_by_jo() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE0, // shl al, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE0, // shl al, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -793,12 +977,17 @@ fn tier2_shr_count_1_clears_of_observed_by_jo() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE8, // shr al, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE8, // shr al, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -819,12 +1008,18 @@ fn tier2_masks_8bit_shift_count_for_flag_updates() {
     // mov al, 1
     // <invalid>
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xC0, 0xE0, 0x21, // shl al, 33
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x81, // mov al, 0x81
+        0xC0,
+        0xE0,
+        0x21, // shl al, 33
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -843,12 +1038,18 @@ fn tier2_masks_8bit_shift_count_to_zero_for_flag_updates() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x20, // shl al, 32
-        0x74, 0x03, // jz +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x20, // shl al, 32
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -867,12 +1068,21 @@ fn tier2_masks_16bit_shift_count_to_zero_for_flag_updates() {
     // mov al, 2
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE0, 0x20, // shl ax, 32
-        0x74, 0x03, // jz +3
-        0xB0, 0x01, // mov al, 1
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE0,
+        0x20, // shl ax, 32
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -891,12 +1101,21 @@ fn tier2_masks_32bit_shift_count_to_zero_for_flag_updates() {
     // mov al, 2
     // <invalid>
     let code = [
-        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
-        0xC1, 0xE0, 0x20, // shl eax, 32
-        0x74, 0x03, // jz +3
-        0xB0, 0x01, // mov al, 1
+        0xB8,
+        0x01,
+        0x00,
+        0x00,
+        0x00, // mov eax, 1
+        0xC1,
+        0xE0,
+        0x20, // shl eax, 32
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -915,12 +1134,24 @@ fn tier2_masks_64bit_shift_count_for_flag_updates() {
     // mov al, 1
     // <invalid>
     let code = [
-        0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000_0000
-        0x48, 0xC1, 0xE0, 0x41, // shl rax, 65
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0x48,
+        0xC7,
+        0xC0,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov rax, 0x8000_0000
+        0x48,
+        0xC1,
+        0xE0,
+        0x41, // shl rax, 65
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -939,12 +1170,21 @@ fn tier2_masks_32bit_shift_count_for_flag_updates() {
     // mov al, 1
     // <invalid>
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
-        0xC1, 0xE0, 0x21, // shl eax, 33
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x8000_0000
+        0xC1,
+        0xE0,
+        0x21, // shl eax, 33
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -963,12 +1203,24 @@ fn tier2_masks_64bit_shift_count_to_zero_leaves_flags_unchanged() {
     // mov al, 1
     // <invalid>
     let code = [
-        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
-        0x48, 0xC1, 0xE0, 0x40, // shl rax, 64
-        0x74, 0x03, // jz +3
-        0xB0, 0x00, // mov al, 0
+        0x48,
+        0xC7,
+        0xC0,
+        0x01,
+        0x00,
+        0x00,
+        0x00, // mov rax, 1
+        0x48,
+        0xC1,
+        0xE0,
+        0x40, // shl rax, 64
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -990,12 +1242,17 @@ fn tier2_shr_count_1_sets_of_from_old_msb() {
     //
     // For SHR count==1, x86 defines OF=old MSB. With old MSB=1, ensure `jo` is taken.
     let code = [
-        0xB0, 0x81, // mov al, 0x81
-        0xD0, 0xE8, // shr al, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x81, // mov al, 0x81
+        0xD0,
+        0xE8, // shr al, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1017,14 +1274,24 @@ fn tier2_shl_clears_sf_observed_by_js() {
     // taken: mov al, 2
     // <invalid>
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
-        0x85, 0xC0, // test eax, eax
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE0, // shl al, 1
-        0x78, 0x03, // js +3
-        0xB0, 0x01, // mov al, 1
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x8000_0000
+        0x85,
+        0xC0, // test eax, eax
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE0, // shl al, 1
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1043,12 +1310,17 @@ fn tier2_shl8_nonzero_to_zero_sets_zf_observed_by_jz() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xD0, 0xE0, // shl al, 1
-        0x74, 0x03, // jz +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x80, // mov al, 0x80
+        0xD0,
+        0xE0, // shl al, 1
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1069,14 +1341,24 @@ fn tier2_shl_clears_pf_observed_by_jp() {
     // taken: mov al, 2
     // <invalid>
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0x00
-        0x85, 0xC0, // test eax, eax
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE0, // shl al, 1
-        0x7A, 0x03, // jp +3
-        0xB0, 0x01, // mov al, 1
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x00, // mov eax, 0x00
+        0x85,
+        0xC0, // test eax, eax
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE0, // shl al, 1
+        0x7A,
+        0x03, // jp +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1095,12 +1377,18 @@ fn tier2_shl_high8_sets_cf_observed_by_jc() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB4, 0x81, // mov ah, 0x81
-        0xC0, 0xE4, 0x01, // shl ah, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB4,
+        0x81, // mov ah, 0x81
+        0xC0,
+        0xE4,
+        0x01, // shl ah, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1123,12 +1411,17 @@ fn tier2_shr_high8_count_1_sets_cf_observed_by_jc() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB4, 0x01, // mov ah, 1
-        0xD0, 0xEC, // shr ah, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB4,
+        0x01, // mov ah, 1
+        0xD0,
+        0xEC, // shr ah, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1147,12 +1440,17 @@ fn tier2_shr_high8_count_1_sets_of_from_old_msb_observed_by_jo() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB4, 0x80, // mov ah, 0x80
-        0xD0, 0xEC, // shr ah, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0xB4,
+        0x80, // mov ah, 0x80
+        0xD0,
+        0xEC, // shr ah, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1171,12 +1469,17 @@ fn tier2_sar_high8_count_1_sets_cf_observed_by_jc() {
     // taken: mov al, 1
     // <invalid>
     let code = [
-        0xB4, 0x01, // mov ah, 1
-        0xD0, 0xFC, // sar ah, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB4,
+        0x01, // mov ah, 1
+        0xD0,
+        0xFC, // sar ah, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1195,12 +1498,17 @@ fn tier2_sar_high8_count_1_sets_of_to_0_observed_by_jo() {
     // taken: mov al, 2
     // <invalid>
     let code = [
-        0xB4, 0x80, // mov ah, 0x80
-        0xD0, 0xFC, // sar ah, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x01, // mov al, 1
+        0xB4,
+        0x80, // mov ah, 0x80
+        0xD0,
+        0xFC, // sar ah, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1222,12 +1530,17 @@ fn tier2_shl_updates_pf_observed_by_jp() {
     //
     // 0x03 << 1 = 0x06 (0b0000_0110) has even parity => PF=1 => JP taken.
     let code = [
-        0xB0, 0x03, // mov al, 0x03
-        0xD0, 0xE0, // shl al, 1
-        0x7A, 0x03, // jp +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x03, // mov al, 0x03
+        0xD0,
+        0xE0, // shl al, 1
+        0x7A,
+        0x03, // jp +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1248,12 +1561,17 @@ fn tier2_shl_updates_zf_observed_by_jz() {
     //
     // 0x00 << 1 = 0 => ZF=1 => JZ taken.
     let code = [
-        0xB0, 0x00, // mov al, 0x00
-        0xD0, 0xE0, // shl al, 1
-        0x74, 0x03, // jz +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x00, // mov al, 0x00
+        0xD0,
+        0xE0, // shl al, 1
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1274,12 +1592,17 @@ fn tier2_shl_updates_sf_observed_by_js() {
     //
     // 0x40 << 1 = 0x80 => SF=1 => JS taken.
     let code = [
-        0xB0, 0x40, // mov al, 0x40
-        0xD0, 0xE0, // shl al, 1
-        0x78, 0x03, // js +3
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x40, // mov al, 0x40
+        0xD0,
+        0xE0, // shl al, 1
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1300,12 +1623,17 @@ fn tier2_shr8_updates_zf_observed_by_jz() {
     //
     // 1 >> 1 = 0 => ZF=1 => JZ taken.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xD0, 0xE8, // shr al, 1
-        0x74, 0x03, // jz +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x01, // mov al, 1
+        0xD0,
+        0xE8, // shr al, 1
+        0x74,
+        0x03, // jz +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1326,12 +1654,17 @@ fn tier2_shr8_updates_pf_observed_by_jnp() {
     //
     // 3 >> 1 = 1 => PF=0 (odd parity) => JNP taken.
     let code = [
-        0xB0, 0x03, // mov al, 3
-        0xD0, 0xE8, // shr al, 1
-        0x7B, 0x03, // jnp +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x03, // mov al, 3
+        0xD0,
+        0xE8, // shr al, 1
+        0x7B,
+        0x03, // jnp +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1352,12 +1685,17 @@ fn tier2_sar8_updates_sf_observed_by_js() {
     //
     // 0x80 >>_arith 1 = 0xC0 => SF=1 => JS taken.
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xD0, 0xF8, // sar al, 1
-        0x78, 0x03, // js +3
-        0xB0, 0x00, // mov al, 0
+        0xB0,
+        0x80, // mov al, 0x80
+        0xD0,
+        0xF8, // sar al, 1
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1378,12 +1716,20 @@ fn tier2_shl16_updates_sf_observed_by_js() {
     //
     // 0x4000 << 1 = 0x8000 => SF=1 for 16-bit operand => JS taken.
     let code = [
-        0x66, 0xB8, 0x00, 0x40, // mov ax, 0x4000
-        0x66, 0xD1, 0xE0, // shl ax, 1
-        0x78, 0x03, // js +3
-        0xB0, 0x01, // mov al, 1
+        0x66,
+        0xB8,
+        0x00,
+        0x40, // mov ax, 0x4000
+        0x66,
+        0xD1,
+        0xE0, // shl ax, 1
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1404,12 +1750,20 @@ fn tier2_shl32_updates_sf_observed_by_js() {
     //
     // 0x4000_0000 << 1 = 0x8000_0000 => SF=1 for 32-bit operand => JS taken.
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x40, // mov eax, 0x4000_0000
-        0xD1, 0xE0, // shl eax, 1
-        0x78, 0x03, // js +3
-        0xB0, 0x01, // mov al, 1
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x40, // mov eax, 0x4000_0000
+        0xD1,
+        0xE0, // shl eax, 1
+        0x78,
+        0x03, // js +3
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
-        0xB0, 0x02, // mov al, 2
+        0xB0,
+        0x02,      // mov al, 2
         invalid(), // <invalid>
     ];
 
@@ -1430,12 +1784,20 @@ fn tier2_shl16_count_1_sets_of_observed_by_jo() {
     //
     // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xD1, 0xE0, // shl ax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xD1,
+        0xE0, // shl ax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1456,12 +1818,20 @@ fn tier2_shl32_count_1_sets_of_observed_by_jo() {
     //
     // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
-        0xD1, 0xE0, // shl eax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x8000_0000
+        0xD1,
+        0xE0, // shl eax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1482,12 +1852,20 @@ fn tier2_shr16_count_1_sets_of_from_old_msb_observed_by_jo() {
     //
     // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xD1, 0xE8, // shr ax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xD1,
+        0xE8, // shr ax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1508,12 +1886,20 @@ fn tier2_shr32_count_1_sets_of_from_old_msb_observed_by_jo() {
     //
     // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
-        0xD1, 0xE8, // shr eax, 1
-        0x70, 0x03, // jo +3
-        0xB0, 0x00, // mov al, 0
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x8000_0000
+        0xD1,
+        0xE8, // shr eax, 1
+        0x70,
+        0x03, // jo +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1534,12 +1920,17 @@ fn tier2_shl_high8_updates_cf_observed_by_jc() {
     //
     // For the given input, SHL sets CF=1 (old MSB), so JC must be taken.
     let code = [
-        0xB4, 0x81, // mov ah, 0x81
-        0xD0, 0xE4, // shl ah, 1
-        0x72, 0x03, // jc +3
-        0xB0, 0x00, // mov al, 0
+        0xB4,
+        0x81, // mov ah, 0x81
+        0xD0,
+        0xE4, // shl ah, 1
+        0x72,
+        0x03, // jc +3
+        0xB0,
+        0x00,      // mov al, 0
         invalid(), // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0,
+        0x01,      // mov al, 1
         invalid(), // <invalid>
     ];
 
@@ -1560,12 +1951,26 @@ fn tier2_shl64_updates_cf_observed_by_jc() {
     //
     // For SHL count==1, CF is the old MSB. With old MSB=1, ensure `jc` is taken.
     let code = [
-        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
-        0x48, 0xD1, 0xE0, // shl rax, 1
-        0x72, 0x03, // jc +3
-        0xB3, 0x00, // mov bl, 0
+        0x48,
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov rax, 0x8000...
+        0x48,
+        0xD1,
+        0xE0, // shl rax, 1
+        0x72,
+        0x03, // jc +3
+        0xB3,
+        0x00,      // mov bl, 0
         invalid(), // <invalid>
-        0xB3, 0x01, // mov bl, 1
+        0xB3,
+        0x01,      // mov bl, 1
         invalid(), // <invalid>
     ];
 
@@ -1587,12 +1992,26 @@ fn tier2_shl64_updates_of_observed_by_jo() {
     //
     // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
     let code = [
-        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
-        0x48, 0xD1, 0xE0, // shl rax, 1
-        0x70, 0x03, // jo +3
-        0xB3, 0x00, // mov bl, 0
+        0x48,
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov rax, 0x8000...
+        0x48,
+        0xD1,
+        0xE0, // shl rax, 1
+        0x70,
+        0x03, // jo +3
+        0xB3,
+        0x00,      // mov bl, 0
         invalid(), // <invalid>
-        0xB3, 0x01, // mov bl, 1
+        0xB3,
+        0x01,      // mov bl, 1
         invalid(), // <invalid>
     ];
 
@@ -1614,12 +2033,26 @@ fn tier2_shr64_count_1_sets_cf_observed_by_jc() {
     //
     // For SHR count==1, CF is the old LSB. With old LSB=1, ensure `jc` is taken.
     let code = [
-        0x48, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 1
-        0x48, 0xD1, 0xE8, // shr rax, 1
-        0x72, 0x03, // jc +3
-        0xB3, 0x00, // mov bl, 0
+        0x48,
+        0xB8,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00, // mov rax, 1
+        0x48,
+        0xD1,
+        0xE8, // shr rax, 1
+        0x72,
+        0x03, // jc +3
+        0xB3,
+        0x00,      // mov bl, 0
         invalid(), // <invalid>
-        0xB3, 0x01, // mov bl, 1
+        0xB3,
+        0x01,      // mov bl, 1
         invalid(), // <invalid>
     ];
 
@@ -1641,12 +2074,26 @@ fn tier2_shr64_count_1_sets_of_from_old_msb_observed_by_jo() {
     //
     // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
     let code = [
-        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
-        0x48, 0xD1, 0xE8, // shr rax, 1
-        0x70, 0x03, // jo +3
-        0xB3, 0x00, // mov bl, 0
+        0x48,
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov rax, 0x8000...
+        0x48,
+        0xD1,
+        0xE8, // shr rax, 1
+        0x70,
+        0x03, // jo +3
+        0xB3,
+        0x00,      // mov bl, 0
         invalid(), // <invalid>
-        0xB3, 0x01, // mov bl, 1
+        0xB3,
+        0x01,      // mov bl, 1
         invalid(), // <invalid>
     ];
 
@@ -1671,12 +2118,26 @@ fn tier2_sar64_count_1_sets_of_to_0() {
     //
     // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
     let code = [
-        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
-        0x48, 0xD1, 0xF8, // sar rax, 1
-        0x70, 0x03, // jo +3
-        0xB3, 0x00, // mov bl, 0
+        0x48,
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov rax, 0x8000...
+        0x48,
+        0xD1,
+        0xF8, // sar rax, 1
+        0x70,
+        0x03, // jo +3
+        0xB3,
+        0x00,      // mov bl, 0
         invalid(), // <invalid>
-        0xB3, 0x01, // mov bl, 1
+        0xB3,
+        0x01,      // mov bl, 1
         invalid(), // <invalid>
     ];
 

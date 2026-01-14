@@ -967,8 +967,7 @@ mod tests {
         let mut resp_hdr = [0u8; 4];
         bridge.mem.read(resp, &mut resp_hdr).unwrap();
         assert_eq!(
-            resp_hdr,
-            [0xAA; 4],
+            resp_hdr, [0xAA; 4],
             "response buffer must not be written when BME is clear"
         );
 
@@ -986,8 +985,7 @@ mod tests {
         );
         bridge.mem.read(resp, &mut resp_hdr).unwrap();
         assert_eq!(
-            resp_hdr,
-            [0xAA; 4],
+            resp_hdr, [0xAA; 4],
             "response buffer must not be written when polling with BME clear"
         );
 

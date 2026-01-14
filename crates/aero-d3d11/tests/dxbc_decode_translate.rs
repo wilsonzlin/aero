@@ -3,8 +3,7 @@ use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, CmpOp, CmpType, DxbcFile, DxbcSignature,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
     ShaderSignatures, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
-    SrcKind,
-    SrcOperand, Swizzle, TextureRef, WriteMask,
+    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -1500,7 +1499,10 @@ fn decodes_and_translates_ifc_with_else() {
 
     assert!(matches!(
         module.instructions.first(),
-        Some(Sm4Inst::IfC { op: Sm4CmpOp::Lt, .. })
+        Some(Sm4Inst::IfC {
+            op: Sm4CmpOp::Lt,
+            ..
+        })
     ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");

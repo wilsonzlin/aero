@@ -991,9 +991,9 @@ fn tier2_trace_wasm_matches_interpreter_on_shift_flags_used_by_guard() {
         0xB0, 0x81, // mov al, 0x81
         0xC0, 0xE0, 0x01, // shl al, 1
         0x72, 0x03, // jc +3 (to mov al, 1)
-        0xB0, 0x00, // mov al, 0
+        0xB0, 0x00,    // mov al, 0
         invalid, // <invalid>
-        0xB0, 0x01, // mov al, 1
+        0xB0, 0x01,    // mov al, 1
         invalid, // <invalid>
     ];
 

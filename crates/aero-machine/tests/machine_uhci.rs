@@ -1,6 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use core::any::Any;
 use aero_devices::pci::profile::USB_EHCI_ICH9;
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::ehci::regs as ehci_regs;
@@ -10,6 +9,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
+use core::any::Any;
 
 #[test]
 fn uhci_tick_increments_frnum_when_running() {

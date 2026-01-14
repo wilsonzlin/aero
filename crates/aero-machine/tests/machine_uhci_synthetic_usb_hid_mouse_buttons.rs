@@ -71,4 +71,3 @@ fn machine_synthetic_usb_hid_mouse_buttons_mask_injection_produces_reports() {
         UsbInResult::Nak
     ));
 }
-
