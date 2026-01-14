@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -13,8 +14,8 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         self.text = ps_path.read_text(encoding="utf-8", errors="replace")
 
     def test_with_input_leds_param_exists(self) -> None:
-        # Ensure the public harness switch exists (so users can require the marker).
-        self.assertIn("[switch]$WithInputLeds", self.text)
+        # Ensure the public harness switch exists (so callers can require virtio-input-leds markers).
+        self.assertRegex(self.text, re.compile(r"\[switch\]\s*\$WithInputLeds\b", re.IGNORECASE))
 
         # Keep alias pattern consistent with other virtio-input flags.
         # The alias list may evolve, so avoid brittle exact-string matching.
@@ -33,8 +34,17 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         ):
             self.assertIn(token, self.text)
 
+        # Ensure the main harness wires the switch into the Wait-AeroSelftestResult requirement param.
+        self.assertRegex(
+            self.text,
+            re.compile(
+                r"-RequireVirtioInputLedsPass\s*\(\[bool\]\$WithInputLeds\)",
+                re.IGNORECASE,
+            ),
+        )
+
     def test_with_input_leds_preflight_requires_keyboard(self) -> None:
-        # In transitional mode, LED/statusq validation requires virtio-keyboard-pci support.
+        # Input LED/statusq testing requires QEMU to advertise virtio-keyboard-pci.
         self.assertIn(
             "QEMU does not advertise virtio-keyboard-pci but -WithInputLeds was enabled",
             self.text,
