@@ -34,6 +34,9 @@ constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
 
+constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
+constexpr NTSTATUS kStatusInvalidParameter = static_cast<NTSTATUS>(0xC000000DL); // STATUS_INVALID_PARAMETER
+
 uint64_t ReadMonitoredFenceValue(volatile uint64_t* ptr) {
   if (!ptr) {
     return 0;
@@ -60,14 +63,6 @@ uint64_t ReadMonitoredFenceValue(volatile uint64_t* ptr) {
 #endif
   return static_cast<uint64_t>(*ptr);
 }
-
-#ifndef STATUS_TIMEOUT
-  #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
-#endif
-
-#ifndef STATUS_INVALID_PARAMETER
-  #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
-#endif
 
 // -----------------------------------------------------------------------------
 // WDDM allocation-list tracking (Win7 / WDDM 1.1)
@@ -1280,7 +1275,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
 
   HRESULT submit_hr = E_NOTIMPL;
   uint64_t fence = 0;
-  const HRESULT status_invalid_parameter = static_cast<HRESULT>(STATUS_INVALID_PARAMETER);
+  const HRESULT status_invalid_parameter = static_cast<HRESULT>(kStatusInvalidParameter);
 
   const auto fill_submit_lists = [&](auto& args) {
     using ArgsT = std::remove_reference_t<decltype(args)>;
@@ -1834,7 +1829,7 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
   fill_wait_for_sync_object_args(&args, hContext_, kmt_adapter_for_debug_, handles, fence_values, fence, timeout);
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-  if (st == STATUS_TIMEOUT) {
+  if (st == kStatusTimeout) {
     return kDxgiErrorWasStillDrawing;
   }
   if (!NtSuccess(st)) {
@@ -1926,7 +1921,7 @@ uint64_t WddmSubmit::QueryCompletedFence() {
                                        /*timeout=*/0);
 
         const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-        if (st != STATUS_TIMEOUT && NtSuccess(st)) {
+        if (st != kStatusTimeout && NtSuccess(st)) {
           completed = std::max(completed, last_submitted_fence_);
         }
       }
