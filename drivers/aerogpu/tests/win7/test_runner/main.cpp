@@ -94,6 +94,25 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     return true;
   }
 
+  // Build a JSON fragment representing the new artifact paths:
+  //   "<path0>","<path1>",...
+  //
+  // We build this up-front so injection logic can focus on locating the correct insertion point.
+  std::string items;
+  items.reserve(256);
+  for (size_t i = 0; i < artifacts.size(); ++i) {
+    if (artifacts[i].empty()) {
+      continue;
+    }
+    if (!items.empty()) {
+      items.push_back(',');
+    }
+    aerogpu_test::JsonAppendEscaped(&items, aerogpu_test::WideToUtf8(artifacts[i]));
+  }
+  if (items.empty()) {
+    return true;
+  }
+
   size_t array_start = std::string::npos;
 
   // Fast path: our in-tree JSON reporter emits `"artifacts":[...]` with no whitespace.
@@ -135,85 +154,114 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     }
   }
 
-  if (array_start == std::string::npos) {
-    if (err) {
-      *err = "AppendArtifactsToTestReportJsonObject: missing artifacts array";
-    }
-    return false;
-  }
   size_t array_end = std::string::npos;
-  // Find the end of the artifacts array without being confused by ']' inside quoted strings.
-  // We intentionally do not implement full JSON parsing here; this is just enough robustness for
-  // Windows paths that may contain arbitrary characters.
-  bool in_string = false;
-  bool escape = false;
-  int nested_arrays = 0;
-  for (size_t i = array_start; i < obj->size(); ++i) {
-    const char c = (*obj)[i];
-    if (in_string) {
-      if (escape) {
-        escape = false;
+  if (array_start != std::string::npos) {
+    // Find the end of the artifacts array without being confused by ']' inside quoted strings.
+    // We intentionally do not implement full JSON parsing here; this is just enough robustness for
+    // Windows paths that may contain arbitrary characters.
+    bool in_string = false;
+    bool escape = false;
+    int nested_arrays = 0;
+    for (size_t i = array_start; i < obj->size(); ++i) {
+      const char c = (*obj)[i];
+      if (in_string) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (c == '\\') {
+          escape = true;
+          continue;
+        }
+        if (c == '"') {
+          in_string = false;
+          continue;
+        }
         continue;
       }
-      if (c == '\\') {
-        escape = true;
-        continue;
-      }
+
       if (c == '"') {
-        in_string = false;
+        in_string = true;
         continue;
       }
-      continue;
+      if (c == '[') {
+        nested_arrays++;
+        continue;
+      }
+      if (c == ']') {
+        if (nested_arrays == 0) {
+          array_end = i;
+          break;
+        }
+        nested_arrays--;
+        continue;
+      }
+    }
+    if (array_end == std::string::npos) {
+      if (err) {
+        *err = "AppendArtifactsToTestReportJsonObject: unterminated artifacts array";
+      }
+      return false;
     }
 
-    if (c == '"') {
-      in_string = true;
-      continue;
-    }
-    if (c == '[') {
-      nested_arrays++;
-      continue;
-    }
-    if (c == ']') {
-      if (nested_arrays == 0) {
-        array_end = i;
+    bool is_empty = true;
+    for (size_t i = array_start; i < array_end; ++i) {
+      const char c = (*obj)[i];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        is_empty = false;
         break;
       }
-      nested_arrays--;
-      continue;
     }
+
+    std::string insert = items;
+    if (!is_empty) {
+      insert.insert(insert.begin(), ',');
+    }
+    obj->insert(array_end, insert);
+    return true;
   }
-  if (array_end == std::string::npos) {
+
+  // If the artifacts array is missing entirely (for example from older/handwritten JSON reporters),
+  // add a new `"artifacts":[...]` field to the end of the object so the suite report still links
+  // to runner-generated debug outputs.
+  size_t end = obj->size();
+  while (end > 0) {
+    const char c = (*obj)[end - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      break;
+    }
+    end--;
+  }
+  if (end == 0 || (*obj)[end - 1] != '}') {
     if (err) {
-      *err = "AppendArtifactsToTestReportJsonObject: unterminated artifacts array";
+      *err = "AppendArtifactsToTestReportJsonObject: object does not end with '}'";
     }
     return false;
   }
 
-  bool is_empty = true;
-  for (size_t i = array_start; i < array_end; ++i) {
-    const char c = (*obj)[i];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-      is_empty = false;
-      break;
+  bool is_empty_object = true;
+  if (end >= 2 && (*obj)[0] == '{') {
+    for (size_t i = 1; i + 1 < end; ++i) {
+      const char c = (*obj)[i];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        is_empty_object = false;
+        break;
+      }
     }
+  } else {
+    is_empty_object = false;
   }
 
-  std::string insert;
-  insert.reserve(256);
-  for (size_t i = 0; i < artifacts.size(); ++i) {
-    if (artifacts[i].empty()) {
-      continue;
-    }
-    if (!insert.empty() || !is_empty) {
-      insert.push_back(',');
-    }
-    aerogpu_test::JsonAppendEscaped(&insert, aerogpu_test::WideToUtf8(artifacts[i]));
+  std::string field;
+  field.reserve(items.size() + 32);
+  if (!is_empty_object) {
+    field.push_back(',');
   }
-  if (insert.empty()) {
-    return true;
-  }
-  obj->insert(array_end, insert);
+  field.append("\"artifacts\":[");
+  field.append(items);
+  field.push_back(']');
+
+  obj->insert(end - 1, field);
   return true;
 }
 
