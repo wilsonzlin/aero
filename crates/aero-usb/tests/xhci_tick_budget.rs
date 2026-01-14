@@ -7,7 +7,8 @@
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{budget, regs, XhciController};
-use aero_usb::MemoryBus;
+use aero_usb::xhci::CommandCompletionCode;
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 mod util;
 use util::TestMemory;
@@ -26,6 +27,13 @@ fn make_noop_command(cycle: bool) -> Trb {
     let mut trb = Trb::new(0, 0, 0);
     trb.set_trb_type(TrbType::NoOpCommand);
     trb.set_slot_id(0);
+    trb.set_cycle(cycle);
+    trb
+}
+
+fn make_noop_transfer(cycle: bool) -> Trb {
+    let mut trb = Trb::new(0, 0, 0);
+    trb.set_trb_type(TrbType::NoOp);
     trb.set_cycle(cycle);
     trb
 }
@@ -124,4 +132,66 @@ fn xhci_step_1ms_command_ring_is_bounded_and_makes_progress() {
 
     let events_final = count_event_trbs(&mut mem, event_ring_base, event_ring_trbs as usize);
     assert_eq!(events_final, COMMAND_TRBS, "expected all commands to complete");
+}
+
+#[test]
+fn xhci_step_1ms_coalesces_redundant_endpoint_doorbells() {
+    use aero_usb::xhci::context::SlotContext;
+
+    #[derive(Default)]
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut mem = TestMemory::new(0x8000);
+    let mut ctrl = XhciController::with_port_count(1);
+    ctrl.attach_device(0, Box::new(DummyDevice::default()));
+
+    // Enable a slot and bind it to the attached device so endpoint doorbells are accepted.
+    ctrl.set_dcbaap(0x1000);
+    let enable = ctrl.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+    assert_ne!(slot_id, 0);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    // Configure a controller-local transfer ring cursor (without populating a full guest Device
+    // Context) so the transfer executor can make progress.
+    let tr_ring = 0x2000u64;
+    let endpoint_id = 3u8; // EP1 IN (DCI=3).
+    ctrl.set_endpoint_ring(slot_id, endpoint_id, tr_ring, true);
+
+    // Prime the transfer ring with a single No-Op TRB. This will be consumed in the first tick and
+    // then the endpoint will go idle.
+    write_trb(&mut mem, tr_ring, make_noop_transfer(true));
+
+    // Ring the same endpoint doorbell many times. The controller should coalesce these into a single
+    // pending endpoint activation so `step_1ms` only services it once.
+    for _ in 0..1000 {
+        ctrl.ring_doorbell(slot_id, endpoint_id);
+    }
+
+    let work = ctrl.step_1ms(&mut mem);
+    assert_eq!(
+        work.doorbells_serviced, 1,
+        "expected redundant doorbells to be coalesced into a single active endpoint"
+    );
+    assert_eq!(work.transfer_trbs_consumed, 1);
+
+    // Subsequent ticks should do no transfer-ring work unless the guest rings a new doorbell.
+    let work2 = ctrl.step_1ms(&mut mem);
+    assert_eq!(work2.doorbells_serviced, 0);
+    assert_eq!(work2.transfer_trbs_consumed, 0);
 }
