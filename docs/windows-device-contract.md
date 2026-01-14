@@ -116,7 +116,8 @@ Current canonical machine note:
     vblank timing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
   The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`
+  (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - Boot display is provided by `aero_gpu_vga` (VGA + Bochs VBE) when `MachineConfig::enable_vga=true`,
   plus a minimal “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE LFB
   routing through the PCI MMIO router.

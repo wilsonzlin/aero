@@ -252,7 +252,8 @@ Note on boot display vs AeroGPU:
   host-facing scanout presentation).
 
   The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`
+  (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
   VGA/VBE compatibility; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)

@@ -33,7 +33,7 @@ Canonical machine GPU device modes (today):
   - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
     - In AeroGPU mode (no standalone VGA device model), `display_present()` presents (priority order) the WDDM scanout0 framebuffer if claimed, otherwise the BIOS VBE LFB, otherwise BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
   - The full AeroGPU command execution model is not implemented in `aero-machine` yet.
-  - The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today.
+  - The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today (tracked for extraction in [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 
 ### 2) Browser presentation: shared-memory framebuffer → GPU worker → canvas
 
