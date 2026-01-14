@@ -195,7 +195,9 @@ export class InputEventQueue {
    * buffer is always transferred whole (small, fixed-size) to avoid extra copies.
    *
    * Returns the host-side latency in microseconds from the first event in the
-   * batch to when the batch is sent, or `null` if the queue was empty.
+   * batch to when the batch is sent, or `null` if the queue was empty or the
+   * batch could not be delivered (e.g. `postMessage` throws due to a terminated
+   * worker).
    */
   flush(target: InputBatchTarget, opts: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook } = {}): number | null {
     if (this.count === 0) {
@@ -240,17 +242,30 @@ export class InputEventQueue {
       onBeforeSend(buffer, this.words, this.count, recycle);
     }
 
-    if (recycle) {
-      target.postMessage({ type: "in:input-batch", buffer, recycle: true }, [buffer]);
-    } else {
-      target.postMessage({ type: "in:input-batch", buffer }, [buffer]);
+    let delivered = false;
+    try {
+      if (recycle) {
+        target.postMessage({ type: "in:input-batch", buffer, recycle: true }, [buffer]);
+      } else {
+        target.postMessage({ type: "in:input-batch", buffer }, [buffer]);
+      }
+      delivered = true;
+    } catch {
+      // If the target is terminated/crashed (or a stub target throws), `postMessage`
+      // can throw synchronously. Drop the batch and keep the queue usable.
     }
 
-    // The transferred buffer is now detached; allocate a fresh one.
+    // The transferred buffer is now detached; allocate a fresh one. Even if
+    // `postMessage` threw, the buffer may have been detached (or the receiver
+    // may no longer exist), so always reset the queue to a clean state.
     this.buf = this.allocateBuffer(byteLength);
     this.words = new Int32Array(this.buf);
     this.count = 0;
     this.minTimestampUs = 0;
+
+    if (!delivered) {
+      return null;
+    }
 
     // Unsigned delta handles u32 wraparound.
     return (sendTimestampUs - minTimestampUs) >>> 0;
