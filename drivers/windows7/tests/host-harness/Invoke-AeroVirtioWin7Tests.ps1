@@ -4407,7 +4407,9 @@ function Try-AeroQmpResizeVirtioBlk {
   $reason = ""
   try { $reason = Sanitize-AeroMarkerValue $lastErr } catch { }
   if ([string]::IsNullOrEmpty($reason)) { $reason = "qmp_resize_failed" }
-  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=$reason"
+  $driveTok = $DriveId
+  try { $driveTok = Sanitize-AeroMarkerValue $DriveId } catch { }
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=$reason|old_bytes=$OldBytes|new_bytes=$NewBytes|drive_id=$driveTok"
   return $false
 }
 

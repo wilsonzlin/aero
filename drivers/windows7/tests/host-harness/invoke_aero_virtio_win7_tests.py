@@ -5634,7 +5634,8 @@ def main() -> int:
                     except Exception as e:
                         reason = _sanitize_marker_value(str(e) or type(e).__name__)
                         print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason={reason}",
+                            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|"
+                            f"reason={reason}|old_bytes={int(blk_resize_old_bytes)}|new_bytes={int(blk_resize_new_bytes)}|drive_id=drive0",
                             file=sys.stderr,
                         )
                         print(
