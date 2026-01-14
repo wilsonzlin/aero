@@ -47,11 +47,26 @@ describe("io_hid_output_report_forwarding", () => {
 
     const { msg, transfer } = sent[0];
     expect(msg).toMatchObject({ type: "hid.sendReport", deviceId: 7, reportType: "feature", reportId: 9 });
+    expect(msg.outputRingTail).toBe(0);
     expect(msg.data.byteLength).toBe(32);
     expect(msg.data.buffer).toBeInstanceOf(ArrayBuffer);
     expect(msg.data.buffer).not.toBe(shared);
     expect(Array.from(msg.data)).toEqual(Array.from(bytes));
     expect(transfer).toEqual([msg.data.buffer]);
   });
-});
 
+  it("does not include outputRingTail when no ring is available", () => {
+    const postMessage = vi.fn<[HidSendReportMessage, Transferable[]], void>();
+    const payload = { deviceId: 1, reportType: "output" as const, reportId: 2, data: new Uint8Array([1, 2, 3]) };
+
+    const res = forwardHidSendReportToMainThread(payload, {
+      outputRing: null,
+      postMessage,
+    });
+
+    expect(res).toEqual({ path: "postMessage", ringFailed: false });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const [msg] = postMessage.mock.calls[0]!;
+    expect(msg.outputRingTail).toBeUndefined();
+  });
+});
