@@ -1463,7 +1463,7 @@ def _detect_virtio_snd_device(qemu_system: str) -> str:
     )
 
 
-def main() -> int:
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu-system", required=True, help="Path to qemu-system-* binary")
     parser.add_argument("--disk-image", required=True, help="Prepared Win7 disk image")
@@ -1669,6 +1669,12 @@ def main() -> int:
         metavar="N",
         help="Override virtio-input MSI-X vectors via `-device virtio-*-pci,...,vectors=N` when supported.",
     )
+
+    return parser
+
+
+def main() -> int:
+    parser = _build_arg_parser()
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
