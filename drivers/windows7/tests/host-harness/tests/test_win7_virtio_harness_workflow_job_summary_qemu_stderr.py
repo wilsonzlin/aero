@@ -21,6 +21,9 @@ class Win7VirtioHarnessWorkflowJobSummaryQemuStderrTests(unittest.TestCase):
         self.assertIn("qemu_stderr_log", self.text)
         self.assertIn(".qemu.stderr.log", self.text)
         self.assertIn("QEMU stderr (last line)", self.text)
+        # Avoid printing a misleading bullet when the stderr log is only a placeholder.
+        self.assertIn('(qemu stderr log was not produced)', self.text)
+        self.assertIn('(qemu stderr log was empty)', self.text)
         self.assertIn("harness_cmdline", self.text)
         self.assertIn("Executing harness:", self.text)
         self.assertIn("Harness command:", self.text)
