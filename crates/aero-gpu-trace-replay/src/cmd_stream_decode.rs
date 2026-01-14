@@ -623,6 +623,18 @@ fn decode_known_fields(
                 out.insert("blend_op_name".into(), Value::String(name));
             }
             out.insert("color_write_mask".into(), json!(pkt.payload[16]));
+            out.insert(
+                "src_factor_alpha".into(),
+                json!(read_u32_le(pkt.payload, 20).unwrap()),
+            );
+            out.insert(
+                "dst_factor_alpha".into(),
+                json!(read_u32_le(pkt.payload, 24).unwrap()),
+            );
+            out.insert(
+                "blend_op_alpha".into(),
+                json!(read_u32_le(pkt.payload, 28).unwrap()),
+            );
             // blend_constant_rgba_f32[4] at payload offset 32.
             let mut rgba = Vec::new();
             for i in 0..4 {

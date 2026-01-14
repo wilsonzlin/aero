@@ -1079,6 +1079,9 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(blend["decoded"]["blend_op"], 4);
     assert_eq!(blend["decoded"]["blend_op_name"], "Max");
     assert_eq!(blend["decoded"]["color_write_mask"], 0x0F);
+    assert_eq!(blend["decoded"]["src_factor_alpha"], 5);
+    assert_eq!(blend["decoded"]["dst_factor_alpha"], 6);
+    assert_eq!(blend["decoded"]["blend_op_alpha"], 7);
     assert_eq!(blend["decoded"]["sample_mask"], 0xFFFF_FFFFu64);
     assert_eq!(
         blend["decoded"]["blend_constant_rgba"][0]
