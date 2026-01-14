@@ -183,9 +183,13 @@ tracked independently and are expected to be provided to the emulation pipelines
 internal bind group:
 
 - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
-- Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) also
-  live in `@group(3)` but use a reserved binding-number range (see
+- Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
+  also internal to the emulation path. The **target** design places these in `@group(3)` using a
+  reserved high binding-number range (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
+  - Note: the current vertex-pulling helper bind group also occupies `@group(3)` but uses
+    low-numbered bindings (including `@binding(32)`), which overlaps the D3D register binding
+    ranges. This will need to be unified as GS execution lands.
 
 ### Binding number ranges within a stage group
 
