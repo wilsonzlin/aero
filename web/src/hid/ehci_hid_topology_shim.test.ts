@@ -18,7 +18,7 @@ function createFakeBridge(): UhciTopologyBridge & {
 }
 
 describe("hid/createEhciTopologyBridgeShim", () => {
-  it("swaps EHCI root ports 0/1 for hub + device topology calls", () => {
+  it("passes UHCI-style root ports through unchanged for hub + device topology calls", () => {
     const ehci = createFakeBridge();
     const shim = createEhciTopologyBridgeShim(ehci);
     const dev = { kind: "device" };
@@ -29,18 +29,17 @@ describe("hid/createEhciTopologyBridgeShim", () => {
     shim.attach_webhid_device([0, 6], dev);
     shim.attach_usb_hid_passthrough_device([1, 7], dev);
 
-    expect(ehci.attach_hub).toHaveBeenNthCalledWith(1, 1, 16);
-    expect(ehci.attach_hub).toHaveBeenNthCalledWith(2, 0, 8);
-    expect(ehci.detach_at_path).toHaveBeenCalledWith([1, 5]);
-    expect(ehci.attach_webhid_device).toHaveBeenCalledWith([1, 6], dev);
-    expect(ehci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 7], dev);
+    expect(ehci.attach_hub).toHaveBeenNthCalledWith(1, 0, 16);
+    expect(ehci.attach_hub).toHaveBeenNthCalledWith(2, 1, 8);
+    expect(ehci.detach_at_path).toHaveBeenCalledWith([0, 5]);
+    expect(ehci.attach_webhid_device).toHaveBeenCalledWith([0, 6], dev);
+    expect(ehci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([1, 7], dev);
   });
 
-  it("allows UhciHidTopologyManager to attach its external hub on EHCI root port 1", () => {
+  it("allows UhciHidTopologyManager to attach its external hub on EHCI root port 0", () => {
     const ehci = createFakeBridge();
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     mgr.setUhciBridge(createEhciTopologyBridgeShim(ehci));
-    expect(ehci.attach_hub).toHaveBeenCalledWith(1, 16);
+    expect(ehci.attach_hub).toHaveBeenCalledWith(0, 16);
   });
 });
-

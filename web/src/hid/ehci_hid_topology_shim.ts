@@ -1,18 +1,14 @@
 import type { UhciTopologyBridge } from "./uhci_hid_topology";
 
 function mapEhciRootPortFromUhci(rootPort: number): number {
-  // EHCI reserves root port 0 for WebUSB passthrough (see `EhciControllerBridge`).
+  // EHCI reserves root port 1 for WebUSB passthrough (see `EhciControllerBridge`).
   //
-  // Higher-level WebHID + synthetic HID plumbing (and the `GuestUsbPath` protocol) uses the
-  // UHCI convention:
+  // Higher-level WebHID + synthetic HID plumbing (and the `GuestUsbPath` protocol) uses the UHCI
+  // convention:
   // - root port 0: external hub
   // - root port 1: WebUSB passthrough device
   //
-  // When EHCI is the only available guest-visible controller (i.e. UHCI is omitted from the WASM
-  // build), we still want both the external hub and WebUSB passthrough to coexist. Swap root ports
-  // so the external hub is attached on EHCI root port 1 while WebUSB remains on EHCI root port 0.
-  if (rootPort === 0) return 1;
-  if (rootPort === 1) return 0;
+  // EHCI now matches this convention, so no mapping is required.
   return rootPort;
 }
 
@@ -40,4 +36,3 @@ export function createEhciTopologyBridgeShim(bridge: UhciTopologyBridge): UhciTo
       bridge.attach_usb_hid_passthrough_device(mapEhciPathFromUhci(path), device),
   };
 }
-

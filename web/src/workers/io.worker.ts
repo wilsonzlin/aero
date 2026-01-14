@@ -1313,10 +1313,10 @@ function formatWebUsbGuestError(err: unknown): string {
 
 function emitWebUsbGuestStatus(): void {
   const controllerKind = webUsbGuestControllerKind;
-  // WebUSB root port numbering is controller-specific:
-  // - UHCI/xHCI reserve root port 1 (root port 0 hosts the external hub for WebHID/synthetic HID).
-  // - EHCI currently reserves root port 0.
-  const rootPort = controllerKind === "ehci" ? 0 : WEBUSB_GUEST_ROOT_PORT;
+  // WebUSB root port numbering:
+  // - root port 0 hosts the external hub for WebHID/synthetic HID.
+  // - root port 1 is reserved for WebUSB passthrough.
+  const rootPort = WEBUSB_GUEST_ROOT_PORT;
   const snapshot: UsbGuestWebUsbSnapshot = {
     available: webUsbGuestBridge !== null,
     attached: webUsbGuestAttached,
@@ -2037,9 +2037,9 @@ function maybeInitEhciDevice(): void {
         typeof topo.attach_webhid_device === "function" &&
         typeof topo.attach_usb_hid_passthrough_device === "function"
       ) {
-        // EHCI reserves root port 0 for WebUSB passthrough. When we reuse the UHCI HID topology
-        // manager on EHCI (EHCI-only WASM builds), swap root ports so the external hub lives on
-        // EHCI root port 1 while WebUSB remains on EHCI root port 0.
+        // EHCI reserves root port 1 for WebUSB passthrough, matching the UHCI topology convention.
+        // Keep a shim layer so future EHCI-only topology quirks can be handled without rewriting
+        // the UHCI topology manager.
         const shim = createEhciTopologyBridgeShim(bridge as unknown as any);
         uhciHidTopology.setUhciBridge(shim);
         uhciHidTopologyBridgeSource = shim;
