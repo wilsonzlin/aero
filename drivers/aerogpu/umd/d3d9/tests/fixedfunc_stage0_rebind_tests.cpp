@@ -28,6 +28,11 @@ constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+// D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16. These
+// bits may contain garbage for unused texcoord sets; the driver should ignore
+// them (except for texcoord 0 when TEX1 is present).
+constexpr uint32_t kFvfGarbageTexCoord0SizeBits = (0x2u << 16u); // float4 for tex0
+constexpr uint32_t kFvfGarbageTexCoord1SizeBits = (0x2u << 18u); // float4 for tex1
 
 // D3DTSS_* (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
@@ -361,19 +366,29 @@ int main() {
                                              "SetFVF(XYZ|DIFFUSE|TEX1)")) {
     return 1;
   }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuseTex1 | kFvfGarbageTexCoord1SizeBits,
+                                             tri_xyz_diffuse_tex1,
+                                             "SetFVF(XYZ|DIFFUSE|TEX1) (unused texcoord-size bits)")) {
+    return 1;
+  }
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzrhwDiffuseTex1,
-                                             tri_xyzrhw_diffuse_tex1,
-                                             "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+                                              tri_xyzrhw_diffuse_tex1,
+                                              "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
     return 1;
   }
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuse,
+                                              tri_xyz_diffuse,
+                                              "SetFVF(XYZ|DIFFUSE)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuse | kFvfGarbageTexCoord0SizeBits,
                                              tri_xyz_diffuse,
-                                             "SetFVF(XYZ|DIFFUSE)")) {
+                                             "SetFVF(XYZ|DIFFUSE) (unused texcoord-size bits)")) {
     return 1;
   }
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzrhwDiffuse,
-                                             tri_xyzrhw_diffuse,
-                                             "SetFVF(XYZRHW|DIFFUSE)")) {
+                                              tri_xyzrhw_diffuse,
+                                              "SetFVF(XYZRHW|DIFFUSE)")) {
     return 1;
   }
 
