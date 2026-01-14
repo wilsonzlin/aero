@@ -41,6 +41,11 @@ def _synthetic_setup_text(
     include_cert_install_skip_policy: bool = True,
     include_signature_marker_files: bool = True,
     include_testsigning_policy_gate: bool = True,
+    include_testsigning_parse: bool = True,
+    include_nointegritychecks_parse: bool = True,
+    include_forcesigningpolicy_parse: bool = True,
+    include_notestsigning_parse: bool = True,
+    include_installcerts_parse: bool = True,
     include_verify_media_flag: bool = True,
     include_verify_media_parse: bool = True,
     include_installed_media_state: bool = True,
@@ -60,15 +65,25 @@ def _synthetic_setup_text(
             'if /i "%SIGNING_POLICY%"=="test" echo ok',
             'if /i "%SIGNING_POLICY%"=="production" echo ok',
             'if /i "%SIGNING_POLICY%"=="none" echo ok',
-            r'if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"',
-            r'if /i "%%~A"=="/nointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"',
-            r'if /i "%%~A"=="/forcesigningpolicy:none" set "ARG_FORCE_SIGNING_POLICY=none"',
-            r'if /i "%%~A"=="/forcesigningpolicy:test" set "ARG_FORCE_SIGNING_POLICY=test"',
-            r'if /i "%%~A"=="/forcesigningpolicy:production" set "ARG_FORCE_SIGNING_POLICY=production"',
-            r'if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"',
-            r'if /i "%%~A"=="/installcerts" set "ARG_INSTALL_CERTS=1"',
         ]
     )
+
+    if include_testsigning_parse:
+        lines.append(r'if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"')
+    if include_nointegritychecks_parse:
+        lines.append(r'if /i "%%~A"=="/nointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"')
+    if include_forcesigningpolicy_parse:
+        lines.extend(
+            [
+                r'if /i "%%~A"=="/forcesigningpolicy:none" set "ARG_FORCE_SIGNING_POLICY=none"',
+                r'if /i "%%~A"=="/forcesigningpolicy:test" set "ARG_FORCE_SIGNING_POLICY=test"',
+                r'if /i "%%~A"=="/forcesigningpolicy:production" set "ARG_FORCE_SIGNING_POLICY=production"',
+            ]
+        )
+    if include_notestsigning_parse:
+        lines.append(r'if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"')
+    if include_installcerts_parse:
+        lines.append(r'if /i "%%~A"=="/installcerts" set "ARG_INSTALL_CERTS=1"')
 
     if include_verify_media_flag:
         lines.extend(
@@ -318,6 +333,106 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("Parses /skipstorage" in e for e in errs),
                 msg="expected missing /skipstorage parse error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_testsigning_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_testsigning_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Supports /testsigning" in e for e in errs),
+                msg="expected missing /testsigning parse error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_nointegritychecks_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_nointegritychecks_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Supports /nointegritychecks" in e for e in errs),
+                msg="expected missing /nointegritychecks parse error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_forcesigningpolicy_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_forcesigningpolicy_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Supports /forcesigningpolicy" in e for e in errs),
+                msg="expected missing /forcesigningpolicy parse error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_notestsigning_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_notestsigning_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Supports /notestsigning" in e for e in errs),
+                msg="expected missing /notestsigning parse error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_installcerts_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_installcerts_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Supports /installcerts" in e for e in errs),
+                msg="expected missing /installcerts parse error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_skipstorage_does_not_gate_storage_validation(self) -> None:
