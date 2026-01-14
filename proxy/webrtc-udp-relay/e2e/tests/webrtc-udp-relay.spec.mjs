@@ -998,6 +998,308 @@ test("accepts UDP replies from unexpected source ports over WebRTC when UDP_INBO
   }
 });
 
+test("expires UDP remote allowlist entries over WebRTC after UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT", async ({ page }) => {
+  const ttlMs = 250;
+  const lateSendDelayMs = 900;
+  const echo = await startUdpServerWithDelayedRepeat("udp4", "127.0.0.1", {
+    delayMs: lateSendDelayMs,
+    latePayload: Buffer.from("late datagram"),
+  });
+  test.skip(!echo, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({ UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: `${ttlMs}ms` });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+
+  try {
+    await page.goto(web.url);
+
+    const before = await getRelayEventCounters(relay.port);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        let pc;
+        try {
+          const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+          const iceServers = Array.isArray(iceResp?.iceServers) ? iceResp.iceServers : [];
+
+          pc = new RTCPeerConnection({ iceServers });
+          const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+          dc.binaryType = "arraybuffer";
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") return resolve();
+            const onState = () => {
+              if (pc.iceGatheringState !== "complete") return;
+              pc.removeEventListener("icegatheringstatechange", onState);
+              resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", onState);
+          });
+
+          if (!pc.localDescription?.sdp) {
+            throw new Error("missing local description");
+          }
+
+          const offerResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/offer`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp }),
+          });
+          if (!offerResp.ok) {
+            throw new Error(`unexpected /webrtc/offer status ${offerResp.status}`);
+          }
+          const offerJSON = await offerResp.json();
+          if (!offerJSON?.sdp?.sdp) {
+            throw new Error("invalid /webrtc/offer response");
+          }
+          await pc.setRemoteDescription(offerJSON.sdp);
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+            dc.addEventListener(
+              "open",
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+            dc.addEventListener(
+              "error",
+              () => {
+                clearTimeout(timeout);
+                reject(new Error("datachannel error"));
+              },
+              { once: true },
+            );
+          });
+
+          const waitForDatagram = async ({ timeoutMs }) =>
+            await new Promise((resolve) => {
+              let timeout;
+              let done = false;
+              const onMessage = (event) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(event.data));
+              };
+              const cleanup = () => {
+                dc.removeEventListener("message", onMessage);
+                clearTimeout(timeout);
+              };
+              timeout = setTimeout(() => {
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(null);
+              }, timeoutMs);
+              dc.addEventListener("message", onMessage);
+            });
+
+          const guestPort = 10_000;
+          const payload = new TextEncoder().encode("first datagram");
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (echoPort >> 8) & 0xff;
+          frame[7] = echoPort & 0xff;
+          frame.set(payload, 8);
+
+          const firstPromise = waitForDatagram({ timeoutMs: 10_000 });
+          dc.send(frame);
+          const first = await firstPromise;
+          if (!first) throw new Error("timed out waiting for first echoed datagram");
+          if (first.length < 8) throw new Error("echoed frame too short");
+          const firstText = new TextDecoder().decode(first.slice(8));
+
+          const second = await waitForDatagram({ timeoutMs: 2_500 });
+          const secondText = second ? new TextDecoder().decode(second.slice(8)) : null;
+          return { firstText, gotSecond: second !== null, secondText };
+        } finally {
+          pc?.close?.();
+        }
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(res.firstText).toBe("first datagram");
+    if (res.gotSecond) {
+      throw new Error(`expected allowlist entry to expire; received second datagram: ${res.secondText ?? "<unknown>"}`);
+    }
+
+    const beforeDrops = getCounter(before, allowlistDropMetric);
+    const after = await waitForRelayEventCounterAtLeast(relay.port, allowlistDropMetric, beforeDrops + 1, { timeoutMs: 8_000 });
+    expect(getCounter(after, allowlistDropMetric)).toBeGreaterThanOrEqual(beforeDrops + 1);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("evicts UDP remote allowlist entries over WebRTC when MAX_ALLOWED_REMOTES_PER_BINDING is exceeded", async ({ page }) => {
+  const echoA = await startUdpServerWithDelayedRepeat("udp4", "127.0.0.1", {
+    delayMs: 2_000,
+    latePayload: Buffer.from("late from A"),
+  });
+  const echoB = await startUdpEchoServer("udp4", "127.0.0.1");
+  test.skip(!echoA || !echoB, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({
+    MAX_ALLOWED_REMOTES_PER_BINDING: "1",
+    UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: "10s",
+  });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+  const allowlistEvictMetric = "udp_remote_allowlist_evictions_total";
+
+  try {
+    await page.goto(web.url);
+
+    const before = await getRelayEventCounters(relay.port);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPortA, echoPortB }) => {
+        let pc;
+        try {
+          const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+          const iceServers = Array.isArray(iceResp?.iceServers) ? iceResp.iceServers : [];
+
+          pc = new RTCPeerConnection({ iceServers });
+          const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+          dc.binaryType = "arraybuffer";
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") return resolve();
+            const onState = () => {
+              if (pc.iceGatheringState !== "complete") return;
+              pc.removeEventListener("icegatheringstatechange", onState);
+              resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", onState);
+          });
+
+          if (!pc.localDescription?.sdp) {
+            throw new Error("missing local description");
+          }
+
+          const offerResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/offer`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp }),
+          });
+          if (!offerResp.ok) {
+            throw new Error(`unexpected /webrtc/offer status ${offerResp.status}`);
+          }
+          const offerJSON = await offerResp.json();
+          if (!offerJSON?.sdp?.sdp) {
+            throw new Error("invalid /webrtc/offer response");
+          }
+          await pc.setRemoteDescription(offerJSON.sdp);
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+            dc.addEventListener(
+              "open",
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+            dc.addEventListener(
+              "error",
+              () => {
+                clearTimeout(timeout);
+                reject(new Error("datachannel error"));
+              },
+              { once: true },
+            );
+          });
+
+          const waitForDatagram = async ({ timeoutMs }) =>
+            await new Promise((resolve) => {
+              let timeout;
+              let done = false;
+              const onMessage = (event) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(event.data));
+              };
+              const cleanup = () => {
+                dc.removeEventListener("message", onMessage);
+                clearTimeout(timeout);
+              };
+              timeout = setTimeout(() => {
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(null);
+              }, timeoutMs);
+              dc.addEventListener("message", onMessage);
+            });
+
+          const guestPort = 10_000;
+          const buildFrame = (remotePort, text) => {
+            const payload = new TextEncoder().encode(text);
+            const frame = new Uint8Array(8 + payload.length);
+            frame[0] = (guestPort >> 8) & 0xff;
+            frame[1] = guestPort & 0xff;
+            frame.set([127, 0, 0, 1], 2);
+            frame[6] = (remotePort >> 8) & 0xff;
+            frame[7] = remotePort & 0xff;
+            frame.set(payload, 8);
+            return frame;
+          };
+
+          const sendAndRecvText = async (remotePort, text) => {
+            const frame = buildFrame(remotePort, text);
+            const respPromise = waitForDatagram({ timeoutMs: 10_000 });
+            dc.send(frame);
+            const resp = await respPromise;
+            if (!resp) throw new Error(`timed out waiting for echoed datagram for ${text}`);
+            if (resp.length < 8) throw new Error("echoed frame too short");
+            return new TextDecoder().decode(resp.slice(8));
+          };
+
+          const textA = await sendAndRecvText(echoPortA, "hello A");
+          const textB = await sendAndRecvText(echoPortB, "hello B");
+
+          // If eviction worked, this should be dropped and we should not receive it.
+          const late = await waitForDatagram({ timeoutMs: 3_500 });
+          const lateText = late ? new TextDecoder().decode(late.slice(8)) : null;
+          return { textA, textB, gotLate: late !== null, lateText };
+        } finally {
+          pc?.close?.();
+        }
+      },
+      { relayPort: relay.port, echoPortA: echoA.port, echoPortB: echoB.port },
+    );
+
+    expect(res.textA).toBe("hello A");
+    expect(res.textB).toBe("hello B");
+    if (res.gotLate) {
+      throw new Error(`expected allowlist entry A to be evicted; received datagram: ${res.lateText ?? "<unknown>"}`);
+    }
+
+    const beforeEvictions = getCounter(before, allowlistEvictMetric);
+    const afterEvictions = await waitForRelayEventCounterAtLeast(relay.port, allowlistEvictMetric, beforeEvictions + 1);
+    expect(getCounter(afterEvictions, allowlistEvictMetric)).toBeGreaterThanOrEqual(beforeEvictions + 1);
+
+    const beforeDrops = getCounter(before, allowlistDropMetric);
+    const afterDrops = await waitForRelayEventCounterAtLeast(relay.port, allowlistDropMetric, beforeDrops + 1, { timeoutMs: 8_000 });
+    expect(getCounter(afterDrops, allowlistDropMetric)).toBeGreaterThanOrEqual(beforeDrops + 1);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echoA?.close(), echoB?.close()]);
+  }
+});
+
 test("relays a UDP datagram via a Chromium WebRTC DataChannel using negotiated v2 IPv4 framing", async ({ page }) => {
   const echo = await startUdpEchoServer("udp4", "127.0.0.1");
   const relay = await spawnRelayServer();
