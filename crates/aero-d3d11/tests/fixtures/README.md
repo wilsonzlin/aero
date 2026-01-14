@@ -73,6 +73,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: emits three `SV_Position` vertices (triangle strip) to form a large
     triangle covering the center of the render target.
+  * Note: the token stream uses `emit` (`OPCODE_EMIT = 0x43`) and `cut`
+    (`OPCODE_CUT = 0x44`) opcode IDs from `aero_d3d11::sm4::opcode` (do not
+    confuse with `emit_then_cut` / `emit_then_cut_stream`, which use opcode IDs
+    `0x3f` / `0x40`).
 * `hs_minimal.dxbc`
   * Shader model: `hs_5_0`
   * Chunks: `ISGN`, `OSGN`, `PCSG`, `SHEX`
