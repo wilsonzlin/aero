@@ -53,6 +53,59 @@ fn iso_from_dir_is_deterministic_and_filters_host_metadata() -> anyhow::Result<(
 
 #[cfg(target_os = "linux")]
 #[test]
+fn iso_from_dir_rejects_case_insensitive_colliding_files() -> anyhow::Result<()> {
+    let input = tempfile::tempdir()?;
+    let root = input.path();
+
+    fs::write(root.join("Foo.txt"), b"foo\n")?;
+    fs::write(root.join("foo.txt"), b"bar\n")?;
+
+    let out = tempfile::tempdir()?;
+    let iso = out.path().join("out.iso");
+
+    let err = aero_packager::write_iso9660_joliet_from_dir(root, &iso, "TEST_VOL", 0).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("case-insensitive path collision"),
+        "unexpected error: {msg}"
+    );
+    assert!(msg.contains("foo.txt"), "unexpected error: {msg}");
+    assert!(msg.contains("Foo.txt"), "unexpected error: {msg}");
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn iso_from_dir_rejects_case_insensitive_colliding_dirs() -> anyhow::Result<()> {
+    let input = tempfile::tempdir()?;
+    let root = input.path();
+
+    fs::create_dir_all(root.join("Drivers").join("A"))?;
+    fs::create_dir_all(root.join("drivers").join("a"))?;
+
+    fs::write(root.join("Drivers").join("A").join("one.txt"), b"one\n")?;
+    fs::write(root.join("drivers").join("a").join("two.txt"), b"two\n")?;
+
+    let out = tempfile::tempdir()?;
+    let iso = out.path().join("out.iso");
+
+    let err = aero_packager::write_iso9660_joliet_from_dir(root, &iso, "TEST_VOL", 0).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("case-insensitive path collision"),
+        "unexpected error: {msg}"
+    );
+    // Ensure the collision report includes the implied directories.
+    assert!(msg.contains("drivers/a"), "unexpected error: {msg}");
+    assert!(msg.contains("Drivers/A/"), "unexpected error: {msg}");
+    assert!(msg.contains("drivers/a/"), "unexpected error: {msg}");
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn iso_from_dir_fails_on_non_utf8_paths() -> anyhow::Result<()> {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt as _;

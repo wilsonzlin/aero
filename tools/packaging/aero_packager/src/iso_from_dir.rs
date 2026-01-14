@@ -98,6 +98,8 @@ pub fn write_iso9660_joliet_from_dir(
         );
     }
 
+    crate::ensure_no_case_insensitive_path_collisions(&files)?;
+
     iso9660::write_iso9660_joliet(out_iso, volume_id, source_date_epoch, &files)
         .with_context(|| format!("write {}", out_iso.display()))?;
 
