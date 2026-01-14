@@ -2516,6 +2516,12 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
       category = "OutOfMemory";
     } else if (haystack.includes("device lost") || haystack.includes("devicelost")) {
       category = "DeviceLost";
+    } else if (haystack.includes("shader") || haystack.includes("wgsl") || haystack.includes("naga")) {
+      category = "ShaderCompile";
+    } else if (haystack.includes("pipeline") || haystack.includes("createpipeline") || haystack.includes("renderpipeline")) {
+      category = "PipelineCreate";
+    } else if (haystack.includes("surface") || haystack.includes("getcurrenttexture") || haystack.includes("canvas")) {
+      category = "Surface";
     } else if (haystack.includes("validation")) {
       category = "Validation";
     }
