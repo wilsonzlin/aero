@@ -216,6 +216,32 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("hdd");
   });
 
+  it("ignores inherited machine CPU active boot device reports", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
+
+    // Inherited bootDevice should be ignored.
+    const msg = Object.create({ bootDevice: "cdrom" });
+    msg.type = "machineCpu.bootDeviceActive";
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, msg);
+    expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
+
+    // Inherited type tag should be ignored.
+    const msg2 = Object.create({ type: "machineCpu.bootDeviceActive" });
+    msg2.bootDevice = "cdrom";
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, msg2);
+    expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
+  });
+
   it("tracks the machine CPU worker's boot config reports", () => {
     const coordinator = new WorkerCoordinator();
 
