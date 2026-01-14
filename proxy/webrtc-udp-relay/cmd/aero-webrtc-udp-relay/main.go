@@ -58,6 +58,16 @@ func main() {
 		"listen_addr", cfg.ListenAddr,
 		"public_base_url", cfg.PublicBaseURL,
 		"mode", cfg.Mode,
+		"max_datagram_payload_bytes", cfg.MaxDatagramPayloadBytes,
+		"l2_max_message_bytes", cfg.L2MaxMessageBytes,
+		"webrtc_datachannel_max_message_bytes", cfg.WebRTCDataChannelMaxMessageBytes,
+		"webrtc_sctp_max_receive_buffer_bytes", cfg.WebRTCSCTPMaxReceiveBufferBytes,
+		"webrtc_session_connect_timeout", cfg.WebRTCSessionConnectTimeout,
+		"udp_inbound_filter_mode", cfg.UDPInboundFilterMode,
+		"max_sessions", cfg.MaxSessions,
+		"prefer_v2", cfg.PreferV2,
+		"l2_backend_ws_url_set", cfg.L2BackendWSURL != "",
+		"l2_backend_ws_host", safeURLHost(cfg.L2BackendWSURL),
 	)
 
 	destPolicy, err := policy.NewDestinationPolicyFromEnv()
