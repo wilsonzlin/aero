@@ -37,13 +37,6 @@ use crate::{
     pack_rgba8_to_b5g6r5_unorm, readback_depth32f, readback_rgba8, readback_stencil8,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-static HEADLESS_PRIMARY_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
-#[cfg(not(target_arch = "wasm32"))]
-static HEADLESS_GL_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
-#[cfg(not(target_arch = "wasm32"))]
-static HEADLESS_ALL_INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
-
 #[cfg(target_arch = "wasm32")]
 fn compute_wgpu_caps_hash(device: &wgpu::Device, downlevel_flags: wgpu::DownlevelFlags) -> String {
     // This hash is included in the persistent shader cache key to avoid reusing translation output
@@ -142,7 +135,6 @@ pub struct AerogpuD3d9Executor {
     clear_color_buffer: wgpu::Buffer,
     clear_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     clear_depth_pipelines: HashMap<ClearDepthPipelineKey, wgpu::RenderPipeline>,
-    clear_dummy_color_targets: HashMap<(u32, u32), ClearDummyColorTarget>,
 
     presented_scanouts: HashMap<u32, u32>,
 
@@ -1433,12 +1425,6 @@ struct ClearDepthPipelineKey {
     write_stencil: bool,
 }
 
-struct ClearDummyColorTarget {
-    #[allow(dead_code)]
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-}
-
 /// Configuration for [`AerogpuD3d9Executor`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AerogpuD3d9ExecutorConfig {
@@ -1881,7 +1867,6 @@ impl AerogpuD3d9Executor {
             clear_color_buffer,
             clear_pipelines: HashMap::new(),
             clear_depth_pipelines: HashMap::new(),
-            clear_dummy_color_targets: HashMap::new(),
             presented_scanouts: HashMap::new(),
             triangle_fan_index_buffers: HashMap::new(),
             contexts: HashMap::new(),
@@ -1943,7 +1928,6 @@ impl AerogpuD3d9Executor {
         self.pipeline_layouts.clear();
         self.clear_pipelines.clear();
         self.clear_depth_pipelines.clear();
-        self.clear_dummy_color_targets.clear();
         self.triangle_fan_index_buffers.clear();
         self.contexts.clear();
         self.current_context_id = 0;
@@ -7896,39 +7880,6 @@ impl AerogpuD3d9Executor {
         self.clear_depth_pipelines.get(&key).expect(
             "missing clear depth pipeline; ensure_clear_depth_pipeline should be called first",
         )
-    }
-
-    fn ensure_clear_dummy_color_target(&mut self, width: u32, height: u32) {
-        let key = (width, height);
-        if self.clear_dummy_color_targets.contains_key(&key) {
-            return;
-        }
-
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aerogpu-d3d9.clear_dummy_color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.clear_dummy_color_targets
-            .insert(key, ClearDummyColorTarget { texture, view });
-    }
-
-    fn clear_dummy_color_view(&self, width: u32, height: u32) -> &wgpu::TextureView {
-        &self
-            .clear_dummy_color_targets
-            .get(&(width, height))
-            .expect("missing clear dummy color target; ensure_clear_dummy_color_target should be called first")
-            .view
     }
 
     fn ensure_clear_pipeline(&mut self, format: wgpu::TextureFormat) {
