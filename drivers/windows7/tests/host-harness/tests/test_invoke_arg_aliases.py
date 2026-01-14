@@ -187,6 +187,40 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_net_link_flap)
 
+    def test_require_net_csum_offload_aliases_set_flag(self) -> None:
+        for flag in (
+            "--require-net-csum-offload",
+            "--require-virtio-net-csum-offload",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.require_net_csum_offload)
+
+    def test_require_net_udp_csum_offload_aliases_set_flag(self) -> None:
+        for flag in (
+            "--require-net-udp-csum-offload",
+            "--require-virtio-net-udp-csum-offload",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.require_net_udp_csum_offload)
+
     def test_virtio_input_media_keys_aliases_set_flag(self) -> None:
         for flag in (
             "--with-input-media-keys",

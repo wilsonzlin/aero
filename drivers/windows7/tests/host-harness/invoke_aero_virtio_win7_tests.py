@@ -3454,6 +3454,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-net-csum-offload",
+        "--require-virtio-net-csum-offload",
         action="store_true",
         help=(
             "Require at least one checksum-offloaded packet from the virtio-net driver. "
@@ -3464,6 +3465,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-net-udp-csum-offload",
+        "--require-virtio-net-udp-csum-offload",
         action="store_true",
         help=(
             "Require at least one UDP checksum-offloaded TX packet from the virtio-net driver. "
