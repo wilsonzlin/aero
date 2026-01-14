@@ -6312,10 +6312,18 @@ static std::string WaveFormatToString(const WAVEFORMATEX* fmt) {
                      : fmt->wFormatTag == 0x0 ? "unknown"
                                               : "other";
 
+  unsigned valid_bits = fmt->wBitsPerSample;
+  if (WaveFormatIsExtensible(fmt)) {
+    const auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(fmt);
+    if (ext->Samples.wValidBitsPerSample != 0 && ext->Samples.wValidBitsPerSample <= fmt->wBitsPerSample) {
+      valid_bits = static_cast<unsigned>(ext->Samples.wValidBitsPerSample);
+    }
+  }
+
   char buf[256];
-  snprintf(buf, sizeof(buf), "tag=0x%04x type=%s rate=%lu ch=%u bits=%u align=%u",
+  snprintf(buf, sizeof(buf), "tag=0x%04x type=%s rate=%lu ch=%u bits=%u valid=%u align=%u",
            static_cast<unsigned>(fmt->wFormatTag), type, static_cast<unsigned long>(fmt->nSamplesPerSec),
-           static_cast<unsigned>(fmt->nChannels), static_cast<unsigned>(fmt->wBitsPerSample),
+           static_cast<unsigned>(fmt->nChannels), static_cast<unsigned>(fmt->wBitsPerSample), valid_bits,
            static_cast<unsigned>(fmt->nBlockAlign));
   return std::string(buf);
 }
