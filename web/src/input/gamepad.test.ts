@@ -333,7 +333,7 @@ describe("GamepadCapture", () => {
       connected: boolean;
     };
 
-    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: true };
+    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: false };
     let pad1: StubGamepad = { buttons: makeButtons([1]), axes: [0, 0, 0, 0], index: 1, connected: true };
 
     const capture = new GamepadCapture({
@@ -342,22 +342,23 @@ describe("GamepadCapture", () => {
     });
     const queue = new InputEventQueue(16);
 
-    // First poll should choose the first connected pad (pad0) and emit its state.
+    // First poll should choose the first connected pad (pad1) and emit its state.
     capture.poll(queue, 1, { active: true });
     expect(queue.size).toBe(1);
 
-    // Changes to the inactive pad should be ignored (no flip-flop).
-    pad1 = { ...pad1, axes: [1, 0, 0, 0] };
+    // If another pad becomes connected later, the capture should keep using the
+    // existing active pad (no flip-flop).
+    pad0 = { ...pad0, connected: true };
     capture.poll(queue, 2, { active: true });
     expect(queue.size).toBe(1);
 
-    // Changes to the active pad should be emitted...
+    // Changes to the inactive pad should be ignored...
     pad0 = { ...pad0, axes: [1, 0, 0, 0] };
     capture.poll(queue, 3, { active: true });
-    expect(queue.size).toBe(2);
+    expect(queue.size).toBe(1);
 
-    // ...and further changes to the inactive pad should still be ignored.
-    pad1 = { ...pad1, axes: [0, 0, 0, 0] };
+    // ...but changes to the active pad should be emitted.
+    pad1 = { ...pad1, axes: [1, 0, 0, 0] };
     capture.poll(queue, 4, { active: true });
     expect(queue.size).toBe(2);
 
@@ -373,8 +374,8 @@ describe("GamepadCapture", () => {
     const words = new Int32Array(state.posted.buffer);
     expect(words[0]).toBe(2);
 
-    const expected1 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
-    const expected2 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 127, y: 0, rx: 0, ry: 0 });
+    const expected1 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expected2 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 127, y: 0, rx: 0, ry: 0 });
 
     const base = 2;
     const ev0 = base + 0 * 4;
@@ -385,7 +386,7 @@ describe("GamepadCapture", () => {
 
     const ev1 = base + 1 * 4;
     expect(words[ev1]).toBe(InputEventType.GamepadReport);
-    expect(words[ev1 + 1]).toBe(3);
+    expect(words[ev1 + 1]).toBe(4);
     expect(words[ev1 + 2] >>> 0).toBe(expected2.packedLo >>> 0);
     expect(words[ev1 + 3] >>> 0).toBe(expected2.packedHi >>> 0);
   });
