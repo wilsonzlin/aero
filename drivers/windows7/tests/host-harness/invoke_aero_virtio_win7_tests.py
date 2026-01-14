@@ -2876,7 +2876,15 @@ def main() -> int:
                         irq_diag_carry = _update_virtio_irq_markers_from_chunk(
                             irq_diag_markers, chunk2, carry=irq_diag_carry
                         )
+                        virtio_blk_marker_line, virtio_blk_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_blk_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|",
+                            carry=virtio_blk_marker_carry,
+                        )
                         tail += chunk2
+                        if len(tail) > 131072:
+                            tail = tail[-131072:]
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
                         if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
