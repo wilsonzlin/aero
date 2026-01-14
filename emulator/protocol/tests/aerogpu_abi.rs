@@ -3023,6 +3023,7 @@ fn rust_layout_matches_c_headers() {
         1u64 << 31
     );
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED"), 2);
 
     assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1);
