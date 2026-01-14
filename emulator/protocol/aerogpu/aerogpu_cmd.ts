@@ -983,6 +983,105 @@ export function decodeCmdUploadResourcePayloadFromPacket(packet: AerogpuCmdPacke
   };
 }
 
+export interface AerogpuCmdCopyBufferPayload {
+  dstBuffer: AerogpuHandle;
+  srcBuffer: AerogpuHandle;
+  dstOffsetBytes: bigint;
+  srcOffsetBytes: bigint;
+  sizeBytes: bigint;
+  flags: number;
+  reserved0: number;
+}
+
+export function decodeCmdCopyBufferPayload(bytes: Uint8Array, packetOffset = 0): AerogpuCmdCopyBufferPayload {
+  return decodeCmdCopyBufferPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdCopyBufferPayloadFromPacket(packet: AerogpuCmdPacket): AerogpuCmdCopyBufferPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.CopyBuffer) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected COPY_BUFFER)`);
+  }
+  const expectedPayloadLen = AEROGPU_CMD_COPY_BUFFER_SIZE - AEROGPU_CMD_HDR_SIZE;
+  if (packet.payload.byteLength < expectedPayloadLen) {
+    throw new Error("Buffer too small for COPY_BUFFER payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const dstBuffer = view.getUint32(0, true);
+  const srcBuffer = view.getUint32(4, true);
+  const dstOffsetBytes = view.getBigUint64(8, true);
+  const srcOffsetBytes = view.getBigUint64(16, true);
+  const sizeBytes = view.getBigUint64(24, true);
+  const flags = view.getUint32(32, true);
+  const reserved0 = view.getUint32(36, true);
+  return { dstBuffer, srcBuffer, dstOffsetBytes, srcOffsetBytes, sizeBytes, flags, reserved0 };
+}
+
+export interface AerogpuCmdCopyTexture2dPayload {
+  dstTexture: AerogpuHandle;
+  srcTexture: AerogpuHandle;
+  dstMipLevel: number;
+  dstArrayLayer: number;
+  srcMipLevel: number;
+  srcArrayLayer: number;
+  dstX: number;
+  dstY: number;
+  srcX: number;
+  srcY: number;
+  width: number;
+  height: number;
+  flags: number;
+  reserved0: number;
+}
+
+export function decodeCmdCopyTexture2dPayload(bytes: Uint8Array, packetOffset = 0): AerogpuCmdCopyTexture2dPayload {
+  return decodeCmdCopyTexture2dPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdCopyTexture2dPayloadFromPacket(packet: AerogpuCmdPacket): AerogpuCmdCopyTexture2dPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.CopyTexture2d) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected COPY_TEXTURE2D)`);
+  }
+  const expectedPayloadLen = AEROGPU_CMD_COPY_TEXTURE2D_SIZE - AEROGPU_CMD_HDR_SIZE;
+  if (packet.payload.byteLength < expectedPayloadLen) {
+    throw new Error("Buffer too small for COPY_TEXTURE2D payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const dstTexture = view.getUint32(0, true);
+  const srcTexture = view.getUint32(4, true);
+  const dstMipLevel = view.getUint32(8, true);
+  const dstArrayLayer = view.getUint32(12, true);
+  const srcMipLevel = view.getUint32(16, true);
+  const srcArrayLayer = view.getUint32(20, true);
+  const dstX = view.getUint32(24, true);
+  const dstY = view.getUint32(28, true);
+  const srcX = view.getUint32(32, true);
+  const srcY = view.getUint32(36, true);
+  const width = view.getUint32(40, true);
+  const height = view.getUint32(44, true);
+  const flags = view.getUint32(48, true);
+  const reserved0 = view.getUint32(52, true);
+  return {
+    dstTexture,
+    srcTexture,
+    dstMipLevel,
+    dstArrayLayer,
+    srcMipLevel,
+    srcArrayLayer,
+    dstX,
+    dstY,
+    srcX,
+    srcY,
+    width,
+    height,
+    flags,
+    reserved0,
+  };
+}
+
 export interface AerogpuCmdSetVertexBuffersBindingsPayload {
   startSlot: number;
   bufferCount: number;
@@ -1561,6 +1660,18 @@ export class AerogpuCmdWriter {
    * back to the legacy `stage=PIXEL, reserved0=0` form.
    */
   createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
+    // CREATE_SHADER_DXBC uses `reserved0` for the stage_ex ABI extension.
+    //
+    // Encoding mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`:
+    // - Legacy shaders (VS/PS/CS): `stage = VERTEX/PIXEL/COMPUTE` and `reserved0 = 0`.
+    // - stage_ex shaders (GS/HS/DS): `stage = COMPUTE` and `reserved0` is a non-zero DXBC program
+    //   type tag (2/3/4).
+    // `reserved0 == 0` must remain the legacy/default encoding (old guests always wrote 0 into
+    // reserved fields), so the DXBC program-type value `0 = Pixel` is not encodable here.
+    if ((stageEx >>> 0) === AerogpuShaderStageEx.Pixel) {
+      throw new Error("CREATE_SHADER_DXBC stage_ex cannot encode DXBC Pixel program type (0)");
+    }
+
     const [stage, reserved0] = encodeStageEx(stageEx);
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);

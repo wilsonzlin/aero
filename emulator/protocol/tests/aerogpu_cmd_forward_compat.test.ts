@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   AEROGPU_CMD_BIND_SHADERS_SIZE,
+  AEROGPU_CMD_COPY_BUFFER_SIZE,
+  AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_DISPATCH_SIZE,
@@ -20,6 +22,8 @@ import {
   AerogpuCmdOpcode,
   decodeCmdBindShadersPayload,
   decodeCmdBindShadersPayloadFromPacket,
+  decodeCmdCopyBufferPayload,
+  decodeCmdCopyTexture2dPayload,
   decodeCmdCreateShaderDxbcPayload,
   decodeCmdDispatchPayload,
   decodeCmdStreamView,
@@ -31,6 +35,13 @@ import { AEROGPU_ABI_VERSION_U32 } from "../aerogpu/aerogpu_pci.ts";
 
 function pushU32(out: number[], v: number): void {
   out.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff);
+}
+
+function pushU64(out: number[], v: bigint): void {
+  const lo = Number(v & 0xffff_ffffn);
+  const hi = Number((v >> 32n) & 0xffff_ffffn);
+  pushU32(out, lo);
+  pushU32(out, hi);
 }
 
 function buildStream(withTrailing: boolean): Uint8Array {
@@ -169,6 +180,68 @@ test("DISPATCH decoder accepts trailing bytes in cmd.size_bytes", () => {
   assert.equal(decoded.groupCountX, 1);
   assert.equal(decoded.groupCountY, 2);
   assert.equal(decoded.groupCountZ, 3);
+  assert.equal(decoded.reserved0, 0);
+});
+
+test("COPY_BUFFER decoder accepts trailing bytes in cmd.size_bytes", () => {
+  const bytes: number[] = [];
+  pushU32(bytes, AerogpuCmdOpcode.CopyBuffer);
+  pushU32(bytes, AEROGPU_CMD_COPY_BUFFER_SIZE + 4);
+  pushU32(bytes, 1); // dst_buffer
+  pushU32(bytes, 2); // src_buffer
+  pushU64(bytes, 3n); // dst_offset_bytes
+  pushU64(bytes, 4n); // src_offset_bytes
+  pushU64(bytes, 5n); // size_bytes
+  pushU32(bytes, 6); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0xdead_beef);
+
+  const out = new Uint8Array(bytes);
+  const decoded = decodeCmdCopyBufferPayload(out, 0);
+  assert.equal(decoded.dstBuffer, 1);
+  assert.equal(decoded.srcBuffer, 2);
+  assert.equal(decoded.dstOffsetBytes, 3n);
+  assert.equal(decoded.srcOffsetBytes, 4n);
+  assert.equal(decoded.sizeBytes, 5n);
+  assert.equal(decoded.flags, 6);
+  assert.equal(decoded.reserved0, 0);
+});
+
+test("COPY_TEXTURE2D decoder accepts trailing bytes in cmd.size_bytes", () => {
+  const bytes: number[] = [];
+  pushU32(bytes, AerogpuCmdOpcode.CopyTexture2d);
+  pushU32(bytes, AEROGPU_CMD_COPY_TEXTURE2D_SIZE + 4);
+  pushU32(bytes, 10); // dst_texture
+  pushU32(bytes, 11); // src_texture
+  pushU32(bytes, 0); // dst_mip_level
+  pushU32(bytes, 0); // dst_array_layer
+  pushU32(bytes, 1); // src_mip_level
+  pushU32(bytes, 2); // src_array_layer
+  pushU32(bytes, 3); // dst_x
+  pushU32(bytes, 4); // dst_y
+  pushU32(bytes, 5); // src_x
+  pushU32(bytes, 6); // src_y
+  pushU32(bytes, 7); // width
+  pushU32(bytes, 8); // height
+  pushU32(bytes, 9); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0xdead_beef);
+
+  const out = new Uint8Array(bytes);
+  const decoded = decodeCmdCopyTexture2dPayload(out, 0);
+  assert.equal(decoded.dstTexture, 10);
+  assert.equal(decoded.srcTexture, 11);
+  assert.equal(decoded.dstMipLevel, 0);
+  assert.equal(decoded.dstArrayLayer, 0);
+  assert.equal(decoded.srcMipLevel, 1);
+  assert.equal(decoded.srcArrayLayer, 2);
+  assert.equal(decoded.dstX, 3);
+  assert.equal(decoded.dstY, 4);
+  assert.equal(decoded.srcX, 5);
+  assert.equal(decoded.srcY, 6);
+  assert.equal(decoded.width, 7);
+  assert.equal(decoded.height, 8);
+  assert.equal(decoded.flags, 9);
   assert.equal(decoded.reserved0, 0);
 });
 
