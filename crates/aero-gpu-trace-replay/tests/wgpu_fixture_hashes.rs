@@ -160,6 +160,26 @@ fn replays_aerogpu_cmd_depth_test_fixture_and_matches_hash() {
 }
 
 #[test]
+fn replays_aerogpu_cmd_constant_buffer_vs_matrix_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path(
+        "aerogpu_cmd_constant_buffer_vs_matrix.aerogputrace",
+    ))
+    .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Expected frame is solid transparent black (RGBA = [0,0,0,0]).
+        assert_eq!(
+            hash,
+            "644c2a04bcf31fa9c768669a335ee70bd4efba4c445120288f4efeec38d52b5b"
+        );
+    });
+}
+
+#[test]
 fn replays_aerogpu_cmd_scissor_test_fixture_and_matches_hash() {
     let bytes = fs::read(fixture_path("aerogpu_cmd_scissor_test.aerogputrace"))
         .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
