@@ -8536,13 +8536,20 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
         KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
 
         ULONG enable = adapter->IrqEnableMask;
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->InterruptRegistered) {
+        if (adapter->InterruptRegistered) {
             /*
-             * Ensure fence + error IRQs remain enabled post-restart. dxgkrnl may toggle vblank
-             * and fence interrupts through DxgkDdiControlInterrupt; we only force the baseline
-             * bits required for forward progress and diagnostics.
+             * Ensure baseline IRQ delivery is restored post-restart.
+             *
+             * - ERROR: some device models latch ERROR as a level-triggered interrupt; the ISR masks
+             *   it off to avoid storms. RestartFromTimeout clears DeviceErrorLatched so we must
+             *   re-enable ERROR delivery for future diagnostics.
+             * - FENCE: required for forward progress on the v1 ABI; legacy devices deliver fences
+             *   via INT_STATUS/ACK and do not use IRQ_ENABLE for fence completion.
              */
-            enable |= (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR);
+            enable |= AEROGPU_IRQ_ERROR;
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                enable |= AEROGPU_IRQ_FENCE;
+            }
         }
 
         adapter->IrqEnableMask = enable;
