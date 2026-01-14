@@ -182,6 +182,23 @@ class QmpMsixParsingTests(unittest.TestCase):
         self.assertEqual(blk.msix_enabled, False)
         self.assertEqual(blk.bdf(), "00:04.0")
 
+    def test_hmp_info_pci_parses_vendor_id_device_id_format(self) -> None:
+        h = self.harness
+        info_pci = "\n".join(
+            [
+                "Bus 0, device 8, function 0:",
+                "  Vendor ID: 0x1af4 Device ID: 0x1041",
+                "    MSI-X: enabled",
+                "",
+            ]
+        )
+        infos = h._parse_hmp_info_pci_msix_info(info_pci)
+        self.assertEqual(len(infos), 1)
+        self.assertEqual(infos[0].vendor_id, 0x1AF4)
+        self.assertEqual(infos[0].device_id, 0x1041)
+        self.assertEqual(infos[0].bdf(), "00:08.0")
+        self.assertEqual(infos[0].msix_enabled, True)
+
     def test_require_virtio_snd_msix_disabled_token(self) -> None:
         h = self.harness
 
