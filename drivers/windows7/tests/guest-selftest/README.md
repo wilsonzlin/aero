@@ -12,9 +12,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
 - **virtio-blk**
   - Detect a virtio disk device (SetupAPI hardware IDs).
   - Query the `aero_virtio_blk` miniport (via `IOCTL_SCSI_MINIPORT`) and validate basic configuration/feature bits.
-    - When the miniport reports the v2+ IOCTL payload, the virtio-blk machine marker also includes StorPort recovery
-      counters for log scraping:
-      `abort_srb`, `reset_device_srb`, `reset_bus_srb`, `pnp_srb`, `ioctl_reset`.
+    - When the miniport reports the v2+ IOCTL payload, the virtio-blk per-test marker also includes StorPort recovery
+      counters for log scraping: `abort_srb`, `reset_device_srb`, `reset_bus_srb`, `pnp_srb`, `ioctl_reset`.
+    - Newer selftest builds also emit a dedicated machine-readable marker for these counters (and
+      `capacity_change_events`):
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=...`
   - Optional interrupt-mode expectation:
     - Enable with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`).
     - When enabled, the virtio-blk test **FAIL**s if the miniport reports it is still operating in **INTx**
@@ -263,6 +266,7 @@ The host harness parses these markers from COM1 serial:
   # virtio-blk additionally includes MSI-X routing fields and basic I/O throughput metrics (VIRTIO_BLK_IO).
   # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-<dev>|PASS` with no extra fields.
   AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
+  AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|ioctl_reset=0|capacity_change_events=0
   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
   AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
   AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|...
