@@ -7,8 +7,29 @@
 "\x20\x00\x00\x00"
 # 16 (TOC header size / blob header size)
 "\x10\x00\x00\x00"
+# 8 (record header size)
+"\x08\x00\x00\x00"
 # 48 (TOC len for 1 frame)
 "\x30\x00\x00\x00"
+# 56 (AEROGPU_SUBMISSION_RECORD_HEADER_SIZE)
+"\x38\x00\x00\x00"
+# 1 (TOC version / AEROGPU_SUBMISSION_RECORD_VERSION)
+"\x01\x00\x00\x00"
+# 2 (container version v2)
+"\x02\x00\x00\x00"
+# u32::MAX
+"\xff\xff\xff\xff"
+
+# Common little-endian u64 values used by the container format (offset/len fields).
+"\x20\x00\x00\x00\x00\x00\x00\x00"
+"\x30\x00\x00\x00\x00\x00\x00\x00"
+"\x38\x00\x00\x00\x00\x00\x00\x00"
+
+# A few high-bit u64 patterns that commonly show up in comparison-based dictionaries.
+"\x00\x00\x00\x00\x00\x00\x00\x08"
+"\x01\x00\x00\x00\x00\x00\x00\x04"
+"\x00\x00\x00\x00\x00\x00\x00\x00"
+"\x00\x00\x00\x00\x00\x00\x00\x9c"
 
 # RecordType values (first byte in RecordHeader).
 # BeginFrame
