@@ -227,7 +227,7 @@ mod device_tests {
 
 ### USB (UHCI/EHCI/xHCI + WebHID/WebUSB passthrough) tests
 
-The canonical browser USB/UHCI stack is `crates/aero-usb` (see [ADR 0015](./adr/0015-canonical-usb-stack.md)).
+The canonical browser USB stack (controllers + device models) is `crates/aero-usb` (see [ADR 0015](./adr/0015-canonical-usb-stack.md)).
 Keep correctness locked down with:
 
 - Rust unit/integration tests under `crates/aero-usb`:
