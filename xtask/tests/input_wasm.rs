@@ -190,8 +190,13 @@ fn said_rust_only_skips_node_and_npm() -> Result<(), Box<dyn std::error::Error>>
         cargo_usb.iter().any(|arg| arg == "--test"),
         "expected default input run to filter aero-usb tests (use --usb-all to remove); argv={cargo_usb:?}"
     );
-    for expected in ["uhci", "ehci", "xhci_enum_smoke", "webusb_passthrough_uhci", "xhci_webusb_passthrough"]
-    {
+    for expected in [
+        "uhci",
+        "ehci",
+        "xhci_enum_smoke",
+        "webusb_passthrough_uhci",
+        "xhci_webusb_passthrough",
+    ] {
         assert!(
             cargo_usb.iter().any(|arg| arg == expected),
             "expected `{expected}` to be part of the focused aero-usb test list; argv={cargo_usb:?}"

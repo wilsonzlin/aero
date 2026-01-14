@@ -1421,7 +1421,10 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_out_of_range_sampler_decla
 
     // Inject an out-of-range sampler declaration (tex16/samp16).
     let extra = "@group(2) @binding(32) var tex16: texture_2d<f32>;\n@group(2) @binding(33) var samp16: sampler;\n\n";
-    let wgsl_corrupt = wgsl_before.replace("@fragment\nfn fs_main", &format!("{extra}@fragment\nfn fs_main"));
+    let wgsl_corrupt = wgsl_before.replace(
+        "@fragment\nfn fs_main",
+        &format!("{extra}@fragment\nfn fs_main"),
+    );
     let cached_obj: Object = cached
         .clone()
         .dyn_into()

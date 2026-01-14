@@ -166,7 +166,7 @@ fn snapshot_restore_preserves_host_attached_xhci_device_handles() {
         &[EXTERNAL_HUB_ROOT_PORT],
         Box::new(UsbHubDevice::with_port_count(2)),
     )
-        .expect("attach hub at root port 0");
+    .expect("attach hub at root port 0");
 
     let keyboard = UsbHidKeyboardHandle::new();
     let keyboard_handle = keyboard.clone();
@@ -299,7 +299,7 @@ fn snapshot_restore_clears_xhci_webusb_host_state_behind_hub() {
         &[EXTERNAL_HUB_ROOT_PORT],
         Box::new(UsbHubDevice::with_port_count(2)),
     )
-        .expect("attach hub at root port 0");
+    .expect("attach hub at root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
     vm.usb_xhci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
@@ -418,7 +418,7 @@ fn snapshot_restore_clears_xhci_webhid_feature_report_host_state_behind_hub() {
         &[EXTERNAL_HUB_ROOT_PORT],
         Box::new(UsbHubDevice::with_port_count(2)),
     )
-        .expect("attach hub at root port 0");
+    .expect("attach hub at root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
         0x1234,

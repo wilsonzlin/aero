@@ -14249,7 +14249,9 @@ impl AerogpuD3d11Executor {
             .chain(patch_constant.bindings.iter())
         {
             if let crate::BindingKind::ExpansionStorageBuffer { read_only: false } = binding.kind {
-                if let Some(internal) = internal_buffers.iter().find(|b| b.binding == binding.binding)
+                if let Some(internal) = internal_buffers
+                    .iter()
+                    .find(|b| b.binding == binding.binding)
                 {
                     write_buffers.insert(internal.buffer as *const wgpu::Buffer);
                 }
@@ -14263,7 +14265,9 @@ impl AerogpuD3d11Executor {
             .chain(patch_constant.bindings.iter())
         {
             if let crate::BindingKind::ExpansionStorageBuffer { read_only: true } = binding.kind {
-                if let Some(internal) = internal_buffers.iter().find(|b| b.binding == binding.binding)
+                if let Some(internal) = internal_buffers
+                    .iter()
+                    .find(|b| b.binding == binding.binding)
                 {
                     if write_buffers.contains(&(internal.buffer as *const wgpu::Buffer)) {
                         bindings_to_copy.insert(binding.binding);
@@ -16369,7 +16373,8 @@ fn build_vertex_buffers_for_pipeline(
             .iter()
             .copied()
             .filter(|sig| {
-                sig.semantic_name_hash != vertex_id_hash && sig.semantic_name_hash != instance_id_hash
+                sig.semantic_name_hash != vertex_id_hash
+                    && sig.semantic_name_hash != instance_id_hash
             })
             .collect();
         if sig_sorted.is_empty() {

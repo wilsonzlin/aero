@@ -336,8 +336,11 @@ fn snapshot_restore_clears_webusb_host_state_behind_hub() {
 
     // Attach a hub at UHCI root port 0, then attach a WebUSB passthrough device behind that hub to
     // ensure `AttachedUsbDevice::reset_host_state_for_restore()` recurses through nested hubs.
-    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
-        .expect("attach hub behind UHCI root port 0");
+    vm.usb_attach_root(
+        EXTERNAL_HUB_ROOT_PORT,
+        Box::new(UsbHubDevice::with_port_count(4)),
+    )
+    .expect("attach hub behind UHCI root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
     vm.usb_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
@@ -372,8 +375,11 @@ fn snapshot_restore_clears_ehci_webusb_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_ehci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
-        .expect("attach hub behind EHCI root port 0");
+    vm.usb_ehci_attach_root(
+        EXTERNAL_HUB_ROOT_PORT,
+        Box::new(UsbHubDevice::with_port_count(4)),
+    )
+    .expect("attach hub behind EHCI root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
     vm.usb_ehci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
@@ -520,8 +526,11 @@ fn snapshot_restore_clears_webhid_feature_report_host_state_behind_hub() {
 
     // Attach a hub at UHCI root port 0, then attach a WebHID passthrough device behind that hub to
     // ensure `AttachedUsbDevice::reset_host_state_for_restore()` recurses through nested hubs.
-    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
-        .expect("attach hub behind UHCI root port 0");
+    vm.usb_attach_root(
+        EXTERNAL_HUB_ROOT_PORT,
+        Box::new(UsbHubDevice::with_port_count(4)),
+    )
+    .expect("attach hub behind UHCI root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
         0x1234,
@@ -576,8 +585,11 @@ fn snapshot_restore_clears_ehci_webhid_feature_report_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_ehci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
-        .expect("attach hub behind EHCI root port 0");
+    vm.usb_ehci_attach_root(
+        EXTERNAL_HUB_ROOT_PORT,
+        Box::new(UsbHubDevice::with_port_count(4)),
+    )
+    .expect("attach hub behind EHCI root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
         0x1234,

@@ -184,4 +184,3 @@ fn aerogpu_intx_reasserts_until_irq_ack_in_apic_mode() {
         assert_eq!(InterruptController::get_pending(&*ints), None);
     }
 }
-
