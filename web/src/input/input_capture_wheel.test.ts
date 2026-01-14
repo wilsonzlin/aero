@@ -28,6 +28,96 @@ function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
 }
 
 describe("InputCapture wheel handling", () => {
+  it("scales wheel delta based on WheelEvent.deltaMode (pixel/line/page)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // Use the same raw delta across modes so we can compare scaling directly.
+      const deltaY = 100;
+
+      (capture as any).handleWheel({
+        deltaY,
+        deltaMode: 0, // DOM_DELTA_PIXEL => scaled down by /100
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as WheelEvent);
+      capture.flushNow();
+
+      (capture as any).handleWheel({
+        deltaY,
+        deltaMode: 1, // DOM_DELTA_LINE => as-is
+        preventDefault,
+        stopPropagation,
+        timeStamp: 2,
+      } as unknown as WheelEvent);
+      capture.flushNow();
+
+      (capture as any).handleWheel({
+        deltaY,
+        deltaMode: 2, // DOM_DELTA_PAGE => scaled up by *3
+        preventDefault,
+        stopPropagation,
+        timeStamp: 3,
+      } as unknown as WheelEvent);
+      capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(3);
+      expect(stopPropagation).toHaveBeenCalledTimes(3);
+
+      expect(posted).toHaveLength(3);
+      const pixelWords = decodeFirstEventWords((posted[0] as { buffer: ArrayBuffer }).buffer);
+      const lineWords = decodeFirstEventWords((posted[1] as { buffer: ArrayBuffer }).buffer);
+      const pageWords = decodeFirstEventWords((posted[2] as { buffer: ArrayBuffer }).buffer);
+
+      // Sanity check: each flush should contain one wheel event.
+      expect(pixelWords[0]).toBe(1);
+      expect(pixelWords[2]).toBe(InputEventType.MouseWheel);
+      expect(lineWords[0]).toBe(1);
+      expect(lineWords[2]).toBe(InputEventType.MouseWheel);
+      expect(pageWords[0]).toBe(1);
+      expect(pageWords[2]).toBe(InputEventType.MouseWheel);
+
+      const pixelDz = pixelWords[4];
+      const lineDz = lineWords[4];
+      const pageDz = pageWords[4];
+
+      // DOM: deltaY > 0 is scroll down; PS/2: positive is wheel up.
+      expect(pixelDz).toBeLessThan(0);
+      expect(lineDz).toBeLessThan(0);
+      expect(pageDz).toBeLessThan(0);
+
+      // Scaling:
+      // - pixel mode is scaled down by /100
+      // - page mode is scaled up by *3 vs line
+      expect(pixelDz).toBe(-1);
+      expect(lineDz).toBe(pixelDz * 100);
+      expect(pageDz).toBe(lineDz * 3);
+
+      // Relative magnitude: page > line > pixel.
+      expect(Math.abs(pageDz)).toBeGreaterThan(Math.abs(lineDz));
+      expect(Math.abs(lineDz)).toBeGreaterThan(Math.abs(pixelDz));
+    });
+  });
+
   it("accumulates small DOM_DELTA_PIXEL wheel deltas into discrete steps", () => {
     withStubbedDocument(() => {
       const canvas = {
