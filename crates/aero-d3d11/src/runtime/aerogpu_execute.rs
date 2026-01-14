@@ -327,6 +327,8 @@ impl AerogpuCmdRuntime {
                 crate::StorageTextureFormat::R32Uint,
                 crate::StorageTextureFormat::R32Sint,
             ] {
+                #[cfg(not(target_arch = "wasm32"))]
+                device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("aero-d3d11 aerogpu dummy storage texture"),
                     size: wgpu::Extent3d {
@@ -341,10 +343,15 @@ impl AerogpuCmdRuntime {
                     usage: wgpu::TextureUsages::STORAGE_BINDING,
                     view_formats: &[],
                 });
-                dummy_storage_texture_views.insert(
-                    format,
-                    tex.create_view(&wgpu::TextureViewDescriptor::default()),
-                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    device.poll(wgpu::Maintain::Poll);
+                    if pollster::block_on(device.pop_error_scope()).is_some() {
+                        continue;
+                    }
+                }
+                dummy_storage_texture_views.insert(format, view);
             }
         }
 

@@ -1773,7 +1773,8 @@ impl AerogpuD3d11Executor {
         let mut dummy_storage_texture_views = HashMap::new();
         // Only create dummy storage textures when the device reports storage-texture support.
         // Downlevel backends like WebGL2 report `max_storage_textures_per_shader_stage=0` and will
-        // reject `STORAGE_BINDING` usage.
+        // reject `STORAGE_BINDING` usage. Some downlevel/native backends also only expose a subset
+        // of storage texture formats, so we probe format support via a validation error scope.
         if device.limits().max_storage_textures_per_shader_stage > 0 {
             for format in [
                 crate::StorageTextureFormat::Rgba8Unorm,
@@ -1793,6 +1794,8 @@ impl AerogpuD3d11Executor {
                 crate::StorageTextureFormat::R32Uint,
                 crate::StorageTextureFormat::R32Sint,
             ] {
+                #[cfg(not(target_arch = "wasm32"))]
+                device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("aerogpu_cmd dummy storage texture"),
                     size: wgpu::Extent3d {
@@ -1807,10 +1810,15 @@ impl AerogpuD3d11Executor {
                     usage: wgpu::TextureUsages::STORAGE_BINDING,
                     view_formats: &[],
                 });
-                dummy_storage_texture_views.insert(
-                    format,
-                    tex.create_view(&wgpu::TextureViewDescriptor::default()),
-                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    device.poll(wgpu::Maintain::Poll);
+                    if pollster::block_on(device.pop_error_scope()).is_some() {
+                        continue;
+                    }
+                }
+                dummy_storage_texture_views.insert(format, view);
             }
         }
 
