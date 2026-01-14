@@ -1044,9 +1044,15 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
 test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
-  const token = mintHS256JWT({
+  const tokenA = mintHS256JWT({
     sid: "sess_e2e",
-    iat: now,
+    iat: now - 10,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const tokenB = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now - 9,
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
@@ -1061,7 +1067,7 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, token }) => {
+      async ({ relayPort, tokenA, tokenB }) => {
         const waitForOpen = (ws) =>
           new Promise((resolve, reject) => {
             ws.addEventListener("open", () => resolve(), { once: true });
@@ -1141,13 +1147,13 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
           });
 
         const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${tokenA}` },
         }).then((r) => r.json());
         const iceServers = iceResp.iceServers ?? [];
 
         const ws1 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
         await waitForOpen(ws1);
-        ws1.send(JSON.stringify({ type: "auth", token }));
+        ws1.send(JSON.stringify({ type: "auth", token: tokenA }));
 
         const pc = new RTCPeerConnection({ iceServers });
         pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
@@ -1170,7 +1176,7 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
         const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
         const ws2ClosePromise = waitForClose(ws2);
         await waitForOpen(ws2);
-        ws2.send(JSON.stringify({ type: "auth", token }));
+        ws2.send(JSON.stringify({ type: "auth", token: tokenB }));
         // A valid SDP isn't required because the relay rejects on quota allocation
         // before setting the remote description. Keep this deterministic and fast.
         ws2.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "v=0" } }));
@@ -1184,7 +1190,7 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
         // The JWT sid quota key should be released once the first session is closed.
         const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
         await waitForOpen(ws3);
-        ws3.send(JSON.stringify({ type: "auth", token }));
+        ws3.send(JSON.stringify({ type: "auth", token: tokenB }));
         ws3.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: offerSDP } }));
         await waitForAnswer(ws3);
         const ws3ClosedPromise = waitForClosed(ws3);
@@ -1193,7 +1199,7 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
 
         return { ws2Res, reused: true };
       },
-      { relayPort: relay.port, token },
+      { relayPort: relay.port, tokenA, tokenB },
     );
 
     expect(res.ws2Res.errMsg?.type).toBe("error");
@@ -1209,9 +1215,15 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
 test("rejects concurrent HTTP session allocations with the same JWT sid", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
-  const token = mintHS256JWT({
+  const tokenA = mintHS256JWT({
     sid: "sess_e2e_http",
-    iat: now,
+    iat: now - 10,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const tokenB = mintHS256JWT({
+    sid: "sess_e2e_http",
+    iat: now - 9,
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
@@ -1226,12 +1238,12 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, token }) => {
+      async ({ relayPort, tokenA, tokenB }) => {
         const postJSON = async (path, body) => {
           const resp = await fetch(`http://127.0.0.1:${relayPort}${path}`, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${tokenB}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(body),
@@ -1242,7 +1254,7 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
         const sess1 = await fetch(`http://127.0.0.1:${relayPort}/session`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${tokenA}`,
           },
         });
         const sess1Status = sess1.status;
@@ -1251,7 +1263,7 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
         const sess2 = await fetch(`http://127.0.0.1:${relayPort}/session`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${tokenB}`,
           },
         });
         const sess2Status = sess2.status;
@@ -1262,7 +1274,7 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
 
         return { sess1Status, sess1Body, sess2Status, sess2JSON, webrtcOffer, offerV1 };
       },
-      { relayPort: relay.port, token },
+      { relayPort: relay.port, tokenA, tokenB },
     );
 
     expect(res.sess1Status).toBe(201);
@@ -2447,15 +2459,27 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
 
-  const queryToken = mintHS256JWT({
+  const queryTokenA = mintHS256JWT({
     sid: "sess_e2e_udp_query",
-    iat: now,
+    iat: now - 10,
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
-  const authMsgToken = mintHS256JWT({
+  const queryTokenB = mintHS256JWT({
+    sid: "sess_e2e_udp_query",
+    iat: now - 9,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const authMsgTokenA = mintHS256JWT({
     sid: "sess_e2e_udp_auth_msg",
-    iat: now,
+    iat: now - 10,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const authMsgTokenB = mintHS256JWT({
+    sid: "sess_e2e_udp_auth_msg",
+    iat: now - 9,
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
@@ -2470,7 +2494,7 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, queryToken, authMsgToken }) => {
+      async ({ relayPort, queryTokenA, queryTokenB, authMsgTokenA, authMsgTokenB }) => {
         const waitForOpen = (ws) =>
           new Promise((resolve, reject) => {
             ws.addEventListener("open", () => resolve(), { once: true });
@@ -2557,12 +2581,12 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
           });
 
         // Query-string auth path.
-        const ws1 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const ws1 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryTokenA)}`);
         const ready1Promise = waitForReady(ws1);
         await waitForOpen(ws1);
         await ready1Promise;
 
-        const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryTokenB)}`);
         const err2Promise = waitForErrorAndClose(ws2);
         await waitForOpen(ws2);
         const err2 = await err2Promise;
@@ -2572,7 +2596,7 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         await ws1ClosedPromise;
 
         // After the first session ends, the stable `sid` key should be reusable.
-        const ws1b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const ws1b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryTokenB)}`);
         const ready1bPromise = waitForReady(ws1b);
         await waitForOpen(ws1b);
         await ready1bPromise;
@@ -2584,13 +2608,13 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         const ready3Promise = waitForReady(ws3);
         await waitForOpen(ws3);
-        ws3.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        ws3.send(JSON.stringify({ type: "auth", token: authMsgTokenA }));
         await ready3Promise;
 
         const ws4 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         const err4Promise = waitForErrorAndClose(ws4);
         await waitForOpen(ws4);
-        ws4.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        ws4.send(JSON.stringify({ type: "auth", token: authMsgTokenB }));
         const err4 = await err4Promise;
 
         const ws3ClosedPromise = waitForClosed(ws3);
@@ -2600,7 +2624,7 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         const ws3b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         const ready3bPromise = waitForReady(ws3b);
         await waitForOpen(ws3b);
-        ws3b.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        ws3b.send(JSON.stringify({ type: "auth", token: authMsgTokenB }));
         await ready3bPromise;
         const ws3bClosedPromise = waitForClosed(ws3b);
         ws3b.close();
@@ -2608,7 +2632,7 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
 
         return { err2, err4 };
       },
-      { relayPort: relay.port, queryToken, authMsgToken },
+      { relayPort: relay.port, queryTokenA, queryTokenB, authMsgTokenA, authMsgTokenB },
     );
 
     expect(res.err2.errMsg?.code).toBe("session_already_active");
