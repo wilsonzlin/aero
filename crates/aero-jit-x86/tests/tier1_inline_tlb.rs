@@ -1897,7 +1897,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w64_on_pref
     // avoid calling `mmu_translate` on huge virtual addresses.
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let mut ram = vec![0u8; 0x2000];
     ram[0x1FF9..0x2000].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
@@ -1968,7 +1968,7 @@ fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w64_on_pre
     let hi_vpn = u64::MAX >> PAGE_SHIFT;
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
     let hi_page_data = 0x1000 | flags;
-    let lo_page_data = 0x0000 | flags;
+    let lo_page_data = flags;
 
     let value: u64 = 0x0807_0605_0403_0201;
     let bytes = value.to_le_bytes();
