@@ -2838,7 +2838,10 @@ impl Machine {
     /// Construct a canonical machine with an explicit vCPU count (SMP).
     ///
     /// This is a constructor-like alternative to `new(ram_size_bytes)` that lets JS opt into SMP
-    /// once `aero_machine::Machine` supports `cpu_count > 1`.
+    /// by configuring `cpu_count` for firmware topology publication (SMBIOS + ACPI).
+    ///
+    /// Note: the canonical `aero_machine::Machine` execution loop is still BSP-only today, so
+    /// `cpu_count > 1` does not (yet) run multiple vCPUs in parallel.
     pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u8) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         cfg.cpu_count = cpu_count;
