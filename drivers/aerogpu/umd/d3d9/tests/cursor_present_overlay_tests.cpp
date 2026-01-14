@@ -69,6 +69,73 @@ bool HasDrawBeforePresentEx(const uint8_t* buf, size_t capacity) {
   return saw_present && saw_draw;
 }
 
+struct CursorOverlayRenderStateObservations {
+  bool saw_present = false;
+  bool saw_draw = false;
+
+  bool saw_alpha_blend_enable = false;
+  bool saw_alpha_blend_disable_after_draw = false;
+
+  bool saw_src_blend_src_alpha = false;
+  bool saw_dst_blend_inv_src_alpha = false;
+};
+
+CursorOverlayRenderStateObservations ObserveCursorOverlayRenderStates(const uint8_t* buf, size_t capacity) {
+  CursorOverlayRenderStateObservations out{};
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return out;
+  }
+
+  // D3D9 render state IDs / values (numeric values from d3d9types.h).
+  constexpr uint32_t kD3d9RsAlphaBlendEnable = 27;
+  constexpr uint32_t kD3d9RsSrcBlend = 19;
+  constexpr uint32_t kD3d9RsDestBlend = 20;
+  constexpr uint32_t kD3d9BlendSrcAlpha = 5;
+  constexpr uint32_t kD3d9BlendInvSrcAlpha = 6;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_DRAW) {
+      out.saw_draw = true;
+    }
+
+    if (hdr->opcode == AEROGPU_CMD_SET_RENDER_STATE &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_render_state)) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_render_state*>(buf + offset);
+      if (!out.saw_draw) {
+        // Expect the cursor overlay to enable blending before it draws.
+        if (cmd->state == kD3d9RsAlphaBlendEnable && cmd->value != 0) {
+          out.saw_alpha_blend_enable = true;
+        }
+        if (cmd->state == kD3d9RsSrcBlend && cmd->value == kD3d9BlendSrcAlpha) {
+          out.saw_src_blend_src_alpha = true;
+        }
+        if (cmd->state == kD3d9RsDestBlend && cmd->value == kD3d9BlendInvSrcAlpha) {
+          out.saw_dst_blend_inv_src_alpha = true;
+        }
+      } else {
+        // After the overlay draw, the driver should restore alpha blending to its previous state.
+        if (cmd->state == kD3d9RsAlphaBlendEnable && cmd->value == 0) {
+          out.saw_alpha_blend_disable_after_draw = true;
+        }
+      }
+    }
+
+    if (hdr->opcode == AEROGPU_CMD_PRESENT_EX) {
+      out.saw_present = true;
+      break;
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  return out;
+}
+
 bool TestCursorOverlayPresentEx() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -258,6 +325,8 @@ bool TestCursorOverlayPresentEx() {
   const uint32_t saved_rs_alpha_blend = dev->render_states[27];
   const uint32_t saved_samp_addr_u = dev->sampler_states[0][1];
   const uint32_t saved_samp_min = dev->sampler_states[0][6];
+  const uint32_t saved_rs_src_blend = dev->render_states[19]; // D3DRS_SRCBLEND
+  const uint32_t saved_rs_dst_blend = dev->render_states[20]; // D3DRS_DESTBLEND
 
   // Create a systemmem cursor bitmap (as per D3D9 API requirements).
   D3D9DDIARG_CREATERESOURCE cursor{};
@@ -329,6 +398,23 @@ bool TestCursorOverlayPresentEx() {
   }
   Debug("after opcode check");
 
+  const CursorOverlayRenderStateObservations rs = ObserveCursorOverlayRenderStates(submit_buf.data(), submit_buf.size());
+  if (!Check(rs.saw_present && rs.saw_draw, "cursor overlay stream must contain DRAW + PRESENT_EX")) {
+    return false;
+  }
+  if (!Check(rs.saw_alpha_blend_enable, "cursor overlay must enable alpha blending before DRAW")) {
+    return false;
+  }
+  if (!Check(rs.saw_src_blend_src_alpha, "cursor overlay must set SRCBLEND=SRCALPHA before DRAW")) {
+    return false;
+  }
+  if (!Check(rs.saw_dst_blend_inv_src_alpha, "cursor overlay must set DESTBLEND=INVSRCALPHA before DRAW")) {
+    return false;
+  }
+  if (!Check(rs.saw_alpha_blend_disable_after_draw, "cursor overlay must restore ALPHABLENDENABLE after DRAW")) {
+    return false;
+  }
+
   // Cached device state must match pre-present values.
   if (!Check(dev->render_targets[0] == saved_rt0, "render target[0] restored")) {
     return false;
@@ -355,6 +441,12 @@ bool TestCursorOverlayPresentEx() {
     return false;
   }
   if (!Check(dev->sampler_states[0][6] == saved_samp_min, "sampler MINFILTER restored")) {
+    return false;
+  }
+  if (!Check(dev->render_states[19] == saved_rs_src_blend, "render state SRCBLEND restored")) {
+    return false;
+  }
+  if (!Check(dev->render_states[20] == saved_rs_dst_blend, "render state DESTBLEND restored")) {
     return false;
   }
 
