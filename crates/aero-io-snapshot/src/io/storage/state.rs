@@ -661,6 +661,12 @@ pub struct IdeBusMasterChannelState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdeAtaDeviceState {
+    /// Negotiated DMA transfer mode for an IDE ATA device.
+    ///
+    /// This is a compact, backward-compatible encoding used by the IDE controller snapshot:
+    /// - `0..=6`: Ultra DMA mode number (UDMA enabled).
+    /// - `0x80 | n`: Multiword DMA mode number `n` (UDMA disabled).
+    /// - `0xFF`: legacy sentinel for "UDMA disabled" with unknown MWDMA mode (accepted on restore).
     pub udma_mode: u8,
 }
 

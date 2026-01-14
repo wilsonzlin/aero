@@ -54,6 +54,34 @@ fn ide_set_features_set_transfer_mode_updates_snapshot_state() {
         IdeDriveState::Ata(s) => assert_eq!(s.udma_mode, 0),
         other => panic!("expected ATA drive state, got {other:?}"),
     }
+
+    // Switch to Multiword DMA mode 2 (0x20 | 2).
+    io.write(PRIMARY_PORTS.cmd_base + 1, 1, 0x03);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x22);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEF);
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1); // ack IRQ
+
+    let snap3 = ide.borrow().snapshot_state();
+    match &snap3.primary.drives[0] {
+        IdeDriveState::Ata(s) => assert_eq!(s.udma_mode, 0x80 | 2),
+        other => panic!("expected ATA drive state, got {other:?}"),
+    }
+
+    // IDENTIFY DEVICE should reflect the negotiated mode bits (word63/word88) for guests that
+    // re-identify after configuring transfer mode.
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    let data_port = PRIMARY_PORTS.cmd_base + 0;
+    let mut id = [0u8; SECTOR_SIZE];
+    for i in 0..(SECTOR_SIZE / 2) {
+        let w = io.read(data_port, 2) as u16;
+        id[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1); // clear IRQ
+
+    let w63 = identify_word(&id, 63);
+    let w88 = identify_word(&id, 88);
+    assert_eq!(w63 & 0xFF00, 1 << (8 + 2), "MWDMA2 should be active");
+    assert_eq!(w88 & 0xFF00, 0, "UDMA should be inactive when MWDMA selected");
 }
 
 #[test]
