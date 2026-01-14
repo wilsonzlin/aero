@@ -3162,6 +3162,58 @@ fn decodes_and_translates_lt_float_compare_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_float_compare_ignores_saturate_flag() {
+    // Like integer compares, float compares write predicate-mask bits (0xffffffff / 0) into the
+    // untyped register file. Saturate is only meaningful for numeric float results, so the decoder
+    // must ignore it.
+    let mut body = Vec::<u32>::new();
+
+    // lt_sat o0, l(1.0), l(2.0)
+    let dst = reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW);
+    let a = imm32_scalar(1.0f32.to_bits());
+    let b = imm32_scalar(2.0f32.to_bits());
+    let len_without_ext = 1u32 + dst.len() as u32 + a.len() as u32 + b.len() as u32;
+    let inst = opcode_token_with_sat(OPCODE_LT, len_without_ext);
+    assert!(
+        (inst[0] & OPCODE_EXTENDED_BIT) != 0,
+        "expected lt_sat opcode token to set OPCODE_EXTENDED_BIT"
+    );
+    assert!(
+        (inst[1] & (1u32 << 13)) != 0,
+        "expected lt_sat extended opcode token to set saturate bit"
+    );
+    body.extend_from_slice(&inst);
+    body.extend_from_slice(&dst);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    match module.instructions.first() {
+        Some(Sm4Inst::Cmp { dst, ty, .. }) => {
+            assert!(!dst.saturate);
+            assert_eq!(*ty, CmpType::F32);
+        }
+        other => panic!("expected first instruction to be Cmp, got: {other:?}"),
+    }
+}
+
+#[test]
 fn decodes_integer_compare_ignores_saturate_flag() {
     // Integer compare instructions write raw predicate mask bits (0xffffffff / 0) into the untyped
     // register file. Applying saturate would treat those bits as floats and corrupt the value, so
