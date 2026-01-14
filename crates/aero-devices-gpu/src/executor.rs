@@ -2015,7 +2015,6 @@ mod tests {
 
     #[test]
     fn process_doorbell_rejects_overflowing_ring_gpa_without_touching_memory() {
-        #[derive(Default)]
         struct PanicBus;
 
         impl MemoryBus for PanicBus {
