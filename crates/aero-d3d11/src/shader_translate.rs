@@ -5499,29 +5499,34 @@ fn emit_instructions(
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ftou", ctx)?;
             }
             Sm4Inst::F32ToF16 { dst, src } => {
-                // DXBC half-float packing layout:
-                // - pack src.xy into dst.x (u32 bits)
-                // - pack src.zw into dst.y (u32 bits)
+                // DXBC `f32tof16` converts each component to a 16-bit float bit-pattern and stores
+                // it in the low 16 bits of the destination lane (upper bits undefined/zero).
                 //
-                // WGSL `pack2x16float` returns a `u32`, but DXBC registers are untyped 32-bit
-                // lanes. Preserve the raw bits by storing `u32` into our internal `vec4<f32>`
-                // register file via `bitcast`.
+                // WGSL `pack2x16float` returns a `u32` containing 2 packed half floats; pack the
+                // input into the low half with a zero high half and mask to the low 16 bits so the
+                // resulting lane matches DXBC's per-component layout.
                 let src = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
-                let pack_xy = format!("pack2x16float(vec2<f32>(({src}).x, ({src}).y))");
-                let pack_zw = format!("pack2x16float(vec2<f32>(({src}).z, ({src}).w))");
-                let expr = format!("bitcast<vec4<f32>>(vec4<u32>({pack_xy}, {pack_zw}, 0u, 0u))");
+                let pack_x = format!("pack2x16float(vec2<f32>(({src}).x, 0.0)) & 0xffffu");
+                let pack_y = format!("pack2x16float(vec2<f32>(({src}).y, 0.0)) & 0xffffu");
+                let pack_z = format!("pack2x16float(vec2<f32>(({src}).z, 0.0)) & 0xffffu");
+                let pack_w = format!("pack2x16float(vec2<f32>(({src}).w, 0.0)) & 0xffffu");
+                let expr =
+                    format!("bitcast<vec4<f32>>(vec4<u32>({pack_x}, {pack_y}, {pack_z}, {pack_w}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f32tof16", ctx)?;
             }
             Sm4Inst::F16ToF32 { dst, src } => {
-                // DXBC half-float unpacking layout (inverse of `f32tof16` above):
-                // - unpack src.x (u32 bits) into dst.xy
-                // - unpack src.y (u32 bits) into dst.zw
+                // DXBC `f16tof32` interprets the low 16 bits of each lane as a 16-bit float bit
+                // pattern and expands it to f32.
                 //
-                // DXBC register files are untyped. Interpret the source lanes as raw bits via
-                // `bitcast<u32>` before calling WGSL `unpack2x16float`.
+                // Mask to the low 16 bits and use WGSL `unpack2x16float` (reading the low-half `.x`)
+                // to do the conversion.
                 let src_u = emit_src_vec4_u32(src, inst_index, "f16tof32", ctx)?;
+                let unpack_x = format!("unpack2x16float(({src_u}).x & 0xffffu).x");
+                let unpack_y = format!("unpack2x16float(({src_u}).y & 0xffffu).x");
+                let unpack_z = format!("unpack2x16float(({src_u}).z & 0xffffu).x");
+                let unpack_w = format!("unpack2x16float(({src_u}).w & 0xffffu).x");
                 let expr = format!(
-                    "vec4<f32>(unpack2x16float(({src_u}).x), unpack2x16float(({src_u}).y))"
+                    "vec4<f32>({unpack_x}, {unpack_y}, {unpack_z}, {unpack_w})"
                 );
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f16tof32", ctx)?;

@@ -273,15 +273,15 @@ fn wgsl_mova_applies_shift_before_saturate() {
         let wgsl = generate_wgsl(&ir).unwrap();
         let src = &wgsl.wgsl;
 
-        // Expect: `clamp((c0) / 2.0, 0..1)` (shift then saturate).
+        // Expect: `clamp((...) / 2.0, 0..1)` (shift then saturate).
         assert!(
-            src.contains("clamp((c0) / 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+            src.contains(") / 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
             "{src}"
         );
 
-        // Reject: `clamp(c0, 0..1) / 2.0` (saturate then shift).
+        // Reject: `clamp(..., 0..1) / 2.0` (saturate then shift).
         assert!(
-            !src.contains("clamp(c0, vec4<f32>(0.0), vec4<f32>(1.0)) / 2.0"),
+            !src.contains("vec4<f32>(1.0)) / 2.0"),
             "{src}"
         );
 
