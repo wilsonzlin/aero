@@ -81,6 +81,23 @@ bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --disk win7-x64.qc
 bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --print --arch x86
 ```
 
+## Verify interrupt mode (MSI/MSI-X vs INTx)
+
+The virtio-snd driver prefers **MSI/MSI-X** message-signaled interrupts when Windows provides
+them, and falls back to **INTx** automatically.
+
+During `START_DEVICE` the driver prints an always-on diagnostic line indicating which mode was
+selected:
+
+- `virtiosnd: interrupt mode: MSI/MSI-X (messages=..., all_on_vector0=...)`
+- `virtiosnd: interrupt mode: INTx`
+- `virtiosnd: interrupt mode: polling-only`
+
+To view these logs in a Windows 7 guest:
+
+- Attach a kernel debugger, or
+- Use Sysinternals **DebugView** with **Capture Kernel** enabled.
+
 ## Optional bring-up: polling-only mode (no interrupts)
 
 If you are testing against an early/buggy virtio-snd device model where interrupts are not delivered or cannot be connected, the driver supports an **opt-in** polling-only mode.
