@@ -107,6 +107,11 @@ The device reports `AEROGPU_ABI_VERSION_U32` via MMIO `AEROGPU_MMIO_REG_ABI_VERS
 
 BAR0 exposes a memory-mapped register block (`AEROGPU_PCI_BAR0_SIZE_BYTES`, currently 64 KiB).
 
+BAR1 may also be exposed as a prefetchable MMIO VRAM aperture (`AEROGPU_PCI_BAR1_SIZE_BYTES`,
+currently 64 MiB). This backs the legacy VGA/VBE compatibility path (boot display) in the canonical
+machine; the in-tree Win7 AeroGPU WDDM driver currently treats the adapter as system-memory-backed
+(i.e. BAR1 is not a dedicated WDDM VRAM segment).
+
 The key MMIO responsibilities are:
 
 1. **Discovery**

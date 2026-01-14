@@ -83,9 +83,10 @@ Defined in `aerogpu_pci.h`:
 
 BARs:
 
-- BAR0: MMIO register block, **64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES`)
-- BAR1: optional prefetchable VRAM aperture used for VGA/VBE compatibility (outside the WDDM ABI
-  defined by `aerogpu_pci.h`; see `docs/16-aerogpu-vga-vesa-compat.md`)
+- BAR0: MMIO register block, **64 KiB** (`AEROGPU_PCI_BAR0_INDEX` / `AEROGPU_PCI_BAR0_SIZE_BYTES`)
+- BAR1: prefetchable MMIO VRAM aperture, **64 MiB** (`AEROGPU_PCI_BAR1_INDEX` / `AEROGPU_PCI_BAR1_SIZE_BYTES`)
+  used for VGA/VBE compatibility (outside the current Win7 WDDM memory model; see
+  `docs/16-aerogpu-vga-vesa-compat.md`)
 
 ---
 
