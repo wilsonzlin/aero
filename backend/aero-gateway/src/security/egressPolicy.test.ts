@@ -120,3 +120,18 @@ test("host policy: TCP_REQUIRE_DNS_NAME rejects non-canonical IPv4 literals", ()
     if (!decision.allowed) assert.equal(decision.reason, "ip-literal-disallowed");
   }
 });
+
+test("host policy: allow/deny lists match IPv6 literals regardless of formatting", () => {
+  const allow = parseHostnamePatterns("2001:DB8::ABCD");
+  const block = parseHostnamePatterns("2001:db8:0:0:0:0:0:abcd");
+
+  const allowed = evaluateTcpHostPolicy("2001:db8::abcd", { allowed: allow, blocked: [], requireDnsName: false });
+  assert.equal(allowed.allowed, true);
+  if (allowed.allowed) {
+    assert.deepEqual(allowed.target, { kind: "ip", ip: "2001:0db8:0000:0000:0000:0000:0000:abcd", version: 6 });
+  }
+
+  const denied = evaluateTcpHostPolicy("2001:db8::abcd", { allowed: [], blocked: block, requireDnsName: false });
+  assert.equal(denied.allowed, false);
+  if (!denied.allowed) assert.equal(denied.reason, "blocked-by-host-policy");
+});

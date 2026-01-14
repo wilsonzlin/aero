@@ -22,6 +22,21 @@ export function normalizeIpv4Literal(ip: string): string | null {
   return `${v4[0]}.${v4[1]}.${v4[2]}.${v4[3]}`;
 }
 
+export function normalizeIpv6Literal(ip: string): string | null {
+  const v6 = parseIpv6(ip);
+  if (!v6) return null;
+
+  let out = "";
+  for (let i = 0; i < 16; i += 2) {
+    const n = (v6[i]! << 8) | v6[i + 1]!;
+    // Emit a fixed-width representation to keep comparisons stable across
+    // different IPv6 textual forms (e.g. "::1" vs "0:0:0:0:0:0:0:1").
+    const hex = n.toString(16).padStart(4, "0");
+    out = out === "" ? hex : `${out}:${hex}`;
+  }
+  return out;
+}
+
 function parseIpv4(ip: string): Uint8Array | null {
   // Manual parser: avoid allocations and regex overhead in this hot path.
   //

@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 
-import { normalizeIpv4Literal } from "./ipPolicy.js";
+import { normalizeIpv4Literal, normalizeIpv6Literal } from "./ipPolicy.js";
 
 export type HostnamePattern =
   | { kind: "exact"; hostname: string }
@@ -164,6 +164,17 @@ export function classifyTargetHost(rawHost: string): TargetHost {
 
   const version = isIP(maybeBracketedV6);
   if (version === 4 || version === 6) {
+    if (version === 6) {
+      // Normalize to a stable lowercase, expanded representation so allow/block
+      // lists match regardless of how the IPv6 literal is formatted.
+      const lower = hasAsciiHexUppercase(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6;
+      const normalized = normalizeIpv6Literal(lower) ?? lower;
+      return {
+        kind: "ip",
+        ip: normalized,
+        version,
+      };
+    }
     return {
       kind: "ip",
       ip: hasAsciiHexUppercase(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6,
