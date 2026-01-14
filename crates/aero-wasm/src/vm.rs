@@ -720,7 +720,8 @@ export function installAeroMmioTestShims() {
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
             unsafe {
-                (addr as *mut u8).write(value);
+                let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(addr as usize);
+                dst.write(value);
             }
         }
 
@@ -728,7 +729,10 @@ export function installAeroMmioTestShims() {
             let addr = self.abs(paddr, 1);
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
-            unsafe { (addr as *const u8).read() }
+            unsafe {
+                let src: *const u8 = core::ptr::with_exposed_provenance(addr as usize);
+                src.read()
+            }
         }
 
         fn write_bytes(&self, paddr: u32, bytes: &[u8]) {
@@ -736,7 +740,8 @@ export function installAeroMmioTestShims() {
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
             unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+                let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(addr as usize);
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
             }
         }
     }
@@ -947,7 +952,8 @@ export function installAeroMmioTestShims() {
         // Safety: `a20_ptr` is provided by `WasmVm` and points into wasm linear memory.
         // Write 0/1 only (valid `bool` representation in Rust).
         unsafe {
-            (a20_ptr as *mut u8).write(1);
+            let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(a20_ptr as usize);
+            ptr.write(1);
         }
 
         let exit = vm.run_slice(128);
@@ -969,7 +975,8 @@ export function installAeroMmioTestShims() {
             "a20_enabled_ptr must be stable across reset_real_mode"
         );
         unsafe {
-            (a20_ptr2 as *mut u8).write(0);
+            let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(a20_ptr2 as usize);
+            ptr.write(0);
         }
 
         let exit = vm.run_slice(128);

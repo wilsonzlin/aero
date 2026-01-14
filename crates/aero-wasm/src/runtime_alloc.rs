@@ -78,7 +78,8 @@ impl RuntimeAllocator {
     unsafe fn init(&self) {
         // `&__heap_base as *const u8` yields the heap base pointer as a linear
         // memory address (wasm-ld provides it as a global).
-        let heap_base = unsafe { &__heap_base as *const u8 as usize };
+        let heap_base_ptr = core::ptr::addr_of!(__heap_base) as *mut u8;
+        let heap_base = heap_base_ptr as usize;
 
         // wasm-bindgen tests (and other non-worker contexts) may instantiate the module with a
         // small default linear memory. The runtime/guest layout contract assumes at least
@@ -124,7 +125,7 @@ impl RuntimeAllocator {
         unsafe {
             self.heap
                 .lock()
-                .init(heap_base as *mut u8, heap_end - heap_base);
+                .init(heap_base_ptr, heap_end - heap_base);
         }
     }
 }

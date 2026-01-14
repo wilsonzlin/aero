@@ -964,7 +964,8 @@ impl WasmJitBackend {
     fn write_u64_at(&self, addr: u32, value: u64) {
         // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
         unsafe {
-            core::ptr::write_unaligned(addr as *mut u64, value);
+            let dst: *mut u64 = core::ptr::with_exposed_provenance_mut(addr as usize);
+            core::ptr::write_unaligned(dst, value);
         }
     }
 
@@ -972,20 +973,27 @@ impl WasmJitBackend {
     fn write_u32_at(&self, addr: u32, value: u32) {
         // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
         unsafe {
-            core::ptr::write_unaligned(addr as *mut u32, value);
+            let dst: *mut u32 = core::ptr::with_exposed_provenance_mut(addr as usize);
+            core::ptr::write_unaligned(dst, value);
         }
     }
 
     #[inline]
     fn read_u64_at(&self, addr: u32) -> u64 {
         // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
-        unsafe { core::ptr::read_unaligned(addr as *const u64) }
+        unsafe {
+            let src: *const u64 = core::ptr::with_exposed_provenance(addr as usize);
+            core::ptr::read_unaligned(src)
+        }
     }
 
     #[inline]
     fn read_u32_at(&self, addr: u32) -> u32 {
         // Safety: `addr` is a wasm linear-memory pointer into the dedicated JIT ABI buffer.
-        unsafe { core::ptr::read_unaligned(addr as *const u32) }
+        unsafe {
+            let src: *const u32 = core::ptr::with_exposed_provenance(addr as usize);
+            core::ptr::read_unaligned(src)
+        }
     }
 
     fn sync_cpu_to_abi(&self, state: &aero_cpu_core::state::CpuState) {
@@ -1940,7 +1948,8 @@ export function installAeroTieredMmioTestShims() {
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
             unsafe {
-                (addr as *mut u8).write(value);
+                let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(addr as usize);
+                dst.write(value);
             }
         }
 
@@ -1948,7 +1957,10 @@ export function installAeroTieredMmioTestShims() {
             let addr = self.abs(paddr, 1);
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
-            unsafe { (addr as *const u8).read() }
+            unsafe {
+                let src: *const u8 = core::ptr::with_exposed_provenance(addr as usize);
+                src.read()
+            }
         }
 
         fn write_bytes(&self, paddr: u32, bytes: &[u8]) {
@@ -1956,7 +1968,8 @@ export function installAeroTieredMmioTestShims() {
             // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
             // exists in wasm linear memory.
             unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+                let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(addr as usize);
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
             }
         }
     }
@@ -2274,8 +2287,11 @@ export function installAeroTieredMmioTestShims() {
         // Verify the exposed table entry was updated in-place.
         // Safety: `page < table_len` is checked above and the JIT ABI contract guarantees the
         // table is stored in wasm linear memory.
-        let version_from_table =
-            unsafe { core::ptr::read_unaligned((table_ptr_after_write as *const u32).add(page)) };
+        let version_from_table = unsafe {
+            let base: *const u32 =
+                core::ptr::with_exposed_provenance(table_ptr_after_write as usize);
+            core::ptr::read_unaligned(base.add(page))
+        };
         assert_eq!(
             version_from_table, 1,
             "expected page version table entry to be incremented"
@@ -2444,7 +2460,9 @@ export function installAeroTieredMmioTestShims() {
                     // Safety: `cpu_ptr` is a wasm linear-memory pointer into the JIT ABI buffer owned by
                     // `WasmTieredVm`. The commit flag slot is a `u32` at a stable offset.
                     unsafe {
-                        core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
+                        let dst: *mut u32 =
+                            core::ptr::with_exposed_provenance_mut(commit_flag_ptr as usize);
+                        core::ptr::write_unaligned(dst, 0);
                     }
                     0x1000
                 },
@@ -2499,14 +2517,22 @@ export function installAeroTieredMmioTestShims() {
 
                 // The backend should default the commit flag to "committed" before calling into
                 // the host.
-                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                let before = unsafe {
+                    let src: *const u32 =
+                        core::ptr::with_exposed_provenance(commit_flag_ptr as usize);
+                    core::ptr::read_unaligned(src)
+                };
                 assert_eq!(
                     before, 1,
                     "commit flag should be set to 1 before host hook runs"
                 );
 
                 // Emulate the JS host rolling back guest state.
-                unsafe { core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0) };
+                unsafe {
+                    let dst: *mut u32 =
+                        core::ptr::with_exposed_provenance_mut(commit_flag_ptr as usize);
+                    core::ptr::write_unaligned(dst, 0);
+                };
 
                 JIT_EXIT_SENTINEL_I64
             },
@@ -2554,7 +2580,11 @@ export function installAeroTieredMmioTestShims() {
                 let commit_flag_ptr = cpu_ptr + COMMIT_FLAG_OFFSET;
 
                 // The backend should set the flag to 1 (committed) before calling into the host.
-                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                let before = unsafe {
+                    let src: *const u32 =
+                        core::ptr::with_exposed_provenance(commit_flag_ptr as usize);
+                    core::ptr::read_unaligned(src)
+                };
                 assert_eq!(
                     before, 1,
                     "commit flag should be set to 1 before host hook runs"
@@ -2648,7 +2678,8 @@ export function installAeroTieredMmioTestShims() {
         // Safety: `a20_ptr` is provided by `WasmTieredVm` and points into wasm linear memory.
         // Write 0/1 only (valid `bool` representation in Rust).
         unsafe {
-            (a20_ptr as *mut u8).write(1);
+            let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(a20_ptr as usize);
+            ptr.write(1);
         }
 
         let exit = vm.run_blocks(64).expect("run_blocks");
@@ -2673,7 +2704,8 @@ export function installAeroTieredMmioTestShims() {
             "a20_enabled_ptr must be stable across reset_real_mode"
         );
         unsafe {
-            (a20_ptr2 as *mut u8).write(0);
+            let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(a20_ptr2 as usize);
+            ptr.write(0);
         }
 
         let exit = vm.run_blocks(64).expect("run_blocks");
@@ -2703,8 +2735,14 @@ export function installAeroTieredMmioTestShims() {
             .expect("table_len_addr overflow");
 
         // Safety: `cpu_ptr` points into the dedicated JIT ABI buffer allocated by `WasmTieredVm`.
-        let table_ptr = unsafe { core::ptr::read_unaligned(table_ptr_addr as *const u32) };
-        let table_len = unsafe { core::ptr::read_unaligned(table_len_addr as *const u32) };
+        let table_ptr = unsafe {
+            let src: *const u32 = core::ptr::with_exposed_provenance(table_ptr_addr as usize);
+            core::ptr::read_unaligned(src)
+        };
+        let table_len = unsafe {
+            let src: *const u32 = core::ptr::with_exposed_provenance(table_len_addr as usize);
+            core::ptr::read_unaligned(src)
+        };
 
         assert!(table_len > 0, "expected non-zero code version table len");
         assert!(table_ptr != 0, "expected non-zero code version table ptr");
@@ -2736,7 +2774,7 @@ export function installAeroTieredMmioTestShims() {
         let entry_off = table_ptr
             .checked_add(page.checked_mul(4).expect("page*4 overflow"))
             .expect("entry_off overflow");
-        let entry_ptr = entry_off as *const u32;
+        let entry_ptr: *const u32 = core::ptr::with_exposed_provenance(entry_off as usize);
 
         // Safety: `entry_ptr` points inside the version table allocated by the wasm runtime.
         let before = unsafe { core::ptr::read_unaligned(entry_ptr) };
@@ -2754,8 +2792,14 @@ export function installAeroTieredMmioTestShims() {
         let table_len_addr2 = cpu_ptr2
             .checked_add(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET)
             .expect("table_len_addr2 overflow");
-        let table_ptr2 = unsafe { core::ptr::read_unaligned(table_ptr_addr2 as *const u32) };
-        let table_len2 = unsafe { core::ptr::read_unaligned(table_len_addr2 as *const u32) };
+        let table_ptr2 = unsafe {
+            let src: *const u32 = core::ptr::with_exposed_provenance(table_ptr_addr2 as usize);
+            core::ptr::read_unaligned(src)
+        };
+        let table_len2 = unsafe {
+            let src: *const u32 = core::ptr::with_exposed_provenance(table_len_addr2 as usize);
+            core::ptr::read_unaligned(src)
+        };
         assert!(
             table_len2 > 0,
             "expected non-zero code version table len after reset"
