@@ -4168,8 +4168,12 @@ impl Machine {
             return false;
         }
 
-        // Once WDDM scanout has been claimed, never fall back to the BIOS VBE/text paths until the
-        // machine is reset.
+        // Once WDDM scanout has been claimed, do not fall back to the BIOS VBE/text paths while
+        // the claim is held.
+        //
+        // Note: an explicit `SCANOUT0_ENABLE=0` write releases the WDDM claim in the AeroGPU BAR0
+        // device model (`wddm_scanout_active` becomes false), so this path is primarily defensive
+        // against inconsistent snapshot state.
         if !state.enable {
             self.display_fb.clear();
             self.display_width = 0;
