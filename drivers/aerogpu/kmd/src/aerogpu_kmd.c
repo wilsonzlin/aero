@@ -4423,7 +4423,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                                     adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
                                     adapter->FencePageVa->completed_fence = completedFence;
                                     KeMemoryBarrier();
-                                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
+                                    AeroGpuWriteRegU32(adapter,
+                                                       AEROGPU_MMIO_REG_FENCE_GPA_LO,
+                                                       adapter->FencePagePa.LowPart);
                                     AeroGpuWriteRegU32(adapter,
                                                        AEROGPU_MMIO_REG_FENCE_GPA_HI,
                                                        (ULONG)(adapter->FencePagePa.QuadPart >> 32));
@@ -4441,21 +4443,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
                             }
                         } else {
-                            if (adapter->RingVa && adapter->RingEntryCount != 0) {
-                                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
-                                AeroGpuWriteRegU32(adapter,
-                                                   AEROGPU_LEGACY_REG_RING_BASE_HI,
-                                                   (ULONG)(adapter->RingPa.QuadPart >> 32));
-                                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
-                            }
-                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
-                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
-                            adapter->RingTail = 0;
-                            adapter->LegacyRingHeadIndex = 0;
-                            adapter->LegacyRingHeadSeq = 0;
-                            adapter->LegacyRingTailSeq = 0;
-                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
-                        }
+                            /*
+                             * Defensive: BAR0 does not expose the v1 ring-control registers; we cannot
+                             * safely reprogram/stop the ring here. Do not fall back to legacy ring
+                             * registers (different ABI); leave submissions blocked instead.
+                             */
                         }
                     } else {
                         BOOLEAN ringOk = FALSE;
