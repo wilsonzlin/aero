@@ -555,7 +555,9 @@ Some bring-up entrypoints correspond primarily to **fixed-function** and legacy 
 In particular:
 
 - **Patch caps**: keep N-patch/patch caps conservative. Patch rendering entrypoints may still exist, but the caps are
-  intentionally not advertised (`D3DDEVCAPS_*PATCHES` / `MaxNpatchTessellationLevel`) so the runtime/apps prefer the core
-  triangle/VB/IB paths.
+  intentionally conservative so the runtime/apps prefer the core triangle/VB/IB paths.
+  - `D3DDEVCAPS_RTPATCHES` is advertised for the supported cubic Bezier patch subset (see “Patch rendering”), with a finite
+    `MaxNpatchTessellationLevel` (currently 64.0) to avoid unbounded tessellation requests.
+  - `D3DDEVCAPS_NPATCHES` and `D3DDEVCAPS_QUINTICRTPATCHES` are not advertised.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`). 
