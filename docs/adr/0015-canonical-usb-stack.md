@@ -149,10 +149,11 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
    - Treat this ADR as the source of truth for USB stack selection.
    - Update related docs to link to this ADR and avoid implying the legacy `crates/emulator` USB stack
      is the primary path for browser USB.
+   - See also: [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md) (broader `crates/emulator` → canonical stack plan + deletion targets).
 
 2. **Keep the legacy `aero-wasm` prototype deleted**
    - Do not reintroduce `crates/aero-wasm/src/usb_passthrough.rs` (it duplicated the passthrough
-     wire contract).
+      wire contract).
    - Ensure there is exactly one `UsbPassthroughBridge` surface in `crates/aero-wasm`, backed by
      `aero_usb::passthrough::UsbPassthroughDevice`.
 

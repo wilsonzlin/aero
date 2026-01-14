@@ -94,6 +94,12 @@ Establish a single canonical full-system “machine integration layer” crate:
 4. Migrate the main worker runtime from `WasmVm`/`WasmTieredVm` → canonical `Machine` by moving the
    full-system port/MMIO/device stepping loop into `aero-machine` (running in WASM) and using the
    existing AIPC rings as the host/device boundary (disk, GPU, audio, networking).
-5. Add deprecation markers to the old VM crates and remove remaining dependencies on them.
-6. Follow-up: refactor `crates/emulator` to consume `aero-machine`/`aero-devices` wiring (or move
-   remaining unique functionality behind shared interfaces).
+ 5. Add deprecation markers to the old VM crates and remove remaining dependencies on them.
+ 6. Follow-up: refactor `crates/emulator` to consume `aero-machine`/`aero-devices` wiring (or move
+    remaining unique functionality behind shared interfaces).
+
+See also:
+
+- [ADR 0008](./0008-canonical-vm-core.md) (canonical VM core crate)
+- [`docs/vm-crate-map.md`](../vm-crate-map.md) (canonical vs legacy crate map)
+- [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md) (`crates/emulator` → canonical stack plan + deletion targets)
