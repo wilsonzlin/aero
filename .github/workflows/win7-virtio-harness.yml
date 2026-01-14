@@ -1272,15 +1272,21 @@ jobs:
                 echo '```'
                 echo "</details>"
               fi
+              echo ""
+              echo "<details><summary>qemu.stderr.log (tail)</summary>"
+              echo ""
+              echo '```'
               if [[ -f "${qemu_stderr_log}" ]]; then
-                echo ""
-                echo "<details><summary>qemu.stderr.log (tail)</summary>"
-                echo ""
-                echo '```'
-                tail -n 200 "${qemu_stderr_log}" | tr -d '\r'
-                echo '```'
-                echo "</details>"
+                if [[ -s "${qemu_stderr_log}" ]]; then
+                  tail -n 200 "${qemu_stderr_log}" | tr -d '\r'
+                else
+                  echo "(qemu stderr log was empty)"
+                fi
+              else
+                echo "(qemu stderr log was not produced)"
               fi
+              echo '```'
+              echo "</details>"
             fi
             echo "- Logs artifact: win7-virtio-harness-logs"
             echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
