@@ -119,7 +119,7 @@ describe("io/devices/UhciPciDevice", () => {
     expect(bridge.tick_1ms).not.toHaveBeenCalled();
   });
 
-  it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2) when set_pci_command is unavailable", () => {
     const bridge: UhciControllerBridgeLike = {
       io_read: vi.fn(() => 0),
       io_write: vi.fn(),
@@ -138,6 +138,28 @@ describe("io/devices/UhciPciDevice", () => {
     dev.onPciCommandWrite(1 << 2);
     dev.tick(9);
     expect(bridge.tick_1ms).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances time while BME is off when the bridge supports set_pci_command", () => {
+    const bridge: UhciControllerBridgeLike = {
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      set_pci_command: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new UhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(8);
+    expect(bridge.tick_1ms).toHaveBeenCalledTimes(8);
+
+    // Enable bus mastering; should continue stepping without catching up.
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(9);
+    expect(bridge.tick_1ms).toHaveBeenCalledTimes(9);
   });
 
   it("suppresses INTx assertion when PCI command INTX_DISABLE bit is set", () => {
