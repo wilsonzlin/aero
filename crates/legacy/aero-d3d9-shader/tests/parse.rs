@@ -738,6 +738,30 @@ fn malformed_relative_src_missing_token_errors() {
 }
 
 #[test]
+fn malformed_relative_src_missing_token_without_param_bit_errors() {
+    // Source token sets the relative-address bit but does not have bit31 set. This is not a valid
+    // D3D9 encoding, but the parser should still treat it as malformed and avoid silently dropping
+    // relative addressing.
+    let words = [
+        0xFFFE_0200,
+        0x0300_0001, // mov len=3 (opcode + dst + src)
+        0x800F_0000, // r0
+        0x0000_2000, // r0 (relative) but missing relative register token
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_predicated_mov_missing_src_token_errors() {
     // Predicated mov with a predicate + dst but missing a src token.
     let words = [
