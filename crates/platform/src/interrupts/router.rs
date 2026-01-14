@@ -1337,4 +1337,31 @@ mod tests {
         assert_eq!(events[0].destination, 1);
         assert_eq!(events[0].vector, 0x45);
     }
+
+    #[test]
+    fn reset_lapic_preserves_icr_notifier_registration() {
+        let ints = PlatformInterrupts::new_with_cpu_count(2);
+
+        let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
+        let seen_clone = seen.clone();
+        ints.register_icr_notifier(1, Arc::new(move |icr| {
+            seen_clone.lock().unwrap().push(icr);
+        }));
+
+        // Send fixed IPI vector 0x40 from LAPIC1 -> destination 0.
+        ints.lapic_mmio_write_for_apic(1, 0x310, &((0u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(1, 0x300, &0x40u32.to_le_bytes());
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        // Reset LAPIC1 and ensure the notifier still fires.
+        seen.lock().unwrap().clear();
+        ints.reset_lapic(1);
+
+        ints.lapic_mmio_write_for_apic(1, 0x310, &((0u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(1, 0x300, &0x41u32.to_le_bytes());
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].destination, 0);
+        assert_eq!(events[0].vector, 0x41);
+    }
 }
