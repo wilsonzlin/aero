@@ -124,6 +124,57 @@ fn read_u64_from_memory(caller: &mut Caller<'_, HostState>, memory: &Memory, add
     u64::from_le_bytes(buf)
 }
 
+fn bump_code_versions(
+    caller: &mut Caller<'_, HostState>,
+    memory: &Memory,
+    cpu_ptr: i32,
+    paddr: u64,
+    len: usize,
+) {
+    if len == 0 {
+        return;
+    }
+    let cpu_ptr = cpu_ptr as usize;
+
+    let mut buf = [0u8; 4];
+    memory
+        .read(
+            &mut *caller,
+            cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+            &mut buf,
+        )
+        .unwrap();
+    let table_len = u32::from_le_bytes(buf) as u64;
+    if table_len == 0 {
+        return;
+    }
+
+    memory
+        .read(
+            &mut *caller,
+            cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+            &mut buf,
+        )
+        .unwrap();
+    let table_ptr = u32::from_le_bytes(buf) as u64;
+
+    let start_page = paddr >> PAGE_SHIFT;
+    let end = paddr.saturating_add(len as u64 - 1);
+    let end_page = end >> PAGE_SHIFT;
+
+    for page in start_page..=end_page {
+        if page >= table_len {
+            continue;
+        }
+        let addr = table_ptr as usize + page as usize * 4;
+        memory.read(&mut *caller, addr, &mut buf).unwrap();
+        let cur = u32::from_le_bytes(buf);
+        memory
+            .write(&mut *caller, addr, &cur.wrapping_add(1).to_le_bytes())
+            .unwrap();
+    }
+}
+
 fn define_mem_helpers(
     store: &mut Store<HostState>,
     linker: &mut Linker<HostState>,
@@ -265,6 +316,9 @@ fn define_mem_helpers(
                             + (JitContext::RAM_BASE_OFFSET as usize),
                     ) as usize;
                     write::<1>(&mut caller, &mem, ram_base + addr as usize, value as u64);
+                    if (addr as u64) < caller.data().ram_size {
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 1);
+                    }
                 },
             ),
         )
@@ -287,6 +341,9 @@ fn define_mem_helpers(
                             + (JitContext::RAM_BASE_OFFSET as usize),
                     ) as usize;
                     write::<2>(&mut caller, &mem, ram_base + addr as usize, value as u64);
+                    if (addr as u64) < caller.data().ram_size {
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 2);
+                    }
                 },
             ),
         )
@@ -309,6 +366,9 @@ fn define_mem_helpers(
                             + (JitContext::RAM_BASE_OFFSET as usize),
                     ) as usize;
                     write::<4>(&mut caller, &mem, ram_base + addr as usize, value as u64);
+                    if (addr as u64) < caller.data().ram_size {
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 4);
+                    }
                 },
             ),
         )
@@ -331,6 +391,9 @@ fn define_mem_helpers(
                             + (JitContext::RAM_BASE_OFFSET as usize),
                     ) as usize;
                     write::<8>(&mut caller, &mem, ram_base + addr as usize, value as u64);
+                    if (addr as u64) < caller.data().ram_size {
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 8);
+                    }
                 },
             ),
         )
@@ -677,6 +740,43 @@ fn tier2_inline_tlb_cross_page_store_uses_slow_helper() {
     let (_ret, got_ram, _gpr, host) = run_trace(&trace, ram, cpu_ptr, 0x20_000);
 
     assert_eq!(read_u32_le(&got_ram, addr as usize), 0xDDCC_BBAA);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier2_inline_tlb_cross_page_store_bumps_code_version_table_via_slow_helper() {
+    let addr = 0x1fff; // last byte of page 1
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(addr),
+            src: Operand::Const(0x1122_3344_5566_7788),
+            width: Width::W64,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let table_ptr: u32 = 0x8000;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        table_ptr,
+        &[123, u32::MAX, 5, 6],
+    );
+
+    // Cross-page store should still write the guest RAM and bump both touched pages (1 and 2).
+    assert_eq!(read_u64_le(&got_ram, addr as usize), 0x1122_3344_5566_7788);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 123);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize + 4), 0);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize + 8), 6);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize + 12), 6);
+
     assert_eq!(host.mmu_translate_calls, 0);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 1);
