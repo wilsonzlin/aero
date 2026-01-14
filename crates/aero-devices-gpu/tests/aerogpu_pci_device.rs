@@ -7,8 +7,8 @@ use aero_devices_gpu::cmd::{
 use aero_devices_gpu::executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use aero_devices_gpu::pci::AeroGpuDeviceConfig;
 use aero_devices_gpu::regs::{
-    irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC, FEATURE_ERROR_INFO,
-    FEATURE_VBLANK,
+    irq_bits, mmio, ring_control, AeroGpuFormat, AerogpuErrorCode, AEROGPU_MMIO_MAGIC,
+    FEATURE_ERROR_INFO, FEATURE_VBLANK,
 };
 use aero_devices_gpu::ring::{
     AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
@@ -56,6 +56,19 @@ impl MemoryBus for VecMemory {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let range = self.range(paddr, buf.len());
         self.data[range].copy_from_slice(buf);
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NoDmaMemory;
+
+impl MemoryBus for NoDmaMemory {
+    fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+        panic!("unexpected DMA read while DMA is disabled");
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+        panic!("unexpected DMA write while DMA is disabled");
     }
 }
 
@@ -226,6 +239,41 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     assert_eq!(
         mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
         AEROGPU_FENCE_PAGE_MAGIC
+    );
+}
+
+#[test]
+fn pci_wrapper_gates_scanout_and_cursor_readback_on_pci_command_bme_bit() {
+    let mut mem = NoDmaMemory;
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+
+    // Enable MMIO decode but leave bus mastering disabled.
+    dev.config_mut().set_command(1 << 1);
+
+    // Program a valid scanout configuration. Even with a valid config, readback must be gated on
+    // COMMAND.BME to avoid performing DMA reads when bus mastering is disabled.
+    dev.regs.scanout0.enable = true;
+    dev.regs.scanout0.width = 1;
+    dev.regs.scanout0.height = 1;
+    dev.regs.scanout0.pitch_bytes = 4;
+    dev.regs.scanout0.fb_gpa = 0x1000;
+    dev.regs.scanout0.format = AeroGpuFormat::R8G8B8A8Unorm;
+
+    assert!(
+        dev.read_scanout0_rgba(&mut mem).is_none(),
+        "scanout readback must be gated on COMMAND.BME"
+    );
+
+    dev.regs.cursor.enable = true;
+    dev.regs.cursor.width = 1;
+    dev.regs.cursor.height = 1;
+    dev.regs.cursor.pitch_bytes = 4;
+    dev.regs.cursor.fb_gpa = 0x2000;
+    dev.regs.cursor.format = AeroGpuFormat::R8G8B8A8Unorm;
+
+    assert!(
+        dev.read_cursor_rgba(&mut mem).is_none(),
+        "cursor readback must be gated on COMMAND.BME"
     );
 }
 
