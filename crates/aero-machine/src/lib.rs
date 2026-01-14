@@ -37,7 +37,7 @@ use std::fmt;
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1931,9 +1931,10 @@ pub const VBE_LFB_OFFSET: usize = LEGACY_VGA_WINDOW_SIZE;
 /// Total VRAM size exposed via AeroGPU BAR1.
 const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
 
-/// Minimal AeroGPU runtime state required for:
-/// - VRAM-backed legacy VGA/VBE compatibility (BAR1 + 0xA0000 alias), and
-/// - WDDM-visible scanout/vblank pacing via BAR0 MMIO registers.
+/// Minimal AeroGPU runtime state required for VRAM-backed legacy VGA/VBE compatibility.
+///
+/// Note: The versioned BAR0 MMIO register block (ring transport + scanout + vblank pacing) is
+/// implemented separately in [`AeroGpuMmioDevice`] (`crates/aero-machine/src/aerogpu.rs`).
 struct AeroGpuDevice {
     /// Dedicated VRAM backing store exposed via AeroGPU BAR1.
     vram: Vec<u8>,
@@ -1975,61 +1976,10 @@ struct AeroGpuDevice {
     dac_read_subindex: u8,
     /// Stored as VGA-native 6-bit components (0..=63).
     dac_palette: [[u8; 3]; 256],
-
-    // ---------------------------------------------------------------------
-    // BAR0 register state (versioned ABI; minimal scanout + vblank subset)
-    // ---------------------------------------------------------------------
-    abi_version: u32,
-    features: u64,
-
-    irq_status: u32,
-    irq_enable: u32,
-
-    scanout0_enable: bool,
-    scanout0_width: u32,
-    scanout0_height: u32,
-    scanout0_format: agpu_pci::AerogpuFormat,
-    scanout0_pitch_bytes: u32,
-    scanout0_fb_gpa: u64,
-
-    scanout0_vblank_seq: u64,
-    scanout0_vblank_time_ns: u64,
-    scanout0_vblank_period_ns: u32,
-
-    // ---------------------------------------------------------------------
-    // Runtime state
-    // ---------------------------------------------------------------------
-    irq_level: bool,
-    boot_time: Instant,
-    vblank_interval: Option<Duration>,
-    next_vblank: Option<Instant>,
-    wddm_scanout_active: bool,
 }
 
 impl AeroGpuDevice {
     fn new() -> Self {
-        Self::new_with_vblank_hz(Some(60))
-    }
-
-    fn new_with_vblank_hz(vblank_hz: Option<u32>) -> Self {
-        let vblank_interval = vblank_hz.and_then(|hz| {
-            if hz == 0 {
-                return None;
-            }
-            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to
-            // 16_666_666).
-            let period_ns = 1_000_000_000u64.div_ceil(hz as u64);
-            Some(Duration::from_nanos(period_ns))
-        });
-
-        let mut features = agpu_pci::AEROGPU_FEATURE_SCANOUT;
-        let scanout0_vblank_period_ns = if let Some(interval) = vblank_interval {
-            features |= agpu_pci::AEROGPU_FEATURE_VBLANK;
-            interval.as_nanos().min(u32::MAX as u128) as u32
-        } else {
-            0
-        };
-
         Self {
             vram: vec![0u8; AEROGPU_VRAM_SIZE],
             vbe_mode_active: false,
@@ -2051,25 +2001,6 @@ impl AeroGpuDevice {
             dac_read_index: 0,
             dac_read_subindex: 0,
             dac_palette: [[0; 3]; 256],
-
-            abi_version: agpu_pci::AEROGPU_ABI_VERSION_U32,
-            features,
-            irq_status: 0,
-            irq_enable: 0,
-            scanout0_enable: false,
-            scanout0_width: 0,
-            scanout0_height: 0,
-            scanout0_format: agpu_pci::AerogpuFormat::Invalid,
-            scanout0_pitch_bytes: 0,
-            scanout0_fb_gpa: 0,
-            scanout0_vblank_seq: 0,
-            scanout0_vblank_time_ns: 0,
-            scanout0_vblank_period_ns,
-            irq_level: false,
-            boot_time: Instant::now(),
-            vblank_interval,
-            next_vblank: None,
-            wddm_scanout_active: false,
         }
     }
 
@@ -2087,21 +2018,6 @@ impl AeroGpuDevice {
         self.attr_index = 0;
         self.attr_regs.fill(0);
         self.attr_flip_flop = false;
-
-        self.irq_status = 0;
-        self.irq_enable = 0;
-        self.scanout0_enable = false;
-        self.scanout0_width = 0;
-        self.scanout0_height = 0;
-        self.scanout0_format = agpu_pci::AerogpuFormat::Invalid;
-        self.scanout0_pitch_bytes = 0;
-        self.scanout0_fb_gpa = 0;
-        self.scanout0_vblank_seq = 0;
-        self.scanout0_vblank_time_ns = 0;
-        self.irq_level = false;
-        self.boot_time = Instant::now();
-        self.next_vblank = None;
-        self.wddm_scanout_active = false;
 
         self.pel_mask = 0xFF;
         self.dac_write_index = 0;
@@ -2354,247 +2270,6 @@ impl AeroGpuDevice {
 
             _ => {}
         }
-    }
-
-    fn tick(&mut self, _mem: &mut dyn memory::MemoryBus, now: Instant) {
-        // If vblank is disabled by configuration, do not advance any vblank counters.
-        let Some(interval) = self.vblank_interval else {
-            self.update_irq_level();
-            return;
-        };
-
-        // When scanout is disabled, stop vblank scheduling and clear any pending vblank IRQ.
-        if !self.scanout0_enable {
-            self.next_vblank = None;
-            self.irq_status &= !agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-            self.update_irq_level();
-            return;
-        }
-
-        let mut next = self.next_vblank.unwrap_or(now + interval);
-        if now < next {
-            self.next_vblank = Some(next);
-            self.update_irq_level();
-            return;
-        }
-
-        let mut ticks = 0u32;
-        while now >= next {
-            // Counters advance even if vblank IRQ delivery is masked.
-            self.scanout0_vblank_seq = self.scanout0_vblank_seq.wrapping_add(1);
-
-            let t_ns = next.saturating_duration_since(self.boot_time).as_nanos();
-            self.scanout0_vblank_time_ns = t_ns.min(u64::MAX as u128) as u64;
-
-            // Only latch the vblank IRQ status bit while the guest has it enabled.
-            // This prevents an immediate "stale" interrupt on re-enable.
-            if (self.irq_enable & agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK) != 0 {
-                self.irq_status |= agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-            }
-
-            next += interval;
-            ticks += 1;
-
-            // Avoid unbounded catch-up work if the host stalls for a very long time.
-            if ticks >= 1024 {
-                next = now + interval;
-                break;
-            }
-        }
-
-        self.next_vblank = Some(next);
-        self.update_irq_level();
-    }
-
-    fn irq_level(&self, pci_command: u16) -> bool {
-        // Respect COMMAND.INTX_DISABLE (bit 10).
-        if (pci_command & (1 << 10)) != 0 {
-            return false;
-        }
-        self.irq_level
-    }
-
-    fn update_irq_level(&mut self) {
-        self.irq_level = (self.irq_status & self.irq_enable) != 0;
-    }
-
-    fn mmio_read_dword(&self, offset: u64) -> u32 {
-        match u32::try_from(offset).unwrap_or(u32::MAX) {
-            agpu_pci::AEROGPU_MMIO_REG_MAGIC => agpu_pci::AEROGPU_MMIO_MAGIC,
-            agpu_pci::AEROGPU_MMIO_REG_ABI_VERSION => self.abi_version,
-            agpu_pci::AEROGPU_MMIO_REG_FEATURES_LO => (self.features & 0xffff_ffff) as u32,
-            agpu_pci::AEROGPU_MMIO_REG_FEATURES_HI => (self.features >> 32) as u32,
-
-            agpu_pci::AEROGPU_MMIO_REG_IRQ_STATUS => self.irq_status,
-            agpu_pci::AEROGPU_MMIO_REG_IRQ_ENABLE => self.irq_enable,
-
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE => self.scanout0_enable as u32,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH => self.scanout0_width,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT => self.scanout0_height,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT => self.scanout0_format as u32,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES => self.scanout0_pitch_bytes,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO => self.scanout0_fb_gpa as u32,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI => (self.scanout0_fb_gpa >> 32) as u32,
-
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO => self.scanout0_vblank_seq as u32,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI => {
-                (self.scanout0_vblank_seq >> 32) as u32
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO => {
-                self.scanout0_vblank_time_ns as u32
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI => {
-                (self.scanout0_vblank_time_ns >> 32) as u32
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS => self.scanout0_vblank_period_ns,
-
-            _ => 0,
-        }
-    }
-
-    fn mmio_write_dword(&mut self, offset: u64, value: u32) {
-        match u32::try_from(offset).unwrap_or(u32::MAX) {
-            agpu_pci::AEROGPU_MMIO_REG_IRQ_ENABLE => {
-                self.irq_enable = value;
-
-                // Clear any IRQ status bits that are now masked.
-                if (value & agpu_pci::AEROGPU_IRQ_FENCE) == 0 {
-                    self.irq_status &= !agpu_pci::AEROGPU_IRQ_FENCE;
-                }
-                if (value & agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK) == 0 {
-                    self.irq_status &= !agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                }
-
-                self.update_irq_level();
-            }
-            agpu_pci::AEROGPU_MMIO_REG_IRQ_ACK => {
-                self.irq_status &= !value;
-                self.update_irq_level();
-            }
-
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE => {
-                let new_enable = value != 0;
-                if self.scanout0_enable && !new_enable {
-                    // When scanout is disabled, stop vblank scheduling and drop any pending vblank
-                    // IRQ.
-                    self.next_vblank = None;
-                    self.irq_status &= !agpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                    self.update_irq_level();
-                }
-                if new_enable && !self.scanout0_enable {
-                    self.wddm_scanout_active = true;
-                }
-                self.scanout0_enable = new_enable;
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH => self.scanout0_width = value,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT => self.scanout0_height = value,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT => {
-                self.scanout0_format = Self::format_from_u32(value);
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES => self.scanout0_pitch_bytes = value,
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO => {
-                self.scanout0_fb_gpa =
-                    (self.scanout0_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
-            }
-            agpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI => {
-                self.scanout0_fb_gpa =
-                    (self.scanout0_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
-            }
-
-            // Ignore writes to read-only / unknown registers.
-            _ => {}
-        }
-    }
-
-    fn format_from_u32(value: u32) -> agpu_pci::AerogpuFormat {
-        match value {
-            x if x == agpu_pci::AerogpuFormat::B8G8R8A8Unorm as u32 => {
-                agpu_pci::AerogpuFormat::B8G8R8A8Unorm
-            }
-            x if x == agpu_pci::AerogpuFormat::B8G8R8X8Unorm as u32 => {
-                agpu_pci::AerogpuFormat::B8G8R8X8Unorm
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8A8Unorm as u32 => {
-                agpu_pci::AerogpuFormat::R8G8B8A8Unorm
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8X8Unorm as u32 => {
-                agpu_pci::AerogpuFormat::R8G8B8X8Unorm
-            }
-            x if x == agpu_pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
-                agpu_pci::AerogpuFormat::B8G8R8A8UnormSrgb
-            }
-            x if x == agpu_pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
-                agpu_pci::AerogpuFormat::B8G8R8X8UnormSrgb
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
-                agpu_pci::AerogpuFormat::R8G8B8A8UnormSrgb
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
-                agpu_pci::AerogpuFormat::R8G8B8X8UnormSrgb
-            }
-            _ => agpu_pci::AerogpuFormat::Invalid,
-        }
-    }
-}
-
-impl PciBarMmioHandler for AeroGpuDevice {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        if size > 8 {
-            return u64::MAX;
-        }
-        if size == 8 {
-            let lo = self.read(offset, 4);
-            let hi = self.read(offset + 4, 4);
-            return lo | (hi << 32);
-        }
-
-        let aligned = offset & !3;
-        let shift = (offset & 3) * 8;
-        let value = self.mmio_read_dword(aligned);
-        match size {
-            1 => u64::from((value >> shift) & 0xff),
-            2 => u64::from((value >> shift) & 0xffff),
-            4 => u64::from(value),
-            _ => 0,
-        }
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 || size > 8 {
-            return;
-        }
-        if size == 8 {
-            self.write(offset, 4, value & 0xffff_ffff);
-            self.write(offset + 4, 4, value >> 32);
-            return;
-        }
-
-        let aligned = offset & !3;
-        let shift = (offset & 3) * 8;
-
-        let value32 = match size {
-            1 => ((value as u32) & 0xff) << shift,
-            2 => ((value as u32) & 0xffff) << shift,
-            4 => value as u32,
-            _ => return,
-        };
-
-        let merged = if size == 4 {
-            value32
-        } else {
-            let cur = self.mmio_read_dword(aligned);
-            let mask = match size {
-                1 => 0xffu32 << shift,
-                2 => 0xffffu32 << shift,
-                _ => 0,
-            };
-            (cur & !mask) | value32
-        };
-
-        self.mmio_write_dword(aligned, merged);
     }
 }
 
