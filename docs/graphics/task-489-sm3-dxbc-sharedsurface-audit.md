@@ -156,6 +156,36 @@ Ops/features referenced by the scratchpad tasks:
 
 ---
 
+## Task 124 — D3D9 half-pixel center convention (`half_pixel_center`)
+
+**Status:** ✅ Done
+
+**What:** Optional emulation of D3D9’s classic “half-pixel offset” by nudging the final clip-space
+vertex position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex shaders.
+This is enabled via `WgslOptions::half_pixel_center` and is wired end-to-end through the D3D9
+executor.
+
+**Implementation (key files):**
+- Translation (SM3-first path): `crates/aero-d3d9/src/shader_translate.rs`
+  - `inject_half_pixel_center_sm3_vertex_wgsl` injects `@group(3) @binding(0)` `HalfPixel` uniform
+    + clip-space adjustment.
+- Translation (legacy fallback path): `crates/aero-d3d9/src/shader.rs`
+  - `WgslOptions::half_pixel_center` emits the same uniform + adjustment for the legacy
+    token-stream translator.
+- Execution: `crates/aero-gpu/src/aerogpu_d3d9_executor.rs`
+  - creates/binds the half-pixel bind group at `@group(3) @binding(0)`
+  - updates the uniform on `AeroGpuCmd::SetViewport`.
+
+**Tests:**
+- `crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs` (pixel-level rasterization shift)
+
+**How to run:**
+```bash
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_half_pixel_center --locked
+```
+
+---
+
 ## Task 125 / 400 — consistent VS↔PS varying location mapping + WGSL IO structs
 
 **Status:** ✅ Done
