@@ -69,6 +69,15 @@ pub struct TransferEvent {
     pub completion_code: CompletionCode,
 }
 
+/// Work counters returned by [`XhciTransferExecutor::poll_endpoint_counted`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TransferPollWork {
+    /// Number of non-Link transfer TRBs consumed (advanced past) by executing a TD.
+    pub trbs_consumed: usize,
+    /// Number of ring-walk steps performed (TRB fetches from guest memory).
+    pub ring_poll_steps: usize,
+}
+
 #[derive(Debug, Clone)]
 struct BufferSegment {
     paddr: u64,
@@ -79,6 +88,7 @@ struct BufferSegment {
 struct TdDescriptor {
     buffers: Vec<BufferSegment>,
     total_len: u32,
+    trbs_in_td: usize,
     last_trb_ptr: u64,
     last_ioc: bool,
     event_data: Option<u64>,
@@ -206,33 +216,36 @@ impl XhciTransferExecutor {
     }
 
     /// Attempt to process at most one TD for a specific endpoint, with a bounded ring-walk budget.
-    ///
-    /// Returns the number of ring-walk steps performed (TRB fetches from guest memory).
+    /// Returns work counters including ring-walk steps and non-Link transfer TRBs consumed.
     pub fn poll_endpoint_counted<M: MemoryBus + ?Sized>(
         &mut self,
         mem: &mut M,
         ep_addr: u8,
         step_budget: usize,
-    ) -> usize {
+    ) -> TransferPollWork {
         if !mem.dma_enabled() {
-            return 0;
+            return TransferPollWork::default();
         }
         if step_budget == 0 {
-            return 0;
+            return TransferPollWork::default();
         }
 
         let mut remaining_budget = step_budget;
+        let mut trbs_consumed = 0usize;
         // See `tick_1ms`: move the endpoint map out to avoid holding a mutable borrow of
         // `self.endpoints` while calling helpers that need `&mut self`.
         let mut endpoints = core::mem::take(&mut self.endpoints);
         if let Some(ep) = endpoints.get_mut(&ep_addr) {
             if !ep.halted {
-                self.process_one_td(mem, ep, &mut remaining_budget);
+                trbs_consumed = self.process_one_td(mem, ep, &mut remaining_budget);
             }
         }
         self.endpoints = endpoints;
 
-        step_budget.saturating_sub(remaining_budget)
+        TransferPollWork {
+            trbs_consumed,
+            ring_poll_steps: step_budget.saturating_sub(remaining_budget),
+        }
     }
 
     /// Attempt to process at most one TD for a specific endpoint.
@@ -267,7 +280,7 @@ impl XhciTransferExecutor {
                 continue;
             }
             let mut budget = usize::MAX;
-            self.process_one_td(mem, ep, &mut budget);
+            let _ = self.process_one_td(mem, ep, &mut budget);
         }
         self.endpoints = endpoints;
     }
@@ -277,17 +290,17 @@ impl XhciTransferExecutor {
         mem: &mut M,
         ep: &mut EndpointState,
         step_budget: &mut usize,
-    ) {
+    ) -> usize {
         // Advance past any link TRBs so the dequeue pointer naturally points at a transfer TRB (or
         // a not-yet-ready TRB).
         match self.skip_link_trbs(mem, ep, step_budget) {
             SkipLinkTrbsResult::Ok => {}
-            SkipLinkTrbsResult::Fault | SkipLinkTrbsResult::BudgetExhausted => return,
+            SkipLinkTrbsResult::Fault | SkipLinkTrbsResult::BudgetExhausted => return 0,
         }
 
         let trb = match read_trb_checked_budgeted(mem, ep.ring.dequeue_ptr, step_budget) {
             Ok(trb) => trb,
-            Err(ReadTrbCheckedError::BudgetExhausted) => return,
+            Err(ReadTrbCheckedError::BudgetExhausted) => return 0,
             Err(ReadTrbCheckedError::InvalidDmaRead) => {
                 ep.halted = true;
                 self.pending_events.push(TransferEvent {
@@ -297,11 +310,11 @@ impl XhciTransferExecutor {
                     residual: 0,
                     completion_code: CompletionCode::TrbError,
                 });
-                return;
+                return 0;
             }
         };
         if trb.cycle() != ep.ring.cycle {
-            return;
+            return 0;
         }
 
         match trb.trb_type() {
@@ -309,6 +322,7 @@ impl XhciTransferExecutor {
                 let mut td = TdDescriptor {
                     buffers: Vec::new(),
                     total_len: 0,
+                    trbs_in_td: 0,
                     last_trb_ptr: ep.ring.dequeue_ptr,
                     last_ioc: false,
                     event_data: None,
@@ -317,8 +331,15 @@ impl XhciTransferExecutor {
                 };
 
                 match self.gather_td(mem, ep, &mut td, step_budget) {
-                    GatherTdResult::Incomplete => (),
-                    GatherTdResult::Ready => self.execute_td(mem, ep, td),
+                    GatherTdResult::Incomplete => 0,
+                    GatherTdResult::Ready => {
+                        let trbs_in_td = td.trbs_in_td;
+                        if self.execute_td(mem, ep, td) {
+                            trbs_in_td
+                        } else {
+                            0
+                        }
+                    }
                     GatherTdResult::Fault { trb_ptr } => {
                         ep.halted = true;
                         self.pending_events.push(TransferEvent {
@@ -328,8 +349,9 @@ impl XhciTransferExecutor {
                             residual: 0,
                             completion_code: CompletionCode::TrbError,
                         });
+                        0
                     }
-                    GatherTdResult::BudgetExhausted => (),
+                    GatherTdResult::BudgetExhausted => 0,
                 }
             }
             TrbType::NoOp => {
@@ -350,7 +372,7 @@ impl XhciTransferExecutor {
                             residual: 0,
                             completion_code: CompletionCode::TrbError,
                         });
-                        return;
+                        return 0;
                     }
                 }
 
@@ -363,12 +385,13 @@ impl XhciTransferExecutor {
                         completion_code: CompletionCode::Success,
                     });
                 }
+                1
             }
             TrbType::Link => {
                 // If we land on a link TRB after a TD commit, skip it now.
                 match self.skip_link_trbs(mem, ep, step_budget) {
-                    SkipLinkTrbsResult::Ok | SkipLinkTrbsResult::Fault => {}
-                    SkipLinkTrbsResult::BudgetExhausted => (),
+                    SkipLinkTrbsResult::Ok | SkipLinkTrbsResult::Fault => 0,
+                    SkipLinkTrbsResult::BudgetExhausted => 0,
                 }
             }
             _ => {
@@ -382,8 +405,14 @@ impl XhciTransferExecutor {
                 };
                 self.pending_events.push(event);
                 match ep.ring.dequeue_ptr.checked_add(TRB_SIZE) {
-                    Some(next) => ep.ring.dequeue_ptr = next,
-                    None => ep.halted = true,
+                    Some(next) => {
+                        ep.ring.dequeue_ptr = next;
+                        1
+                    }
+                    None => {
+                        ep.halted = true;
+                        0
+                    }
                 }
             }
         }
@@ -464,6 +493,7 @@ impl XhciTransferExecutor {
 
         td.buffers.clear();
         td.total_len = 0;
+        td.trbs_in_td = 0;
         td.last_trb_ptr = ptr;
         td.last_ioc = false;
         td.event_data = None;
@@ -501,6 +531,7 @@ impl XhciTransferExecutor {
                 }
                 TrbType::Normal => {
                     let trb_ptr = ptr;
+                    td.trbs_in_td = td.trbs_in_td.saturating_add(1);
                     let len = trb.transfer_len();
                     td.buffers.push(BufferSegment {
                         paddr: trb.parameter,
@@ -532,6 +563,7 @@ impl XhciTransferExecutor {
                     // Expose the event-data payload so callers can set the Transfer Event TRB ED
                     // bit and preserve the parameter field semantics expected by real xHCI drivers.
                     let trb_ptr = ptr;
+                    td.trbs_in_td = td.trbs_in_td.saturating_add(1);
                     if trb.chain() {
                         // Event Data TRBs are not expected to be chained.
                         return GatherTdResult::Fault { trb_ptr };
@@ -566,7 +598,7 @@ impl XhciTransferExecutor {
         mem: &mut M,
         ep: &mut EndpointState,
         td: TdDescriptor,
-    ) {
+    ) -> bool {
         let max_len = td.total_len as usize;
 
         let (completion_code, transferred_bytes_opt) = if ep.direction_in() {
@@ -585,7 +617,7 @@ impl XhciTransferExecutor {
                 }
                 UsbInResult::Nak => {
                     // Leave TD pending; retry in a future tick.
-                    return;
+                    return false;
                 }
                 UsbInResult::Stall => {
                     ep.halted = true;
@@ -598,7 +630,7 @@ impl XhciTransferExecutor {
             match self.device.handle_out_transfer(ep.ep_addr, &data) {
                 UsbOutResult::Ack => (CompletionCode::Success, Some(td.total_len)),
                 UsbOutResult::Nak => {
-                    return;
+                    return false;
                 }
                 UsbOutResult::Stall => {
                     ep.halted = true;
@@ -628,6 +660,8 @@ impl XhciTransferExecutor {
                 completion_code,
             });
         }
+
+        true
     }
 
     fn dma_write_in<M: MemoryBus + ?Sized>(

@@ -3218,9 +3218,9 @@ impl XhciController {
                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
             let step_budget = *ring_poll_budget;
-            let steps_used = exec.poll_endpoint_counted(mem, ep_addr, step_budget);
-            *ring_poll_budget = ring_poll_budget.saturating_sub(steps_used);
-            work.ring_poll_steps = work.ring_poll_steps.saturating_add(steps_used);
+            let poll_work = exec.poll_endpoint_counted(mem, ep_addr, step_budget);
+            *ring_poll_budget = ring_poll_budget.saturating_sub(poll_work.ring_poll_steps);
+            work.ring_poll_steps = work.ring_poll_steps.saturating_add(poll_work.ring_poll_steps);
 
             let after = exec
                 .endpoint_state(ep_addr)
@@ -3228,7 +3228,7 @@ impl XhciController {
 
             // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
             // Pointer field so guests that inspect the Device Context observe progress.
-            let trbs_consumed = if before != after { 1 } else { 0 };
+            let trbs_consumed = poll_work.trbs_consumed;
             if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
                 (before, after)
             {
