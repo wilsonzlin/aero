@@ -5,9 +5,23 @@
 
 The repo commits `boot.bin` so the harness does **not** need an assembler in CI.
 
+CI enforces determinism for this file via:
+
+```bash
+cargo xtask fixtures --check
+```
+
 ## Regenerating `boot.bin`
 
-On a Linux host with `as`, `ld`, and `objcopy` (binutils):
+The simplest way (no assembler required):
+
+```bash
+cargo xtask fixtures
+```
+
+If you intentionally change the reference assembly (`boot.S`), rebuild `boot.bin`
+on a Linux host with `as`, `ld`, and `objcopy` (binutils) and update the embedded
+fixture bytes in `xtask/src/fixture_sources/qemu_diff_boot.rs` to match:
 
 ```bash
 cd tools/qemu_diff/boot
