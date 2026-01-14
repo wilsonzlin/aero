@@ -3297,14 +3297,12 @@ mod tests {
                 }
             "#;
 
-            let bindings = [
-                BindingDesc {
-                    binding: 0,
-                    ty: BindingType::StorageBufferReadOnly,
-                    visibility: ShaderStageFlags::FRAGMENT,
-                    storage_texture_format: None,
-                },
-            ];
+            let bindings = [BindingDesc {
+                binding: 0,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::FRAGMENT,
+                storage_texture_format: None,
+            }];
 
             let mut writer = CmdWriter::new();
             writer.create_shader_module_wgsl(1, vs_wgsl);

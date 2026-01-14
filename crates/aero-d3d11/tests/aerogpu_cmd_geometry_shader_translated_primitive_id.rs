@@ -372,4 +372,3 @@ fn aerogpu_cmd_geometry_shader_translated_primitive_id() {
         assert_eq!(px(width / 2, height / 2), [0, 0, 0, 255]);
     });
 }
-
