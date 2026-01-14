@@ -751,6 +751,16 @@ static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
         AeroGpuFreeSubmissionMeta(entry->Meta);
         ExFreePoolWithTag(entry, AEROGPU_POOL_TAG);
     }
+
+    /* Keep teardown idempotent and leave the adapter in a clean state. */
+    {
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
+        Adapter->PendingMetaHandleCount = 0;
+        Adapter->PendingMetaHandleBytes = 0;
+        InitializeListHead(&Adapter->PendingMetaHandles);
+        KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+    }
 }
 
 typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
