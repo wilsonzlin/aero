@@ -527,7 +527,6 @@ dependencies = [
  "aero-storage",
  "aero-usb",
  "aero-virtio",
- "emulator",
  "firmware",
  "memory",
  "pretty_assertions",
