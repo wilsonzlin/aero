@@ -1878,6 +1878,16 @@ describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
+      const bootConfigPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown; bootDrive?: unknown; cdBootDrive?: unknown; bootFromCdIfPresent?: unknown }).type === "machineCpu.bootConfig" &&
+          (msg as { type?: unknown; bootDrive?: unknown }).bootDrive === 0x80 &&
+          (msg as { type?: unknown; cdBootDrive?: unknown }).cdBootDrive === 0xe0 &&
+          (msg as { type?: unknown; bootFromCdIfPresent?: unknown }).bootFromCdIfPresent === true,
+        10_000,
+      ) as Promise<{ type: string; bootDrive: number; cdBootDrive: number; bootFromCdIfPresent: boolean }>;
+
       const hddMeta: any = {
         source: "local",
         id: "hdd0",
@@ -1915,6 +1925,11 @@ describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
 
       const activeMsg = await activePromise;
       expect(activeMsg.bootDevice).toBe("cdrom");
+
+      const bootConfigMsg = await bootConfigPromise;
+      expect(bootConfigMsg.bootDrive).toBe(0x80);
+      expect(bootConfigMsg.cdBootDrive).toBe(0xe0);
+      expect(bootConfigMsg.bootFromCdIfPresent).toBe(true);
     } finally {
       await worker.terminate();
     }

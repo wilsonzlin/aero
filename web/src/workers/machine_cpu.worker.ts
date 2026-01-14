@@ -2957,6 +2957,9 @@ ctx.onmessage = (ev) => {
         return { kind: runExitKindMap.Halted };
       },
       active_boot_device: () => dummyActiveBootDevice,
+      boot_drive: () => dummyBootDrive,
+      cd_boot_drive: () => dummyCdBootDrive,
+      boot_from_cd_if_present: () => dummyBootFromCdIfPresent,
       setBootFromCdIfPresent: (enabled: boolean) => {
         dummyBootFromCdIfPresent = !!enabled;
       },
