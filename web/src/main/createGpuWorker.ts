@@ -60,6 +60,7 @@ export interface GpuWorkerHandle {
     signalFence: bigint,
     allocTable?: ArrayBuffer,
     contextId?: number,
+    opts?: { flags?: number; engineId?: number },
   ): Promise<GpuRuntimeSubmitCompleteMessage>;
   /**
    * Request a deterministic screenshot from the GPU worker.
@@ -360,6 +361,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     signalFence: bigint,
     allocTable?: ArrayBuffer,
     contextId = 0,
+    opts?: { flags?: number; engineId?: number },
   ): Promise<GpuRuntimeSubmitCompleteMessage> {
     return ready.then(
       () => {
@@ -367,12 +369,16 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         const transfer: Transferable[] = [cmdStream];
         if (allocTable) transfer.push(allocTable);
         const normalizedContextId = Number.isFinite(contextId) ? contextId >>> 0 : 0;
+        const flags = typeof opts?.flags === "number" && Number.isFinite(opts.flags) ? opts.flags >>> 0 : undefined;
+        const engineId = typeof opts?.engineId === "number" && Number.isFinite(opts.engineId) ? opts.engineId >>> 0 : undefined;
         worker.postMessage(
           {
             ...GPU_MESSAGE_BASE,
             type: "submit_aerogpu",
             requestId,
             contextId: normalizedContextId,
+            ...(flags !== undefined ? { flags } : {}),
+            ...(engineId !== undefined ? { engineId } : {}),
             signalFence,
             cmdStream,
             ...(allocTable ? { allocTable } : {}),
