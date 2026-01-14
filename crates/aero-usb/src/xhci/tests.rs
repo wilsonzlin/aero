@@ -816,3 +816,48 @@ fn enable_slot_allocates_slot_ids_and_reports_exhaustion() {
 
     assert_eq!(mem.read_u64(dcbaa + 8), 0);
 }
+
+#[test]
+fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+
+    let mut ctrl = super::XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+    assert_ne!(slot_id, 0);
+
+    mem.write_u64(dcbaa + (u64::from(slot_id) * 8), dev_ctx);
+
+    // Inject non-default EP0 control TD state.
+    ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        data_expected: 42,
+        data_transferred: 7,
+        completion_code: CompletionCode::TrbError,
+    };
+
+    // Set TR Dequeue Pointer should reset EP0 TD tracking so the next transfer starts clean.
+    let completion = ctrl.set_tr_dequeue_pointer(&mut mem, slot_id, 1, 0x6000, false);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        ctrl.ep0_control_td[usize::from(slot_id)],
+        super::ControlTdState::default()
+    );
+
+    // Reset Endpoint should also clear any pending TD tracking.
+    ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        data_expected: 123,
+        data_transferred: 456,
+        completion_code: CompletionCode::StallError,
+    };
+    let completion = ctrl.reset_endpoint(&mut mem, slot_id, 1);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        ctrl.ep0_control_td[usize::from(slot_id)],
+        super::ControlTdState::default()
+    );
+}

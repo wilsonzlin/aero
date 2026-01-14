@@ -615,6 +615,9 @@ impl XhciController {
             TrbType::EnableSlotCommand => self.cmd_enable_slot(mem, cmd_paddr),
             TrbType::DisableSlotCommand => self.cmd_disable_slot(mem, cmd_paddr, trb),
             TrbType::AddressDeviceCommand => self.cmd_address_device(mem, cmd_paddr, trb),
+            TrbType::StopEndpointCommand => self.cmd_stop_endpoint(mem, cmd_paddr, trb),
+            TrbType::ResetEndpointCommand => self.cmd_reset_endpoint(mem, cmd_paddr, trb),
+            TrbType::SetTrDequeuePointerCommand => self.cmd_set_tr_dequeue_pointer(mem, cmd_paddr, trb),
             TrbType::NoOpCommand => self.queue_command_completion_event(
                 cmd_paddr,
                 CompletionCode::Success,
@@ -639,6 +642,51 @@ impl XhciController {
     fn cmd_disable_slot<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
         let slot_id = trb.slot_id();
         let code = self.disable_slot(mem, slot_id);
+        self.queue_command_completion_event(cmd_paddr, code, slot_id);
+    }
+
+    fn cmd_stop_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        let slot_id = trb.slot_id();
+        let endpoint_id = trb.endpoint_id();
+        let result = self.stop_endpoint(mem, slot_id, endpoint_id);
+        let code = match result.completion_code {
+            CommandCompletionCode::Success => CompletionCode::Success,
+            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
+            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
+            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
+            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+        };
+        // xHCI completion events retain the original slot ID for endpoint commands.
+        self.queue_command_completion_event(cmd_paddr, code, slot_id);
+    }
+
+    fn cmd_reset_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        let slot_id = trb.slot_id();
+        let endpoint_id = trb.endpoint_id();
+        let result = self.reset_endpoint(mem, slot_id, endpoint_id);
+        let code = match result.completion_code {
+            CommandCompletionCode::Success => CompletionCode::Success,
+            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
+            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
+            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
+            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+        };
+        self.queue_command_completion_event(cmd_paddr, code, slot_id);
+    }
+
+    fn cmd_set_tr_dequeue_pointer<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        let slot_id = trb.slot_id();
+        let endpoint_id = trb.endpoint_id();
+        let tr_dequeue_ptr = trb.parameter & !0x0f;
+        let dcs = (trb.parameter & 0x01) != 0;
+        let result = self.set_tr_dequeue_pointer(mem, slot_id, endpoint_id, tr_dequeue_ptr, dcs);
+        let code = match result.completion_code {
+            CommandCompletionCode::Success => CompletionCode::Success,
+            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
+            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
+            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
+            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+        };
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
@@ -939,9 +987,9 @@ impl XhciController {
         self.configure_endpoint(slot_id, slot_ctx)
     }
 
-    fn read_device_context_ptr(
+    fn read_device_context_ptr<M: MemoryBus + ?Sized>(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut M,
         slot_id: u8,
     ) -> Result<u64, CommandCompletionCode> {
         let dcbaap = self
@@ -962,9 +1010,9 @@ impl XhciController {
     ///
     /// Updates the Endpoint Context Endpoint State field to `Stopped (3)` and preserves all other
     /// fields. If the device context pointer is missing, returns `ContextStateError`.
-    pub fn stop_endpoint(
+    pub fn stop_endpoint<M: MemoryBus + ?Sized>(
         &mut self,
-        mem: &mut impl MemoryBus,
+        mem: &mut M,
         slot_id: u8,
         endpoint_id: u8,
     ) -> CommandCompletion {
@@ -1013,9 +1061,9 @@ impl XhciController {
     ///
     /// Clears a halted/stopped endpoint and allows transfers again by setting the Endpoint State to
     /// `Running (1)`.
-    pub fn reset_endpoint(
+    pub fn reset_endpoint<M: MemoryBus + ?Sized>(
         &mut self,
-        mem: &mut impl MemoryBus,
+        mem: &mut M,
         slot_id: u8,
         endpoint_id: u8,
     ) -> CommandCompletion {
@@ -1054,6 +1102,11 @@ impl XhciController {
         let slot = &mut self.slots[slot_idx];
         slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
         slot.device_context_ptr = dev_ctx_ptr;
+        if endpoint_id == 1 {
+            if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+                *state = ControlTdState::default();
+            }
+        }
 
         CommandCompletion::success(slot_id)
     }
@@ -1061,9 +1114,9 @@ impl XhciController {
     /// Set Transfer Ring Dequeue Pointer (MVP semantics).
     ///
     /// Updates the Endpoint Context TR Dequeue Pointer and internal transfer ring cursor state.
-    pub fn set_tr_dequeue_pointer(
+    pub fn set_tr_dequeue_pointer<M: MemoryBus + ?Sized>(
         &mut self,
-        mem: &mut impl MemoryBus,
+        mem: &mut M,
         slot_id: u8,
         endpoint_id: u8,
         tr_dequeue_ptr: u64,
@@ -1107,6 +1160,11 @@ impl XhciController {
         slot.transfer_rings[usize::from(endpoint_id - 1)] =
             Some(RingCursor::new(tr_dequeue_ptr, dcs));
         slot.device_context_ptr = dev_ctx_ptr;
+        if endpoint_id == 1 {
+            if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+                *state = ControlTdState::default();
+            }
+        }
 
         CommandCompletion::success(slot_id)
     }
