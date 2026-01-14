@@ -11717,6 +11717,182 @@ bool TestFvfXyzNormalDiffuseRedundantRenderStateDoesNotReuploadLightingConstants
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirection() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  // Keep global ambient deterministic.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  // Provide a non-unit direction; the driver should normalize it when packing
+  // the vertex->light direction constant.
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {3.0f, 4.0f, 0.0f}; // length 5
+  light0.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(direction normalization)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(direction normalization)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "direction normalization: lighting payload present")) {
+    return false;
+  }
+
+  constexpr uint32_t kLight0DirRel = (211u - kFixedfuncLightingStartRegister);
+  const float x = payload[kLight0DirRel * 4 + 0];
+  const float y = payload[kLight0DirRel * 4 + 1];
+  const float z = payload[kLight0DirRel * 4 + 2];
+  const float w = payload[kLight0DirRel * 4 + 3];
+
+  // D3D direction is the direction the light rays travel. The shader expects
+  // vertex->light, so the driver negates it. For (3,4,0), normalized is (0.6,0.8,0),
+  // so the expected vertex->light is (-0.6,-0.8,0).
+  if (!Check(std::fabs(x - (-0.6f)) < 1e-6f &&
+                 std::fabs(y - (-0.8f)) < 1e-6f &&
+                 std::fabs(z - 0.0f) < 1e-6f &&
+                 std::fabs(w - 0.0f) < 1e-6f,
+             "direction normalization: packed dir == normalized vertex->light")) {
+    return false;
+  }
+
+  const float len2 = x * x + y * y + z * z;
+  if (!Check(std::fabs(len2 - 1.0f) < 1e-5f, "direction normalization: packed direction is unit length")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseGlobalAmbientPreservesAlphaChannel() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Use a non-opaque ambient color to validate alpha handling in the ARGB->RGBA
+  // conversion used by fixed-function lighting.
+  constexpr uint32_t kAmbientGreenAlpha0 = 0x0000FF00u; // A=0, R=0, G=255, B=0
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, kAmbientGreenAlpha0);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=green alpha0)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(global ambient alpha)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(global ambient alpha)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "global ambient alpha: lighting payload present")) {
+    return false;
+  }
+
+  if (!Check(payload[kFixedfuncLightingGlobalAmbientRel * 4 + 0] == 0.0f &&
+                 payload[kFixedfuncLightingGlobalAmbientRel * 4 + 1] == 1.0f &&
+                 payload[kFixedfuncLightingGlobalAmbientRel * 4 + 2] == 0.0f &&
+                 payload[kFixedfuncLightingGlobalAmbientRel * 4 + 3] == 0.0f,
+             "global ambient alpha: ARGB->RGBA conversion preserves alpha channel")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -14689,6 +14865,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseRedundantRenderStateDoesNotReuploadLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirection()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseGlobalAmbientPreservesAlphaChannel()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights()) {
