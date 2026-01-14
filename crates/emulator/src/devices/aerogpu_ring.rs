@@ -280,10 +280,5 @@ impl AeroGpuAllocEntry {
 }
 
 pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
-    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
-    mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
-
-    // Keep writes within the defined struct size; do not touch the rest of the page.
-    let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
+    aero_devices_gpu::ring::write_fence_page(mem, gpa, abi_version, completed_fence);
 }
