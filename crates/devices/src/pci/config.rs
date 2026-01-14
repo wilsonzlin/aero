@@ -783,14 +783,42 @@ pub trait PciDevice {
 
     fn reset(&mut self) {
         // Default: clear command register (BARs remain programmed by firmware / allocator).
-        self.config_mut().set_command(0);
+        //
+        // Also clear MSI/MSI-X enable state so a platform reset (machine reset / BIOS POST) starts
+        // from a sane baseline. Some device models reset their internal MSI/MSI-X routing (e.g.
+        // vector selects) but rely on PCI capability enable bits to decide whether to suppress
+        // legacy INTx; leaving MSI-X enabled across reset can therefore result in a device that
+        // never interrupts until the guest reprograms MSI-X.
+        let cfg = self.config_mut();
+        cfg.set_command(0);
+
+        // Disable MSI by clearing Message Control bit 0 (MSI Enable).
+        if let Some(cap) = cfg.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = cfg.read(off, 2) as u16;
+                cfg.write(off, 2, u32::from(ctrl & !0x0001));
+            }
+        }
+
+        // Disable MSI-X by clearing Message Control bits 15 (Enable) and 14 (Function Mask).
+        if let Some(cap) = cfg.find_capability(crate::pci::msix::PCI_CAP_ID_MSIX) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = cfg.read(off, 2) as u16;
+                cfg.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PciBarDefinition, PciConfigSpace};
+    use super::{PciBarDefinition, PciConfigSpace, PciDevice};
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
+    use crate::pci::msix::{MsixCapability, PCI_CAP_ID_MSIX};
 
     #[test]
     fn capability_list_traversal_finds_msi() {
@@ -820,6 +848,64 @@ mod tests {
         assert!(msi.enabled());
         assert_eq!(msi.message_address(), 0xfee0_0000);
         assert_eq!(msi.message_data(), 0x0045);
+    }
+
+    #[test]
+    fn pci_device_reset_disables_msi_and_msix_but_preserves_bars() {
+        struct Dev {
+            cfg: PciConfigSpace,
+        }
+
+        impl PciDevice for Dev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.cfg
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.cfg
+            }
+        }
+
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        cfg.set_bar_base(0, 0x1234_5000);
+
+        cfg.add_capability(Box::new(MsiCapability::new()));
+        cfg.add_capability(Box::new(MsixCapability::new(2, 0, 0x1000, 0, 0x2000)));
+
+        // Enable MSI.
+        let msi_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+        let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+        cfg.write(msi_off + 0x02, 2, u32::from(msi_ctrl | 0x0001));
+
+        // Enable MSI-X and set Function Mask.
+        let msix_off = cfg.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
+        let msix_ctrl = cfg.read(msix_off + 0x02, 2) as u16;
+        cfg.write(
+            msix_off + 0x02,
+            2,
+            u32::from(msix_ctrl | (1 << 15) | (1 << 14)),
+        );
+
+        assert!(cfg.capability::<MsiCapability>().unwrap().enabled());
+        assert!(cfg.capability::<MsixCapability>().unwrap().enabled());
+        assert!(cfg.capability::<MsixCapability>().unwrap().function_masked());
+
+        let mut dev = Dev { cfg };
+        dev.reset();
+
+        assert!(!dev.cfg.capability::<MsiCapability>().unwrap().enabled());
+        assert!(!dev.cfg.capability::<MsixCapability>().unwrap().enabled());
+        assert!(!dev.cfg.capability::<MsixCapability>().unwrap().function_masked());
+
+        // BAR base programming is preserved across reset.
+        assert_eq!(dev.cfg.bar_range(0).unwrap().base, 0x1234_5000);
     }
 
     #[test]

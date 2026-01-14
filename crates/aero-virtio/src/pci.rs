@@ -256,9 +256,47 @@ impl VirtioPciDevice {
     /// - BAR programming is preserved
     /// - PCI decoding is disabled (`COMMAND = 0`)
     pub fn reset(&mut self) {
+        self.reset_pci_config();
+        self.reset_transport();
+    }
+
+    fn reset_pci_config(&mut self) {
         // Preserve BAR programming but disable decoding.
         self.config.set_command(0);
-        self.reset_transport();
+
+        // Clear MSI/MSI-X enable state so a platform reset starts from a sane baseline. This
+        // mirrors the default `aero_devices::pci::PciDevice::reset` implementation, but needs to
+        // live here as well because `VirtioPciDevice` overrides that trait method.
+        let cfg = &mut self.config;
+
+        // MSI: clear Message Control bit 0 (MSI Enable).
+        if let Some(cap) = cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE
+            {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = cfg.read(off, 2) as u16;
+                cfg.write(off, 2, u32::from(ctrl & !0x0001));
+            }
+        }
+
+        // MSI-X: clear Message Control bits 15 (Enable) and 14 (Function Mask).
+        if let Some(cap) = cfg.find_capability(aero_devices::pci::msix::PCI_CAP_ID_MSIX) {
+            let ctrl_off = usize::from(cap).saturating_add(0x02);
+            if ctrl_off.saturating_add(2) <= aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE
+            {
+                let off = u16::from(cap).saturating_add(0x02);
+                let ctrl = cfg.read(off, 2) as u16;
+                cfg.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
+            }
+        }
+
+        // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset deasserts
+        // all interrupts deterministically.
+        if let Some(msix) = cfg.capability_mut::<MsixCapability>() {
+            let zeros = vec![0u64; msix.snapshot_pba().len()];
+            let _ = msix.restore_pba(&zeros);
+        }
     }
 
     /// Returns whether the device is currently asserting its legacy INTx interrupt line.
@@ -1626,10 +1664,9 @@ impl aero_devices::pci::PciDevice for VirtioPciDevice {
     }
 
     fn reset(&mut self) {
-        // Preserve BAR programming but reset the virtio transport + device state back to its
-        // power-on baseline.
-        self.reset_transport();
-        self.config.set_command(0);
+        // Delegate to the concrete reset implementation so platform-level PCI resets clear MSI-X
+        // enable state in addition to resetting the virtio transport.
+        VirtioPciDevice::reset(self);
     }
 }
 
@@ -2251,5 +2288,50 @@ mod tests {
         assert_eq!(isr, VIRTIO_PCI_LEGACY_ISR_CONFIG);
         assert!(!pci.irq_level());
         assert_eq!(state.borrow().legacy_lower_count, 1);
+    }
+
+    #[test]
+    fn reset_disables_msix_and_resets_vector_selects() {
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(NoopInterrupts),
+        );
+
+        // Enable MSI-X and set Function Mask so we can verify reset clears both bits.
+        let cap_offset = pci
+            .config
+            .find_capability(aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+            .unwrap() as u16;
+        let ctrl = pci.config.read(cap_offset + 0x02, 2) as u16;
+        pci.config.write(
+            cap_offset + 0x02,
+            2,
+            u32::from(ctrl | (1 << 15) | (1 << 14)),
+        );
+        assert!(pci.config.capability::<MsixCapability>().unwrap().enabled());
+        assert!(pci
+            .config
+            .capability::<MsixCapability>()
+            .unwrap()
+            .function_masked());
+
+        // Enable BAR0 MMIO decoding so we can program the virtio MSI-X vector selects.
+        pci.set_pci_command(1u16 << 1);
+        pci.bar0_write(0x10, &0u16.to_le_bytes()); // msix_config_vector = 0
+        pci.bar0_write(0x16, &0u16.to_le_bytes()); // queue_select = 0
+        pci.bar0_write(0x1a, &1u16.to_le_bytes()); // queue 0 msix_vector = 1
+        assert_eq!(pci.msix_config_vector, 0);
+        assert_eq!(pci.queues[0].msix_vector, 1);
+
+        <VirtioPciDevice as aero_devices::pci::PciDevice>::reset(&mut pci);
+
+        assert!(!pci.config.capability::<MsixCapability>().unwrap().enabled());
+        assert!(!pci
+            .config
+            .capability::<MsixCapability>()
+            .unwrap()
+            .function_masked());
+        assert_eq!(pci.msix_config_vector, 0xffff);
+        assert_eq!(pci.queues[0].msix_vector, 0xffff);
     }
 }
