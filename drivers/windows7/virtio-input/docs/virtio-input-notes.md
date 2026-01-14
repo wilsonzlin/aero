@@ -76,11 +76,14 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
 - For keyboard/mouse devices, if the name is not recognized the driver fails start (Code 10) rather than guessing.
 - For tablet/absolute-pointer devices (`EV_ABS`), if the name is not recognized the driver can fall back to identifying the
   device as a tablet when it advertises `EV_ABS` with `ABS_X`/`ABS_Y` in `EV_BITS`.
+  - When this fallback is used, the device is treated as **non-contract**:
+    - PCI subsystem kind cross-check is skipped.
+    - `ID_DEVIDS` and `ABS_INFO` are best-effort (defaults are used when unavailable).
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse, `0x0012` tablet),
-  it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
+  it is cross-checked against `ID_NAME` **for strict ID_NAME matches** and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
 
-This keeps the keyboard/mouse contract deterministic (device kind comes from `ID_NAME`) while still allowing QEMU-style
+This keeps the keyboard/mouse contract deterministic (device kind comes from `ID_NAME`) while still allowing stock QEMU-style
 absolute-pointer devices to be identified via `EV_BITS` when needed.
 
 ### Optional compat mode (VIO-020)

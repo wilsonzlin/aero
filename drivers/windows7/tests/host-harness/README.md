@@ -16,7 +16,7 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
     - Stock QEMU virtio-input devices typically report non-Aero `ID_NAME` strings (e.g. `QEMU Virtio Keyboard`).
-      The in-tree Aero virtio-input driver defaults to strict contract mode and may refuse to start (Code 10) unless
+      The in-tree Aero virtio-input driver defaults to strict contract mode and will refuse to start for non-Aero keyboard/mouse devices (Code 10) unless
       virtio-input compatibility mode is enabled.
       - Enable by setting:
         `HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` (REG_DWORD) = `1`

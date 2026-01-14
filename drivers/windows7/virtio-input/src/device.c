@@ -1754,7 +1754,17 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         size = 0;
         status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_ID_DEVIDS, 0, (UCHAR*)&ids, sizeof(ids), &size);
 
-        enforce = compatDeviceKind ? FALSE : TRUE;
+        /*
+         * Enforce strict Aero contract ID_DEVIDS values unless:
+         *   - CompatIdName is enabled (non-contract virtio-input frontends), or
+         *   - This is an EV_BITS-inferred tablet in strict mode (non-contract
+         *     absolute pointer).
+         *
+         * The latter keeps keyboard/mouse behavior deterministic while allowing
+         * stock QEMU virtio-tablet devices (which may not report Aero contract
+         * ID_DEVIDS values) to function without requiring CompatIdName.
+         */
+        enforce = (compatDeviceKind || (!strictIdName && deviceContext->DeviceKind == VioInputDeviceKindTablet)) ? FALSE : TRUE;
 
         if (!NT_SUCCESS(status) || size < sizeof(ids)) {
             VIOINPUT_LOG(
@@ -2224,6 +2234,19 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VIRTIO_INPUT_ABS_INFO absX;
                 VIRTIO_INPUT_ABS_INFO absY;
                 UCHAR absSize;
+                BOOLEAN haveAbsX;
+                BOOLEAN haveAbsY;
+                LONG absXMin;
+                LONG absXMax;
+                LONG absYMin;
+                LONG absYMax;
+
+                haveAbsX = FALSE;
+                haveAbsY = FALSE;
+                absXMin = 0;
+                absXMax = 32767;
+                absYMin = 0;
+                absYMax = 32767;
 
                 RtlZeroMemory(&absX, sizeof(absX));
                 absSize = 0;
@@ -2233,10 +2256,16 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                                                   (UCHAR*)&absX,
                                                   sizeof(absX),
                                                   &absSize);
-                if (!NT_SUCCESS(status) || absSize < 8) {
+                if (NT_SUCCESS(status) && absSize >= 8) {
+                    haveAbsX = TRUE;
+                    absXMin = absX.Min;
+                    absXMax = absX.Max;
+                } else {
                     VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ABS_INFO(ABS_X) query failed: %!STATUS!\n", status);
-                    VirtioPciResetDevice(&deviceContext->PciDevice);
-                    return STATUS_NOT_SUPPORTED;
+                    if (strictIdName) {
+                        VirtioPciResetDevice(&deviceContext->PciDevice);
+                        return STATUS_NOT_SUPPORTED;
+                    }
                 }
 
                 RtlZeroMemory(&absY, sizeof(absY));
@@ -2247,21 +2276,39 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                                                   (UCHAR*)&absY,
                                                   sizeof(absY),
                                                   &absSize);
-                if (!NT_SUCCESS(status) || absSize < 8) {
+                if (NT_SUCCESS(status) && absSize >= 8) {
+                    haveAbsY = TRUE;
+                    absYMin = absY.Min;
+                    absYMax = absY.Max;
+                } else {
                     VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ABS_INFO(ABS_Y) query failed: %!STATUS!\n", status);
-                    VirtioPciResetDevice(&deviceContext->PciDevice);
-                    return STATUS_NOT_SUPPORTED;
+                    if (strictIdName) {
+                        VirtioPciResetDevice(&deviceContext->PciDevice);
+                        return STATUS_NOT_SUPPORTED;
+                    }
                 }
 
-                hid_translate_set_tablet_abs_range(&deviceContext->InputDevice.translate, absX.Min, absX.Max, absY.Min, absY.Max);
+                hid_translate_set_tablet_abs_range(&deviceContext->InputDevice.translate, absXMin, absXMax, absYMin, absYMax);
 
-                VIOINPUT_LOG(
-                    VIOINPUT_LOG_VIRTQ,
-                    "virtio-input tablet ABS ranges: X=[%ld,%ld] Y=[%ld,%ld]\n",
-                    (LONG)absX.Min,
-                    (LONG)absX.Max,
-                    (LONG)absY.Min,
-                    (LONG)absY.Max);
+                if (haveAbsX && haveAbsY) {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "virtio-input tablet ABS ranges: X=[%ld,%ld] Y=[%ld,%ld]\n",
+                        absXMin,
+                        absXMax,
+                        absYMin,
+                        absYMax);
+                } else {
+                    VIOINPUT_LOG(
+                        VIOINPUT_LOG_VIRTQ,
+                        "virtio-input tablet ABS_INFO unavailable (x=%u y=%u); using default scaling X=[%ld,%ld] Y=[%ld,%ld]\n",
+                        haveAbsX ? 1u : 0u,
+                        haveAbsY ? 1u : 0u,
+                        absXMin,
+                        absXMax,
+                        absYMin,
+                        absYMax);
+                }
             }
         } else {
             VIOINPUT_LOG(

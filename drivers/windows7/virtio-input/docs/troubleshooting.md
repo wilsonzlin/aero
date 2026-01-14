@@ -131,7 +131,8 @@ The driver uses virtio-input config space to validate and classify the device:
     - `Aero Virtio Mouse`
     - (tablet recommended) `Aero Virtio Tablet`
     - Note: for tablet/absolute-pointer devices (`EV_ABS`), the driver can also identify a tablet via `EV_BITS` even if
-      `ID_NAME` is not recognized.
+      `ID_NAME` is not recognized. In this fallback path, `ID_DEVIDS` / `ABS_INFO` are treated as best-effort and the
+      driver falls back to default coordinate scaling when `ABS_INFO` is unavailable.
   - In **compat** mode (`CompatIdName=1`), the driver also accepts common QEMU strings:
     - `QEMU Virtio Keyboard`
     - `QEMU Virtio Mouse`
@@ -149,7 +150,9 @@ If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BI
 
 Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard` and may not use the Aero
 contract subsystem IDs. In **strict mode** (compat disabled), the keyboard/mouse devices will refuse to start (Code 10 /
-`STATUS_NOT_SUPPORTED`). (Tablets may still be identified via `EV_BITS` if they advertise `EV_ABS` with `ABS_X`/`ABS_Y`.)
+contract subsystem IDs. In **strict mode** (compat disabled), the keyboard/mouse devices will refuse to start (Code 10 /
+`STATUS_NOT_SUPPORTED`). Tablets may still be identified via `EV_BITS` if they advertise `EV_ABS` with `ABS_X`/`ABS_Y` (with
+best-effort `ID_DEVIDS` / `ABS_INFO` handling).
 
 For QEMU development/testing, you can either:
 
