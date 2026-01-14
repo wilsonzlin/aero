@@ -1004,8 +1004,9 @@ executor’s shared internal/emulation bind group:
 - `@group(3) @binding(BINDING_BASE_CBUFFER + slot)`: `cb#[]` uniform buffers
 
 When wiring that translator into the executor, either adapt its declarations to the baseline
-internal scheme, or bind a separate internal group(0) for the GS pass (the current point-list GS
-prepass uses the separate group(0) approach; see section 2.2.1).
+internal scheme, or bind a separate internal group(0) for the GS pass (the current translated-GS
+prepass paths for `PointList` and `TriangleList` draws use the separate group(0) approach; see
+section 2.2.1).
 
 Example declaration:
 
@@ -1052,8 +1053,8 @@ To populate `gs_inputs`, the runtime must:
 2. for each vertex in the assembled primitive, populate the required `v#[]` input registers:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
-   - Current in-tree implementation note: the point-list GS prepass path in
-     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` fills `gs_inputs` directly from the IA
+   - Current in-tree implementation note: the point/triangle-list translated-GS prepass paths in
+     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` fill `gs_inputs` directly from the IA
      vertex buffers via vertex pulling (VS-as-compute is not implemented yet), so only simple
      passthrough-style VS/GS combinations are expected to work.
 
@@ -2350,10 +2351,11 @@ Each test should:
 3. Issue a draw that exercises the expansion path.
 4. Read back the render target and compare to a tiny reference image (or a simple expected pattern).
 
-Now that a minimal point-list GS DXBC execution path exists, keep the existing “ignore GS payloads”
-robustness test (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) using a GS DXBC
-payload that is intentionally **outside** the translator/execution subset. This test is meant to
-be a cheap regression check that the executor:
+Now that a minimal point/triangle-list translated GS DXBC execution path exists, keep the existing
+“ignore GS payloads” robustness test
+(`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) using a GS DXBC payload that is
+intentionally **outside** the translator/execution subset. This test is meant to be a cheap
+regression check that the executor:
 
 - accepts and stores unsupported GS shaders (rather than failing with a stage-mismatch error), and
 - accepts geometry-stage `stage_ex` bindings / extended `BIND_SHADERS` packets without crashing.
