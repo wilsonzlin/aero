@@ -112,6 +112,34 @@ static std::string DecU64(uint64_t v) {
   return std::string(buf);
 }
 
+static std::string DecI64(int64_t v) {
+  char buf[64];
+  sprintf_s(buf, sizeof(buf), "%I64d", (long long)v);
+  return std::string(buf);
+}
+
+static std::string BytesToHex(const void *data, size_t len, bool withPrefix = true) {
+  const uint8_t *p = (const uint8_t *)data;
+  std::string out;
+  const size_t prefixLen = withPrefix ? 2 : 0;
+  if (len > ((size_t)-1 - prefixLen) / 2) {
+    // Overflow; return a best-effort prefix-only string.
+    return withPrefix ? std::string("0x") : std::string();
+  }
+  out.reserve(prefixLen + len * 2);
+  if (withPrefix) {
+    out.push_back('0');
+    out.push_back('x');
+  }
+  for (size_t i = 0; i < len; ++i) {
+    char b[3];
+    sprintf_s(b, sizeof(b), "%02x", (unsigned)p[i]);
+    out.push_back(b[0]);
+    out.push_back(b[1]);
+  }
+  return out;
+}
+
 static std::string Win32ErrorToString(DWORD win32) {
   wchar_t msg[512];
   DWORD chars =
@@ -6110,6 +6138,97 @@ static void JsonWriteTopLevelErrno(std::string *out, const char *command, const 
   out->push_back('\n');
 }
 
+static int DoReadGpaJson(const D3DKMT_FUNCS *f,
+                         D3DKMT_HANDLE hAdapter,
+                         uint64_t gpa,
+                         uint32_t sizeBytes,
+                         const wchar_t *outFile,
+                         std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_read_gpa_inout io;
+  ZeroMemory(&io, sizeof(io));
+  io.hdr.version = AEROGPU_ESCAPE_VERSION;
+  io.hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
+  io.hdr.size = sizeof(io);
+  io.hdr.reserved0 = 0;
+  io.gpa = gpa;
+  io.size_bytes = sizeBytes;
+  io.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "read-gpa", f, "D3DKMTEscape(read-gpa) failed", st);
+    return 2;
+  }
+
+  const NTSTATUS op = (NTSTATUS)io.status;
+  uint32_t copied = io.bytes_copied;
+  if (copied > sizeBytes) {
+    copied = sizeBytes;
+  }
+  if (copied > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    copied = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  }
+
+  bool wroteFile = false;
+  if (outFile && *outFile) {
+    if (!WriteBinaryFile(outFile, io.data, copied)) {
+      JsonWriteTopLevelError(out, "read-gpa", f, "Failed to write --out file", STATUS_UNSUCCESSFUL);
+      return 2;
+    }
+    wroteFile = true;
+  }
+
+  const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY);
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("read-gpa");
+  w.Key("ok");
+  w.Bool(ok);
+
+  w.Key("request");
+  w.BeginObject();
+  JsonWriteU64HexDec(w, "gpa", gpa);
+  w.Key("size_bytes");
+  w.Uint32(sizeBytes);
+  w.EndObject();
+
+  w.Key("response");
+  w.BeginObject();
+  w.Key("status");
+  JsonWriteNtStatusError(w, f, op);
+  w.Key("bytes_copied");
+  w.Uint32(copied);
+  w.Key("bytes_copied_reported");
+  w.Uint32(io.bytes_copied);
+  w.Key("partial_copy");
+  w.Bool(op == STATUS_PARTIAL_COPY);
+  if (outFile && *outFile) {
+    w.Key("out_path");
+    w.String(WideToUtf8(outFile));
+    w.Key("out_written");
+    w.Bool(wroteFile);
+  }
+  w.Key("data_hex");
+  w.String(BytesToHex(io.data, copied));
+  w.EndObject();
+
+  w.EndObject();
+  out->push_back('\n');
+
+  if (op == STATUS_PARTIAL_COPY) {
+    return 3;
+  }
+  return NT_SUCCESS(op) ? 0 : 2;
+}
+
 static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
   if (!out) {
     return 1;
@@ -6143,6 +6262,227 @@ static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::
   JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
   JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
   w.EndObject();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
+                            D3DKMT_HANDLE hAdapter,
+                            uint32_t samples,
+                            uint32_t intervalMs,
+                            uint32_t overallTimeoutMs,
+                            std::string *out) {
+  // Stall threshold: warn after ~2 seconds of no completed-fence progress while work is pending.
+  static const uint32_t kStallWarnTimeMs = 2000;
+
+  if (!out) {
+    return 1;
+  }
+  if (samples == 0) {
+    JsonWriteTopLevelError(out, "watch-fence", f, "--watch-fence requires --samples N", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+  if (samples > 1000000u) {
+    samples = 1000000u;
+  }
+
+  LARGE_INTEGER freq;
+  if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) {
+    JsonWriteTopLevelError(out, "watch-fence", f, "QueryPerformanceFrequency failed", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  const uint32_t stallWarnIntervals =
+      (intervalMs != 0) ? ((kStallWarnTimeMs + intervalMs - 1) / intervalMs) : 3;
+
+  LARGE_INTEGER start;
+  QueryPerformanceCounter(&start);
+
+  bool havePrev = false;
+  uint64_t prevSubmitted = 0;
+  uint64_t prevCompleted = 0;
+  LARGE_INTEGER prevTime;
+  ZeroMemory(&prevTime, sizeof(prevTime));
+  uint32_t stallIntervals = 0;
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("watch-fence");
+  w.Key("samples_requested");
+  w.Uint32(samples);
+  w.Key("interval_ms");
+  w.Uint32(intervalMs);
+  w.Key("overall_timeout_ms");
+  w.Uint32(overallTimeoutMs);
+  w.Key("samples");
+  w.BeginArray();
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    const double elapsedMs =
+        (double)(before.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+
+    if (overallTimeoutMs != 0 && elapsedMs >= (double)overallTimeoutMs) {
+      w.EndArray();
+      w.Key("ok");
+      w.Bool(false);
+      w.Key("error");
+      w.BeginObject();
+      w.Key("message");
+      w.String("watch-fence: overall timeout");
+      w.Key("sample_index");
+      w.Uint32(i + 1);
+      w.Key("status");
+      JsonWriteNtStatusError(w, f, STATUS_TIMEOUT);
+      w.EndObject();
+      w.EndObject();
+      out->push_back('\n');
+      return 2;
+    }
+
+    aerogpu_escape_query_fence_out q;
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+
+    const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+    if (!NT_SUCCESS(st)) {
+      w.EndArray();
+      w.Key("ok");
+      w.Bool(false);
+      w.Key("error");
+      w.BeginObject();
+      w.Key("message");
+      w.String("D3DKMTEscape(query-fence) failed");
+      w.Key("status");
+      JsonWriteNtStatusError(w, f, st);
+      w.EndObject();
+      w.EndObject();
+      out->push_back('\n');
+      return 2;
+    }
+
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double tMs = (double)(now.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+
+    aerogpu_fence_delta_stats delta;
+    ZeroMemory(&delta, sizeof(delta));
+    double dtMs = 0.0;
+    if (havePrev) {
+      const double dtSeconds = (double)(now.QuadPart - prevTime.QuadPart) / (double)freq.QuadPart;
+      dtMs = dtSeconds * 1000.0;
+      delta = aerogpu_fence_compute_delta(prevSubmitted, prevCompleted, q.last_submitted_fence, q.last_completed_fence,
+                                          dtSeconds);
+    } else {
+      delta.delta_submitted = 0;
+      delta.delta_completed = 0;
+      delta.completed_per_s = 0.0;
+      delta.reset = 0;
+    }
+
+    const bool hasPending =
+        (q.last_submitted_fence > q.last_completed_fence) && (!delta.reset || !havePrev);
+    if (havePrev && !delta.reset && hasPending && delta.delta_completed == 0) {
+      stallIntervals += 1;
+    } else {
+      stallIntervals = 0;
+    }
+
+    const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
+    const char *warn = "-";
+    if (havePrev && delta.reset) {
+      warn = "RESET";
+    } else if (warnStall) {
+      warn = "STALL";
+    }
+
+    const uint64_t pending =
+        (q.last_submitted_fence >= q.last_completed_fence) ? (q.last_submitted_fence - q.last_completed_fence) : 0;
+
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i + 1);
+    w.Key("t_ms");
+    w.Double(tMs);
+    w.Key("fences");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "submitted", q.last_submitted_fence);
+    JsonWriteU64HexDec(w, "completed", q.last_completed_fence);
+    w.Key("pending");
+    w.String(DecU64(pending));
+    JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
+    JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
+    w.EndObject();
+    w.Key("delta");
+    w.BeginObject();
+    w.Key("d_submitted");
+    w.String(DecU64(delta.delta_submitted));
+    w.Key("d_completed");
+    w.String(DecU64(delta.delta_completed));
+    w.Key("dt_ms");
+    w.Double(dtMs);
+    w.Key("completed_per_s");
+    w.Double(delta.completed_per_s);
+    w.Key("reset");
+    w.Bool(!!delta.reset);
+    w.EndObject();
+    w.Key("stall_intervals");
+    w.Uint32(stallIntervals);
+    w.Key("warn");
+    w.String(warn);
+    w.EndObject();
+
+    prevSubmitted = q.last_submitted_fence;
+    prevCompleted = q.last_completed_fence;
+    prevTime = now;
+    havePrev = true;
+
+    if (i + 1 < samples && intervalMs != 0) {
+      DWORD sleepMs = intervalMs;
+      if (overallTimeoutMs != 0) {
+        LARGE_INTEGER preSleep;
+        QueryPerformanceCounter(&preSleep);
+        const double elapsedMs2 =
+            (double)(preSleep.QuadPart - start.QuadPart) * 1000.0 / (double)freq.QuadPart;
+        if (elapsedMs2 >= (double)overallTimeoutMs) {
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("watch-fence: overall timeout");
+          w.Key("sample_index");
+          w.Uint32(i + 1);
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_TIMEOUT);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+        const double remainingMs = (double)overallTimeoutMs - elapsedMs2;
+        if (remainingMs < (double)sleepMs) {
+          sleepMs = (DWORD)remainingMs;
+        }
+      }
+      if (sleepMs != 0) {
+        Sleep(sleepMs);
+      }
+    }
+  }
+
+  w.EndArray();
+  w.Key("ok");
+  w.Bool(true);
   w.EndObject();
   out->push_back('\n');
   return 0;
@@ -7370,6 +7710,781 @@ static int DoDumpRingJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
     w.EndObject();
   }
   w.EndArray();
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoWatchRingJson(const D3DKMT_FUNCS *f,
+                           D3DKMT_HANDLE hAdapter,
+                           uint32_t ringId,
+                           uint32_t samples,
+                           uint32_t intervalMs,
+                           std::string *out) {
+  // Stall threshold: warn after ~2 seconds of no observed pending-count change while work is pending.
+  static const uint32_t kStallWarnTimeMs = 2000;
+
+  if (!out) {
+    return 1;
+  }
+  if (samples == 0 || intervalMs == 0) {
+    JsonWriteTopLevelError(out, "watch-ring", f, "--watch-ring requires --samples N and --interval-ms N",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  if (samples > 1000000u) {
+    samples = 1000000u;
+  }
+  if (intervalMs > 60000u) {
+    intervalMs = 60000u;
+  }
+
+  // sizeof(aerogpu_legacy_ring_entry) (see drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h).
+  static const uint32_t kLegacyRingEntrySizeBytes = 24u;
+
+  const auto TryComputeLegacyPending = [&](uint32_t ringSizeBytes, uint32_t head, uint32_t tail,
+                                           uint64_t *pendingOut) -> bool {
+    if (!pendingOut) {
+      return false;
+    }
+    if (ringSizeBytes == 0 || (ringSizeBytes % kLegacyRingEntrySizeBytes) != 0) {
+      return false;
+    }
+    const uint32_t entryCount = ringSizeBytes / kLegacyRingEntrySizeBytes;
+    if (entryCount == 0 || head >= entryCount || tail >= entryCount) {
+      return false;
+    }
+    if (tail >= head) {
+      *pendingOut = (uint64_t)(tail - head);
+    } else {
+      *pendingOut = (uint64_t)(tail + entryCount - head);
+    }
+    return true;
+  };
+
+  bool decided = false;
+  bool useV2 = false;
+  uint32_t v2DescCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+  bool havePrevPending = false;
+  uint64_t prevPending = 0;
+  uint32_t stallIntervals = 0;
+  const uint32_t stallWarnIntervals = (intervalMs != 0) ? ((kStallWarnTimeMs + intervalMs - 1) / intervalMs) : 3;
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("watch-ring");
+  w.Key("ring_id");
+  w.Uint32(ringId);
+  w.Key("samples_requested");
+  w.Uint32(samples);
+  w.Key("interval_ms");
+  w.Uint32(intervalMs);
+  w.Key("samples");
+  w.BeginArray();
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    uint64_t pending = 0;
+    const wchar_t *fmtStr = L"unknown";
+
+    bool haveLast = false;
+    uint64_t lastFence = 0;
+    uint32_t lastFlags = 0;
+
+    if (!decided || useV2) {
+      aerogpu_escape_dump_ring_v2_inout q2;
+      ZeroMemory(&q2, sizeof(q2));
+      q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+      q2.hdr.size = sizeof(q2);
+      q2.hdr.reserved0 = 0;
+      q2.ring_id = ringId;
+      q2.desc_capacity = v2DescCapacity;
+
+      const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+      if (NT_SUCCESS(st)) {
+        decided = true;
+        useV2 = true;
+
+        head = q2.head;
+        tail = q2.tail;
+        fmtStr = RingFormatToString(q2.ring_format);
+
+        if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+          // Monotonic indices (modulo u32 wrap).
+          pending = (uint64_t)(uint32_t)(tail - head);
+
+          // v2 AGPU dumps are a recent tail window; newest is last.
+          if (q2.desc_count > 0 && q2.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+            const aerogpu_dbgctl_ring_desc_v2 &d = q2.desc[q2.desc_count - 1];
+            lastFence = (uint64_t)d.fence;
+            lastFlags = (uint32_t)d.flags;
+            haveLast = true;
+          }
+
+          // For watch mode, only ask the KMD to return the newest descriptor.
+          v2DescCapacity = 1;
+        } else {
+          // Legacy (masked indices) or unknown: compute pending best-effort using the legacy ring layout.
+          if (!TryComputeLegacyPending(q2.ring_size_bytes, head, tail, &pending)) {
+            pending = (uint64_t)(uint32_t)(tail - head);
+          }
+
+          // Only report the "last" descriptor if we know we captured the full pending region.
+          if (pending != 0 && pending == (uint64_t)q2.desc_count && q2.desc_count > 0 &&
+              q2.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+            const aerogpu_dbgctl_ring_desc_v2 &d = q2.desc[q2.desc_count - 1];
+            lastFence = (uint64_t)d.fence;
+            lastFlags = (uint32_t)d.flags;
+            haveLast = true;
+          }
+
+          v2DescCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+        }
+      } else if (st == STATUS_NOT_SUPPORTED) {
+        decided = true;
+        useV2 = false;
+        // Fall through to legacy dump-ring below.
+      } else {
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("D3DKMTEscape(dump-ring-v2) failed");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, st);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+    }
+
+    if (decided && !useV2) {
+      aerogpu_escape_dump_ring_inout q;
+      ZeroMemory(&q, sizeof(q));
+      q.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+      q.hdr.size = sizeof(q);
+      q.hdr.reserved0 = 0;
+      q.ring_id = ringId;
+      q.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+      const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+      if (!NT_SUCCESS(st)) {
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("D3DKMTEscape(dump-ring) failed");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, st);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+
+      head = q.head;
+      tail = q.tail;
+
+      // Best-effort legacy detection (tail<head wrap requires knowing entry_count).
+      bool assumedLegacy = false;
+      if (TryComputeLegacyPending(q.ring_size_bytes, head, tail, &pending)) {
+        assumedLegacy = true;
+      } else {
+        pending = (uint64_t)(uint32_t)(tail - head);
+      }
+      fmtStr = assumedLegacy ? L"legacy" : L"unknown";
+
+      // Only report the "last" descriptor if we know we captured the full pending region.
+      if (pending != 0 && pending == (uint64_t)q.desc_count && q.desc_count > 0 &&
+          q.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+        const aerogpu_dbgctl_ring_desc &d = q.desc[q.desc_count - 1];
+        lastFence = (uint64_t)d.signal_fence;
+        lastFlags = (uint32_t)d.flags;
+        haveLast = true;
+      }
+    }
+
+    const int64_t dPending = havePrevPending ? ((int64_t)pending - (int64_t)prevPending) : 0;
+    if (havePrevPending && pending != 0 && pending == prevPending) {
+      stallIntervals += 1;
+    } else {
+      stallIntervals = 0;
+    }
+    const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
+
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i + 1);
+    w.Key("format");
+    w.String(WideToUtf8(fmtStr));
+    w.Key("head");
+    w.Uint32(head);
+    w.Key("tail");
+    w.Uint32(tail);
+    w.Key("pending");
+    w.String(DecU64(pending));
+    w.Key("d_pending");
+    w.String(DecI64(dPending));
+    w.Key("stall_intervals");
+    w.Uint32(stallIntervals);
+    w.Key("warn");
+    w.String(warnStall ? "STALL" : "-");
+    if (haveLast) {
+      w.Key("last");
+      w.BeginObject();
+      JsonWriteU64HexDec(w, "fence", lastFence);
+      JsonWriteU32Hex(w, "flags_u32_hex", lastFlags);
+      w.EndObject();
+    }
+    w.EndObject();
+
+    prevPending = pending;
+    havePrevPending = true;
+
+    if (i + 1 < samples) {
+      Sleep(intervalMs);
+    }
+  }
+
+  w.EndArray();
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("used_v2");
+  w.Bool(useV2);
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
+                             D3DKMT_HANDLE hAdapter,
+                             uint32_t ringId,
+                             uint32_t indexFromTail,
+                             uint32_t count,
+                             const wchar_t *outPath,
+                             bool force,
+                             std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!outPath || !outPath[0]) {
+    JsonWriteTopLevelError(out, "dump-last-cmd", f, "--dump-last-cmd requires --out <path>", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+  if (count == 0) {
+    JsonWriteTopLevelError(out, "dump-last-cmd", f, "--count must be >= 1", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  // Prefer the v2 dump-ring packet (AGPU tail window + alloc_table fields).
+  aerogpu_escape_dump_ring_v2_inout q2;
+  ZeroMemory(&q2, sizeof(q2));
+  q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+  q2.hdr.size = sizeof(q2);
+  q2.hdr.reserved0 = 0;
+  q2.ring_id = ringId;
+  q2.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  aerogpu_escape_dump_ring_inout q1;
+  ZeroMemory(&q1, sizeof(q1));
+  bool usedV2 = false;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+
+  uint32_t ringFormat = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
+  uint32_t head = 0;
+  uint32_t tail = 0;
+  uint32_t ringSizeBytes = 0;
+  uint32_t descCount = 0;
+
+  if (NT_SUCCESS(st)) {
+    usedV2 = true;
+    ringFormat = q2.ring_format;
+    head = q2.head;
+    tail = q2.tail;
+    ringSizeBytes = q2.ring_size_bytes;
+    descCount = q2.desc_count;
+    if (descCount > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      descCount = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+  } else if (st == STATUS_NOT_SUPPORTED) {
+    // Fallback to legacy dump-ring for older KMDs.
+    q1.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q1.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+    q1.hdr.size = sizeof(q1);
+    q1.hdr.reserved0 = 0;
+    q1.ring_id = ringId;
+    q1.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+    st = SendAerogpuEscape(f, hAdapter, &q1, sizeof(q1));
+    if (!NT_SUCCESS(st)) {
+      JsonWriteTopLevelError(out, "dump-last-cmd", f, "D3DKMTEscape(dump-ring) failed", st);
+      return 2;
+    }
+
+    ringFormat = AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN;
+    head = q1.head;
+    tail = q1.tail;
+    ringSizeBytes = q1.ring_size_bytes;
+    descCount = q1.desc_count;
+    if (descCount > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+      descCount = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+    }
+  } else {
+    JsonWriteTopLevelError(out, "dump-last-cmd", f, "D3DKMTEscape(dump-ring-v2) failed", st);
+    return 2;
+  }
+
+  if (indexFromTail >= descCount) {
+    JsonWriteTopLevelError(out, "dump-last-cmd", f, "--index-from-tail out of range", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  uint32_t actualCount = count;
+  const uint32_t remaining = descCount - indexFromTail;
+  if (actualCount > remaining) {
+    actualCount = remaining;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("dump-last-cmd");
+
+  w.Key("ring");
+  w.BeginObject();
+  w.Key("ring_id");
+  w.Uint32(ringId);
+  w.Key("used_v2");
+  w.Bool(usedV2);
+  w.Key("format");
+  w.String(WideToUtf8(RingFormatToString(ringFormat)));
+  w.Key("ring_size_bytes");
+  w.Uint32(ringSizeBytes);
+  w.Key("head_u32_hex");
+  w.String(HexU32(head));
+  w.Key("tail_u32_hex");
+  w.String(HexU32(tail));
+  w.Key("desc_count");
+  w.Uint32(descCount);
+  w.EndObject();
+
+  w.Key("request");
+  w.BeginObject();
+  w.Key("index_from_tail");
+  w.Uint32(indexFromTail);
+  w.Key("count");
+  w.Uint32(count);
+  w.Key("count_actual");
+  w.Uint32(actualCount);
+  w.Key("out_path");
+  w.String(WideToUtf8(outPath));
+  w.Key("force");
+  w.Bool(force);
+  w.EndObject();
+
+  w.Key("dumps");
+  w.BeginArray();
+
+  for (uint32_t dumpIndex = 0; dumpIndex < actualCount; ++dumpIndex) {
+    const uint32_t curIndexFromTail = indexFromTail + dumpIndex;
+    const uint32_t idx = (descCount - 1u) - curIndexFromTail;
+
+    aerogpu_dbgctl_ring_desc_v2 d;
+    ZeroMemory(&d, sizeof(d));
+    if (usedV2) {
+      d = q2.desc[idx];
+    } else {
+      const aerogpu_dbgctl_ring_desc &d1 = q1.desc[idx];
+      d.fence = d1.signal_fence;
+      d.cmd_gpa = d1.cmd_gpa;
+      d.cmd_size_bytes = d1.cmd_size_bytes;
+      d.flags = d1.flags;
+      d.alloc_table_gpa = 0;
+      d.alloc_table_size_bytes = 0;
+      d.reserved0 = 0;
+    }
+
+    uint32_t selectedRingIndex = idx;
+    if (usedV2 && ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU && tail >= descCount) {
+      selectedRingIndex = (tail - descCount) + idx;
+    }
+
+    const wchar_t *curOutPath = outPath;
+    wchar_t *curOutPathOwned = NULL;
+    if (actualCount > 1) {
+      curOutPathOwned = HeapBuildIndexedBinPath(outPath, curIndexFromTail);
+      if (!curOutPathOwned) {
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Out of memory building output path");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_INSUFFICIENT_RESOURCES);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      curOutPath = curOutPathOwned;
+    }
+
+    bool cmdWritten = false;
+    uint32_t cmdMagic = 0;
+    bool cmdMagicValid = false;
+    bool cmdMagicMatches = false;
+
+    const uint64_t cmdGpa = (uint64_t)d.cmd_gpa;
+    const uint64_t cmdSizeBytes = (uint64_t)d.cmd_size_bytes;
+    if (cmdGpa == 0 && cmdSizeBytes == 0) {
+      FILE *fp = NULL;
+      errno_t ferr = _wfopen_s(&fp, curOutPath, L"wb");
+      if (ferr != 0 || !fp) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Failed to create output file for empty cmd stream");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+        w.Key("errno");
+        w.Int32((int)ferr);
+        const char *errStr = strerror((int)ferr);
+        if (errStr) {
+          w.Key("errno_message");
+          w.String(errStr);
+        }
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      fclose(fp);
+      cmdWritten = true;
+    } else {
+      if (cmdGpa == 0 || cmdSizeBytes == 0) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Invalid cmd_gpa/cmd_size_bytes pair");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      if (cmdSizeBytes > kDumpLastCmdHardMaxBytes) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Refusing to dump cmd stream (hard cap exceeded)");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      if (cmdSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Refusing to dump cmd stream (default cap exceeded; use --force)");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      if (!AddU64NoOverflow(cmdGpa, cmdSizeBytes, NULL)) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Invalid cmd range (overflow)");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+
+      cmdMagic = 0;
+      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &cmdMagic);
+      if (dumpRc != 0) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Failed to dump cmd stream bytes");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return dumpRc;
+      }
+      cmdWritten = true;
+      if (cmdSizeBytes >= 4) {
+        cmdMagicValid = true;
+        cmdMagicMatches = (cmdMagic == AEROGPU_CMD_STREAM_MAGIC);
+      }
+    }
+
+    std::string summaryPathUtf8;
+    {
+      wchar_t *summaryPath = HeapWcsCatSuffix(curOutPath, L".txt");
+      if (summaryPath) {
+        FILE *sf = NULL;
+        errno_t serr = _wfopen_s(&sf, summaryPath, L"wt");
+        if (serr == 0 && sf) {
+          fwprintf(sf, L"ring_id=%lu\n", (unsigned long)ringId);
+          fwprintf(sf, L"ring_format=%s\n", RingFormatToString(ringFormat));
+          fwprintf(sf, L"head=0x%08lx\n", (unsigned long)head);
+          fwprintf(sf, L"tail=0x%08lx\n", (unsigned long)tail);
+          fwprintf(sf, L"selected_index_from_tail=%lu\n", (unsigned long)curIndexFromTail);
+          fwprintf(sf, L"selected_ring_index=%lu\n", (unsigned long)selectedRingIndex);
+          fwprintf(sf, L"fence=0x%I64x\n", (unsigned long long)d.fence);
+          fwprintf(sf, L"flags=0x%08lx\n", (unsigned long)d.flags);
+          fwprintf(sf, L"cmd_gpa=0x%I64x\n", (unsigned long long)d.cmd_gpa);
+          fwprintf(sf, L"cmd_size_bytes=%lu\n", (unsigned long)d.cmd_size_bytes);
+          if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+            fwprintf(sf, L"alloc_table_gpa=0x%I64x\n", (unsigned long long)d.alloc_table_gpa);
+            fwprintf(sf, L"alloc_table_size_bytes=%lu\n", (unsigned long)d.alloc_table_size_bytes);
+          }
+          fclose(sf);
+          summaryPathUtf8 = WideToUtf8(summaryPath);
+        }
+        HeapFree(GetProcessHeap(), 0, summaryPath);
+      }
+    }
+
+    std::string allocPathUtf8;
+    if (ringFormat == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+      const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
+      const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
+      if (!(allocGpa == 0 && allocSizeBytes == 0)) {
+        if (allocGpa == 0 || allocSizeBytes == 0) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Invalid alloc_table_gpa/alloc_table_size_bytes pair");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+        if (allocSizeBytes > kDumpLastCmdHardMaxBytes) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Refusing to dump alloc table (hard cap exceeded)");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+        if (allocSizeBytes > kDumpLastCmdDefaultMaxBytes && !force) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Refusing to dump alloc table (default cap exceeded; use --force)");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+        if (!AddU64NoOverflow(allocGpa, allocSizeBytes, NULL)) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Invalid alloc table range (overflow)");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_INVALID_PARAMETER);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+
+        wchar_t *allocPath = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
+        if (!allocPath) {
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Out of memory building alloc table output path");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_INSUFFICIENT_RESOURCES);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return 2;
+        }
+        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
+        if (dumpAllocRc != 0) {
+          allocPathUtf8 = WideToUtf8(allocPath);
+          HeapFree(GetProcessHeap(), 0, allocPath);
+          if (curOutPathOwned) {
+            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+          }
+          w.EndArray();
+          w.Key("ok");
+          w.Bool(false);
+          w.Key("error");
+          w.BeginObject();
+          w.Key("message");
+          w.String("Failed to dump alloc table bytes");
+          w.Key("status");
+          JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+          w.EndObject();
+          w.EndObject();
+          out->push_back('\n');
+          return dumpAllocRc;
+        }
+        allocPathUtf8 = WideToUtf8(allocPath);
+        HeapFree(GetProcessHeap(), 0, allocPath);
+      }
+    }
+
+    w.BeginObject();
+    w.Key("index_from_tail");
+    w.Uint32(curIndexFromTail);
+    w.Key("ring_index");
+    w.Uint32(selectedRingIndex);
+    w.Key("descriptor");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "fence", (uint64_t)d.fence);
+    w.Key("cmd_gpa_hex");
+    w.String(HexU64((uint64_t)d.cmd_gpa));
+    w.Key("cmd_size_bytes");
+    w.Uint32(d.cmd_size_bytes);
+    JsonWriteU32Hex(w, "flags_u32_hex", (uint32_t)d.flags);
+    w.Key("alloc_table_gpa_hex");
+    w.String(HexU64((uint64_t)d.alloc_table_gpa));
+    w.Key("alloc_table_size_bytes");
+    w.Uint32(d.alloc_table_size_bytes);
+    w.EndObject();
+    w.Key("output");
+    w.BeginObject();
+    w.Key("cmd_path");
+    w.String(WideToUtf8(curOutPath));
+    w.Key("cmd_written");
+    w.Bool(cmdWritten);
+    if (cmdMagicValid) {
+      w.Key("cmd_magic_u32_hex");
+      w.String(HexU32(cmdMagic));
+      w.Key("cmd_magic_matches");
+      w.Bool(cmdMagicMatches);
+    }
+    if (!summaryPathUtf8.empty()) {
+      w.Key("summary_txt_path");
+      w.String(summaryPathUtf8);
+    }
+    if (!allocPathUtf8.empty()) {
+      w.Key("alloc_table_path");
+      w.String(allocPathUtf8);
+    }
+    w.EndObject();
+    w.EndObject();
+
+    if (curOutPathOwned) {
+      HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+    }
+  }
+
+  w.EndArray();
+  w.Key("ok");
+  w.Bool(true);
   w.EndObject();
   out->push_back('\n');
   return 0;
@@ -8927,28 +10042,17 @@ int wmain(int argc, wchar_t **argv) {
       rc = DoDumpScanoutPngJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, dumpScanoutPngPath, &json);
       break;
     case CMD_DUMP_LAST_CMD:
-      JsonWriteTopLevelError(&json, "dump-last-cmd", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoDumpLastCmdJson(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdCount, dumpLastCmdOutPath,
+                             dumpLastCmdForce, &json);
       break;
     case CMD_READ_GPA:
-      JsonWriteTopLevelError(&json, "read-gpa", &f,
-                             "JSON output is not supported for binary-output commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoReadGpaJson(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile, &json);
       break;
     case CMD_WATCH_FENCE:
-      JsonWriteTopLevelError(&json, "watch-fence", &f,
-                             "JSON output is not supported for watch/streaming commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoWatchFenceJson(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0, &json);
       break;
     case CMD_WATCH_RING:
-      JsonWriteTopLevelError(&json, "watch-ring", &f,
-                             "JSON output is not supported for watch/streaming commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoWatchRingJson(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs, &json);
       break;
     case CMD_WAIT_VBLANK:
       rc = DoWaitVblankJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter, &json);
