@@ -178,6 +178,13 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 	start := time.Now()
 	ws, err := dialL2Backend(dialCtx, b.dialCfg)
 	if err != nil {
+		// If the bridge is shutting down (e.g. DataChannel closed or an oversized
+		// message triggered teardown), don't treat the aborted dial as a backend
+		// dial failure.
+		if errors.Is(dialCtx.Err(), context.Canceled) {
+			return nil, err
+		}
+
 		var httpErr *l2BackendDialHTTPError
 		var statusCode any
 		if errors.As(err, &httpErr) && httpErr.statusCode != 0 {
