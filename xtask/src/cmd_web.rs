@@ -10,6 +10,10 @@ Run common web (Node/Vite) workflows.
 
 Usage:
   cargo xtask web <dev|build|preview> [--node-dir <path>] [-- <extra args>]
+
+Options:
+  --node-dir <path>     Override the Node workspace directory (contains package.json; same as AERO_NODE_DIR; deprecated aliases: AERO_WEB_DIR, WEB_DIR).
+  --web-dir <path>      Alias for --node-dir.
 "
     );
 }

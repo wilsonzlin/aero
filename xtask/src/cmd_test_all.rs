@@ -46,13 +46,14 @@ Options:
   --no-webgpu           Do not require WebGPU (sets AERO_REQUIRE_WEBGPU=0) [default]
 
   --wasm-crate-dir <path>
-                        Path (relative to repo root or absolute) to the wasm-pack crate dir
-                        (defaults to $AERO_WASM_CRATE_DIR or a repo-default like crates/aero-wasm)
+                         Path (relative to repo root or absolute) to the wasm-pack crate dir
+                         (defaults to $AERO_WASM_CRATE_DIR or a repo-default like crates/aero-wasm)
   --node-dir <path>     Path (relative to repo root or absolute) containing package.json
-                        (defaults to $AERO_NODE_DIR or an auto-detected location)
+                         (defaults to $AERO_NODE_DIR; deprecated aliases: $AERO_WEB_DIR, $WEB_DIR; or an auto-detected location)
+  --web-dir <path>      Alias for --node-dir.
 
   --pw-project <name>   Select a Playwright project (repeatable).
-                        Example: --pw-project chromium --pw-project firefox
+                         Example: --pw-project chromium --pw-project firefox
 
   -h, --help            Show this help.
 
@@ -60,9 +61,11 @@ Environment:
   AERO_REQUIRE_WEBGPU   If unset, defaults to 0 (to keep CI/dev behavior consistent).
   AERO_WASM_CRATE_DIR   Default wasm-pack crate directory (same as --wasm-crate-dir).
   AERO_NODE_DIR         Default Node workspace directory (same as --node-dir).
+  AERO_WEB_DIR / WEB_DIR
+                        Deprecated aliases for AERO_NODE_DIR.
   AERO_ISOLATE_CARGO_HOME
-                        If set, isolate Cargo state to `./.cargo-home` (or a custom dir) to avoid
-                        \"Blocking waiting for file lock on package cache\" on shared hosts.
+                         If set, isolate Cargo state to `./.cargo-home` (or a custom dir) to avoid
+                         \"Blocking waiting for file lock on package cache\" on shared hosts.
 
 Examples:
   cargo xtask test-all
