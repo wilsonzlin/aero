@@ -20,7 +20,6 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 #if defined(_WIN32)
@@ -51,6 +50,17 @@
 #include "../../common/aerogpu_win32_security.h"
 
 namespace {
+
+// Avoid exceptions escaping UMD code under memory pressure: prefer nothrow
+// allocation and catch any unexpected constructor exceptions.
+template <typename T, typename... Args>
+std::unique_ptr<T> make_unique_nothrow(Args&&... args) {
+  try {
+    return std::unique_ptr<T>(new (std::nothrow) T(std::forward<Args>(args)...));
+  } catch (...) {
+    return nullptr;
+  }
+}
 
 template <typename T, typename = void>
 struct has_interface_version_member : std::false_type {};
@@ -4561,7 +4571,10 @@ Shader* create_internal_shader_locked(
     return nullptr;
   }
 
-  auto sh = std::make_unique<Shader>();
+  auto sh = make_unique_nothrow<Shader>();
+  if (!sh) {
+    return nullptr;
+  }
   sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
   try {
@@ -4582,7 +4595,10 @@ VertexDecl* create_internal_vertex_decl_locked(Device* dev, const void* pDecl, u
     return nullptr;
   }
 
-  auto decl = std::make_unique<VertexDecl>();
+  auto decl = make_unique_nothrow<VertexDecl>();
+  if (!decl) {
+    return nullptr;
+  }
   decl->handle = allocate_global_handle(dev->adapter);
   try {
     decl->blob.resize(decl_size);
@@ -5207,9 +5223,19 @@ inline uint32_t f32_bits(float f) {
 struct Builder {
   std::vector<uint32_t> tokens;
 
-  void begin() {
+  bool begin() {
     tokens.clear();
-    tokens.push_back(kPs20Version);
+    // Fixed-function PS token streams are bounded (see `build_fixedfunc_ps`). Pre-reserve so
+    // `push_back` does not allocate and cannot throw under memory pressure.
+    constexpr size_t kMaxTokens = 512;
+    try {
+      tokens.reserve(kMaxTokens);
+      tokens.push_back(kPs20Version);
+    } catch (...) {
+      tokens.clear();
+      return false;
+    }
+    return true;
   }
 
   void end() {
@@ -5385,7 +5411,9 @@ bool build_fixedfunc_ps(const FixedfuncPixelShaderKey& key, std::vector<uint32_t
   }
 
   Builder b;
-  b.begin();
+  if (!b.begin()) {
+    return false;
+  }
 
   // r3 = diffuse (baseline current)
   constexpr uint32_t kCurReg = 3;
@@ -5515,7 +5543,7 @@ HRESULT ensure_fixedfunc_pixel_shader_for_key_locked(Device* dev, const Fixedfun
   if (!desired_ps) {
     std::vector<uint32_t> ps_words;
     if (!fixedfunc_build_ps_bytes(key, &ps_words) || ps_words.empty()) {
-      return E_FAIL;
+      return E_OUTOFMEMORY;
     }
     const void* ps_bytes = ps_words.data();
     const uint32_t ps_size = static_cast<uint32_t>(ps_words.size() * sizeof(uint32_t));
@@ -5615,14 +5643,29 @@ HRESULT ensure_fixedfunc_pixel_shader_for_key_locked(Device* dev, const Fixedfun
   if (dev->fixedfunc_ps_variant_cache.size() >= kMaxSignatureCacheEntries &&
       dev->fixedfunc_ps_variant_cache.find(sig) == dev->fixedfunc_ps_variant_cache.end()) {
     dev->fixedfunc_ps_variant_cache.clear();
-    dev->fixedfunc_ps_variant_cache.reserve(128);
+    try {
+      dev->fixedfunc_ps_variant_cache.reserve(128);
+    } catch (...) {
+      // Cache is best-effort; skip reserving on OOM.
+    }
   }
   if (dev->fixedfunc_ps_variant_cache.empty()) {
     // First use: keep the signature cache small and avoid rehashing in the common
     // steady-state case where stage state doesn't churn.
-    dev->fixedfunc_ps_variant_cache.reserve(128);
+    try {
+      dev->fixedfunc_ps_variant_cache.reserve(128);
+    } catch (...) {
+      // Cache is best-effort; skip reserving on OOM.
+    }
   }
-  dev->fixedfunc_ps_variant_cache[sig] = desired_ps;
+  // Best-effort: skip caching on OOM so exceptions never escape driver code.
+  try {
+    auto [it, inserted] = dev->fixedfunc_ps_variant_cache.emplace(sig, desired_ps);
+    if (!inserted) {
+      it->second = desired_ps;
+    }
+  } catch (...) {
+  }
 
   if (*ps_slot == desired_ps) {
     return S_OK;
@@ -6448,7 +6491,10 @@ HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
     new_size = (new_size > (0x7FFFFFFFu / 2)) ? required_size : (new_size * 2);
   }
 
-  auto vb = std::make_unique<Resource>();
+  auto vb = make_unique_nothrow<Resource>();
+  if (!vb) {
+    return E_OUTOFMEMORY;
+  }
   vb->handle = allocate_global_handle(dev->adapter);
   vb->kind = ResourceKind::Buffer;
   vb->size_bytes = new_size;
@@ -6491,7 +6537,10 @@ HRESULT ensure_instancing_vertex_buffer_locked(Device* dev, uint32_t stream, uin
     new_size = (new_size > (0x7FFFFFFFu / 2)) ? required_size : (new_size * 2);
   }
 
-  auto vb = std::make_unique<Resource>();
+  auto vb = make_unique_nothrow<Resource>();
+  if (!vb) {
+    return E_OUTOFMEMORY;
+  }
   vb->handle = allocate_global_handle(dev->adapter);
   vb->kind = ResourceKind::Buffer;
   vb->size_bytes = new_size;
@@ -6532,7 +6581,10 @@ HRESULT ensure_up_index_buffer_locked(Device* dev, uint32_t required_size) {
     new_size = (new_size > (0x7FFFFFFFu / 2)) ? required_size : (new_size * 2);
   }
 
-  auto ib = std::make_unique<Resource>();
+  auto ib = make_unique_nothrow<Resource>();
+  if (!ib) {
+    return E_OUTOFMEMORY;
+  }
   ib->handle = allocate_global_handle(dev->adapter);
   ib->kind = ResourceKind::Buffer;
   ib->size_bytes = new_size;
@@ -9967,13 +10019,21 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
     // Fixed-function PS cache entries can alias the same Shader* (e.g. if two
     // different keys map to the same fallback bytecode). Deduplicate deletes so
     // device teardown can't double-free.
-    std::unordered_set<Shader*> destroyed_fixedfunc_ps;
-    destroyed_fixedfunc_ps.reserve(sizeof(dev->fixedfunc_ps_variants) / sizeof(dev->fixedfunc_ps_variants[0]));
+    Shader* destroyed_fixedfunc_ps[sizeof(dev->fixedfunc_ps_variants) / sizeof(dev->fixedfunc_ps_variants[0])] = {};
+    size_t destroyed_fixedfunc_ps_len = 0;
     for (Shader*& ps : dev->fixedfunc_ps_variants) {
       if (!ps) {
         continue;
       }
-      if (destroyed_fixedfunc_ps.insert(ps).second) {
+      bool already_destroyed = false;
+      for (size_t i = 0; i < destroyed_fixedfunc_ps_len; ++i) {
+        if (destroyed_fixedfunc_ps[i] == ps) {
+          already_destroyed = true;
+          break;
+        }
+      }
+      if (!already_destroyed) {
+        destroyed_fixedfunc_ps[destroyed_fixedfunc_ps_len++] = ps;
         (void)emit_destroy_shader_locked(dev, ps->handle);
         delete ps;
       }
@@ -10305,7 +10365,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(D3DERR_INVALIDCALL);
   }
 
-  auto res = std::make_unique<Resource>();
+  auto res = make_unique_nothrow<Resource>();
+  if (!res) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   res->handle = allocate_global_handle(dev->adapter);
   res->type = create_type_u32;
   res->format = d3d9_resource_format(*pCreateResource);
@@ -11014,7 +11077,10 @@ static HRESULT device_open_resource_impl(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto res = std::make_unique<Resource>();
+  auto res = make_unique_nothrow<Resource>();
+  if (!res) {
+    return E_OUTOFMEMORY;
+  }
   res->handle = allocate_global_handle(dev->adapter);
 
   res->is_shared = true;
@@ -11498,6 +11564,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
     return trace.ret(E_INVALIDARG);
   }
 
+  // Default to null outputs so error paths never leak stale runtime handles.
+  pCreateSwapChain->hBackBuffer.pDrvPrivate = nullptr;
+  pCreateSwapChain->hSwapChain.pDrvPrivate = nullptr;
+
   auto* dev = as_device(hDevice);
   if (!dev || !dev->adapter) {
     return trace.ret(E_FAIL);
@@ -11521,7 +11591,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto sc = std::make_unique<SwapChain>();
+  auto sc = make_unique_nothrow<SwapChain>();
+  if (!sc) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   sc->handle = allocate_global_handle(dev->adapter);
   sc->hwnd = pp->hDeviceWindow;
   sc->width = width;
@@ -11531,69 +11604,112 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
   sc->swap_effect = d3d9_pp_swap_effect(*pp);
   sc->flags = d3d9_pp_flags(*pp);
 
-  sc->backbuffers.reserve(backbuffer_count);
+  auto destroy_swapchain_backbuffers_locked = [&](SwapChain* sc_to_destroy) {
+    if (!sc_to_destroy) {
+      return;
+    }
+    // Best-effort cleanup: emit host-side destroys for any already-created
+    // backbuffers, submit so the runtime sees a consistent alloc list, then
+    // destroy the per-process WDDM allocations.
+    for (Resource* created : sc_to_destroy->backbuffers) {
+      if (!created) {
+        continue;
+      }
+      (void)emit_destroy_resource_locked(dev, created->handle);
+    }
+    (void)submit(dev);
+
+    for (Resource* created : sc_to_destroy->backbuffers) {
+      if (!created) {
+        continue;
+      }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (created->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        (void)wddm_destroy_allocation(dev->wddm_callbacks,
+                                      dev->wddm_device,
+                                      created->wddm_hAllocation,
+                                      dev->wddm_context.hContext);
+        created->wddm_hAllocation = 0;
+      }
+#endif
+      delete created;
+    }
+    sc_to_destroy->backbuffers.clear();
+  };
+
+  try {
+    sc->backbuffers.reserve(backbuffer_count);
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   for (uint32_t i = 0; i < backbuffer_count; i++) {
-    auto bb = std::make_unique<Resource>();
+    auto bb = make_unique_nothrow<Resource>();
+    if (!bb) {
+      destroy_swapchain_backbuffers_locked(sc.get());
+      return trace.ret(E_OUTOFMEMORY);
+    }
     HRESULT hr = create_backbuffer_locked(dev, bb.get(), sc->format, sc->width, sc->height);
     if (hr < 0) {
-      // Best-effort cleanup: emit host-side destroys for any already-created
-      // backbuffers, submit so the runtime sees a consistent alloc list, then
-      // destroy the per-process WDDM allocations.
-      for (Resource* created : sc->backbuffers) {
-        if (!created) {
-          continue;
-        }
-        (void)emit_destroy_resource_locked(dev, created->handle);
-      }
-      (void)submit(dev);
-
-      for (Resource* created : sc->backbuffers) {
-        if (!created) {
-          continue;
-        }
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-        if (created->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-          (void)wddm_destroy_allocation(dev->wddm_callbacks,
-                                        dev->wddm_device,
-                                        created->wddm_hAllocation,
-                                        dev->wddm_context.hContext);
-          created->wddm_hAllocation = 0;
-        }
-#endif
-        delete created;
-      }
+      destroy_swapchain_backbuffers_locked(sc.get());
       return trace.ret(hr);
     }
-    sc->backbuffers.push_back(bb.release());
+    Resource* bb_raw = bb.get();
+    try {
+      sc->backbuffers.push_back(bb_raw);
+    } catch (...) {
+      Resource* extra = bb.release();
+      (void)emit_destroy_resource_locked(dev, extra->handle);
+      destroy_swapchain_backbuffers_locked(sc.get());
+      (void)submit(dev);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (extra->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        (void)wddm_destroy_allocation(dev->wddm_callbacks,
+                                      dev->wddm_device,
+                                      extra->wddm_hAllocation,
+                                      dev->wddm_context.hContext);
+        extra->wddm_hAllocation = 0;
+      }
+#endif
+      delete extra;
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    bb.release();
   }
 
   Resource* first_backbuffer = sc->backbuffers.empty() ? nullptr : sc->backbuffers[0];
 
   // Default D3D9 behavior: the first backbuffer is bound as render target 0.
+  bool bound_rt0 = false;
   if (!dev->render_targets[0] && first_backbuffer) {
     dev->render_targets[0] = first_backbuffer;
+    bound_rt0 = true;
     if (!emit_set_render_targets_locked(dev)) {
       // Keep driver state consistent with the host by rolling back the implicit
       // binding and tearing down the partially-created swapchain.
       dev->render_targets[0] = nullptr;
-      for (Resource* created : sc->backbuffers) {
-        if (!created) {
-          continue;
-        }
-        (void)emit_destroy_resource_locked(dev, created->handle);
-        delete created;
-      }
+      destroy_swapchain_backbuffers_locked(sc.get());
       return trace.ret(E_OUTOFMEMORY);
     }
   }
 
-  pCreateSwapChain->hBackBuffer.pDrvPrivate = first_backbuffer;
-  pCreateSwapChain->hSwapChain.pDrvPrivate = sc.get();
-
-  dev->swapchains.push_back(sc.release());
+  SwapChain* sc_raw = sc.get();
+  try {
+    dev->swapchains.push_back(sc_raw);
+  } catch (...) {
+    if (bound_rt0) {
+      dev->render_targets[0] = nullptr;
+      (void)emit_set_render_targets_locked(dev);
+    }
+    destroy_swapchain_backbuffers_locked(sc.get());
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  (void)sc.release();
   if (!dev->current_swapchain) {
     dev->current_swapchain = dev->swapchains.back();
   }
+
+  pCreateSwapChain->hBackBuffer.pDrvPrivate = first_backbuffer;
+  pCreateSwapChain->hSwapChain.pDrvPrivate = sc_raw;
 
   return trace.ret(S_OK);
 }
@@ -11966,18 +12082,14 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
   // don't destroy allocations still referenced by an unsubmitted command buffer.
   (void)submit(dev);
 
-  // Grow/shrink backbuffer array if needed.
-  std::vector<Resource*> removed_backbuffers;
   while (sc->backbuffers.size() > new_count) {
-    removed_backbuffers.push_back(sc->backbuffers.back());
+    Resource* bb = sc->backbuffers.back();
     sc->backbuffers.pop_back();
-  }
-
-  bool rt_changed = false;
-  for (Resource* bb : removed_backbuffers) {
     if (!bb) {
       continue;
     }
+
+    bool rt_changed = false;
     for (uint32_t i = 0; i < 4; ++i) {
       if (dev->render_targets[i] == bb) {
         dev->render_targets[i] = nullptr;
@@ -12033,17 +12145,12 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
         cmd->reserved0 = 0;
       }
     }
-  }
 
-  if (rt_changed) {
-    (void)emit_set_render_targets_locked(dev);
-  }
-
-  for (Resource* bb : removed_backbuffers) {
-    if (!bb) {
-      continue;
+    if (rt_changed) {
+      (void)emit_set_render_targets_locked(dev);
     }
-    emit_destroy_resource_locked(dev, bb->handle);
+
+    (void)emit_destroy_resource_locked(dev, bb->handle);
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     if (bb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
       (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, bb->wddm_hAllocation, dev->wddm_context.hContext);
@@ -12052,13 +12159,43 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESEN
 #endif
     delete bb;
   }
+
+  // Ensure backbuffer vector growth does not throw later in the reset path.
+  if (sc->backbuffers.capacity() < new_count) {
+    try {
+      sc->backbuffers.reserve(new_count);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+  }
   while (sc->backbuffers.size() < new_count) {
-    auto bb = std::make_unique<Resource>();
+    auto bb = make_unique_nothrow<Resource>();
+    if (!bb) {
+      return E_OUTOFMEMORY;
+    }
     HRESULT hr = create_backbuffer_locked(dev, bb.get(), sc->format, sc->width, sc->height);
     if (hr < 0) {
       return hr;
     }
-    sc->backbuffers.push_back(bb.release());
+    Resource* bb_raw = bb.get();
+    try {
+      sc->backbuffers.push_back(bb_raw);
+    } catch (...) {
+      // Backbuffer vector was pre-reserved; this should not happen, but keep driver cleanup safe.
+      (void)emit_destroy_resource_locked(dev, bb_raw->handle);
+      (void)submit(dev);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (bb_raw->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        (void)wddm_destroy_allocation(dev->wddm_callbacks,
+                                      dev->wddm_device,
+                                      bb_raw->wddm_hAllocation,
+                                      dev->wddm_context.hContext);
+        bb_raw->wddm_hAllocation = 0;
+      }
+#endif
+      return E_OUTOFMEMORY;
+    }
+    bb.release();
   }
 
   // Recreate backbuffer storage/handles.
@@ -12230,7 +12367,11 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   std::vector<Resource*> resources;
-  resources.reserve(resource_count);
+  try {
+    resources.reserve(resource_count);
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   for (uint32_t i = 0; i < resource_count; ++i) {
     auto* res = as_resource(pResources[i]);
     if (!res) {
@@ -14072,9 +14213,16 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto decl = std::make_unique<VertexDecl>();
+  auto decl = make_unique_nothrow<VertexDecl>();
+  if (!decl) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   decl->handle = allocate_global_handle(dev->adapter);
-  decl->blob.resize(decl_size);
+  try {
+    decl->blob.resize(decl_size);
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   std::memcpy(decl->blob.data(), pDecl, decl_size);
 
   if (!emit_create_input_layout_locked(dev, decl.get())) {
@@ -14240,7 +14388,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
         if (!decl) {
           return trace.ret(E_OUTOFMEMORY);
         }
-        dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
+        try {
+          dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
+        } catch (...) {
+          // Cache insertion is required to keep the internal decl alive; if it fails, tear down the
+          // newly-created host object and return OOM.
+          (void)emit_destroy_input_layout_locked(dev, decl->handle);
+          delete decl;
+          return trace.ret(E_OUTOFMEMORY);
+        }
       }
     } else {
       const FixedFuncVariantDeclDesc* decl_desc = fixedfunc_decl_desc(variant);
@@ -14305,7 +14461,13 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       if (!decl) {
         return trace.ret(E_OUTOFMEMORY);
       }
-      dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
+      try {
+        dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
+      } catch (...) {
+        (void)emit_destroy_input_layout_locked(dev, decl->handle);
+        delete decl;
+        return trace.ret(E_OUTOFMEMORY);
+      }
     }
 
     if (!emit_set_input_layout_locked(dev, decl)) {
@@ -14343,10 +14505,17 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto sh = std::make_unique<Shader>();
+  auto sh = make_unique_nothrow<Shader>();
+  if (!sh) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
-  sh->bytecode.resize(bytecode_size);
+  try {
+    sh->bytecode.resize(bytecode_size);
+  } catch (...) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   std::memcpy(sh->bytecode.data(), pBytecode, bytecode_size);
 
   if (!emit_create_shader_locked(dev, sh.get())) {
@@ -15658,10 +15827,8 @@ HRESULT device_create_state_block_from_args(D3DDDI_HDEVICE hDevice, CreateArgsT*
 
   pCreateStateBlock->hStateBlock.pDrvPrivate = nullptr;
 
-  std::unique_ptr<StateBlock> sb;
-  try {
-    sb = std::make_unique<StateBlock>();
-  } catch (...) {
+  auto sb = make_unique_nothrow<StateBlock>();
+  if (!sb) {
     return trace.ret(E_OUTOFMEMORY);
   }
 
@@ -15686,10 +15853,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_state_block(D3DDDI_HDEVICE hDevice,
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  std::unique_ptr<StateBlock> sb;
-  try {
-    sb = std::make_unique<StateBlock>();
-  } catch (...) {
+  auto sb = make_unique_nothrow<StateBlock>();
+  if (!sb) {
     return trace.ret(E_OUTOFMEMORY);
   }
 
@@ -24122,7 +24287,13 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       }
       const uint64_t present_fence = submit_fence;
       if (present_fence) {
-        dev->inflight_present_fences.push_back(present_fence);
+        try {
+          dev->inflight_present_fences.push_back(present_fence);
+        } catch (...) {
+          // Present has already been submitted; if we cannot track the fence (OOM), drop throttling state
+          // rather than crashing.
+          dev->inflight_present_fences.clear();
+        }
       }
 
       dev->present_count++;
@@ -24529,7 +24700,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     }
     const uint64_t present_fence = submit_fence;
     if (present_fence) {
-      dev->inflight_present_fences.push_back(present_fence);
+      try {
+        dev->inflight_present_fences.push_back(present_fence);
+      } catch (...) {
+        dev->inflight_present_fences.clear();
+      }
     }
 
     dev->present_count++;
@@ -25118,7 +25293,11 @@ HRESULT AEROGPU_D3D9_CALL device_create_query(
     return trace.ret(D3DERR_NOTAVAILABLE);
   }
 
-  auto q = std::make_unique<Query>();
+  auto q = make_unique_nothrow<Query>();
+  if (!q) {
+    pCreateQuery->hQuery.pDrvPrivate = nullptr;
+    return trace.ret(E_OUTOFMEMORY);
+  }
   q->type = query_type;
   pCreateQuery->hQuery.pDrvPrivate = q.release();
   return trace.ret(S_OK);
@@ -25210,7 +25389,13 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
 
   q->fence_value.store(issue_fence, std::memory_order_release);
   q->submitted.store(false, std::memory_order_relaxed);
-  dev->pending_event_queries.push_back(q);
+  try {
+    dev->pending_event_queries.push_back(q);
+  } catch (...) {
+    // Best-effort: if we cannot track the query in the pending list (OOM), fall back to treating it as
+    // immediately submitted so GetData can still observe forward progress.
+    q->submitted.store(true, std::memory_order_release);
+  }
   return trace.ret(S_OK);
 }
 
@@ -25633,10 +25818,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return trace.ret(E_INVALIDARG);
   }
 
-  std::unique_ptr<Device> dev;
-  try {
-    dev = std::make_unique<Device>(adapter);
-  } catch (...) {
+  auto dev = make_unique_nothrow<Device>(adapter);
+  if (!dev) {
     return trace.ret(E_OUTOFMEMORY);
   }
 
@@ -25654,24 +25837,25 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   {
     static std::once_flag wddm_cb_once;
-    std::call_once(wddm_cb_once, [dev] {
+    Device* dev_ptr = dev.get();
+    std::call_once(wddm_cb_once, [dev_ptr] {
       const void* submit_cb = nullptr;
       const void* render_cb = nullptr;
       const void* present_cb = nullptr;
       bool submit_cb_can_present = false;
       bool render_cb_can_present = false;
       if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
-        submit_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnSubmitCommandCb);
-        using SubmitCbT = decltype(dev->wddm_callbacks.pfnSubmitCommandCb);
+        submit_cb = reinterpret_cast<const void*>(dev_ptr->wddm_callbacks.pfnSubmitCommandCb);
+        using SubmitCbT = decltype(dev_ptr->wddm_callbacks.pfnSubmitCommandCb);
         submit_cb_can_present = submit_callback_can_signal_present<SubmitCbT>();
       }
       if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
-        render_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnRenderCb);
-        using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
+        render_cb = reinterpret_cast<const void*>(dev_ptr->wddm_callbacks.pfnRenderCb);
+        using RenderCbT = decltype(dev_ptr->wddm_callbacks.pfnRenderCb);
         render_cb_can_present = submit_callback_can_signal_present<RenderCbT>();
       }
       if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
-        present_cb = reinterpret_cast<const void*>(dev->wddm_callbacks.pfnPresentCb);
+        present_cb = reinterpret_cast<const void*>(dev_ptr->wddm_callbacks.pfnPresentCb);
       }
       aerogpu::logf("aerogpu-d3d9: WDDM callbacks SubmitCommandCb=%p RenderCb=%p PresentCb=%p\n",
                     submit_cb, render_cb, present_cb);
@@ -26370,7 +26554,10 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return trace.ret(E_INVALIDARG);
   }
 
-  auto dev = std::make_unique<Device>(adapter);
+  auto dev = make_unique_nothrow<Device>(adapter);
+  if (!dev) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
   pCreateDevice->hDevice.pDrvPrivate = dev.get();
 
 #if defined(_WIN32)
