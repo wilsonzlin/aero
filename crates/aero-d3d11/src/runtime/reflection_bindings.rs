@@ -330,7 +330,9 @@ pub(super) trait BindGroupResourceProvider {
     fn constant_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
     fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)>;
     #[allow(dead_code)]
-    fn storage_buffer(&self, slot: u32) -> Option<BufferBinding<'_>>;
+    fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+        None
+    }
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
     fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
 
@@ -1567,10 +1569,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
                     None
                 }
@@ -1925,10 +1923,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
                     None
                 }
@@ -2075,10 +2069,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 }
 
                 fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
-                    None
-                }
-
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
@@ -2245,10 +2235,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.scratch
                 }
 
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
                     None
                 }
@@ -2407,10 +2393,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 }
 
                 fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
-                    None
-                }
-
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 
@@ -2836,10 +2818,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
-                    None
-                }
-
                 fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
                     None
                 }
@@ -3011,10 +2989,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 }
 
                 fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
-                    None
-                }
-
-                fn storage_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
                     None
                 }
 

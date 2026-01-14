@@ -1810,10 +1810,6 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         None
     }
 
-    fn storage_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
-        None
-    }
-
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let stage = self.stage_state?;
         let handle = stage.textures.get(slot as usize).copied().flatten()?;

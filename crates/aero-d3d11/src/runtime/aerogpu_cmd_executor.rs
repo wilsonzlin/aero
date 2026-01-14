@@ -11642,10 +11642,6 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
             .map(|scratch| (scratch.id, &scratch.buffer))
     }
 
-    fn storage_buffer(&self, _slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
-        None
-    }
-
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let bound = self.stage_state.texture(slot)?;
         let tex = self.resources.textures.get(&bound.texture)?;
