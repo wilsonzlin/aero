@@ -430,10 +430,15 @@ if (-not $DisableUdp) {
 }
 
 $virtioSndPciDeviceName = ""
-if ($WithVirtioSnd) {
+if ($WithVirtioSnd -and (-not $DryRun)) {
   # Fail fast with a clear message if the selected QEMU binary lacks virtio-snd support (or the
   # device properties needed for the Aero contract v1 identity).
   $virtioSndPciDeviceName = Assert-AeroWin7QemuSupportsVirtioSndPciDevice -QemuSystem $QemuSystem
+} elseif ($WithVirtioSnd) {
+  # Dry-run must not execute any QEMU subprocess probes. Default to the modern virtio-snd device name
+  # for the purpose of printing a copy/pasteable argv. Real runs still probe QEMU and may select
+  # `virtio-snd-pci` on older builds.
+  $virtioSndPciDeviceName = "virtio-sound-pci"
 }
 
 function Start-AeroSelftestHttpServer {
@@ -4582,17 +4587,24 @@ function Test-AeroQmpRequiredVirtioMsix {
   }
 }
 
-$DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
+if ($DryRun) {
+  # Dry-run should not require that the disk image exists; compute a best-effort absolute path so the
+  # printed argv is still useful in CI/debugging environments.
+  try { $DiskImagePath = [System.IO.Path]::GetFullPath($DiskImagePath) } catch { }
+  try { $SerialLogPath = [System.IO.Path]::GetFullPath($SerialLogPath) } catch { }
+} else {
+  $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
-$serialParent = Split-Path -Parent $SerialLogPath
-if ([string]::IsNullOrEmpty($serialParent)) { $serialParent = "." }
-if (-not (Test-Path -LiteralPath $serialParent)) {
-  New-Item -ItemType Directory -Path $serialParent -Force | Out-Null
-}
-$SerialLogPath = Join-Path (Resolve-Path -LiteralPath $serialParent).Path (Split-Path -Leaf $SerialLogPath)
+  $serialParent = Split-Path -Parent $SerialLogPath
+  if ([string]::IsNullOrEmpty($serialParent)) { $serialParent = "." }
+  if (-not (Test-Path -LiteralPath $serialParent)) {
+    New-Item -ItemType Directory -Path $serialParent -Force | Out-Null
+  }
+  $SerialLogPath = Join-Path (Resolve-Path -LiteralPath $serialParent).Path (Split-Path -Leaf $SerialLogPath)
 
-if (-not $DryRun -and (Test-Path -LiteralPath $SerialLogPath)) {
-  Remove-Item -LiteralPath $SerialLogPath -Force
+  if (Test-Path -LiteralPath $SerialLogPath) {
+    Remove-Item -LiteralPath $SerialLogPath -Force
+  }
 }
 
 if ($DryRun) {
@@ -4604,11 +4616,40 @@ if ($DryRun) {
     return "'" + $Value.Replace("'", "''") + "'"
   }
 
+  $qemuSystemResolved = $QemuSystem
+  try {
+    $app = Get-Command -Name $QemuSystem -CommandType Application -ErrorAction Stop
+    if ($app -and (-not [string]::IsNullOrEmpty($app.Path))) {
+      $qemuSystemResolved = $app.Path
+    }
+  } catch { }
+
+  $needInputWheel = [bool]$WithInputWheel
+  $needInputEventsExtended = [bool]$WithInputEventsExtended
+  $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
+  $needInputMediaKeys = [bool]$WithInputMediaKeys
+  $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
+  $needBlkResize = [bool]$WithBlkResize
+
+  if ($needBlkResize) {
+    if ($VirtioTransitional) {
+      throw "-WithBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
+    }
+    if ($BlkResizeDeltaMiB -le 0) {
+      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize is enabled"
+    }
+  }
+
+  $requestedVirtioNetVectors = $(if ($VirtioNetVectors -gt 0) { $VirtioNetVectors } else { $VirtioMsixVectors })
+  $requestedVirtioBlkVectors = $(if ($VirtioBlkVectors -gt 0) { $VirtioBlkVectors } else { $VirtioMsixVectors })
+  $requestedVirtioSndVectors = $(if ($VirtioSndVectors -gt 0) { $VirtioSndVectors } else { $VirtioMsixVectors })
+  $requestedVirtioInputVectors = $(if ($VirtioInputVectors -gt 0) { $VirtioInputVectors } else { $VirtioMsixVectors })
+  $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
+
   $qmpPort = $null
   $qmpArgs = @()
-  $needInputEvents = [bool]$WithInputEvents
-  $needInputTabletEvents = [bool]$WithInputTabletEvents
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
     try {
       $qmpPort = Get-AeroFreeTcpPort
@@ -4616,8 +4657,8 @@ if ($DryRun) {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputTabletEvents) {
-        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputTabletEvents: $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (input injection / blk resize / QemuPreflightPci): $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -4628,20 +4669,65 @@ if ($DryRun) {
   $serialChardev = "file,id=charserial0,path=$(Quote-AeroWin7QemuKeyvalValue $SerialLogPath)"
   $netdev = "user,id=net0"
 
-  $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $netVectors = $(if ($requestedVirtioNetVectors -gt 0) { $requestedVirtioNetVectors } else { 0 })
+  $blkVectors = $(if ($requestedVirtioBlkVectors -gt 0) { $requestedVirtioBlkVectors } else { 0 })
+  $inputVectors = $(if ($requestedVirtioInputVectors -gt 0) { $requestedVirtioInputVectors } else { 0 })
+
   if ($VirtioTransitional) {
     $nic = "virtio-net-pci,netdev=net0"
-    if ($VirtioMsixVectors -gt 0) { $nic += ",vectors=$VirtioMsixVectors" }
-    $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
-    if ($Snapshot) { $drive += ",snapshot=on" }
+    if ($VirtioDisableMsix) {
+      $nic += ",vectors=0"
+    } elseif ($netVectors -gt 0) {
+      $nic += ",vectors=$netVectors"
+    }
+
+    $virtioBlkArgs = @()
+    if ($VirtioDisableMsix -or $blkVectors -gt 0) {
+      # Use an explicit virtio-blk-pci device so we can apply `vectors=` / `vectors=0`.
+      $driveId = "drive0"
+      $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=none,id=$driveId,cache=writeback"
+      if ($Snapshot) { $drive += ",snapshot=on" }
+      $blk = "virtio-blk-pci,drive=$driveId"
+      if ($VirtioDisableMsix) {
+        $blk += ",vectors=0"
+      } else {
+        $blk += ",vectors=$blkVectors"
+      }
+      $virtioBlkArgs = @(
+        "-drive", $drive,
+        "-device", $blk
+      )
+    } else {
+      $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
+      if ($Snapshot) { $drive += ",snapshot=on" }
+      $virtioBlkArgs = @(
+        "-drive", $drive
+      )
+    }
+
+    $kbdArg = "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)"
+    $mouseArg = "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
+    if ($VirtioDisableMsix) {
+      $kbdArg += ",vectors=0"
+      $mouseArg += ",vectors=0"
+    } elseif ($inputVectors -gt 0) {
+      $kbdArg += ",vectors=$inputVectors"
+      $mouseArg += ",vectors=$inputVectors"
+    }
 
     $virtioInputArgs = @(
-      "-device", "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })",
-      "-device", "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })"
+      "-device", $kbdArg,
+      "-device", $mouseArg
     )
-    if ($needInputTabletEvents) {
+    if ($needVirtioTablet) {
+      $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
+      if ($VirtioDisableMsix) {
+        $tabletArg += ",vectors=0"
+      } elseif ($inputVectors -gt 0) {
+        $tabletArg += ",vectors=$inputVectors"
+      }
       $virtioInputArgs += @(
-        "-device", "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })"
+        "-device", $tabletArg
       )
     }
 
@@ -4655,20 +4741,18 @@ if ($DryRun) {
       "-serial", "chardev:charserial0",
       "-netdev", $netdev,
       "-device", $nic
-    ) + $virtioInputArgs + @(
-      "-drive", $drive
-    ) + $QemuExtraArgs
+    ) + $virtioInputArgs + $virtioBlkArgs + $QemuExtraArgs
   } else {
-    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $VirtioMsixVectors
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $netVectors -DisableMsix:$VirtioDisableMsix
     $driveId = "drive0"
     $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
-    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $VirtioMsixVectors
+    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $blkVectors -DisableMsix:$VirtioDisableMsix
 
-    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputKeyboardQmpId)"
-    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputMouseQmpId)"
+    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $inputVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputKeyboardQmpId)"
+    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $inputVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputMouseQmpId)"
     $virtioTabletArgs = @()
-    if ($needInputTabletEvents) {
-      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputTabletQmpId)"
+    if ($needVirtioTablet) {
+      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $inputVectors -DisableMsix:$VirtioDisableMsix),id=$($script:VirtioInputTabletQmpId)"
       $virtioTabletArgs = @(
         "-device", $tablet
       )
@@ -4682,15 +4766,26 @@ if ($DryRun) {
           $audiodev = "none,id=snd0"
         }
         "wav" {
-          $audiodev = "wav,id=snd0,path=$(Quote-AeroWin7QemuKeyvalValue $VirtioSndWavPath)"
+          if ([string]::IsNullOrEmpty($VirtioSndWavPath)) {
+            throw "VirtioSndWavPath is required when VirtioSndAudioBackend is 'wav'."
+          }
+          $wavPath = $VirtioSndWavPath
+          try { $wavPath = [System.IO.Path]::GetFullPath($wavPath) } catch { }
+          $audiodev = "wav,id=snd0,path=$(Quote-AeroWin7QemuKeyvalValue $wavPath)"
         }
         default {
           throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
         }
       }
 
-      $virtioSndDevice = "virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
-      if ($VirtioMsixVectors -gt 0) { $virtioSndDevice += ",vectors=$VirtioMsixVectors" }
+      $sndDeviceName = $virtioSndPciDeviceName
+      if ([string]::IsNullOrEmpty($sndDeviceName)) { $sndDeviceName = "virtio-sound-pci" }
+      $virtioSndDevice = "$sndDeviceName,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
+      if ($VirtioDisableMsix) {
+        $virtioSndDevice += ",vectors=0"
+      } elseif ($requestedVirtioSndVectors -gt 0) {
+        $virtioSndDevice += ",vectors=$requestedVirtioSndVectors"
+      }
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
@@ -4716,12 +4811,12 @@ if ($DryRun) {
   }
 
   Write-Host "DryRun: QEMU argv (one per line):"
-  Write-Host "  $QemuSystem"
+  Write-Host "  $qemuSystemResolved"
   $qemuArgs | ForEach-Object { Write-Host "  $_" }
   Write-Host ""
   Write-Host "DryRun: QEMU command (PowerShell quoted):"
   $quoted = @()
-  $quoted += (Quote-AeroPsArg $QemuSystem)
+  $quoted += (Quote-AeroPsArg $qemuSystemResolved)
   $quoted += ($qemuArgs | ForEach-Object { Quote-AeroPsArg $_ })
   Write-Host ("  & " + ($quoted -join " "))
   exit 0
