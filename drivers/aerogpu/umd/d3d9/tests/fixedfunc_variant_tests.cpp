@@ -26,12 +26,25 @@ bool CheckEq(aerogpu::FixedFuncVariant got, aerogpu::FixedFuncVariant expected, 
   return true;
 }
 
+bool CheckEqU32(uint32_t got, uint32_t expected, const char* msg) {
+  if (got != expected) {
+    std::fprintf(stderr,
+                 "FAIL: %s (got=0x%08x expected=0x%08x)\n",
+                 msg,
+                 static_cast<unsigned>(got),
+                 static_cast<unsigned>(expected));
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 int main() {
   using aerogpu::FixedFuncVariant;
   using aerogpu::fixedfunc_variant_from_decl_blob;
   using aerogpu::fixedfunc_variant_from_fvf;
+  using aerogpu::fixedfunc_implied_fvf_from_decl_blob;
 
   // FVF mapping.
   if (!CheckEq(fixedfunc_variant_from_fvf(aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfDiffuse),
@@ -108,6 +121,11 @@ int main() {
                  "decl -> RHW_COLOR")) {
       return 1;
     }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfDiffuse,
+                    "decl -> implied FVF (RHW_COLOR)")) {
+      return 1;
+    }
   }
 
   {
@@ -120,6 +138,11 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::RHW_COLOR_TEX1,
                  "decl -> RHW_COLOR_TEX1")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfDiffuse | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (RHW_COLOR_TEX1)")) {
       return 1;
     }
   }
@@ -135,6 +158,11 @@ int main() {
                  "decl -> RHW_TEX1")) {
       return 1;
     }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (RHW_TEX1)")) {
+      return 1;
+    }
   }
 
   {
@@ -146,6 +174,11 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::XYZ_COLOR,
                  "decl -> XYZ_COLOR")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfDiffuse,
+                    "decl -> implied FVF (XYZ_COLOR)")) {
       return 1;
     }
   }
@@ -162,6 +195,11 @@ int main() {
                  "decl -> XYZ_COLOR_TEX1")) {
       return 1;
     }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfDiffuse | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (XYZ_COLOR_TEX1)")) {
+      return 1;
+    }
   }
 
   {
@@ -175,6 +213,11 @@ int main() {
                  "decl -> XYZ_TEX1")) {
       return 1;
     }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (XYZ_TEX1)")) {
+      return 1;
+    }
   }
 
   {
@@ -186,6 +229,11 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::XYZ_NORMAL,
                  "decl -> XYZ_NORMAL")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfNormal,
+                    "decl -> implied FVF (XYZ_NORMAL)")) {
       return 1;
     }
   }
@@ -202,6 +250,11 @@ int main() {
                  "decl -> XYZ_NORMAL_TEX1")) {
       return 1;
     }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfNormal | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (XYZ_NORMAL_TEX1)")) {
+      return 1;
+    }
   }
 
   {
@@ -214,6 +267,11 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::XYZ_NORMAL_COLOR,
                  "decl -> XYZ_NORMAL_COLOR")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfNormal | aerogpu::kD3dFvfDiffuse,
+                    "decl -> implied FVF (XYZ_NORMAL_COLOR)")) {
       return 1;
     }
   }
@@ -229,6 +287,53 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1,
                  "decl -> XYZ_NORMAL_COLOR_TEX1")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfNormal | aerogpu::kD3dFvfDiffuse | aerogpu::kD3dFvfTex1,
+                    "decl -> implied FVF (XYZ_NORMAL_COLOR_TEX1)")) {
+      return 1;
+    }
+  }
+
+  // Non-canonical ordering + UNUSED placeholders should still infer the canonical FVF.
+  {
+    const aerogpu::D3DVERTEXELEMENT9_COMPAT decl[] = {
+        // TEX0, UNUSED, COLOR0, POSITIONT, END
+        {0, 20, aerogpu::kD3dDeclTypeFloat2, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsageTexCoord, 0},
+        {0, 24, aerogpu::kD3dDeclTypeUnused, aerogpu::kD3dDeclMethodDefault, 0, 0},
+        {0, 16, aerogpu::kD3dDeclTypeD3dColor, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsageColor, 0},
+        {0, 0, aerogpu::kD3dDeclTypeFloat4, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsagePositionT, 0},
+        {0xFF, 0, aerogpu::kD3dDeclTypeUnused, 0, 0, 0},
+    };
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfDiffuse | aerogpu::kD3dFvfTex1,
+                    "non-canonical decl -> implied FVF (RHW_COLOR_TEX1)")) {
+      return 1;
+    }
+    if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
+                 FixedFuncVariant::RHW_COLOR_TEX1,
+                 "non-canonical decl -> RHW_COLOR_TEX1")) {
+      return 1;
+    }
+  }
+
+  // TEXCOORDSIZE bits should be inferred from the TEXCOORD element type.
+  {
+    const aerogpu::D3DVERTEXELEMENT9_COMPAT decl[] = {
+        {0, 0, aerogpu::kD3dDeclTypeFloat3, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsagePosition, 0},
+        {0, 12, aerogpu::kD3dDeclTypeD3dColor, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsageColor, 0},
+        {0, 16, aerogpu::kD3dDeclTypeFloat3, aerogpu::kD3dDeclMethodDefault, aerogpu::kD3dDeclUsageTexCoord, 0},
+        {0xFF, 0, aerogpu::kD3dDeclTypeUnused, 0, 0, 0},
+    };
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)),
+                    (aerogpu::kD3dFvfXyz | aerogpu::kD3dFvfDiffuse | aerogpu::kD3dFvfTex1) | (1u << 16u),
+                    "decl float3 texcoord -> implied FVF has TEXCOORDSIZE3")) {
+      return 1;
+    }
+    if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
+                 FixedFuncVariant::XYZ_COLOR_TEX1,
+                 "decl float3 texcoord -> XYZ_COLOR_TEX1")) {
       return 1;
     }
   }
@@ -250,6 +355,9 @@ int main() {
   if (!CheckEq(fixedfunc_variant_from_decl_blob(nullptr, 0), FixedFuncVariant::NONE, "decl nullptr -> NONE")) {
     return 1;
   }
+  if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(nullptr, 0), 0u, "decl nullptr -> implied FVF 0")) {
+    return 1;
+  }
 
   // Truncated declarations should not match.
   {
@@ -261,6 +369,9 @@ int main() {
     if (!CheckEq(fixedfunc_variant_from_decl_blob(decl, sizeof(decl)),
                  FixedFuncVariant::NONE,
                  "decl missing END -> NONE")) {
+      return 1;
+    }
+    if (!CheckEqU32(fixedfunc_implied_fvf_from_decl_blob(decl, sizeof(decl)), 0u, "decl missing END -> implied FVF 0")) {
       return 1;
     }
   }

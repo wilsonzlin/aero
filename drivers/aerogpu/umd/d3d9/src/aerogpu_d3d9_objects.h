@@ -289,83 +289,223 @@ inline const FixedFuncVariantDeclDesc* fixedfunc_decl_desc(FixedFuncVariant vari
   return nullptr;
 }
 
-inline FixedFuncVariant fixedfunc_variant_from_decl_blob(const void* blob, size_t size_bytes) {
+inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t size_bytes) {
   if (!blob || size_bytes < sizeof(D3DVERTEXELEMENT9_COMPAT) * 2) {
-    return FixedFuncVariant::NONE;
+    return 0;
   }
-  const size_t max_elems = size_bytes / sizeof(D3DVERTEXELEMENT9_COMPAT);
-  const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(blob);
 
-  // Find the D3DDECL_END terminator.
-  size_t elem_count = 0;
-  for (size_t i = 0; i < max_elems; ++i) {
-    const auto& e = elems[i];
-    if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
-      elem_count = i + 1;
+  const size_t raw_count = size_bytes / sizeof(D3DVERTEXELEMENT9_COMPAT);
+  const auto* raw = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(blob);
+
+  auto is_end = [](const D3DVERTEXELEMENT9_COMPAT& e) -> bool {
+    return (e.Stream == 0xFF) && (e.Type == kD3dDeclTypeUnused);
+  };
+
+  auto texcoord_dim_from_type = [](uint8_t type) -> uint32_t {
+    switch (type) {
+      case kD3dDeclTypeFloat1:
+        return 1u;
+      case kD3dDeclTypeFloat2:
+        return 2u;
+      case kD3dDeclTypeFloat3:
+        return 3u;
+      case kD3dDeclTypeFloat4:
+        return 4u;
+      default:
+        return 0u;
+    }
+  };
+
+  auto fvf_texcoord0_size_bits = [](uint32_t dim) -> uint32_t {
+    // D3DFVF_TEXCOORDSIZE* uses two bits per texcoord set:
+    //   0 -> float2 (default)
+    //   1 -> float3
+    //   2 -> float4
+    //   3 -> float1
+    uint32_t code = 0;
+    switch (dim) {
+      case 1u:
+        code = 3u;
+        break;
+      case 2u:
+        code = 0u;
+        break;
+      case 3u:
+        code = 1u;
+        break;
+      case 4u:
+        code = 2u;
+        break;
+      default:
+        return 0u;
+    }
+    return code << 16u;
+  };
+
+  // Collect non-UNUSED elements up to the first D3DDECL_END terminator. Order is
+  // not semantically meaningful; runtimes may reorder elements and insert UNUSED
+  // placeholders.
+  std::vector<const D3DVERTEXELEMENT9_COMPAT*> elems;
+  elems.reserve(std::min<size_t>(raw_count, 16));
+  bool saw_end = false;
+  for (size_t i = 0; i < raw_count; ++i) {
+    const auto& e = raw[i];
+    if (is_end(e)) {
+      saw_end = true;
       break;
     }
+    if (e.Type == kD3dDeclTypeUnused) {
+      continue;
+    }
+    elems.push_back(&e);
   }
-  if (elem_count == 0) {
-    return FixedFuncVariant::NONE;
+  if (!saw_end) {
+    return 0;
   }
 
+  auto usage_ok_for_position = [](uint8_t usage) -> bool {
+    // Runtimes are not consistent about POSITION vs POSITIONT usage for the
+    // first element when synthesizing declarations (SetFVF compatibility).
+    return (usage == kD3dDeclUsagePosition) || (usage == kD3dDeclUsagePositionT);
+  };
+
+  auto usage_ok_for_texcoord = [](uint8_t usage) -> bool {
+    // Some runtimes leave TEXCOORD usage as 0 when synthesizing declarations for
+    // fixed-function paths. Accept either TEXCOORD or POSITION (0).
+    return (usage == kD3dDeclUsageTexCoord) || (usage == kD3dDeclUsagePosition);
+  };
+
+  auto elem_matches = [&](const D3DVERTEXELEMENT9_COMPAT& got,
+                          const D3DVERTEXELEMENT9_COMPAT& exp,
+                          uint32_t* out_tex_dim) -> bool {
+    if (out_tex_dim) {
+      *out_tex_dim = 0;
+    }
+    if (is_end(exp)) {
+      return false;
+    }
+    if (got.Stream != exp.Stream || got.Offset != exp.Offset || got.Method != exp.Method ||
+        got.UsageIndex != exp.UsageIndex) {
+      return false;
+    }
+
+    if (exp.Usage == kD3dDeclUsageTexCoord) {
+      if (!usage_ok_for_texcoord(got.Usage)) {
+        return false;
+      }
+      const uint32_t dim = texcoord_dim_from_type(got.Type);
+      if (dim == 0) {
+        return false;
+      }
+      if (out_tex_dim) {
+        *out_tex_dim = dim;
+      }
+      return true;
+    }
+
+    if (exp.Usage == kD3dDeclUsagePosition || exp.Usage == kD3dDeclUsagePositionT) {
+      if (!usage_ok_for_position(got.Usage)) {
+        return false;
+      }
+      return got.Type == exp.Type;
+    }
+
+    // Non-position/non-texcoord elements must match exactly (usage + type).
+    return (got.Usage == exp.Usage) && (got.Type == exp.Type);
+  };
+
+  // Fixed-function patterns: match the canonical FVF layouts. We require:
+  // - A valid D3DDECL_END terminator (seen above).
+  // - Exact element count (excluding UNUSED placeholders).
+  // - Exact offsets/types for each expected element, but allow TEXCOORD0 to be
+  //   FLOAT{1,2,3,4} and allow POSITION/POSITIONT usage variance.
   for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
     const FixedFuncVariantDeclDesc& desc = kFixedFuncVariantDeclTable[i];
-    if (!desc.elems || desc.elem_count == 0) {
-      continue;
-    }
-    if (elem_count != desc.elem_count) {
+    if (!desc.elems || desc.elem_count < 2) {
       continue;
     }
 
+    // Exclude the D3DDECL_END terminator from the signature element count.
+    const size_t sig_count = desc.elem_count - 1;
+    if (elems.size() != sig_count) {
+      continue;
+    }
+
+    std::vector<uint8_t> used(elems.size(), 0);
+    uint32_t tex_dim = 0;
     bool ok = true;
-    for (size_t j = 0; j < elem_count; ++j) {
-      const auto& got = elems[j];
+
+    for (size_t j = 0; j < desc.elem_count; ++j) {
       const auto& exp = desc.elems[j];
-
-      if (j == 0) {
-        // Runtimes are not consistent about POSITION vs POSITIONT usage for the
-        // first element when synthesizing declarations for SetFVF. Accept either.
-        const bool usage_ok = (got.Usage == kD3dDeclUsagePosition || got.Usage == kD3dDeclUsagePositionT);
-        if (!usage_ok) {
-          ok = false;
-          break;
-        }
-        if (got.Stream != exp.Stream || got.Offset != exp.Offset || got.Type != exp.Type ||
-            got.Method != exp.Method || got.UsageIndex != exp.UsageIndex) {
-          ok = false;
-          break;
-        }
-        continue;
+      if (is_end(exp)) {
+        break;
       }
 
-      if (exp.Usage == kD3dDeclUsageTexCoord) {
-        // Some runtimes leave TEXCOORD usage as 0 when synthesizing declarations
-        // for fixed-function paths. Accept either TEXCOORD or POSITION (0).
-        const bool usage_ok = (got.Usage == kD3dDeclUsageTexCoord || got.Usage == kD3dDeclUsagePosition);
-        if (!usage_ok) {
+      size_t match_idx = static_cast<size_t>(-1);
+      uint32_t match_tex_dim = 0;
+      for (size_t k = 0; k < elems.size(); ++k) {
+        if (used[k]) {
+          continue;
+        }
+        uint32_t local_dim = 0;
+        if (!elem_matches(*elems[k], exp, &local_dim)) {
+          continue;
+        }
+        if (match_idx != static_cast<size_t>(-1)) {
           ok = false;
           break;
         }
-        if (got.Stream != exp.Stream || got.Offset != exp.Offset || got.Type != exp.Type ||
-            got.Method != exp.Method || got.UsageIndex != exp.UsageIndex) {
-          ok = false;
-          break;
-        }
-        continue;
+        match_idx = k;
+        match_tex_dim = local_dim;
       }
-
-      if (std::memcmp(&got, &exp, sizeof(D3DVERTEXELEMENT9_COMPAT)) != 0) {
+      if (!ok) {
+        break;
+      }
+      if (match_idx == static_cast<size_t>(-1)) {
         ok = false;
         break;
       }
+      used[match_idx] = 1;
+      if (exp.Usage == kD3dDeclUsageTexCoord) {
+        tex_dim = match_tex_dim;
+      }
     }
-    if (ok) {
-      return desc.variant;
+
+    if (!ok) {
+      continue;
+    }
+
+    uint32_t fvf = desc.fvf;
+    if ((fvf & kD3dFvfTex1) != 0) {
+      // TEX1 patterns always have TEXCOORD0.
+      if (tex_dim == 0) {
+        continue;
+      }
+      fvf |= fvf_texcoord0_size_bits(tex_dim);
+    }
+    return fvf;
+  }
+
+  // Position-only decls (used by ProcessVertices bring-up).
+  if (elems.size() == 1) {
+    const auto& e = *elems[0];
+    if (e.Stream == 0 && e.Offset == 0 && e.Method == kD3dDeclMethodDefault && e.UsageIndex == 0 &&
+        usage_ok_for_position(e.Usage)) {
+      if (e.Type == kD3dDeclTypeFloat4) {
+        return kD3dFvfXyzRhw;
+      }
+      if (e.Type == kD3dDeclTypeFloat3) {
+        return kD3dFvfXyz;
+      }
     }
   }
 
-  return FixedFuncVariant::NONE;
+  return 0;
+}
+
+inline FixedFuncVariant fixedfunc_variant_from_decl_blob(const void* blob, size_t size_bytes) {
+  const uint32_t implied_fvf = fixedfunc_implied_fvf_from_decl_blob(blob, size_bytes);
+  return fixedfunc_variant_from_fvf(implied_fvf);
 }
 inline uint32_t bytes_per_pixel(D3DDDIFORMAT d3d9_format) {
   // Conservative: handle the formats DWM/typical D3D9 samples use.
