@@ -10299,7 +10299,6 @@ impl AerogpuD3d11Executor {
                 }
             }
         }
-
         // After validating patchlist/HS invariants, reject draws that bind tessellation stages until
         // the HS/DS compute expansion path is implemented.
         if self.state.hs.is_some() && self.state.ds.is_some() {
@@ -10742,7 +10741,6 @@ impl AerogpuD3d11Executor {
                     dummy_storage_texture_views: &self.dummy_storage_texture_views,
                     dummy_texture_view_2d: &self.dummy_texture_view_2d,
                     dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
-                    dummy_storage_texture_views: &self.dummy_storage_texture_views,
                     default_sampler: &self.default_sampler,
                     stage: ShaderStage::Vertex,
                     stage_state: stage_bindings,
@@ -31231,7 +31229,6 @@ fn cs_main() {
                 dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
-                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Domain,
                 stage_state: exec.bindings.stage(ShaderStage::Domain),
