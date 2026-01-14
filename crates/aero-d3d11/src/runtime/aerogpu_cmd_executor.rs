@@ -29386,6 +29386,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Domain,
                 stage_state: exec.bindings.stage(ShaderStage::Domain),
