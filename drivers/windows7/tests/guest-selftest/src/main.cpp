@@ -695,13 +695,14 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
   constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
 
   if (res.returned_len < kIrqModeEnd) {
-    log.Logf("virtio-blk-irq|WARN|missing|returned_len=%zu|expected_min=%zu", res.returned_len, kIrqModeEnd);
+    log.Logf("virtio-blk-miniport-irq|WARN|reason=missing_interrupt_mode|returned_len=%zu|expected_min=%zu",
+             res.returned_len, kIrqModeEnd);
     return true;
   }
 
   if (res.returned_len < sizeof(AEROVBLK_QUERY_INFO)) {
-    log.Logf("virtio-blk-irq|WARN|query_truncated|returned_len=%zu|expected=%zu", res.returned_len,
-             sizeof(AEROVBLK_QUERY_INFO));
+    log.Logf("virtio-blk-miniport-irq|WARN|reason=query_truncated|returned_len=%zu|expected=%zu",
+             res.returned_len, sizeof(AEROVBLK_QUERY_INFO));
   }
 
   const char* mode = "unknown";
@@ -718,11 +719,11 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
   if (res.returned_len >= kMsgCountEnd) {
     msg_count = std::to_string(static_cast<unsigned long>(info.MessageCount));
   } else {
-    log.Logf("virtio-blk-irq|WARN|missing_message_count|returned_len=%zu|expected_min=%zu", res.returned_len,
-             kMsgCountEnd);
+    log.Logf("virtio-blk-miniport-irq|WARN|reason=missing_message_count|returned_len=%zu|expected_min=%zu",
+             res.returned_len, kMsgCountEnd);
   }
 
-  log.Logf("virtio-blk-irq|INFO|mode=%s|message_count=%s|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x",
+  log.Logf("virtio-blk-miniport-irq|INFO|mode=%s|message_count=%s|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x",
            mode, msg_count.c_str(), static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
   return true;
 }
