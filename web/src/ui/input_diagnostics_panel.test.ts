@@ -78,6 +78,9 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, 1);
     Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, 1);
     Atomics.store(status, StatusIndex.IoInputUsbMouseOk, 0);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsUsb, 0x03);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsVirtio, 0);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsPs2, 0x04);
     Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, 0x1f);
     Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, 2);
     Atomics.store(status, StatusIndex.IoInputBatchReceivedCounter, 10);
@@ -101,6 +104,9 @@ describe("mountInputDiagnosticsPanel", () => {
     expect(hostText()).toContain("mouse_buttons_mask=0x0000001f");
     expect(hostText()).toContain("mouse_buttons_held=left,right,middle,back,forward");
     expect(hostText()).toContain("keyboard_held_count=2");
+    expect(hostText()).toContain("keyboard_leds_usb=0x00000003 num,caps");
+    expect(hostText()).toContain("keyboard_leds_virtio=0x00000000 (none)");
+    expect(hostText()).toContain("keyboard_leds_ps2=0x00000004 scroll");
     expect(hostText()).toContain("io.batches_received=10");
     expect(hostText()).toContain("io.batches_processed=9");
     expect(hostText()).toContain("io.batches_dropped=1");
@@ -120,6 +126,9 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, 1);
     Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, 0);
     Atomics.store(status, StatusIndex.IoInputUsbMouseOk, 1);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsUsb, 0);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsVirtio, 0x01);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsPs2, 0);
     Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, 0);
     Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, 0);
     Atomics.store(status, StatusIndex.IoInputBatchReceivedCounter, 42);
@@ -143,6 +152,9 @@ describe("mountInputDiagnosticsPanel", () => {
     expect(hostText()).toContain("mouse_buttons_mask=0x00000000");
     expect(hostText()).toContain("mouse_buttons_held=(none)");
     expect(hostText()).toContain("keyboard_held_count=0");
+    expect(hostText()).toContain("keyboard_leds_usb=0x00000000 (none)");
+    expect(hostText()).toContain("keyboard_leds_virtio=0x00000001 num");
+    expect(hostText()).toContain("keyboard_leds_ps2=0x00000000 (none)");
     expect(hostText()).toContain("io.batches_received=42");
     expect(hostText()).toContain("io.batches_processed=42");
     expect(hostText()).toContain("io.batches_dropped=0");

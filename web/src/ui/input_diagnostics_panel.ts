@@ -9,6 +9,9 @@ export type InputDiagnosticsSnapshot = {
   virtioMouseDriverOk: boolean;
   syntheticUsbKeyboardConfigured: boolean;
   syntheticUsbMouseConfigured: boolean;
+  keyboardLedsUsbMask: number;
+  keyboardLedsVirtioMask: number;
+  keyboardLedsPs2Mask: number;
   mouseButtonsMask: number;
   /**
    * Total number of "keyboard-like" inputs currently held down.
@@ -45,6 +48,9 @@ export function readInputDiagnosticsSnapshotFromStatus(status: Int32Array): Inpu
     virtioMouseDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) !== 0,
     syntheticUsbKeyboardConfigured: Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk) !== 0,
     syntheticUsbMouseConfigured: Atomics.load(status, StatusIndex.IoInputUsbMouseOk) !== 0,
+    keyboardLedsUsbMask: Atomics.load(status, StatusIndex.IoInputKeyboardLedsUsb) >>> 0,
+    keyboardLedsVirtioMask: Atomics.load(status, StatusIndex.IoInputKeyboardLedsVirtio) >>> 0,
+    keyboardLedsPs2Mask: Atomics.load(status, StatusIndex.IoInputKeyboardLedsPs2) >>> 0,
     mouseButtonsMask: Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0,
     keyboardHeldCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
     batchesReceived: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
@@ -81,6 +87,17 @@ function formatMouseButtonsHeld(mask: number): string {
   if ((mask & 0x04) !== 0) names.push("middle");
   if ((mask & 0x08) !== 0) names.push("back");
   if ((mask & 0x10) !== 0) names.push("forward");
+  return names.length ? names.join(",") : "(none)";
+}
+
+function formatKeyboardLeds(mask: number): string {
+  const m = mask & 0x1f;
+  const names: string[] = [];
+  if ((m & 0x01) !== 0) names.push("num");
+  if ((m & 0x02) !== 0) names.push("caps");
+  if ((m & 0x04) !== 0) names.push("scroll");
+  if ((m & 0x08) !== 0) names.push("compose");
+  if ((m & 0x10) !== 0) names.push("kana");
   return names.length ? names.join(",") : "(none)";
 }
 
@@ -124,6 +141,9 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
       `mouse_buttons_mask=${formatHex32(snapshot.mouseButtonsMask)}`,
       `mouse_buttons_held=${formatMouseButtonsHeld(snapshot.mouseButtonsMask)}`,
       `keyboard_held_count=${snapshot.keyboardHeldCount >>> 0}`,
+      `keyboard_leds_usb=${formatHex32(snapshot.keyboardLedsUsbMask)} ${formatKeyboardLeds(snapshot.keyboardLedsUsbMask)}`,
+      `keyboard_leds_virtio=${formatHex32(snapshot.keyboardLedsVirtioMask)} ${formatKeyboardLeds(snapshot.keyboardLedsVirtioMask)}`,
+      `keyboard_leds_ps2=${formatHex32(snapshot.keyboardLedsPs2Mask)} ${formatKeyboardLeds(snapshot.keyboardLedsPs2Mask)}`,
       `io.batches_received=${snapshot.batchesReceived >>> 0}`,
       `io.batches_processed=${snapshot.batchesProcessed >>> 0}`,
       `io.batches_dropped=${snapshot.batchesDropped >>> 0}`,

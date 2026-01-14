@@ -234,6 +234,16 @@ impl VirtioInputPciDeviceCore {
         self.irq.asserted()
     }
 
+    pub fn leds_mask(&self) -> u8 {
+        if self.kind != VirtioInputDeviceKind::Keyboard {
+            return 0;
+        }
+        self.pci
+            .device::<VirtioInput>()
+            .map(|input| input.leds_mask())
+            .unwrap_or(0)
+    }
+
     pub fn inject_key(&mut self, linux_key: u16, pressed: bool, mem: &mut dyn GuestMemory) {
         if self.kind != VirtioInputDeviceKind::Keyboard {
             return;
@@ -712,6 +722,13 @@ mod wasm {
             self.inner.irq_asserted()
         }
 
+        /// Current guest-reported keyboard LED state bitmask (HID-style).
+        ///
+        /// Only meaningful for `kind="keyboard"`. Other device kinds return 0.
+        pub fn leds_mask(&self) -> u32 {
+            u32::from(self.inner.leds_mask())
+        }
+
         /// Inject a Linux input key code event (keyboard devices only).
         pub fn inject_key(&mut self, linux_key: u32, pressed: bool) {
             let Ok(code) = u16::try_from(linux_key) else {
@@ -808,5 +825,14 @@ mod remap_tests {
     fn mmio_read_size0_is_noop() {
         let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
         assert_eq!(dev.mmio_read(0, 0), 0);
+    }
+
+    #[test]
+    fn leds_mask_is_exposed_for_keyboard_and_defaults_to_zero() {
+        let dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
+        assert_eq!(dev.leds_mask(), 0);
+
+        let dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Mouse);
+        assert_eq!(dev.leds_mask(), 0);
     }
 }

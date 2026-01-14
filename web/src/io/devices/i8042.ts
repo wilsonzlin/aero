@@ -1110,6 +1110,27 @@ export class I8042Controller implements PortIoHandler {
   }
 
   /**
+   * Return the current guest-set keyboard LED state as a HID-style bitmask.
+   *
+   * Bit layout:
+   * - bit0: Num Lock
+   * - bit1: Caps Lock
+   * - bit2: Scroll Lock
+   * - bit3: Compose
+   * - bit4: Kana
+   *
+   * Note: the PS/2 Set LEDs command uses a different bit order; this helper normalizes it.
+   */
+  keyboardLedsMask(): number {
+    // PS/2 raw bit layout: bit0=Scroll, bit1=Num, bit2=Caps.
+    const raw = this.#keyboard.leds & 0x07;
+    const scroll = raw & 0x01;
+    const num = (raw >>> 1) & 0x01;
+    const caps = (raw >>> 2) & 0x01;
+    return (num | (caps << 1) | (scroll << 2)) >>> 0;
+  }
+
+  /**
    * Inject host keyboard scancode bytes into the controller output buffer.
    *
    * Bytes injected via this path are treated as coming from the keyboard device

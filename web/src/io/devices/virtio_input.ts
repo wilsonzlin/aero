@@ -24,6 +24,14 @@ export type VirtioInputPciDeviceLike = {
   set_pci_command?(command: number): void;
   driver_ok(): boolean;
   irq_asserted(): boolean;
+  /**
+   * Current guest-reported keyboard LED state bitmask (HID-style).
+   *
+   * Only meaningful for the keyboard variant; other kinds may return 0.
+   *
+   * Optional for older WASM builds.
+   */
+  leds_mask?(): number;
   inject_key(linux_key: number, pressed: boolean): void;
   inject_rel(dx: number, dy: number): void;
   inject_button(btn: number, pressed: boolean): void;
@@ -811,6 +819,19 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
       console.info(`[virtio-input] ${this.#kind} driver_ok`);
     }
     return ok;
+  }
+
+  ledsMask(): number {
+    if (this.#destroyed) return 0;
+    if (this.#kind !== "keyboard") return 0;
+    const fn = (this.#dev as unknown as { leds_mask?: unknown }).leds_mask;
+    if (typeof fn !== "function") return 0;
+    try {
+      const raw = (fn as () => unknown).call(this.#dev) as unknown;
+      return typeof raw === "number" ? (raw >>> 0) & 0x1f : 0;
+    } catch {
+      return 0;
+    }
   }
 
   injectKey(code: number, pressed: boolean): void {

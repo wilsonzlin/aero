@@ -460,6 +460,9 @@ function initInputDiagnosticsTelemetry(): void {
     Atomics.store(st, StatusIndex.IoInputUsbMouseOk, 0);
     Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, 0);
     Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardLedsUsb, 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardLedsVirtio, 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardLedsPs2, 0);
 
     Atomics.store(st, StatusIndex.IoInputBatchSendLatencyUs, 0);
     Atomics.store(st, StatusIndex.IoInputBatchSendLatencyEwmaUs, 0);
@@ -495,6 +498,23 @@ function safeCallBool(thisArg: unknown, fn: unknown): boolean {
     return !!(fn as () => unknown).call(thisArg);
   } catch {
     return false;
+  }
+}
+
+function safeCallU32(thisArg: unknown, fn: unknown): number {
+  if (typeof fn !== "function") return 0;
+  try {
+    const raw = (fn as () => unknown).call(thisArg) as unknown;
+    if (typeof raw === "number") {
+      return Number.isFinite(raw) ? raw >>> 0 : 0;
+    }
+    if (typeof raw === "bigint") {
+      if (raw < 0n) return 0;
+      return Number(raw & 0xffff_ffffn);
+    }
+    return 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -711,6 +731,26 @@ function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMous
     Atomics.store(st, StatusIndex.IoInputUsbMouseOk, mouseUsbOk ? 1 : 0);
     Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, (pressedKeyboardHidUsageCount + pressedConsumerUsageCount) | 0);
     Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
+
+    const m = machine;
+    if (m) {
+      const anyMachine = m as unknown as {
+        usb_hid_keyboard_leds?: unknown;
+        virtio_input_keyboard_leds?: unknown;
+        ps2_keyboard_leds?: unknown;
+      };
+      Atomics.store(st, StatusIndex.IoInputKeyboardLedsUsb, safeCallU32(m, anyMachine.usb_hid_keyboard_leds) & 0x1f);
+      Atomics.store(
+        st,
+        StatusIndex.IoInputKeyboardLedsVirtio,
+        safeCallU32(m, anyMachine.virtio_input_keyboard_leds) & 0x1f,
+      );
+      Atomics.store(st, StatusIndex.IoInputKeyboardLedsPs2, safeCallU32(m, anyMachine.ps2_keyboard_leds) & 0x1f);
+    } else {
+      Atomics.store(st, StatusIndex.IoInputKeyboardLedsUsb, 0);
+      Atomics.store(st, StatusIndex.IoInputKeyboardLedsVirtio, 0);
+      Atomics.store(st, StatusIndex.IoInputKeyboardLedsPs2, 0);
+    }
   } catch {
     // ignore (best-effort)
   }

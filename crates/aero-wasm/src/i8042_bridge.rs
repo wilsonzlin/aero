@@ -132,6 +132,25 @@ impl I8042Bridge {
         self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x1f;
     }
 
+    /// Return the current guest-set keyboard LED state as a HID-style bitmask.
+    ///
+    /// Bit layout:
+    /// - bit0: Num Lock
+    /// - bit1: Caps Lock
+    /// - bit2: Scroll Lock
+    /// - bit3: Compose
+    /// - bit4: Kana
+    ///
+    /// Note: PS/2 `Set LEDs` uses a different bit order; this helper normalizes it.
+    pub fn keyboard_leds(&self) -> u8 {
+        // PS/2 raw bit layout (Set LEDs payload): bit0=Scroll, bit1=Num, bit2=Caps.
+        let raw = self.ctrl.keyboard().leds() & 0x07;
+        let scroll = raw & 0x01;
+        let num = (raw >> 1) & 0x01;
+        let caps = (raw >> 2) & 0x01;
+        num | (caps << 1) | (scroll << 2)
+    }
+
     /// Inject up to 4 Set-2 keyboard scancode bytes.
     ///
     /// The format matches `web/src/input/event_queue.ts`:
@@ -289,5 +308,34 @@ impl I8042Bridge {
         // captures controller/device state.
         self.sys.borrow_mut().reset_requests = 0;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::I8042Bridge;
+
+    #[test]
+    fn keyboard_leds_are_reported_as_hid_style_bitmask() {
+        let mut bridge = I8042Bridge::new();
+        assert_eq!(bridge.keyboard_leds(), 0);
+
+        // PS/2 raw layout: bit0=Scroll, bit1=Num, bit2=Caps.
+        // HID layout: bit0=Num, bit1=Caps, bit2=Scroll.
+
+        // Scroll -> HID bit2.
+        bridge.port_write(0x0060, 0xED);
+        bridge.port_write(0x0060, 0x01);
+        assert_eq!(bridge.keyboard_leds(), 0x04);
+
+        // Num -> HID bit0.
+        bridge.port_write(0x0060, 0xED);
+        bridge.port_write(0x0060, 0x02);
+        assert_eq!(bridge.keyboard_leds(), 0x01);
+
+        // Caps -> HID bit1.
+        bridge.port_write(0x0060, 0xED);
+        bridge.port_write(0x0060, 0x04);
+        assert_eq!(bridge.keyboard_leds(), 0x02);
     }
 }

@@ -399,6 +399,17 @@ class I8042WasmController {
     this.#syncSideEffects({ suppressIrqPulses: true });
   }
 
+  keyboardLedsMask(): number {
+    const fn = (this.#bridge as unknown as { keyboard_leds?: unknown }).keyboard_leds;
+    if (typeof fn !== "function") return 0;
+    try {
+      const raw = (fn as () => unknown).call(this.#bridge) as unknown;
+      return typeof raw === "number" ? (raw >>> 0) & 0x1f : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   #syncSideEffects(opts: { afterPort60Read?: boolean; suppressIrqPulses?: boolean } = {}): void {
     this.#syncIrqs(opts);
     this.#syncSystemControl();
@@ -506,6 +517,9 @@ let syntheticUsbConsumerControl: UsbHidPassthroughBridge | null = null;
 let syntheticUsbHidAttached = false;
 let keyboardUsbOk = false;
 let mouseUsbOk = false;
+// HID-style keyboard LED bitmask as last reported by the guest via the synthetic USB keyboard
+// output report (bit0=Num, bit1=Caps, bit2=Scroll, bit3=Compose, bit4=Kana).
+let keyboardLedsUsbMask = 0;
 let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
 let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
 let syntheticUsbConsumerControlPendingReport: Uint8Array | null = null;
@@ -3206,6 +3220,7 @@ function teardownGuestStateForMachineHostOnlyMode(): void {
     // ignore
   }
   syntheticUsbKeyboard = null;
+  keyboardLedsUsbMask = 0;
   try {
     syntheticUsbMouse?.free();
   } catch {
@@ -6435,6 +6450,23 @@ function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMous
       (pressedKeyboardHidUsageCount + pressedConsumerUsageCount) | 0,
     );
     Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
+
+    // Keyboard LED diagnostics.
+    let virtioLeds = 0;
+    try {
+      virtioLeds = virtioInputKeyboard?.ledsMask() ?? 0;
+    } catch {
+      virtioLeds = 0;
+    }
+    let ps2Leds = 0;
+    try {
+      ps2Leds = i8042Wasm?.keyboardLedsMask() ?? i8042Ts?.keyboardLedsMask() ?? 0;
+    } catch {
+      ps2Leds = 0;
+    }
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsUsb, keyboardLedsUsbMask & 0x1f);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsVirtio, virtioLeds & 0x1f);
+    Atomics.store(status, StatusIndex.IoInputKeyboardLedsPs2, ps2Leds & 0x1f);
   } catch {
     // ignore (best-effort)
   }
@@ -6604,10 +6636,28 @@ function drainSyntheticUsbHidOutputReports(): void {
   const gamepad = syntheticUsbGamepad;
   const consumer = syntheticUsbConsumerControl;
 
-  if (keyboard) drainSyntheticUsbHidOutputReportsForDevice(keyboard);
+  if (keyboard) drainSyntheticUsbKeyboardOutputReports(keyboard);
   if (mouse) drainSyntheticUsbHidOutputReportsForDevice(mouse);
   if (gamepad) drainSyntheticUsbHidOutputReportsForDevice(gamepad);
   if (consumer) drainSyntheticUsbHidOutputReportsForDevice(consumer);
+}
+
+function drainSyntheticUsbKeyboardOutputReports(dev: UsbHidPassthroughBridge): void {
+  if (!safeSyntheticUsbHidConfigured(dev)) return;
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK; i += 1) {
+    let report: unknown;
+    try {
+      report = dev.drain_next_output_report();
+    } catch {
+      break;
+    }
+    if (report == null) break;
+    const out = report as Partial<{ reportType: unknown; data: unknown }>;
+    if (out.reportType !== "output") continue;
+    const data = out.data;
+    if (!(data instanceof Uint8Array) || data.byteLength === 0) continue;
+    keyboardLedsUsbMask = data[0]! & 0x1f;
+  }
 }
 
 function drainSyntheticUsbHidOutputReportsForDevice(dev: UsbHidPassthroughBridge): void {
@@ -7073,6 +7123,7 @@ function shutdown(): void {
 
       syntheticUsbKeyboard?.free();
       syntheticUsbKeyboard = null;
+      keyboardLedsUsbMask = 0;
       syntheticUsbMouse?.free();
       syntheticUsbMouse = null;
       syntheticUsbGamepad?.free();

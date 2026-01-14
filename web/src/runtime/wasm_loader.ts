@@ -1314,6 +1314,12 @@ export interface WasmApi {
         set_pci_command?(command: number): void;
         driver_ok(): boolean;
         irq_asserted(): boolean;
+        /**
+         * Current guest-reported keyboard LED state bitmask (HID-style).
+         *
+         * Optional for older WASM builds.
+         */
+        leds_mask?(): number;
         inject_key(linux_key: number, pressed: boolean): void;
         inject_rel(dx: number, dy: number): void;
         inject_button(btn: number, pressed: boolean): void;
@@ -1574,6 +1580,12 @@ export interface WasmApi {
 
         readonly a20_enabled: boolean;
         take_reset_requests(): number;
+        /**
+         * Current guest-set keyboard LED state (HID-style bitmask).
+         *
+         * Optional for older WASM builds.
+         */
+        keyboard_leds?(): number;
 
         save_state(): Uint8Array;
         load_state(bytes: Uint8Array): void;

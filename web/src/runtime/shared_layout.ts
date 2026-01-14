@@ -74,6 +74,18 @@ export const StatusIndex = {
   IoInputKeyboardHeldCount: 26,
   IoInputMouseButtonsHeldMask: 27,
 
+  // Guest-reported keyboard LED bitmasks for each backend (best-effort diagnostics).
+  //
+  // Bit layout (HID-style; shared with `Machine.*_keyboard_leds()` helpers):
+  // - bit0: Num Lock
+  // - bit1: Caps Lock
+  // - bit2: Scroll Lock
+  // - bit3: Compose
+  // - bit4: Kana
+  IoInputKeyboardLedsUsb: 36,
+  IoInputKeyboardLedsVirtio: 37,
+  IoInputKeyboardLedsPs2: 38,
+
   // Total input batches received by the input injector (including queued/dropped while snapshot-paused).
   IoInputBatchReceivedCounter: 28,
   // Total input batches dropped by the input injector (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
