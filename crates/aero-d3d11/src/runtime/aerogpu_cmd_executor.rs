@@ -21882,7 +21882,8 @@ mod tests {
                 "expected HS legacy constants buffer to be referenced"
             );
             assert!(
-                !exec.encoder_used_buffers
+                !exec
+                    .encoder_used_buffers
                     .contains(&legacy_constants_buffer_id(ShaderStage::Compute)),
                 "stage_ex HS write must not clobber the real compute stage legacy constants buffer"
             );
@@ -21905,7 +21906,8 @@ mod tests {
                 "expected DS legacy constants buffer to be referenced"
             );
             assert!(
-                !exec.encoder_used_buffers
+                !exec
+                    .encoder_used_buffers
                     .contains(&legacy_constants_buffer_id(ShaderStage::Compute)),
                 "stage_ex DS write must not clobber the real compute stage legacy constants buffer"
             );

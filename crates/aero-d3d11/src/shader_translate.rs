@@ -8813,9 +8813,9 @@ mod tests {
             translated.wgsl
         );
         assert!(
-            translated
-                .wgsl
-                .contains("hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id"),
+            translated.wgsl.contains(
+                "hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id"
+            ),
             "{}",
             translated.wgsl
         );

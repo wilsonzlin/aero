@@ -180,7 +180,9 @@ fn inf_functional_text_without_sections(contents: &str, drop_sections: &[&str]) 
         if trimmed.starts_with('[') {
             if let Some(end) = trimmed.find(']') {
                 let section = trimmed[1..end].trim();
-                dropping = drop_sections.iter().any(|s| s.eq_ignore_ascii_case(section));
+                dropping = drop_sections
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(section));
             } else {
                 // Not a real section header; keep current dropping state.
                 dropping = false;

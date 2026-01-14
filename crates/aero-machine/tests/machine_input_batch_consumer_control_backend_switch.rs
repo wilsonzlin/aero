@@ -74,8 +74,10 @@ fn inject_input_batch_consumer_release_stays_on_usb_when_virtio_becomes_ready() 
     // Press a Consumer Control usage (Volume Up, Usage Page 0x0C, Usage ID 0x00E9) before
     // virtio-input is ready; this should route via the USB consumer-control device.
     let words_press: [u32; 6] = [
-        1, 0, // header: count=1, timestamp unused
-        7, 0, // type=HidUsage16, event_ts unused
+        1,
+        0, // header: count=1, timestamp unused
+        7,
+        0,           // type=HidUsage16, event_ts unused
         0x0001_000c, // a=(usagePage=0x000c)|((pressed=1)<<16)
         0x00e9,      // b=usageId
     ];
@@ -99,8 +101,10 @@ fn inject_input_batch_consumer_release_stays_on_usb_when_virtio_becomes_ready() 
     // Release should still route to the USB consumer-control device (matching the press), ensuring
     // the USB model's pressed state is cleared rather than being left "stuck".
     let words_release: [u32; 6] = [
-        1, 0, // header
-        7, 0, // type=HidUsage16
+        1,
+        0, // header
+        7,
+        0,           // type=HidUsage16
         0x0000_000c, // a=(usagePage=0x000c)|((pressed=0)<<16)
         0x00e9,
     ];
@@ -198,4 +202,3 @@ fn inject_input_batch_consumer_release_after_snapshot_restore_clears_usb_even_if
         UsbInResult::Data(vec![0x00, 0x00])
     );
 }
-

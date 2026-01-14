@@ -954,7 +954,9 @@ pub trait PciDevice {
 #[cfg(test)]
 mod tests {
     use super::{PciBarDefinition, PciConfigSpace, PciDevice};
-    use crate::pci::capabilities::{PCI_CAP_PTR_OFFSET, PCI_STATUS_CAPABILITIES_LIST, PCI_STATUS_OFFSET};
+    use crate::pci::capabilities::{
+        PCI_CAP_PTR_OFFSET, PCI_STATUS_CAPABILITIES_LIST, PCI_STATUS_OFFSET,
+    };
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
     use crate::pci::msix::{MsixCapability, PCI_CAP_ID_MSIX};
     use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -1429,7 +1431,8 @@ mod tests {
             state.bytes[PCI_STATUS_OFFSET + 1],
         ]);
         let status = status & !PCI_STATUS_CAPABILITIES_LIST;
-        state.bytes[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2].copy_from_slice(&status.to_le_bytes());
+        state.bytes[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2]
+            .copy_from_slice(&status.to_le_bytes());
 
         let mut restored = PciConfigSpace::new(0xabcd, 0xef01);
         let expected_msi = restored.add_capability(Box::new(MsiCapability::new()));
@@ -1445,7 +1448,10 @@ mod tests {
         );
 
         assert_eq!(restored.find_capability(PCI_CAP_ID_MSI), Some(expected_msi));
-        assert_eq!(restored.find_capability(PCI_CAP_ID_MSIX), Some(expected_msix));
+        assert_eq!(
+            restored.find_capability(PCI_CAP_ID_MSIX),
+            Some(expected_msix)
+        );
 
         // Verify the returned offset is safe to use for subsequent reads.
         let msix_off = restored.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
