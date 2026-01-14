@@ -461,6 +461,26 @@ impl ExpansionScratchAllocator {
         self.alloc_inner(device, size, align)
     }
 
+    /// Allocate a combined "indirect args + counters" block for translated GS compute prepasses.
+    ///
+    /// Layout matches `runtime::gs_translate::GsPrepassState`:
+    /// - `DrawIndexedIndirectArgs` at offset 0 (consumed by `draw_indexed_indirect`)
+    /// - `GsPrepassCounters` immediately following it
+    pub fn alloc_gs_prepass_state_draw_indexed(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
+        if !self.desc.usage.contains(wgpu::BufferUsages::INDIRECT) {
+            return Err(ExpansionScratchError::InvalidDescriptor(
+                "scratch buffer usage must include INDIRECT for indirect draw arguments",
+            ));
+        }
+        let (args_size, args_align) = DrawIndexedIndirectArgs::layout();
+        // Sized to match `runtime::gs_translate::GsPrepassCounters` (4 x u32 / 16 bytes).
+        let size = args_size + 16;
+        self.alloc_inner(device, size, args_align)
+    }
+
     pub fn alloc_counter_u32(
         &mut self,
         device: &wgpu::Device,

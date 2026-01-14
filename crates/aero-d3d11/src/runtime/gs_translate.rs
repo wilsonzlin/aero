@@ -40,6 +40,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BIND_GROUP_INTERNAL_EMULATION,
+    EXPANDED_VERTEX_MAX_VARYINGS,
 };
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
@@ -112,7 +113,8 @@ impl fmt::Display for GsTranslateError {
             }
             GsTranslateError::InvalidVaryingLocation { loc } => write!(
                 f,
-                "GS translate: invalid output varying location {loc} (location 0 is reserved for position in the expanded-vertex scheme)"
+                "GS translate: invalid output varying location {loc} (valid range is 1..{}; location 0 is reserved for position in the expanded-vertex scheme)",
+                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1)
             ),
             GsTranslateError::UnsupportedInputPrimitive { primitive } => write!(
                 f,
@@ -320,8 +322,9 @@ pub struct GsPrepassTranslation {
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
-/// - `@group(0) @binding(2)` indirect args buffer (`DrawIndexedIndirectArgs`, read_write)
-/// - `@group(0) @binding(3)` atomic counters (`GsPrepassCounters`, read_write)
+/// - `@group(0) @binding(2)` indirect args + counters (`GsPrepassState`, read_write)
+///   - `DrawIndexedIndirectArgs` fields at offset 0 so the render pass can call
+///     `draw_indexed_indirect` with the same buffer+offset.
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
 /// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
 /// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
@@ -344,8 +347,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
-/// - `@group(0) @binding(2)` indirect args buffer (`DrawIndexedIndirectArgs`, read_write)
-/// - `@group(0) @binding(3)` atomic counters (`GsPrepassCounters`, read_write)
+/// - `@group(0) @binding(2)` indirect args + counters (`GsPrepassState`, read_write)
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
 /// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
 /// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
@@ -374,7 +376,10 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
         return Err(GsTranslateError::NotGeometryStage(module.stage));
     }
 
-    if let Some(&loc) = varyings.iter().find(|&&loc| loc == 0) {
+    if let Some(&loc) = varyings
+        .iter()
+        .find(|&&loc| loc == 0 || loc >= EXPANDED_VERTEX_MAX_VARYINGS)
+    {
         return Err(GsTranslateError::InvalidVaryingLocation { loc });
     }
 
@@ -1109,9 +1114,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("struct ExpandedVertex {");
     w.indent();
     w.line("pos: vec4<f32>,");
-    for (i, _) in varyings.iter().enumerate() {
-        w.line(&format!("v{i}: vec4<f32>,"));
-    }
+    w.line(&format!(
+        "varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,"
+    ));
     w.dedent();
     w.line("};");
     w.line("");
@@ -1145,6 +1150,16 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("// Set to non-zero when any invocation detects OOB/overflow.");
     w.line("overflow: atomic<u32>,");
     w.line("_pad0: u32,");
+    w.dedent();
+    w.line("};");
+    w.line("");
+
+    // Keep the `DrawIndexedIndirectArgs` layout at offset 0 so the executor can feed this buffer
+    // directly into `draw_indexed_indirect`.
+    w.line("struct GsPrepassState {");
+    w.indent();
+    w.line("out_indirect: DrawIndexedIndirectArgs,");
+    w.line("counters: GsPrepassCounters,");
     w.dedent();
     w.line("};");
     w.line("");
@@ -1190,8 +1205,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
 
     w.line("@group(0) @binding(0) var<storage, read_write> out_vertices: ExpandedVertexBuffer;");
     w.line("@group(0) @binding(1) var<storage, read_write> out_indices: U32Buffer;");
-    w.line("@group(0) @binding(2) var<storage, read_write> out_indirect: DrawIndexedIndirectArgs;");
-    w.line("@group(0) @binding(3) var<storage, read_write> counters: GsPrepassCounters;");
+    w.line("@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;");
     w.line("@group(0) @binding(4) var<uniform> params: GsPrepassParams;");
     w.line("@group(0) @binding(5) var<storage, read> gs_inputs: Vec4F32Buffer;");
     w.line("");
@@ -1267,32 +1281,34 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line(") {");
     w.indent();
     w.line("if (*overflow) { return; }");
-    w.line("if (atomicLoad(&counters.overflow) != 0u) { *overflow = true; return; }");
+    w.line("if (atomicLoad(&out_state.counters.overflow) != 0u) { *overflow = true; return; }");
     w.line("if (*emitted_count >= GS_MAX_VERTEX_COUNT) { return; }");
     w.line("");
-    w.line("let vtx_idx = atomicAdd(&counters.vertex_count, 1u);");
+    w.line("let vtx_idx = atomicAdd(&out_state.counters.vertex_count, 1u);");
     w.line("let vtx_cap = arrayLength(&out_vertices.data);");
     w.line("if (vtx_idx >= vtx_cap) {");
     w.indent();
-    w.line("atomicOr(&counters.overflow, 1u);");
+    w.line("atomicOr(&out_state.counters.overflow, 1u);");
     w.line("*overflow = true;");
     w.line("return;");
     w.dedent();
     w.line("}");
     w.line("");
     w.line("out_vertices.data[vtx_idx].pos = o0;");
-    for (i, &loc) in varyings.iter().enumerate() {
-        w.line(&format!("out_vertices.data[vtx_idx].v{i} = o{loc};"));
+    for &loc in varyings {
+        w.line(&format!(
+            "out_vertices.data[vtx_idx].varyings[{loc}u] = o{loc};"
+        ));
     }
     w.line("");
     match output_topology_kind {
         OutputTopologyKind::PointList => {
             w.line("// Point list index emission.");
-            w.line("let base = atomicAdd(&counters.index_count, 1u);");
+            w.line("let base = atomicAdd(&out_state.counters.index_count, 1u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base >= idx_cap) {");
             w.indent();
-            w.line("atomicOr(&counters.overflow, 1u);");
+            w.line("atomicOr(&out_state.counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
@@ -1307,11 +1323,11 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             w.dedent();
             w.line("} else {");
             w.indent();
-            w.line("let base = atomicAdd(&counters.index_count, 2u);");
+            w.line("let base = atomicAdd(&out_state.counters.index_count, 2u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base + 1u >= idx_cap) {");
             w.indent();
-            w.line("atomicOr(&counters.overflow, 1u);");
+            w.line("atomicOr(&out_state.counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
@@ -1351,11 +1367,11 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             w.dedent();
             w.line("}");
             w.line("");
-            w.line("let base = atomicAdd(&counters.index_count, 3u);");
+            w.line("let base = atomicAdd(&out_state.counters.index_count, 3u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base + 2u >= idx_cap) {");
             w.indent();
-            w.line("atomicOr(&counters.overflow, 1u);");
+            w.line("atomicOr(&out_state.counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
@@ -1387,7 +1403,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line(") {");
     w.indent();
     w.line("if (*overflow) { return; }");
-    w.line("if (atomicLoad(&counters.overflow) != 0u) { *overflow = true; return; }");
+    w.line("if (atomicLoad(&out_state.counters.overflow) != 0u) { *overflow = true; return; }");
     w.line("");
 
     for i in 0..temp_reg_count {
@@ -2329,23 +2345,23 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("fn cs_finalize(@builtin(global_invocation_id) id: vec3<u32>) {");
     w.indent();
     w.line("if (id.x != 0u) { return; }");
-    w.line("let overflow: bool = atomicLoad(&counters.overflow) != 0u;");
+    w.line("let overflow: bool = atomicLoad(&out_state.counters.overflow) != 0u;");
     w.line("if (overflow) {");
     w.indent();
-    w.line("out_indirect.index_count = 0u;");
-    w.line("out_indirect.instance_count = 0u;");
-    w.line("out_indirect.first_index = 0u;");
-    w.line("out_indirect.base_vertex = 0;");
-    w.line("out_indirect.first_instance = 0u;");
+    w.line("out_state.out_indirect.index_count = 0u;");
+    w.line("out_state.out_indirect.instance_count = 0u;");
+    w.line("out_state.out_indirect.first_index = 0u;");
+    w.line("out_state.out_indirect.base_vertex = 0;");
+    w.line("out_state.out_indirect.first_instance = 0u;");
     w.dedent();
     w.line("} else {");
     w.indent();
-    w.line("let out_index_count: u32 = atomicLoad(&counters.index_count);");
-    w.line("out_indirect.index_count = out_index_count;");
-    w.line("out_indirect.instance_count = params.instance_count;");
-    w.line("out_indirect.first_index = 0u;");
-    w.line("out_indirect.base_vertex = 0;");
-    w.line("out_indirect.first_instance = params.first_instance;");
+    w.line("let out_index_count: u32 = atomicLoad(&out_state.counters.index_count);");
+    w.line("out_state.out_indirect.index_count = out_index_count;");
+    w.line("out_state.out_indirect.instance_count = params.instance_count;");
+    w.line("out_state.out_indirect.first_index = 0u;");
+    w.line("out_state.out_indirect.base_vertex = 0;");
+    w.line("out_state.out_indirect.first_instance = params.first_instance;");
     w.dedent();
     w.line("}");
     w.dedent();

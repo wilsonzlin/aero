@@ -3744,15 +3744,15 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("GS prepass: alloc expanded index buffer: {e}"))?;
         let indirect_args_alloc = self
             .expansion_scratch
-            .alloc_indirect_draw_indexed(&self.device)
-            .map_err(|e| anyhow!("GS prepass: alloc indirect args buffer: {e}"))?;
-        let counter_alloc = self
-            .expansion_scratch
-            .alloc_gs_prepass_counters(&self.device)
-            .map_err(|e| anyhow!("GS prepass: alloc counter buffer: {e}"))?;
+            .alloc_gs_prepass_state_draw_indexed(&self.device)
+            .map_err(|e| anyhow!("GS prepass: alloc indirect+counter state buffer: {e}"))?;
+        let counter_offset = indirect_args_alloc
+            .offset
+            .checked_add(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES)
+            .ok_or_else(|| anyhow!("GS prepass: state counter offset overflows u64"))?;
         self.queue.write_buffer(
-            counter_alloc.buffer.as_ref(),
-            counter_alloc.offset,
+            indirect_args_alloc.buffer.as_ref(),
+            counter_offset,
             &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
         );
 
@@ -3802,18 +3802,8 @@ impl AerogpuD3d11Executor {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(
-                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
                     ),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
                 },
                 count: None,
             },
@@ -3892,14 +3882,6 @@ impl AerogpuD3d11Executor {
                         buffer: indirect_args_alloc.buffer.as_ref(),
                         offset: indirect_args_alloc.offset,
                         size: wgpu::BufferSize::new(indirect_args_alloc.size),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: counter_alloc.buffer.as_ref(),
-                        offset: counter_alloc.offset,
-                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
                     }),
                 },
                 wgpu::BindGroupEntry {
