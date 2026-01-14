@@ -88,8 +88,9 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
     let mode = seed.get(6).copied().unwrap_or(0) % 5;
     let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2;
-    // For the `mova`/relative-constant mode, force vs_3_0 so address registers are valid as dst.
-    let major = if mode == 2 {
+    // For the `mova`/relative-constant and `loop` modes, force SM3 so address/loop registers are
+    // valid and we reach deeper structured-control-flow IR paths more reliably.
+    let major = if mode == 2 || mode == 4 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -251,9 +252,11 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
         // Loop + breakc to exercise structured looping IR.
         _ => {
-            // loop aL0, i0
-            let loop_reg = src_token(15, 0, 0xE4, 0);
-            let ctrl_reg = src_token(7, 0, 0xE4, 0);
+            // loop aL#, i#
+            let loop_reg_idx = seed.get(13).copied().unwrap_or(0) % 4;
+            let ctrl_reg_idx = seed.get(14).copied().unwrap_or(0) % 4;
+            let loop_reg = src_token(15, loop_reg_idx, 0xE4, 0);
+            let ctrl_reg = src_token(7, ctrl_reg_idx, 0xE4, 0);
             tokens.push(opcode_token(27, 2, 0));
             tokens.push(loop_reg);
             tokens.push(ctrl_reg);
@@ -264,8 +267,9 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(src0);
             tokens.push(src1);
 
-            // breakc src0, src1 (compare op defaults to 0 = gt)
-            tokens.push(opcode_token(45, 2, 0));
+            // breakc src0, src1 (compare op encoded in opcode_token[16..19])
+            let cmp = (seed.get(15).copied().unwrap_or(0) & 0x7) as u32;
+            tokens.push(opcode_token(45, 2, 0) | (cmp << 16));
             tokens.push(src0);
             tokens.push(src1);
 
