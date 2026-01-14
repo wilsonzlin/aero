@@ -312,16 +312,19 @@ Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 
 Notes:
 
-* **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; render uses `controlq` (0) + `txq` (2), capture uses `controlq` (0) + `rxq` (3).
-  - `eventq` is initialized for contract conformance and is drained best-effort. While the Aero contract v1 does not define
-    any required event messages, the driver parses standard virtio-snd **jack** events (when present) and exposes the
-    resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`) and generates a
-    `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` notification so user-mode can refresh jack state without polling.
-    Audio streaming remains correct even if eventq is silent or absent.
-  - For diagnostics/observability, the driver maintains `Dx->EventqStats` counters and exposes them via:
-    - A structured teardown log marker (only when non-zero): `AERO_VIRTIO_SND_EVENTQ|completions=...|pcm_period=...|xrun=...|...`.
-    - A custom topology KS property (`IOCTL_KS_PROPERTY`) used by `aero-virtio-selftest.exe`:
-      `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`.
+ * **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; render uses `controlq` (0) + `txq` (2), capture uses `controlq` (0) + `rxq` (3).
+   - `eventq` is initialized for contract conformance and is drained best-effort. While the Aero contract v1 does not define
+     any required event messages, the driver parses standard virtio-snd **jack** events (when present) and exposes the
+     resulting plug/unplug state via topology jack properties (`KSPROPERTY_JACK_DESCRIPTION*`) and generates a
+     `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` notification so user-mode can refresh jack state without polling.
+     When running with the virtio backend, the WaveRT miniport may also register an optional `eventq` callback so
+     virtio-snd PCM notifications (`PCM_PERIOD_ELAPSED` / `PCM_XRUN`) can be used as best-effort wakeup/recovery signals
+     (the periodic WaveRT timer remains the contract-v1 baseline for correctness).
+     Audio streaming remains correct even if eventq is silent or absent.
+   - For diagnostics/observability, the driver maintains `Dx->EventqStats` counters and exposes them via:
+     - A structured teardown log marker (only when non-zero): `AERO_VIRTIO_SND_EVENTQ|completions=...|pcm_period=...|xrun=...|...`.
+     - A custom topology KS property (`IOCTL_KS_PROPERTY`) used by `aero-virtio-selftest.exe`:
+       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`.
 * **Interrupts:** **INTx** is required by contract v1. The driver supports MSI/MSI-X as an optional enhancement and prefers it when Windows grants message interrupts (the shipped INF opts in), with fallback to INTx when message interrupts are unavailable or MSI-X vector programming is rejected.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
