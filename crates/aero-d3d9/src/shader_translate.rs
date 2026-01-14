@@ -193,7 +193,7 @@ pub fn translate_d3d9_shader_to_wgsl(
                 wgsl: wgsl.wgsl,
                 entry_point: wgsl.entry_point,
                 uses_semantic_locations: ir.uses_semantic_locations,
-                semantic_locations: ir.semantic_locations.clone(),
+                semantic_locations: ir.semantic_locations,
                 used_samplers: ir.used_samplers,
                 sampler_texture_types: ir.sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
