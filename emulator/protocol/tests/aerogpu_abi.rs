@@ -165,8 +165,14 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
             }
             "CONST" => {
                 assert_eq!(parts.len(), 3, "bad CONST line @{}: {line}", line_no + 1);
-                dump.consts
-                    .insert(parts[1].to_string(), parts[2].parse().unwrap());
+                let name = parts[1].to_string();
+                let value = parts[2].parse().unwrap();
+                let prev = dump.consts.insert(name.clone(), value);
+                assert!(
+                    prev.is_none(),
+                    "duplicate CONST for {name} in line @{}: {line}",
+                    line_no + 1
+                );
             }
             other => panic!(
                 "unknown ABI dump tag {other} in line @{}: {line}",

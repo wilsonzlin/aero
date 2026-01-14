@@ -268,7 +268,10 @@ function parseAbiDump(text: string): AbiDump {
     } else if (parts[0] === "OFF") {
       offsets.set(`${parts[1]}.${parts[2]}`, Number(parts[3]));
     } else if (parts[0] === "CONST") {
-      consts.set(parts[1], BigInt(parts[2]));
+      if (consts.has(parts[1]!)) {
+        throw new Error(`Duplicate CONST: ${parts[1]}`);
+      }
+      consts.set(parts[1]!, BigInt(parts[2]!));
     } else {
       throw new Error(`Unknown ABI dump tag: ${parts[0]}`);
     }
