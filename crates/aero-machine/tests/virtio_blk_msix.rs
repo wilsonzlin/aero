@@ -216,6 +216,170 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
 }
 
 #[test]
+fn virtio_blk_msix_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 4 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_blk: true,
+        // Keep the test focused on PCI + virtio-blk.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    let virtio_blk = m.virtio_blk().expect("virtio-blk enabled");
+    let bdf = profile::VIRTIO_BLK.bdf;
+
+    // Switch into APIC mode so MSI delivery targets the LAPIC.
+    m.io_write(IMCR_SELECT_PORT, 1, u32::from(IMCR_INDEX));
+    m.io_write(IMCR_DATA_PORT, 1, 0x01);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable PCI memory decoding + bus mastering so BAR0 is reachable and DMA works.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    // Discover BAR0.
+    let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
+    let bar0_hi = cfg_read(&mut m, bdf, 0x14, 4) as u64;
+    let bar0_base = (bar0_hi << 32) | (bar0_lo & !0xFu64);
+    assert_ne!(bar0_base, 0, "expected virtio-blk BAR0 to be assigned");
+
+    // Locate MSI-X capability and validate table/PBA live in BAR0.
+    let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+        .expect("virtio-blk should expose MSI-X capability");
+    let table = cfg_read(&mut m, bdf, msix_cap + 0x04, 4);
+    let pba = cfg_read(&mut m, bdf, msix_cap + 0x08, 4);
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0 (BIR=0)");
+    assert_eq!(pba & 0x7, 0, "MSI-X PBA must live in BAR0 (BIR=0)");
+
+    // Program MSI-X table entry 0 with a valid vector but an invalid/unprogrammed address.
+    let vector = 0x6bu32;
+    let table_offset = u64::from(table & !0x7);
+    let pba_offset = u64::from(pba & !0x7);
+    let entry0 = bar0_base + table_offset;
+    m.write_physical_u32(entry0, 0);
+    m.write_physical_u32(entry0 + 0x4, 0);
+    m.write_physical_u32(entry0 + 0x8, vector);
+    m.write_physical_u32(entry0 + 0xc, 0); // unmasked
+
+    // Enable MSI-X (bit 15) and ensure function mask (bit 14) is cleared.
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    let ctrl = (ctrl & !(1 << 14)) | (1 << 15);
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl));
+
+    // BAR0 layout for Aero's virtio-pci contract.
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    m.write_physical_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    m.write_physical_u8(bar0_base + COMMON + 0x14, 1 | 2); // + DRIVER
+
+    m.write_physical_u32(bar0_base + COMMON, 0);
+    let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
+
+    m.write_physical_u32(bar0_base + COMMON, 1);
+    let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);
+
+    m.write_physical_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    m.write_physical_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0.
+    let desc = 0x200000;
+    let avail = 0x201000;
+    let used = 0x202000;
+
+    m.write_physical_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    assert!(m.read_physical_u16(bar0_base + COMMON + 0x18) >= 2);
+    // Assign MSI-X vector 0 to queue 0.
+    m.write_physical_u16(bar0_base + COMMON + 0x1a, 0);
+    m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
+    m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
+    m.write_physical_u64(bar0_base + COMMON + 0x30, used);
+    m.write_physical_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    // Build a minimal FLUSH request.
+    const VIRTIO_BLK_T_FLUSH: u32 = 4;
+    let header = 0x203000;
+    let status = 0x204000;
+    m.write_physical_u32(header, VIRTIO_BLK_T_FLUSH);
+    m.write_physical_u32(header + 4, 0);
+    m.write_physical_u64(header + 8, 0);
+    m.write_physical_u8(status, 0xff);
+
+    write_desc(&mut m, desc, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut m, desc, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, 1);
+    m.write_physical_u16(avail + 4, 0);
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Doorbell queue 0, then allow the device to process.
+    let notify_off = m.read_physical_u16(bar0_base + COMMON + 0x1e);
+    let notify_addr = bar0_base + NOTIFY + u64::from(notify_off) * NOTIFY_MULT;
+    m.write_physical_u16(notify_addr, 0);
+    m.process_virtio_blk();
+
+    assert_eq!(m.read_physical_u16(used + 2), 1);
+    assert_eq!(m.read_physical_u8(status), 0);
+
+    // Delivery is blocked by the invalid MSI-X table entry address; the vector should be latched
+    // as pending in the MSI-X PBA without falling back to legacy INTx.
+    assert!(
+        !virtio_blk.borrow().irq_level(),
+        "virtio-blk should not assert legacy INTx while MSI-X is enabled"
+    );
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "expected no MSI-X delivery while the table entry address is invalid"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set while the table entry address is invalid"
+    );
+
+    // Clear the virtio interrupt cause (ISR is read-to-clear). Pending MSI-X delivery should still
+    // occur once MSI-X programming becomes valid, even without a new interrupt edge.
+    let _isr = m.read_physical_u8(bar0_base + u64::from(profile::VIRTIO_ISR_CFG_BAR0_OFFSET));
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected PBA pending bit to remain set after clearing the ISR"
+    );
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Program a valid MSI-X message address; table writes service pending MSI-X vectors, so delivery
+    // should occur without reasserting the interrupt condition.
+    m.write_physical_u32(entry0, 0xfee0_0000);
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
+    assert_eq!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to clear after delivery"
+    );
+    interrupts.borrow_mut().acknowledge(vector as u8);
+    interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(interrupts.borrow().get_pending(), None);
+}
+
+#[test]
 fn virtio_blk_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
