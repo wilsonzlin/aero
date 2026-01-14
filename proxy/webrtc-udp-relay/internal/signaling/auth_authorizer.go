@@ -21,7 +21,7 @@ type authAuthorizer struct {
 	verifier auth.Verifier
 }
 
-func NewAuthAuthorizer(cfg config.Config) (Authorizer, error) {
+func NewAuthAuthorizer(cfg config.Config) (authorizer, error) {
 	v, err := auth.NewVerifier(cfg)
 	if err != nil {
 		return nil, err
@@ -32,20 +32,20 @@ func NewAuthAuthorizer(cfg config.Config) (Authorizer, error) {
 	}, nil
 }
 
-func (a authAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
+func (a authAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authResult, error) {
 	if a.mode == config.AuthModeNone {
-		return AuthResult{}, nil
+		return authResult{}, nil
 	}
 	if a.verifier == nil {
-		return AuthResult{}, errors.New("auth verifier not configured")
+		return authResult{}, errors.New("auth verifier not configured")
 	}
 
 	cred, err := credentialFromHelloAndRequest(a.mode, firstMsg, r)
 	if err != nil {
-		return AuthResult{}, err
+		return authResult{}, err
 	}
 
-	res := AuthResult{Credential: cred}
+	res := authResult{Credential: cred}
 
 	// For AUTH_MODE=jwt we use the JWT session id (`sid`) as a stable quota key so
 	// clients cannot bypass per-session rate limits by opening many parallel
@@ -53,23 +53,23 @@ func (a authAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthR
 	if a.mode == config.AuthModeJWT {
 		cv, ok := a.verifier.(auth.ClaimsVerifier)
 		if !ok {
-			return AuthResult{}, errors.New("jwt verifier does not support claims extraction")
+			return authResult{}, errors.New("jwt verifier does not support claims extraction")
 		}
 		claims, err := cv.VerifyAndExtractClaims(cred)
 		if err != nil {
-			return AuthResult{}, err
+			return authResult{}, err
 		}
 		res.SessionKey = claims.SID
 		return res, nil
 	}
 
 	if err := a.verifier.Verify(cred); err != nil {
-		return AuthResult{}, err
+		return authResult{}, err
 	}
 	return res, nil
 }
 
-func credentialFromHelloAndRequest(mode config.AuthMode, hello *ClientHello, r *http.Request) (string, error) {
+func credentialFromHelloAndRequest(mode config.AuthMode, hello *clientHello, r *http.Request) (string, error) {
 	if hello != nil {
 		if v := strings.TrimSpace(hello.Credential); v != "" {
 			return v, nil

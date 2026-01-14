@@ -49,7 +49,7 @@ type Config struct {
 	// semantics for browser clients.
 	AllowedOrigins []string
 
-	Authorizer Authorizer
+	Authorizer authorizer
 
 	// ICEGatheringTimeout bounds how long the relay waits for candidate gathering
 	// on non-trickle HTTP endpoints (e.g. /offer and /webrtc/offer).
@@ -108,7 +108,7 @@ type Server struct {
 
 	AllowedOrigins []string
 
-	Authorizer          Authorizer
+	Authorizer          authorizer
 	ICEGatheringTimeout time.Duration
 	SessionPreallocTTL  time.Duration
 
@@ -221,9 +221,9 @@ func (s *Server) untrackWebRTCSession(sess *webrtcpeer.Session) {
 	s.mu.Unlock()
 }
 
-func (s *Server) authorizer() Authorizer {
+func (s *Server) authorizer() authorizer {
 	if s.Authorizer == nil {
-		return AllowAllAuthorizer{}
+		return allowAllAuthorizer{}
 	}
 	return s.Authorizer
 }
@@ -407,7 +407,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
+	authRes, err := s.authorizer().Authorize(r, &clientHello{Type: messageTypeOffer})
 	if err != nil {
 		if isUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
@@ -570,7 +570,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
+	authRes, err := s.authorizer().Authorize(r, &clientHello{Type: messageTypeOffer})
 	if err != nil {
 		if isUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
@@ -809,12 +809,12 @@ func aeroSessionCookieFromRequest(r *http.Request) *string {
 }
 
 type httpOfferRequest struct {
-	SDP SDP `json:"sdp"`
+	SDP sdp `json:"sdp"`
 }
 
 type httpOfferResponse struct {
 	SessionID string `json:"sessionId"`
-	SDP       SDP    `json:"sdp"`
+	SDP       sdp    `json:"sdp"`
 }
 
 type httpErrorResponse struct {
@@ -832,20 +832,20 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, httpErrorResponse{Code: code, Message: message})
 }
 
-func parseHTTPOfferRequest(body []byte) (SDP, error) {
+func parseHTTPOfferRequest(body []byte) (sdp, error) {
 	var req httpOfferRequest
 	reqErr := decodeStrictJSON(body, &req)
 	if reqErr == nil {
 		return req.SDP, nil
 	}
 
-	var sdp SDP
-	sdpErr := decodeStrictJSON(body, &sdp)
+	var rawSDP sdp
+	sdpErr := decodeStrictJSON(body, &rawSDP)
 	if sdpErr == nil {
-		return sdp, nil
+		return rawSDP, nil
 	}
 
-	return SDP{}, fmt.Errorf("invalid offer request body (expected {\"sdp\":{...}} or a raw SessionDescription): %w", errors.Join(reqErr, sdpErr))
+	return sdp{}, fmt.Errorf("invalid offer request body (expected {\"sdp\":{...}} or a raw SessionDescription): %w", errors.Join(reqErr, sdpErr))
 }
 
 func decodeStrictJSON(data []byte, v any) error {
@@ -869,7 +869,7 @@ type wsSession struct {
 	conn *websocket.Conn
 	req  *http.Request
 
-	authorizer Authorizer
+	authorizer authorizer
 
 	authTimeout     time.Duration
 	idleTimeout     time.Duration
@@ -887,7 +887,7 @@ type wsSession struct {
 
 	answerMu   sync.Mutex
 	answerSent bool
-	candBuf    []Candidate
+	candBuf    []candidate
 
 	closeOnce sync.Once
 
@@ -913,8 +913,8 @@ func (wss *wsSession) installPeerHandlers() {
 		}
 		wss.answerMu.Unlock()
 
-		_ = wss.send(SignalMessage{
-			Type:      MessageTypeCandidate,
+		_ = wss.send(signalMessage{
+			Type:      messageTypeCandidate,
 			Candidate: &cand,
 		})
 	})
@@ -1056,7 +1056,7 @@ func (wss *wsSession) run() {
 		}
 
 		if !authorized {
-			if msg.Type != MessageTypeAuth {
+			if msg.Type != messageTypeAuth {
 				wss.srv.incMetric(metrics.AuthFailure)
 				_ = wss.fail("unauthorized", "authentication required", websocket.ClosePolicyViolation, "authentication required")
 				return
@@ -1066,7 +1066,7 @@ func (wss *wsSession) run() {
 			if cred == "" {
 				cred = msg.Token
 			}
-			authRes, err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred})
+			authRes, err := wss.authorizer.Authorize(wss.req, &clientHello{Type: messageTypeAuth, Credential: cred})
 			if err != nil {
 				if isUnauthorized(err) {
 					wss.srv.incMetric(metrics.AuthFailure)
@@ -1085,7 +1085,7 @@ func (wss *wsSession) run() {
 		}
 
 		switch msg.Type {
-		case MessageTypeAuth:
+		case messageTypeAuth:
 			// Be tolerant: clients may send an auth message even when already
 			// authenticated (e.g. query-string fallback or AUTH_MODE=none).
 			if !haveOffer {
@@ -1093,7 +1093,7 @@ func (wss *wsSession) run() {
 			}
 			_ = wss.fail("unexpected_message", "auth received after offer", websocket.ClosePolicyViolation, "unexpected message")
 			return
-		case MessageTypeOffer:
+		case messageTypeOffer:
 			if haveOffer {
 				_ = wss.fail("unexpected_message", "offer already received", websocket.ClosePolicyViolation, "unexpected message")
 				return
@@ -1108,7 +1108,7 @@ func (wss *wsSession) run() {
 				_ = wss.fail("internal_error", err.Error(), websocket.CloseInternalServerErr, "internal error")
 				return
 			}
-		case MessageTypeCandidate:
+		case messageTypeCandidate:
 			if !haveOffer {
 				_ = wss.fail("unexpected_message", "candidate received before offer", websocket.ClosePolicyViolation, "unexpected message")
 				return
@@ -1117,7 +1117,7 @@ func (wss *wsSession) run() {
 				_ = wss.fail("bad_message", err.Error(), websocket.ClosePolicyViolation, "bad message")
 				return
 			}
-		case MessageTypeClose:
+		case messageTypeClose:
 			return
 		default:
 			_ = wss.fail("bad_message", fmt.Sprintf("unexpected message type %q", msg.Type), websocket.ClosePolicyViolation, "bad message")
@@ -1133,7 +1133,7 @@ type wsProtocolError struct {
 
 func (e *wsProtocolError) Error() string { return e.Code + ": " + e.Message }
 
-func (wss *wsSession) handleOffer(offerWire SDP) error {
+func (wss *wsSession) handleOffer(offerWire sdp) error {
 	if wss.srv == nil {
 		return &wsProtocolError{Code: "internal_error", Message: "server not configured"}
 	}
@@ -1220,15 +1220,15 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		return errors.New("missing local description after SetLocalDescription")
 	}
 
-	if err := wss.send(SignalMessage{
-		Type: MessageTypeAnswer,
+	if err := wss.send(signalMessage{
+		Type: messageTypeAnswer,
 		SDP:  ptr(sdpFromPion(*local)),
 	}); err != nil {
 		_ = sess.Close()
 		return err
 	}
 
-	var buffered []Candidate
+	var buffered []candidate
 	wss.answerMu.Lock()
 	wss.answerSent = true
 	buffered = append(buffered, wss.candBuf...)
@@ -1237,8 +1237,8 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 
 	for i := range buffered {
 		cand := buffered[i]
-		_ = wss.send(SignalMessage{
-			Type:      MessageTypeCandidate,
+		_ = wss.send(signalMessage{
+			Type:      messageTypeCandidate,
 			Candidate: &cand,
 		})
 	}
@@ -1246,14 +1246,14 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 	return nil
 }
 
-func (wss *wsSession) handleRemoteCandidate(candWire Candidate) error {
+func (wss *wsSession) handleRemoteCandidate(candWire candidate) error {
 	if candWire.Candidate == "" {
 		return nil
 	}
 	return wss.session.PeerConnection().AddICECandidate(candWire.ToPion())
 }
 
-func (wss *wsSession) send(msg SignalMessage) error {
+func (wss *wsSession) send(msg signalMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -1266,8 +1266,8 @@ func (wss *wsSession) send(msg SignalMessage) error {
 }
 
 func (wss *wsSession) fail(code, message string, closeCode int, closeReason string) error {
-	_ = wss.send(SignalMessage{
-		Type:    MessageTypeError,
+	_ = wss.send(signalMessage{
+		Type:    messageTypeError,
 		Code:    code,
 		Message: message,
 	})

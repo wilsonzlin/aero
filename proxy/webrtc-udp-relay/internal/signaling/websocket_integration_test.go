@@ -29,7 +29,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		ICEGatheringTimeout: 2 * time.Second,
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 	})
 
 	mux := http.NewServeMux()
@@ -86,7 +86,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 			}
 
 			switch msg.Type {
-			case MessageTypeAnswer:
+			case messageTypeAnswer:
 				answer, err := msg.SDP.ToPion()
 				if err != nil {
 					readErr <- err
@@ -107,7 +107,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 				for _, cand := range buf {
 					_ = clientPC.AddICECandidate(cand)
 				}
-			case MessageTypeCandidate:
+			case messageTypeCandidate:
 				cand := msg.Candidate.ToPion()
 				select {
 				case <-remoteDescSet:
@@ -117,7 +117,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 					remoteCandidateBuf = append(remoteCandidateBuf, cand)
 					remoteCandidateBufMu.Unlock()
 				}
-			case MessageTypeError:
+			case messageTypeError:
 				readErr <- &protocolError{Code: msg.Code, Message: msg.Message}
 				return
 			default:
@@ -140,8 +140,8 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 
 		select {
 		case <-offerSent:
-			_ = sendWS(ws, &wsWriteMu, SignalMessage{
-				Type:      MessageTypeCandidate,
+			_ = sendWS(ws, &wsWriteMu, signalMessage{
+				Type:      messageTypeCandidate,
 				Candidate: ptr(candidateFromPion(init)),
 			})
 		default:
@@ -159,8 +159,8 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 		t.Fatalf("set local offer: %v", err)
 	}
 
-	if err := sendWS(ws, &wsWriteMu, SignalMessage{
-		Type: MessageTypeOffer,
+	if err := sendWS(ws, &wsWriteMu, signalMessage{
+		Type: messageTypeOffer,
 		SDP:  ptr(sdpFromPion(offer)),
 	}); err != nil {
 		t.Fatalf("send offer: %v", err)
@@ -172,8 +172,8 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	localCandidateBuf = nil
 	localCandidateBufMu.Unlock()
 	for _, cand := range buf {
-		_ = sendWS(ws, &wsWriteMu, SignalMessage{
-			Type:      MessageTypeCandidate,
+		_ = sendWS(ws, &wsWriteMu, signalMessage{
+			Type:      messageTypeCandidate,
 			Candidate: ptr(candidateFromPion(cand)),
 		})
 	}
@@ -198,7 +198,7 @@ func (e *protocolError) Error() string {
 	return string(b)
 }
 
-func sendWS(conn *websocket.Conn, writeMu *sync.Mutex, msg SignalMessage) error {
+func sendWS(conn *websocket.Conn, writeMu *sync.Mutex, msg signalMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err

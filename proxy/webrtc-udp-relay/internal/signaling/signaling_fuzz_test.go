@@ -32,8 +32,8 @@ func FuzzParseSignalMessage(f *testing.F) {
 		}
 
 		// Successful parses must always produce a message that validates.
-		if err := msg1.Validate(); err != nil {
-			t.Fatalf("Validate() failed after successful parse: %v", err)
+		if err := msg1.validate(); err != nil {
+			t.Fatalf("validate() failed after successful parse: %v", err)
 		}
 
 		// Parsing should be stable for identical inputs.
@@ -96,7 +96,7 @@ func FuzzParseHTTPOfferRequest(f *testing.F) {
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		var round SDP
+		var round sdp
 		if err := decodeStrictJSON(b, &round); err != nil {
 			t.Fatalf("decodeStrictJSON(marshal(sdp)) failed: %v (json=%q)", err, string(b))
 		}
@@ -116,7 +116,7 @@ func FuzzDecodeStrictJSON(f *testing.F) {
 	f.Fuzz(func(t *testing.T, body []byte, which uint8) {
 		switch which % 2 {
 		case 0:
-			var v1, v2 SDP
+			var v1, v2 sdp
 			err1 := decodeStrictJSON(body, &v1)
 			err2 := decodeStrictJSON(body, &v2)
 			if (err1 == nil) != (err2 == nil) {
@@ -136,7 +136,7 @@ func FuzzDecodeStrictJSON(f *testing.F) {
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
-			var round SDP
+			var round sdp
 			if err := decodeStrictJSON(roundBytes, &round); err != nil {
 				t.Fatalf("decodeStrictJSON(marshal(v)) failed: %v (json=%q)", err, string(roundBytes))
 			}

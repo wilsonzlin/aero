@@ -6,9 +6,9 @@ import (
 )
 
 func TestSignalMessage_MarshalUnmarshalOffer(t *testing.T) {
-	msg := SignalMessage{
-		Type: MessageTypeOffer,
-		SDP: &SDP{
+	msg := signalMessage{
+		Type: messageTypeOffer,
+		SDP: &sdp{
 			Type: "offer",
 			SDP:  "v=0",
 		},
@@ -24,7 +24,7 @@ func TestSignalMessage_MarshalUnmarshalOffer(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if got.Type != MessageTypeOffer || got.SDP == nil || got.SDP.Type != "offer" || got.SDP.SDP != "v=0" {
+	if got.Type != messageTypeOffer || got.SDP == nil || got.SDP.Type != "offer" || got.SDP.SDP != "v=0" {
 		t.Fatalf("unexpected decoded offer: %#v", got)
 	}
 }
@@ -43,7 +43,7 @@ func TestSignalMessage_UnmarshalCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != MessageTypeCandidate || got.Candidate == nil || got.Candidate.Candidate == "" {
+	if got.Type != messageTypeCandidate || got.Candidate == nil || got.Candidate.Candidate == "" {
 		t.Fatalf("unexpected decoded candidate: %#v", got)
 	}
 }
@@ -61,8 +61,8 @@ func TestSignalMessage_UnmarshalAuth_AllowsTokenAndAPIKeyWhenMatching(t *testing
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != MessageTypeAuth {
-		t.Fatalf("type=%q, want %q", got.Type, MessageTypeAuth)
+	if got.Type != messageTypeAuth {
+		t.Fatalf("type=%q, want %q", got.Type, messageTypeAuth)
 	}
 	if got.Token != "secret" || got.APIKey != "secret" {
 		t.Fatalf("unexpected credential fields: %#v", got)

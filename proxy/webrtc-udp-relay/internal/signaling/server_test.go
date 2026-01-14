@@ -50,7 +50,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 2 * time.Second,
 	})
 
@@ -66,7 +66,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ws1.Close() })
 
-	offerSDP := func() SDP {
+	offerSDP := func() sdp {
 		pc, err := api.NewPeerConnection(webrtc.Configuration{})
 		if err != nil {
 			t.Fatalf("new pc: %v", err)
@@ -89,7 +89,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		return sdpFromPion(*local)
 	}()
 
-	if err := ws1.WriteJSON(SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
+	if err := ws1.WriteJSON(signalMessage{Type: messageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
 		t.Fatalf("send offer: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ws2.Close() })
 
-	if err := ws2.WriteJSON(SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
+	if err := ws2.WriteJSON(signalMessage{Type: messageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
 		t.Fatalf("send offer ws2: %v", err)
 	}
 
@@ -112,7 +112,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if msg.Type != MessageTypeError || msg.Code != "too_many_sessions" {
+	if msg.Type != messageTypeError || msg.Code != "too_many_sessions" {
 		t.Fatalf("unexpected message: %#v", msg)
 	}
 
@@ -125,7 +125,7 @@ func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
 	srv := NewServer(Config{
 		RelayConfig: relay.DefaultConfig(),
 		Policy:      policy.NewDevDestinationPolicy(),
-		Authorizer:  AllowAllAuthorizer{},
+		Authorizer:  allowAllAuthorizer{},
 	})
 
 	mux := http.NewServeMux()
@@ -168,7 +168,7 @@ func TestServer_WebSocketUpgradeFailuresReturnJSON(t *testing.T) {
 		WebRTC:         webrtc.NewAPI(),
 		RelayConfig:    relay.DefaultConfig(),
 		Policy:         policy.NewDevDestinationPolicy(),
-		Authorizer:     AllowAllAuthorizer{},
+		Authorizer:     allowAllAuthorizer{},
 		AllowedOrigins: []string{"https://good.example.com"},
 	})
 
@@ -217,8 +217,8 @@ func TestServer_WebSocketUpgradeFailuresReturnJSON(t *testing.T) {
 
 type failingAuthorizer struct{}
 
-func (failingAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
-	return AuthResult{}, errors.New("boom")
+func (failingAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authResult, error) {
+	return authResult{}, errors.New("boom")
 }
 
 func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
@@ -258,7 +258,7 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 		}
 		parsed, parseErr := parseSignalMessage(msg)
 		if parseErr == nil {
-			if parsed.Type != MessageTypeError || parsed.Code != "internal_error" {
+			if parsed.Type != messageTypeError || parsed.Code != "internal_error" {
 				t.Fatalf("unexpected message: %#v", parsed)
 			}
 		}
@@ -327,7 +327,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 
 	t.Run("webrtc_offer", func(t *testing.T) {
 		body, err := json.Marshal(httpOfferRequest{
-			SDP: SDP{Type: "offer", SDP: "v=0"},
+			SDP: sdp{Type: "offer", SDP: "v=0"},
 		})
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -368,7 +368,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 1 * time.Millisecond,
 	})
 
@@ -463,7 +463,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 1 * time.Millisecond,
 	})
 
@@ -563,7 +563,7 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 30 * time.Second,
 	})
 
@@ -676,7 +676,7 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
+		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 30 * time.Second,
 	})
 
@@ -774,8 +774,8 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 
 type unauthorizedAuthorizer struct{}
 
-func (unauthorizedAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
-	return AuthResult{}, auth.ErrMissingCredentials
+func (unauthorizedAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authResult, error) {
+	return authResult{}, auth.ErrMissingCredentials
 }
 
 func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
@@ -829,7 +829,7 @@ func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 		Sessions:           sm,
 		RelayConfig:        relay.DefaultConfig(),
 		Policy:             policy.NewDevDestinationPolicy(),
-		Authorizer:         AllowAllAuthorizer{},
+		Authorizer:         allowAllAuthorizer{},
 		SessionPreallocTTL: preallocTTL,
 	})
 
@@ -899,7 +899,7 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 		Sessions:           sm,
 		RelayConfig:        relay.DefaultConfig(),
 		Policy:             policy.NewDevDestinationPolicy(),
-		Authorizer:         AllowAllAuthorizer{},
+		Authorizer:         allowAllAuthorizer{},
 		SessionPreallocTTL: time.Hour,
 	})
 
@@ -938,7 +938,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 		WebRTC:                      api,
 		RelayConfig:                 relay.DefaultConfig(),
 		Policy:                      policy.NewDevDestinationPolicy(),
-		Authorizer:                  AllowAllAuthorizer{},
+		Authorizer:                  allowAllAuthorizer{},
 		ICEGatheringTimeout:         10 * time.Millisecond,
 		WebRTCSessionConnectTimeout: 100 * time.Millisecond,
 	})

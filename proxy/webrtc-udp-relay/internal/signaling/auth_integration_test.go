@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,87 @@ func newTestWebRTCAPI(t *testing.T) *webrtc.API {
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me))
 }
 
-func newOfferSDP(t *testing.T, api *webrtc.API) signaling.SDP {
+type sdp struct {
+	Type string `json:"type"`
+	SDP  string `json:"sdp"`
+}
+
+type candidate struct {
+	Candidate        string  `json:"candidate"`
+	SDPMid           *string `json:"sdpMid,omitempty"`
+	SDPMLineIndex    *uint16 `json:"sdpMLineIndex,omitempty"`
+	UsernameFragment *string `json:"usernameFragment,omitempty"`
+}
+
+type signalMessage struct {
+	Type      string     `json:"type"`
+	SDP       *sdp       `json:"sdp,omitempty"`
+	Candidate *candidate `json:"candidate,omitempty"`
+
+	APIKey string `json:"apiKey,omitempty"`
+	Token  string `json:"token,omitempty"`
+
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (m signalMessage) validate() error {
+	switch m.Type {
+	case "auth":
+		if m.APIKey == "" && m.Token == "" {
+			return errors.New("auth message missing apiKey/token")
+		}
+		if m.APIKey != "" && m.Token != "" && m.APIKey != m.Token {
+			return errors.New("auth message must not include both apiKey and token unless they match")
+		}
+		if m.SDP != nil || m.Candidate != nil || m.Code != "" || m.Message != "" {
+			return errors.New("auth message has unexpected fields")
+		}
+	case "offer":
+		if m.SDP == nil {
+			return errors.New("offer message missing sdp")
+		}
+		if m.SDP.Type != "offer" {
+			return fmt.Errorf("offer message has sdp.type=%q", m.SDP.Type)
+		}
+		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
+			return errors.New("offer message has unexpected fields")
+		}
+	case "answer":
+		if m.SDP == nil {
+			return errors.New("answer message missing sdp")
+		}
+		if m.SDP.Type != "answer" {
+			return fmt.Errorf("answer message has sdp.type=%q", m.SDP.Type)
+		}
+		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
+			return errors.New("answer message has unexpected fields")
+		}
+	case "candidate":
+		if m.Candidate == nil {
+			return errors.New("candidate message missing candidate")
+		}
+		if m.SDP != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
+			return errors.New("candidate message has unexpected fields")
+		}
+	case "close":
+		if m.SDP != nil || m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
+			return errors.New("close message has unexpected fields")
+		}
+	case "error":
+		if m.Code == "" || m.Message == "" {
+			return errors.New("error message missing code/message")
+		}
+		if m.SDP != nil || m.Candidate != nil || m.APIKey != "" || m.Token != "" {
+			return errors.New("error message has unexpected fields")
+		}
+	default:
+		return fmt.Errorf("unsupported message type %q", m.Type)
+	}
+	return nil
+}
+
+func newOfferSDP(t *testing.T, api *webrtc.API) sdp {
 	t.Helper()
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -60,22 +141,22 @@ func newOfferSDP(t *testing.T, api *webrtc.API) signaling.SDP {
 	if local == nil {
 		t.Fatalf("missing local description")
 	}
-	return signaling.SDP{Type: local.Type.String(), SDP: local.SDP}
+	return sdp{Type: local.Type.String(), SDP: local.SDP}
 }
 
-func parseSignalMessage(data []byte) (signaling.SignalMessage, error) {
+func parseSignalMessage(data []byte) (signalMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 
-	var msg signaling.SignalMessage
+	var msg signalMessage
 	if err := dec.Decode(&msg); err != nil {
-		return signaling.SignalMessage{}, err
+		return signalMessage{}, err
 	}
-	if err := msg.Validate(); err != nil {
-		return signaling.SignalMessage{}, err
+	if err := msg.validate(); err != nil {
+		return signalMessage{}, err
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return signaling.SignalMessage{}, errors.New("unexpected trailing data")
+		return signalMessage{}, errors.New("unexpected trailing data")
 	}
 	return msg, nil
 }
@@ -343,7 +424,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	}
 	t.Cleanup(func() { _ = ws1.Close() })
 
-	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer ws1: %v", err)
 	}
 
@@ -358,7 +439,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	if err != nil {
 		t.Fatalf("parse ws1: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected ws1 message: %#v", got)
 	}
 
@@ -368,7 +449,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	}
 	t.Cleanup(func() { _ = ws2.Close() })
 
-	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := ws2.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer ws2: %v", err)
 	}
 
@@ -381,7 +462,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	if err != nil {
 		t.Fatalf("parse ws2: %v", err)
 	}
-	if got.Type != signaling.MessageTypeError || got.Code != "session_already_active" {
+	if got.Type != "error" || got.Code != "session_already_active" {
 		t.Fatalf("unexpected ws2 message: %#v", got)
 	}
 }
@@ -475,7 +556,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 
 	t.Run("POST /webrtc/offer", func(t *testing.T) {
 		body, err := json.Marshal(map[string]any{
-			"sdp": signaling.SDP{Type: "offer", SDP: "v=0"},
+			"sdp": sdp{Type: "offer", SDP: "v=0"},
 		})
 		if err != nil {
 			t.Fatalf("marshal offer: %v", err)
@@ -725,10 +806,10 @@ func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, APIKey: "secret"}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "auth", APIKey: "secret"}); err != nil {
 		t.Fatalf("write auth: %v", err)
 	}
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer: %v", err)
 	}
 
@@ -741,7 +822,7 @@ func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected message: %#v", got)
 	}
 }
@@ -767,7 +848,7 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer: %v", err)
 	}
 
@@ -780,7 +861,7 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected message: %#v", got)
 	}
 }
@@ -807,10 +888,10 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	}
 	t.Cleanup(func() { _ = ws1.Close() })
 
-	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, Token: token}); err != nil {
+	if err := ws1.WriteJSON(signalMessage{Type: "auth", Token: token}); err != nil {
 		t.Fatalf("write auth ws1: %v", err)
 	}
-	if err := ws1.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer ws1: %v", err)
 	}
 
@@ -823,7 +904,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	if err != nil {
 		t.Fatalf("parse ws1: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected ws1 message: %#v", got)
 	}
 
@@ -833,10 +914,10 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	}
 	t.Cleanup(func() { _ = ws2.Close() })
 
-	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, Token: token}); err != nil {
+	if err := ws2.WriteJSON(signalMessage{Type: "auth", Token: token}); err != nil {
 		t.Fatalf("write auth ws2: %v", err)
 	}
-	if err := ws2.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := ws2.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer ws2: %v", err)
 	}
 
@@ -849,7 +930,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	if err != nil {
 		t.Fatalf("parse ws2: %v", err)
 	}
-	if got.Type != signaling.MessageTypeError || got.Code != "session_already_active" {
+	if got.Type != "error" || got.Code != "session_already_active" {
 		t.Fatalf("unexpected ws2 message: %#v", got)
 	}
 }
@@ -874,7 +955,7 @@ func TestAuth_APIKey_WebSocketSignal_QueryTokenAlias(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer: %v", err)
 	}
 
@@ -887,7 +968,7 @@ func TestAuth_APIKey_WebSocketSignal_QueryTokenAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected message: %#v", got)
 	}
 }
@@ -913,7 +994,7 @@ func TestAuth_JWT_WebSocketSignal_QueryAPIKeyAlias(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
 		t.Fatalf("write offer: %v", err)
 	}
 
@@ -926,7 +1007,7 @@ func TestAuth_JWT_WebSocketSignal_QueryAPIKeyAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got.Type != signaling.MessageTypeAnswer {
+	if got.Type != "answer" {
 		t.Fatalf("unexpected message: %#v", got)
 	}
 }
@@ -1030,7 +1111,7 @@ func TestWebSocketRejectsBinaryBeforeAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if parsed.Type != signaling.MessageTypeError || parsed.Code != "bad_message" {
+	if parsed.Type != "error" || parsed.Code != "bad_message" {
 		t.Fatalf("unexpected server message: %#v", parsed)
 	}
 
@@ -1060,8 +1141,8 @@ func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	offer := signaling.SDP{Type: "offer", SDP: "v=0"}
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offer}); err != nil {
+	offer := sdp{Type: "offer", SDP: "v=0"}
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offer}); err != nil {
 		t.Fatalf("write offer: %v", err)
 	}
 
@@ -1080,7 +1161,7 @@ func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if parsed.Type != signaling.MessageTypeError || parsed.Code != "unauthorized" {
+	if parsed.Type != "error" || parsed.Code != "unauthorized" {
 		t.Fatalf("unexpected server message: %#v", parsed)
 	}
 	if m.Get(metrics.AuthFailure) == 0 {
@@ -1113,10 +1194,10 @@ func TestWebSocketRateLimitExceeded(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	// The server tolerates auth messages even when AUTH_MODE=none.
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, APIKey: "ignored"}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "auth", APIKey: "ignored"}); err != nil {
 		t.Fatalf("write auth1: %v", err)
 	}
-	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, APIKey: "ignored"}); err != nil {
+	if err := c.WriteJSON(signalMessage{Type: "auth", APIKey: "ignored"}); err != nil {
 		t.Fatalf("write auth2: %v", err)
 	}
 
@@ -1129,7 +1210,7 @@ func TestWebSocketRateLimitExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if parsed.Type != signaling.MessageTypeError || parsed.Code != "rate_limited" {
+	if parsed.Type != "error" || parsed.Code != "rate_limited" {
 		t.Fatalf("unexpected server message: %#v", parsed)
 	}
 	if m.Get(metrics.DropReasonRateLimited) == 0 {

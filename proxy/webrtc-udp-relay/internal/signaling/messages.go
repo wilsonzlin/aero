@@ -9,30 +9,30 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-type MessageType string
+type messageType string
 
 const (
-	MessageTypeAuth      MessageType = "auth"
-	MessageTypeOffer     MessageType = "offer"
-	MessageTypeAnswer    MessageType = "answer"
-	MessageTypeCandidate MessageType = "candidate"
-	MessageTypeClose     MessageType = "close"
-	MessageTypeError     MessageType = "error"
+	messageTypeAuth      messageType = "auth"
+	messageTypeOffer     messageType = "offer"
+	messageTypeAnswer    messageType = "answer"
+	messageTypeCandidate messageType = "candidate"
+	messageTypeClose     messageType = "close"
+	messageTypeError     messageType = "error"
 )
 
-type SDP struct {
+type sdp struct {
 	Type string `json:"type"`
 	SDP  string `json:"sdp"`
 }
 
-func sdpFromPion(desc webrtc.SessionDescription) SDP {
-	return SDP{
+func sdpFromPion(desc webrtc.SessionDescription) sdp {
+	return sdp{
 		Type: desc.Type.String(),
 		SDP:  desc.SDP,
 	}
 }
 
-func (s SDP) ToPion() (webrtc.SessionDescription, error) {
+func (s sdp) ToPion() (webrtc.SessionDescription, error) {
 	var t webrtc.SDPType
 	switch s.Type {
 	case "offer":
@@ -45,15 +45,15 @@ func (s SDP) ToPion() (webrtc.SessionDescription, error) {
 	return webrtc.SessionDescription{Type: t, SDP: s.SDP}, nil
 }
 
-type Candidate struct {
+type candidate struct {
 	Candidate        string  `json:"candidate"`
 	SDPMid           *string `json:"sdpMid,omitempty"`
 	SDPMLineIndex    *uint16 `json:"sdpMLineIndex,omitempty"`
 	UsernameFragment *string `json:"usernameFragment,omitempty"`
 }
 
-func candidateFromPion(init webrtc.ICECandidateInit) Candidate {
-	return Candidate{
+func candidateFromPion(init webrtc.ICECandidateInit) candidate {
+	return candidate{
 		Candidate:        init.Candidate,
 		SDPMid:           init.SDPMid,
 		SDPMLineIndex:    init.SDPMLineIndex,
@@ -61,7 +61,7 @@ func candidateFromPion(init webrtc.ICECandidateInit) Candidate {
 	}
 }
 
-func (c Candidate) ToPion() webrtc.ICECandidateInit {
+func (c candidate) ToPion() webrtc.ICECandidateInit {
 	return webrtc.ICECandidateInit{
 		Candidate:        c.Candidate,
 		SDPMid:           c.SDPMid,
@@ -70,10 +70,10 @@ func (c Candidate) ToPion() webrtc.ICECandidateInit {
 	}
 }
 
-type SignalMessage struct {
-	Type      MessageType `json:"type"`
-	SDP       *SDP        `json:"sdp,omitempty"`
-	Candidate *Candidate  `json:"candidate,omitempty"`
+type signalMessage struct {
+	Type      messageType `json:"type"`
+	SDP       *sdp        `json:"sdp,omitempty"`
+	Candidate *candidate  `json:"candidate,omitempty"`
 
 	APIKey string `json:"apiKey,omitempty"`
 	Token  string `json:"token,omitempty"`
@@ -82,26 +82,26 @@ type SignalMessage struct {
 	Message string `json:"message,omitempty"`
 }
 
-func parseSignalMessage(data []byte) (SignalMessage, error) {
+func parseSignalMessage(data []byte) (signalMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 
-	var msg SignalMessage
+	var msg signalMessage
 	if err := dec.Decode(&msg); err != nil {
-		return SignalMessage{}, err
+		return signalMessage{}, err
 	}
-	if err := msg.Validate(); err != nil {
-		return SignalMessage{}, err
+	if err := msg.validate(); err != nil {
+		return signalMessage{}, err
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return SignalMessage{}, fmt.Errorf("unexpected trailing data")
+		return signalMessage{}, fmt.Errorf("unexpected trailing data")
 	}
 	return msg, nil
 }
 
-func (m SignalMessage) Validate() error {
+func (m signalMessage) validate() error {
 	switch m.Type {
-	case MessageTypeAuth:
+	case messageTypeAuth:
 		if m.APIKey == "" && m.Token == "" {
 			return fmt.Errorf("auth message missing apiKey/token")
 		}
@@ -111,7 +111,7 @@ func (m SignalMessage) Validate() error {
 		if m.SDP != nil || m.Candidate != nil || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("auth message has unexpected fields")
 		}
-	case MessageTypeOffer:
+	case messageTypeOffer:
 		if m.SDP == nil {
 			return fmt.Errorf("offer message missing sdp")
 		}
@@ -121,7 +121,7 @@ func (m SignalMessage) Validate() error {
 		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("offer message has unexpected fields")
 		}
-	case MessageTypeAnswer:
+	case messageTypeAnswer:
 		if m.SDP == nil {
 			return fmt.Errorf("answer message missing sdp")
 		}
@@ -131,18 +131,18 @@ func (m SignalMessage) Validate() error {
 		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("answer message has unexpected fields")
 		}
-	case MessageTypeCandidate:
+	case messageTypeCandidate:
 		if m.Candidate == nil {
 			return fmt.Errorf("candidate message missing candidate")
 		}
 		if m.SDP != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("candidate message has unexpected fields")
 		}
-	case MessageTypeClose:
+	case messageTypeClose:
 		if m.SDP != nil || m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("close message has unexpected fields")
 		}
-	case MessageTypeError:
+	case messageTypeError:
 		if m.Code == "" || m.Message == "" {
 			return fmt.Errorf("error message missing code/message")
 		}
