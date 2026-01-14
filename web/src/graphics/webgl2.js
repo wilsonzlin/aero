@@ -183,6 +183,8 @@ export class WebGl2Backend {
       preserveDrawingBuffer: true,
     });
     if (!gl) throw new Error('WebGL2 not available');
+    // Reduce driver variance and avoid unexpected dithering when presenting 8-bit content.
+    gl.disable(gl.DITHER);
     return new WebGl2Backend(canvas, gl);
   }
 
