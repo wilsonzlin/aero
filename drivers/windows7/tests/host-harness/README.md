@@ -1223,6 +1223,7 @@ This repo includes an **opt-in** workflow for running the host harness end-to-en
 - Trigger: `workflow_dispatch` only (no automatic PR runs)
 - Runner label: `aero-win7-harness`
 - Logs artifact: `win7-virtio-harness-logs` (serial + harness output + HTTP request log; QEMU stderr sidecar when present)
+- Job summary: surfaces key PASS/FAIL markers, QEMU stderr/argv, and (on failure) collapsible tails of the logs above
 
 ### Runner setup
 
