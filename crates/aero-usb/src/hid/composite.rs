@@ -1922,6 +1922,19 @@ mod tests {
     }
 
     #[test]
+    fn configuration_does_not_enqueue_invalid_mouse_button_state() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        dev.mouse_button_event(0x20, true);
+
+        configure(&mut dev);
+        assert_eq!(dev.0.borrow().mouse.buttons, 0);
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
     fn configured_mouse_motion_saturates_without_overflow() {
         let mut dev = UsbCompositeHidInputHandle::new();
         configure(&mut dev);
