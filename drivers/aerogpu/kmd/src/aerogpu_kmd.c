@@ -8159,11 +8159,13 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     /*
      * Once the device has asserted IRQ_ERROR, keep device IRQ generation masked
      * off to avoid storms and force the runtime down a deterministic device-lost
-     * path. Allow disable calls to succeed so dxgkrnl can tear down cleanly.
+     * path.
+     *
+     * Do not fail the ControlInterrupt callback itself: dxgkrnl may call it as
+     * part of teardown/recovery paths, and returning failure here is not
+     * necessary for surfacing device-lost semantics (submission paths already
+     * fail fast with STATUS_GRAPHICS_DEVICE_REMOVED).
      */
-    if (AeroGpuIsDeviceErrorLatched(adapter) && EnableInterrupt) {
-        return STATUS_GRAPHICS_DEVICE_REMOVED;
-    }
 
     /* Fence/DMA completion interrupt gating. */
     if (InterruptType == DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
