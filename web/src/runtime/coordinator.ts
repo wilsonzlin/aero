@@ -1386,6 +1386,7 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
+    const gpu = this.workers.gpu;
     const net = this.workers.net;
     // Capture the config at the start of the snapshot operation. `activeConfig` can change while
     // we await worker RPCs (e.g. user changes vmRuntime), so keep this initial check isolated so
@@ -1437,7 +1438,8 @@ export class WorkerCoordinator {
       // worker, it may already be running and touching NET_TX/NET_RX. Always pause
       // it (when present) before resetting the shared rings.
       const netWorker = net?.worker;
-      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
+      const gpuWorker = gpu?.status.state === "ready" ? gpu.worker : undefined;
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, gpu: gpuWorker, net: netWorker });
 
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
         cpu.worker,
@@ -1483,6 +1485,7 @@ export class WorkerCoordinator {
 
     const cpu = this.workers.cpu;
     const io = this.workers.io;
+    const gpu = this.workers.gpu;
     const net = this.workers.net;
     // See `snapshotSaveToOpfs` for rationale.
     const configAtStart = this.activeConfig;
@@ -1541,7 +1544,8 @@ export class WorkerCoordinator {
       // worker, it may already be running and touching NET_TX/NET_RX. Always pause
       // it (when present) before resetting the shared rings.
       const netWorker = net?.worker;
-      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
+      const gpuWorker = gpu?.status.state === "ready" ? gpu.worker : undefined;
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, gpu: gpuWorker, net: netWorker });
 
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
         io.worker,
@@ -1587,7 +1591,7 @@ export class WorkerCoordinator {
   }
 
   /**
-   * Pause CPU → IO → NET (when present), then clear the NET_TX/NET_RX rings.
+   * Pause CPU → IO (when present) → GPU (when ready) → NET (when present), then clear the NET_TX/NET_RX rings.
    *
    * Ordering matters:
    * - NET_TX/NET_RX are shared-memory rings accessed by multiple workers (guest + host sides).
@@ -1596,7 +1600,7 @@ export class WorkerCoordinator {
    * - Therefore, we pause the "guest" side first (CPU then IO), then pause NET, and only
    *   once *all* participants are paused do we reset the rings.
    */
-  private async pauseWorkersForSnapshot(opts: { cpu: Worker; io?: Worker; net?: Worker }): Promise<void> {
+  private async pauseWorkersForSnapshot(opts: { cpu: Worker; io?: Worker; gpu?: Worker; net?: Worker }): Promise<void> {
     // NOTE: Pausing sequentially enforces the stronger ordering required to safely reset
     // the NET rings without races from CPU/IO enqueue/dequeue.
     const cpuPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.cpu, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
@@ -1609,6 +1613,13 @@ export class WorkerCoordinator {
         timeoutMs: 5_000,
       });
       this.assertSnapshotOk("pause io", ioPause);
+    }
+
+    if (opts.gpu) {
+      const gpuPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.gpu, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      this.assertSnapshotOk("pause gpu", gpuPause);
     }
 
     if (opts.net) {
@@ -1653,6 +1664,8 @@ export class WorkerCoordinator {
   private async resumeWorkersAfterSnapshot(): Promise<void> {
     const cpu = this.workers.cpu?.worker;
     const io = this.workers.io?.worker;
+    const gpuInfo = this.workers.gpu;
+    const gpu = gpuInfo?.status.state === "ready" ? gpuInfo.worker : undefined;
     const netInfo = this.workers.net;
     // If a net worker exists, resume it even if we haven't yet observed its READY
     // state (it might have been paused during startup).
@@ -1673,12 +1686,18 @@ export class WorkerCoordinator {
         }),
       );
     }
+    if (gpu) {
+      guestResumes.push(
+        this.snapshotRpc<VmSnapshotResumedMessage>(gpu, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
+          timeoutMs: 5_000,
+        }),
+      );
+    }
     if (guestResumes.length) {
       // Best-effort: resume even if one worker fails to respond; we don't want a
       // snapshot error to strand a running VM forever.
       await Promise.allSettled(guestResumes);
     }
-
     // Resume net after the guest/device side is back up (CPU + IO).
     if (!net) return;
     const netResume = this.snapshotRpc<VmSnapshotResumedMessage>(net, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {

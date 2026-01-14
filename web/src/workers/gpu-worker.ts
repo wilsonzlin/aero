@@ -123,6 +123,12 @@ import {
   type ProtocolMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
+import {
+  type CoordinatorToWorkerSnapshotMessage,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumedMessage,
+  serializeVmSnapshotError,
+} from "../runtime/snapshot_protocol";
 
 import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
 import { PresenterError } from "../gpu/presenter";
@@ -461,6 +467,7 @@ async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<Aer
 
 // Ensure submissions execute serially even though message handlers are async.
 let aerogpuSubmitChain: Promise<void> = Promise.resolve();
+let aerogpuSubmitInFlight: Promise<void> | null = null;
 
 type AerogpuSubmitCompletionKind = "immediate" | "vsync";
 
@@ -587,6 +594,32 @@ let hwCursorLastImageKey: string | null = null;
 let hwCursorLastVramMissingEventKey: string | null = null;
 
 const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as CursorPresenter | null;
+
+// -----------------------------------------------------------------------------
+// VM snapshot pause/resume (guest-memory write barrier)
+// -----------------------------------------------------------------------------
+
+let snapshotPaused = false;
+let snapshotResumePromise: Promise<void> | null = null;
+let snapshotResumeResolve: (() => void) | null = null;
+
+const waitUntilSnapshotResumed = async (): Promise<void> => {
+  while (snapshotPaused) {
+    if (!snapshotResumePromise) {
+      snapshotResumePromise = new Promise<void>((resolve) => {
+        snapshotResumeResolve = resolve;
+      });
+    }
+    await snapshotResumePromise;
+  }
+};
+
+const handleSnapshotResume = (): void => {
+  snapshotPaused = false;
+  snapshotResumeResolve?.();
+  snapshotResumePromise = null;
+  snapshotResumeResolve = null;
+};
 
 const syncCursorToPresenter = (): void => {
   const p = getCursorPresenter();
@@ -3783,6 +3816,55 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     return;
   }
 
+  const snapshotMsg = data as Partial<CoordinatorToWorkerSnapshotMessage>;
+  if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
+    const requestId = snapshotMsg.requestId;
+    if (typeof requestId !== "number") return;
+    switch (snapshotMsg.kind) {
+      case "vm.snapshot.pause": {
+        void (async () => {
+          try {
+            // Idempotent: if we are already snapshot-paused, acknowledge immediately.
+            if (!snapshotPaused) {
+              snapshotPaused = true;
+              const inFlight = aerogpuSubmitInFlight;
+              if (inFlight) {
+                // Best-effort: wait for any in-progress ACMD submission to complete so we don't
+                // race snapshot save/restore with guest-memory reads/writes.
+                await inFlight.catch(() => {});
+              }
+            }
+            ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+          } catch (err) {
+            ctx.postMessage({
+              kind: "vm.snapshot.paused",
+              requestId,
+              ok: false,
+              error: serializeVmSnapshotError(err),
+            } satisfies VmSnapshotPausedMessage);
+          }
+        })();
+        return;
+      }
+      case "vm.snapshot.resume": {
+        try {
+          handleSnapshotResume();
+          ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+        } catch (err) {
+          ctx.postMessage({
+            kind: "vm.snapshot.resumed",
+            requestId,
+            ok: false,
+            error: serializeVmSnapshotError(err),
+          } satisfies VmSnapshotResumedMessage);
+        }
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
   if (!isGpuWorkerMessageBase(data) || typeof (data as { type?: unknown }).type !== "string") return;
   const msg = data as GpuRuntimeInMessage;
 
@@ -3904,6 +3986,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             });
         }
         aerogpuSubmitChain = Promise.resolve();
+        aerogpuSubmitInFlight = null;
         aerogpuPendingSubmitComplete.length = 0;
         cursorImage = null;
         cursorWidth = 0;
@@ -4023,7 +4106,20 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         .catch(() => {
           // Ensure a previous failed submission does not permanently stall the chain.
         })
-        .then(() => handleSubmitAerogpu(req));
+        .then(() => {
+          const task = (async () => {
+            // Snapshot pause acts as a barrier: do not execute any new ACMD work (which may
+            // read/write guest RAM/VRAM) until the coordinator resumes the GPU worker.
+            await waitUntilSnapshotResumed();
+            await handleSubmitAerogpu(req);
+          })();
+          aerogpuSubmitInFlight = task;
+          return task.finally(() => {
+            if (aerogpuSubmitInFlight === task) {
+              aerogpuSubmitInFlight = null;
+            }
+          });
+        });
       break;
     }
 
