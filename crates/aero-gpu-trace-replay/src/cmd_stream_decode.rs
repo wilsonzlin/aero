@@ -589,6 +589,99 @@ fn decode_known_fields(
             out.insert("data_len".into(), json!(data.len()));
             out.insert("data_prefix".into(), json!(hex_prefix(data, 16)));
         }
+        AerogpuCmdOpcode::SetShaderConstantsI => {
+            let Some(stage) = read_u32_le(pkt.payload, 0) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(start_register) = read_u32_le(pkt.payload, 4) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(vec4_count) = read_u32_le(pkt.payload, 8) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(stage_ex) = read_u32_le(pkt.payload, 12) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            out.insert("stage".into(), json!(stage));
+            out.insert("start_register".into(), json!(start_register));
+            out.insert("vec4_count".into(), json!(vec4_count));
+            if stage == 2 && stage_ex != 0 {
+                out.insert("stage_ex".into(), json!(stage_ex));
+                out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+            }
+            if let Some(int_count) = vec4_count.checked_mul(4) {
+                out.insert("int_count".into(), json!(int_count));
+            }
+            let Some(data_len) = vec4_count.checked_mul(16) else {
+                out.insert("decode_error".into(), json!("vec4_count overflow"));
+                return out;
+            };
+            let data_len = data_len as usize;
+            let data_start = 16usize;
+            let Some(data_end) = data_start.checked_add(data_len) else {
+                out.insert("decode_error".into(), json!("vec4_count overflow"));
+                return out;
+            };
+            if data_end > pkt.payload.len() {
+                out.insert(
+                    "decode_error".into(),
+                    json!("payload too small for vec4_count"),
+                );
+                return out;
+            }
+            let data = &pkt.payload[data_start..data_end];
+            out.insert("data_len".into(), json!(data.len()));
+            out.insert("data_prefix".into(), json!(hex_prefix(data, 16)));
+        }
+        AerogpuCmdOpcode::SetShaderConstantsB => {
+            let Some(stage) = read_u32_le(pkt.payload, 0) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(start_register) = read_u32_le(pkt.payload, 4) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(bool_count) = read_u32_le(pkt.payload, 8) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(stage_ex) = read_u32_le(pkt.payload, 12) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            out.insert("stage".into(), json!(stage));
+            out.insert("start_register".into(), json!(start_register));
+            out.insert("bool_count".into(), json!(bool_count));
+            if stage == 2 && stage_ex != 0 {
+                out.insert("stage_ex".into(), json!(stage_ex));
+                out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+            }
+            let Some(data_len) = bool_count.checked_mul(16) else {
+                out.insert("decode_error".into(), json!("bool_count overflow"));
+                return out;
+            };
+            let data_len = data_len as usize;
+            let data_start = 16usize;
+            let Some(data_end) = data_start.checked_add(data_len) else {
+                out.insert("decode_error".into(), json!("bool_count overflow"));
+                return out;
+            };
+            if data_end > pkt.payload.len() {
+                out.insert(
+                    "decode_error".into(),
+                    json!("payload too small for bool_count"),
+                );
+                return out;
+            }
+            let data = &pkt.payload[data_start..data_end];
+            out.insert("data_len".into(), json!(data.len()));
+            out.insert("data_prefix".into(), json!(hex_prefix(data, 16)));
+        }
         AerogpuCmdOpcode::SetConstantBuffers => {
             match pkt.decode_set_constant_buffers_payload_le() {
                 Ok((cmd, bindings)) => {

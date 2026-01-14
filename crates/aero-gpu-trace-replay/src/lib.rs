@@ -1609,6 +1609,117 @@ pub fn decode_cmd_stream_listing(
                             hex_prefix(data, 16)
                         );
                     }
+                    AerogpuCmdOpcode::SetShaderConstantsI => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let stage = u32_le_at(pkt.payload, 0).unwrap();
+                        let start_register = u32_le_at(pkt.payload, 4).unwrap();
+                        let vec4_count = u32_le_at(pkt.payload, 8).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
+                        let int_count = vec4_count.checked_mul(4).ok_or(
+                            CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "vec4_count overflow",
+                            },
+                        )? as usize;
+                        let payload_len = 16usize
+                            .checked_add(int_count.checked_mul(4).ok_or(
+                                CmdStreamDecodeError::MalformedPayload {
+                                    offset,
+                                    opcode,
+                                    msg: "vec4_count overflow",
+                                },
+                            )?)
+                            .ok_or(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "vec4_count overflow",
+                            })?;
+                        if pkt.payload.len() < payload_len {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "payload truncated for vec4_count",
+                            });
+                        }
+                        let _ = write!(
+                            line,
+                            " stage={stage} start_register={start_register} vec4_count={vec4_count}"
+                        );
+                        if stage == 2 && stage_ex != 0 {
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
+                        }
+                        let data = &pkt.payload[16..payload_len];
+                        let _ = write!(
+                            line,
+                            " data_len={} data_prefix={}",
+                            data.len(),
+                            hex_prefix(data, 16)
+                        );
+                    }
+                    AerogpuCmdOpcode::SetShaderConstantsB => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let stage = u32_le_at(pkt.payload, 0).unwrap();
+                        let start_register = u32_le_at(pkt.payload, 4).unwrap();
+                        let bool_count = u32_le_at(pkt.payload, 8).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
+                        let payload_len = 16usize
+                            .checked_add(
+                                (bool_count as usize).checked_mul(16).ok_or(
+                                    CmdStreamDecodeError::MalformedPayload {
+                                        offset,
+                                        opcode,
+                                        msg: "bool_count overflow",
+                                    },
+                                )?,
+                            )
+                            .ok_or(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "bool_count overflow",
+                            })?;
+                        if pkt.payload.len() < payload_len {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "payload truncated for bool_count",
+                            });
+                        }
+                        let _ = write!(
+                            line,
+                            " stage={stage} start_register={start_register} bool_count={bool_count}"
+                        );
+                        if stage == 2 && stage_ex != 0 {
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
+                        }
+                        let data = &pkt.payload[16..payload_len];
+                        let _ = write!(
+                            line,
+                            " data_len={} data_prefix={}",
+                            data.len(),
+                            hex_prefix(data, 16)
+                        );
+                    }
                     AerogpuCmdOpcode::SetConstantBuffers => {
                         let (cmd, bindings) = pkt
                             .decode_set_constant_buffers_payload_le()
@@ -1763,8 +1874,6 @@ pub fn decode_cmd_stream_listing(
 
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
-                    | AerogpuCmdOpcode::SetShaderConstantsI
-                    | AerogpuCmdOpcode::SetShaderConstantsB
                     | AerogpuCmdOpcode::DestroyInputLayout
                     | AerogpuCmdOpcode::SetInputLayout
                     | AerogpuCmdOpcode::SetBlendState
