@@ -1,4 +1,5 @@
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::{
     PciBdf, PciInterruptPin, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
@@ -680,6 +681,99 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
 
     // Ensure a subsequent tick does not re-trigger MSI without another rising edge.
+    pc.tick(1_000_000);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+}
+
+#[test]
+fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Locate the MMIO BAR allocated by BIOS POST.
+    let bar0_raw = read_cfg_u32(&mut pc, bdf, 0x10);
+    let bar0_base = u64::from(bar0_raw & 0xffff_fff0);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned by BIOS POST");
+
+    // Switch into APIC mode so we can observe MSI-X delivery via the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Also route the legacy INTx line to a higher-priority vector so we can detect accidental INTx
+    // delivery when MSI-X is enabled.
+    let intx_vector = 0x60u32;
+    let low = intx_vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Enable bus mastering and MMIO decoding. The xHCI model raises a synthetic interrupt on the
+    // first RUN edge when DMA is enabled (used by these integration tests).
+    let command = read_cfg_u16(&mut pc, bdf, 0x04);
+    write_cfg_u16(&mut pc, bdf, 0x04, command | 0x0006);
+
+    // Locate and enable the MSI-X capability.
+    let msix_cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSIX)
+        .expect("xHCI should expose an MSI-X capability");
+
+    let table = read_cfg_u32(&mut pc, bdf, msix_cap + 0x04);
+    let pba = read_cfg_u32(&mut pc, bdf, msix_cap + 0x08);
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0 (BIR=0)");
+    assert_eq!(pba & 0x7, 0, "MSI-X PBA must live in BAR0 (BIR=0)");
+    let table_offset = u64::from(table & !0x7);
+
+    let ctrl = read_cfg_u16(&mut pc, bdf, msix_cap + 0x02);
+    write_cfg_u16(&mut pc, bdf, msix_cap + 0x02, ctrl | (1 << 15));
+
+    const MSIX_VECTOR: u8 = 0x55;
+    let entry0 = bar0_base + table_offset;
+    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0 + 0x4, 0);
+    pc.memory.write_u32(entry0 + 0x8, u32::from(MSIX_VECTOR));
+    pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
+
+    // Determine CAPLENGTH so we can locate the operational register block.
+    let cap = pc.memory.read_u32(bar0_base);
+    let caplength = (cap & 0xFF) as u64;
+    assert_ne!(caplength, 0);
+
+    let usbcmd_addr = bar0_base + caplength;
+    let usbsts_addr = usbcmd_addr + 4;
+
+    // Start the controller; the device will assert an interrupt on the first RUN edge.
+    pc.memory.write_u32(usbcmd_addr, 1);
+    pc.tick(1_000_000);
+
+    // Poll INTx after the tick: if MSI-X delivery accidentally also asserts legacy INTx, the IOAPIC
+    // entry above would inject `intx_vector` and preempt the MSI-X vector.
+    pc.poll_pci_intx_lines();
+
+    let usbsts = pc.memory.read_u32(usbsts_addr);
+    assert_ne!(usbsts & (1 << 3), 0, "USBSTS.EINT should be set after RUN");
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        Some(MSIX_VECTOR),
+        "MSI-X delivery should inject the programmed vector and suppress legacy INTx"
+    );
+
+    // Acknowledge + EOI and ensure no further interrupts are pending once the device is cleared.
+    pc.interrupts.borrow_mut().acknowledge(MSIX_VECTOR);
+    pc.memory.write_u32(usbsts_addr, 1 << 3);
+    pc.poll_pci_intx_lines();
+    pc.interrupts.borrow_mut().eoi(MSIX_VECTOR);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Ensure a subsequent tick does not re-trigger MSI-X without another rising edge.
     pc.tick(1_000_000);
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
