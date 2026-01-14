@@ -205,6 +205,13 @@ export class InputCapture {
   private latencyLogSumUs = 0;
   private latencyLogMaxUs = 0;
 
+  private readonly handlePointerLockError = (): void => {
+    // Pointer lock can fail (or be denied) even after a user gesture. If we attempted to acquire
+    // keyboard lock for this capture session, release it so the host isn't left with unexpectedly
+    // swallowed system keys.
+    this.releaseKeyboardLock();
+  };
+
   private readonly handlePointerLockChange = (locked: boolean): void => {
     // Pointer lock boundaries are also keyboard-lock boundaries: if the browser exits pointer lock
     // (e.g. Escape), drop keyboard lock so we don't keep swallowing system-reserved keys.
@@ -248,7 +255,9 @@ export class InputCapture {
     // Best-effort: request Keyboard Lock for this capture session. The API requires a user gesture,
     // so mark the request before any focus/pointer-lock side effects and attempt the lock while
     // we're still in the click handler.
-    this.keyboardLockRequested = true;
+    if (this.pointerLock.isSupported) {
+      this.keyboardLockRequested = true;
+    }
     this.canvas.focus();
     this.pointerLock.request();
     this.updateKeyboardLock();
@@ -849,7 +858,10 @@ export class InputCapture {
       this.canvas.tabIndex = 0;
     }
 
-    this.pointerLock = new PointerLock(this.canvas, { onChange: this.handlePointerLockChange });
+    this.pointerLock = new PointerLock(this.canvas, {
+      onChange: this.handlePointerLockChange,
+      onError: this.handlePointerLockError,
+    });
 
     this.queue = new InputEventQueue(128, (byteLength) => this.takeRecycledBuffer(byteLength));
   }

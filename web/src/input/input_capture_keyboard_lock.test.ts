@@ -47,6 +47,7 @@ describe("InputCapture Keyboard Lock integration", () => {
           addEventListener: () => {},
           removeEventListener: () => {},
           focus: () => {},
+          requestPointerLock: () => {},
         } as unknown as HTMLCanvasElement;
 
         const ioWorker = { postMessage: () => {} };
@@ -80,6 +81,7 @@ describe("InputCapture Keyboard Lock integration", () => {
         addEventListener: () => {},
         removeEventListener: () => {},
         focus: () => {},
+        requestPointerLock: () => {},
       } as unknown as HTMLCanvasElement;
 
       const ioWorker = { postMessage: () => {} };
@@ -105,6 +107,7 @@ describe("InputCapture Keyboard Lock integration", () => {
           addEventListener: () => {},
           removeEventListener: () => {},
           focus: () => {},
+          requestPointerLock: () => {},
         } as unknown as HTMLCanvasElement;
 
         const ioWorker = { postMessage: () => {} };
@@ -146,6 +149,7 @@ describe("InputCapture Keyboard Lock integration", () => {
             addEventListener: () => {},
             removeEventListener: () => {},
             focus: () => {},
+            requestPointerLock: () => {},
           } as unknown as HTMLCanvasElement;
 
           const ioWorker = { postMessage: () => {} };
