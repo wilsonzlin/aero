@@ -119,10 +119,14 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_ir --locked
 - `96c10295` — `refactor(dxbc): move robust DXBC parsing into aero-dxbc`
 
 **Tests:**
+- `crates/aero-dxbc/src/robust/container.rs` (robust parser unit tests; run with `--features robust`)
 - `crates/aero-d3d9/tests/dxbc_parser.rs` (`#![cfg(feature = "dxbc-robust")]`)
 
 **How to run:**
 ```bash
+# Run the robust parser unit tests in `aero-dxbc` itself:
+bash ./scripts/safe-run.sh cargo test -p aero-dxbc --features robust --locked
+
 # Enables aero-dxbc's `robust` feature via aero-d3d9's `dxbc-robust` feature.
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test dxbc_parser --locked
 ```
