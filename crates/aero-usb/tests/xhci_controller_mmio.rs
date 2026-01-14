@@ -150,6 +150,30 @@ fn xhci_controller_pagesize_supports_4k_pages() {
 }
 
 #[test]
+fn xhci_controller_dnctrl_is_writable_and_snapshots() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+
+    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
+        0x1234_5678,
+        "DNCTRL should roundtrip through MMIO reads/writes"
+    );
+
+    let bytes = ctrl.save_state();
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
+        0x1234_5678,
+        "DNCTRL should roundtrip through snapshot restore"
+    );
+}
+
+#[test]
 fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
     let mut ctrl = XhciController::new();
     let mut mem = PanicMem;
