@@ -38,16 +38,20 @@ class VirtioNetMsixRequireTests(unittest.TestCase):
         self.assertIn("mode=intx", reason)
 
     def test_fails_on_skip(self) -> None:
-        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_unavailable\n"
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_unavailable|err=5\n"
         ok, reason = self.harness._require_virtio_net_msix_marker(tail)
         self.assertFalse(ok)
         self.assertIn("SKIP", reason)
+        self.assertIn("reason=diag_unavailable", reason)
+        self.assertIn("err=5", reason)
 
     def test_fails_on_fail(self) -> None:
-        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|reason=whatever\n"
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|reason=whatever|err=7\n"
         ok, reason = self.harness._require_virtio_net_msix_marker(tail)
         self.assertFalse(ok)
         self.assertIn("FAIL", reason)
+        self.assertIn("reason=whatever", reason)
+        self.assertIn("err=7", reason)
 
     def test_fails_when_mode_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|messages=3|config_vector=0|rx_vector=1|tx_vector=2\n"

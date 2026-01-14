@@ -3230,7 +3230,6 @@ def main() -> int:
     need_msix_check = bool(
         args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
     )
-    need_virtio_net_msix = bool(getattr(args, "require_virtio_net_msix", False))
 
     input_events_req_flags: list[str] = []
     if bool(args.with_input_events):
@@ -4121,6 +4120,12 @@ def main() -> int:
             virtio_blk_counters_marker_carry = b""
             virtio_blk_resize_marker_line: Optional[str] = None
             virtio_blk_resize_marker_carry = b""
+            virtio_blk_msix_marker_line: Optional[str] = None
+            virtio_blk_msix_marker_carry = b""
+            virtio_net_msix_marker_line: Optional[str] = None
+            virtio_net_msix_marker_carry = b""
+            virtio_snd_msix_marker_line: Optional[str] = None
+            virtio_snd_msix_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             expect_blk_msi_config: Optional[str] = None
             udp_port_config: Optional[str] = None
@@ -4231,6 +4236,24 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|",
                         carry=virtio_blk_resize_marker_carry,
+                    )
+                    virtio_blk_msix_marker_line, virtio_blk_msix_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_msix_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|",
+                        carry=virtio_blk_msix_marker_carry,
+                    )
+                    virtio_net_msix_marker_line, virtio_net_msix_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_msix_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
+                        carry=virtio_net_msix_marker_carry,
+                    )
+                    virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_snd_msix_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
+                        carry=virtio_snd_msix_marker_carry,
                     )
                     tail += chunk
                     if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
@@ -5232,28 +5255,6 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
-                            if need_virtio_net_msix:
-                                parsed = _parse_virtio_net_msix_marker(tail)
-                                if parsed is None:
-                                    print(
-                                        "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while --require-virtio-net-msix was enabled",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
-
-                                msix_status, msix_fields = parsed
-                                msix_mode = msix_fields.get("mode", "")
-                                if msix_status != "PASS" or msix_mode != "msix":
-                                    print(
-                                        f"FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net-msix marker did not report PASS|mode=msix (status={msix_status} mode={msix_mode or 'unknown'})",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
-
                             if need_net_link_flap:
                                 if saw_virtio_net_link_flap_fail:
                                     print(
@@ -5594,24 +5595,43 @@ def main() -> int:
                             result_code = 1
                             break
                         if args.require_virtio_net_msix:
-                            ok, reason = _require_virtio_net_msix_marker(tail)
+                            msix_tail = (
+                                virtio_net_msix_marker_line.encode("utf-8")
+                                if virtio_net_msix_marker_line is not None
+                                else tail
+                            )
+                            ok, reason = _require_virtio_net_msix_marker(msix_tail)
                             if not ok:
-                                print(
-                                    f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}",
-                                    file=sys.stderr,
-                                )
+                                if reason.startswith("missing virtio-net-msix marker"):
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while "
+                                        "--require-virtio-net-msix was enabled (guest selftest too old?)",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
                         if args.require_virtio_blk_msix:
-                            ok, reason = _require_virtio_blk_msix_marker(tail)
+                            msix_tail = (
+                                virtio_blk_msix_marker_line.encode("utf-8")
+                                if virtio_blk_msix_marker_line is not None
+                                else tail
+                            )
+                            ok, reason = _require_virtio_blk_msix_marker(msix_tail)
                             if not ok:
                                 print(f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
                         if args.require_virtio_snd_msix:
-                            ok, reason = _require_virtio_snd_msix_marker(tail)
+                            msix_tail = (
+                                virtio_snd_msix_marker_line.encode("utf-8")
+                                if virtio_snd_msix_marker_line is not None
+                                else tail
+                            )
+                            ok, reason = _require_virtio_snd_msix_marker(msix_tail)
                             if not ok:
                                 print(
                                     f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
@@ -6067,6 +6087,24 @@ def main() -> int:
                             chunk2,
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|",
                             carry=virtio_blk_resize_marker_carry,
+                        )
+                        virtio_blk_msix_marker_line, virtio_blk_msix_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_blk_msix_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|",
+                            carry=virtio_blk_msix_marker_carry,
+                        )
+                        virtio_net_msix_marker_line, virtio_net_msix_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_msix_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
+                            carry=virtio_net_msix_marker_carry,
+                        )
+                        virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_snd_msix_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
+                            carry=virtio_snd_msix_marker_carry,
                         )
                         tail += chunk2
                         if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
@@ -6679,27 +6717,6 @@ def main() -> int:
                                             result_code = 1
                                             break
 
-                                if need_virtio_net_msix:
-                                    parsed = _parse_virtio_net_msix_marker(tail)
-                                    if parsed is None:
-                                        print(
-                                            "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while --require-virtio-net-msix was enabled",
-                                            file=sys.stderr,
-                                        )
-                                        _print_tail(serial_log)
-                                        result_code = 1
-                                        break
-
-                                    msix_status, msix_fields = parsed
-                                    msix_mode = msix_fields.get("mode", "")
-                                    if msix_status != "PASS" or msix_mode != "msix":
-                                        print(
-                                            f"FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net-msix marker did not report PASS|mode=msix (status={msix_status} mode={msix_mode or 'unknown'})",
-                                            file=sys.stderr,
-                                        )
-                                        _print_tail(serial_log)
-                                        result_code = 1
-                                        break
                                 if need_net_link_flap:
                                     if saw_virtio_net_link_flap_fail:
                                         print(
@@ -7036,24 +7053,43 @@ def main() -> int:
                                     result_code = 1
                                     break
                             if args.require_virtio_net_msix:
-                                ok, reason = _require_virtio_net_msix_marker(tail)
+                                msix_tail = (
+                                    virtio_net_msix_marker_line.encode("utf-8")
+                                    if virtio_net_msix_marker_line is not None
+                                    else tail
+                                )
+                                ok, reason = _require_virtio_net_msix_marker(msix_tail)
                                 if not ok:
-                                    print(
-                                        f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}",
-                                        file=sys.stderr,
-                                    )
+                                    if reason.startswith("missing virtio-net-msix marker"):
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while "
+                                            "--require-virtio-net-msix was enabled (guest selftest too old?)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
                             if args.require_virtio_blk_msix:
-                                ok, reason = _require_virtio_blk_msix_marker(tail)
+                                msix_tail = (
+                                    virtio_blk_msix_marker_line.encode("utf-8")
+                                    if virtio_blk_msix_marker_line is not None
+                                    else tail
+                                )
+                                ok, reason = _require_virtio_blk_msix_marker(msix_tail)
                                 if not ok:
                                     print(f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
                             if args.require_virtio_snd_msix:
-                                ok, reason = _require_virtio_snd_msix_marker(tail)
+                                msix_tail = (
+                                    virtio_snd_msix_marker_line.encode("utf-8")
+                                    if virtio_snd_msix_marker_line is not None
+                                    else tail
+                                )
+                                ok, reason = _require_virtio_snd_msix_marker(msix_tail)
                                 if not ok:
                                     print(
                                         f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
@@ -7280,9 +7316,36 @@ def main() -> int:
                     virtio_blk_resize_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_blk_msix_marker_carry:
+            raw = virtio_blk_msix_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|"):
+                try:
+                    virtio_blk_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_net_msix_marker_carry:
+            raw = virtio_net_msix_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|"):
+                try:
+                    virtio_net_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_snd_msix_marker_carry:
+            raw = virtio_snd_msix_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|"):
+                try:
+                    virtio_snd_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
 
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
-        _emit_virtio_blk_msix_host_marker(tail)
+        blk_msix_tail = (
+            virtio_blk_msix_marker_line.encode("utf-8") if virtio_blk_msix_marker_line is not None else tail
+        )
+        _emit_virtio_blk_msix_host_marker(blk_msix_tail)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_recovery_host_marker(
             tail,
@@ -7295,14 +7358,23 @@ def main() -> int:
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
-        _emit_virtio_net_msix_host_marker(tail)
+        net_msix_tail = (
+            virtio_net_msix_marker_line.encode("utf-8") if virtio_net_msix_marker_line is not None else tail
+        )
+        _emit_virtio_net_msix_host_marker(net_msix_tail)
         _emit_virtio_input_binding_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
-        _emit_virtio_snd_msix_host_marker(tail)
+        snd_msix_tail = (
+            virtio_snd_msix_marker_line.encode("utf-8") if virtio_snd_msix_marker_line is not None else tail
+        )
+        _emit_virtio_snd_msix_host_marker(snd_msix_tail)
         _emit_virtio_input_irq_host_marker(tail)
         _emit_virtio_input_bind_host_marker(tail)
-        _emit_virtio_input_msix_host_marker(tail)
+        input_msix_tail = (
+            virtio_input_msix_marker.line.encode("utf-8") if virtio_input_msix_marker is not None else tail
+        )
+        _emit_virtio_input_msix_host_marker(input_msix_tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
         _emit_virtio_snd_playback_host_marker(tail)
         _emit_virtio_snd_capture_host_marker(tail)
@@ -9049,13 +9121,23 @@ def _require_virtio_blk_msix_marker(tail: bytes) -> tuple[bool, str]:
     if marker_line is None:
         return False, "missing virtio-blk-msix marker (guest selftest too old?)"
 
+    fields = _parse_marker_kv_fields(marker_line)
     parts = marker_line.split("|")
     if "FAIL" in parts:
-        return False, "virtio-blk-msix marker reported FAIL"
+        reason = "virtio-blk-msix marker reported FAIL"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
     if "SKIP" in parts:
-        return False, "virtio-blk-msix marker reported SKIP"
+        reason = "virtio-blk-msix marker reported SKIP"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
 
-    fields = _parse_marker_kv_fields(marker_line)
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-blk-msix marker missing mode=... field"
@@ -9074,13 +9156,23 @@ def _require_virtio_net_msix_marker(tail: bytes) -> tuple[bool, str]:
     if marker_line is None:
         return False, "missing virtio-net-msix marker (guest selftest too old?)"
 
+    fields = _parse_marker_kv_fields(marker_line)
     parts = marker_line.split("|")
     if "FAIL" in parts:
-        return False, "virtio-net-msix marker reported FAIL"
+        reason = "virtio-net-msix marker reported FAIL"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
     if "SKIP" in parts:
-        return False, "virtio-net-msix marker reported SKIP"
+        reason = "virtio-net-msix marker reported SKIP"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
 
-    fields = _parse_marker_kv_fields(marker_line)
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-net-msix marker missing mode=... field"
@@ -9099,13 +9191,23 @@ def _require_virtio_snd_msix_marker(tail: bytes) -> tuple[bool, str]:
     if marker_line is None:
         return False, "missing virtio-snd-msix marker (guest selftest too old?)"
 
+    fields = _parse_marker_kv_fields(marker_line)
     parts = marker_line.split("|")
     if "FAIL" in parts:
-        return False, "virtio-snd-msix marker reported FAIL"
+        reason = "virtio-snd-msix marker reported FAIL"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
     if "SKIP" in parts:
-        return False, "virtio-snd-msix marker reported SKIP"
+        reason = "virtio-snd-msix marker reported SKIP"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
 
-    fields = _parse_marker_kv_fields(marker_line)
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-snd-msix marker missing mode=... field"
