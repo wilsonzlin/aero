@@ -10960,10 +10960,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_BUFFER_TOO_SMALL;
         }
 
-        if (!adapter->Bar0) {
-            return STATUS_DEVICE_NOT_READY;
-        }
-
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
         /* Only scanout/source 0 is currently implemented. */
@@ -10971,17 +10967,22 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_NOT_SUPPORTED;
         }
 
-        const BOOLEAN haveFeaturesRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG));
-        const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
-        if (!haveFeaturesRegs || !haveVblankRegs) {
-            return STATUS_NOT_SUPPORTED;
+        BOOLEAN vblankSupported = FALSE;
+        if (poweredOn) {
+            const BOOLEAN haveFeaturesRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG));
+            const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
+            if (!haveFeaturesRegs || !haveVblankRegs) {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                      ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+            vblankSupported = ((features & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
+        } else {
+            vblankSupported = ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) ? TRUE : FALSE;
         }
 
-        const ULONGLONG features = poweredOn
-                                       ? ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                          ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32))
-                                       : adapter->DeviceFeatures;
-        if ((features & (ULONGLONG)AEROGPU_FEATURE_VBLANK) == 0) {
+        if (!vblankSupported) {
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -10990,16 +10991,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.size = sizeof(*out);
         out->hdr.reserved0 = 0;
 
-        out->irq_enable = 0;
-        out->irq_status = 0;
-        const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
-        if (poweredOn && haveIrqRegs) {
-            out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
-            out->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
-        }
-
         out->flags = AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID | AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED;
+
         if (poweredOn) {
+            const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
+            if (haveIrqRegs) {
+                out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+                out->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+            } else {
+                out->irq_enable = 0;
+                out->irq_status = 0;
+            }
+
             out->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
                                                       AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
                                                       AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
@@ -11008,11 +11011,14 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
             out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         } else {
-            /* Avoid MMIO reads while powered down; return last-known values. */
+            /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+            out->irq_enable = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+            out->irq_status = 0;
             out->vblank_seq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
             out->last_vblank_time_ns = AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
             out->vblank_period_ns = (uint32_t)adapter->VblankPeriodNs;
         }
+
         out->vblank_interrupt_type = 0;
         if (adapter->VblankInterruptTypeValid) {
             KeMemoryBarrier();
@@ -11055,7 +11061,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->mmio_fb_gpa = 0;
 
         if (!poweredOn) {
-            /* Avoid touching MMIO while powered down; cached fields are still valid. */
+            /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+            out->mmio_enable = out->cached_enable;
+            out->mmio_width = out->cached_width;
+            out->mmio_height = out->cached_height;
+            out->mmio_format = out->cached_format;
+            out->mmio_pitch_bytes = out->cached_pitch_bytes;
+            out->mmio_fb_gpa = (uint64_t)adapter->CurrentScanoutFbPa.QuadPart;
             return STATUS_SUCCESS;
         }
 
@@ -11109,27 +11121,26 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->pitch_bytes = 0;
         out->reserved1 = 0;
 
-        if (!adapter->Bar0) {
-            return STATUS_SUCCESS;
-        }
-
-        const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
-        if (!haveCursorRegs) {
-            return STATUS_SUCCESS;
-        }
-
-        BOOLEAN cursorSupported = TRUE;
-        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
-            cursorSupported = (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
-        }
-
-        if (!cursorSupported) {
-            return STATUS_SUCCESS;
-        }
-
-        out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
-
+        BOOLEAN cursorSupported = FALSE;
         if (poweredOn) {
+            const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
+            if (!haveCursorRegs) {
+                return STATUS_SUCCESS;
+            }
+
+            cursorSupported = TRUE;
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
+                const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                           ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+                cursorSupported = (features & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
+            }
+
+            if (!cursorSupported) {
+                return STATUS_SUCCESS;
+            }
+
+            out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
+
             out->enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE);
             out->x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
             out->y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
@@ -11146,27 +11157,51 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
 
             out->pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES);
-        } else {
-            /*
-             * Avoid MMIO reads while powered down. Return the last cached cursor
-             * state; this is the state that will be restored on the next D0
-             * transition.
-             */
-            KIRQL cursorIrql;
-            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
-            out->enable = (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u;
-            out->x = (ULONG)adapter->CursorX;
-            out->y = (ULONG)adapter->CursorY;
-            out->hot_x = adapter->CursorHotX;
-            out->hot_y = adapter->CursorHotY;
-            out->width = adapter->CursorWidth;
-            out->height = adapter->CursorHeight;
-            out->format = adapter->CursorFormat;
-            out->fb_gpa = (uint64_t)adapter->CursorFbPa.QuadPart;
-            out->pitch_bytes = adapter->CursorPitchBytes;
-            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            return STATUS_SUCCESS;
         }
 
+        /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+        cursorSupported = ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) ? TRUE : FALSE;
+        if (!cursorSupported) {
+            return STATUS_SUCCESS;
+        }
+
+        out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
+
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+
+            const BOOLEAN shapeValid = adapter->CursorShapeValid;
+            const BOOLEAN visible = adapter->CursorVisible;
+            const BOOLEAN shapeReady =
+                shapeValid &&
+                adapter->CursorFbPa.QuadPart != 0 &&
+                adapter->CursorPitchBytes != 0 &&
+                adapter->CursorWidth != 0 &&
+                adapter->CursorHeight != 0;
+
+            out->x = (uint32_t)adapter->CursorX;
+            out->y = (uint32_t)adapter->CursorY;
+
+            /*
+             * Only return cursor shape-dependent fields when we have a valid shape
+             * and backing store; otherwise keep values conservative.
+             */
+            if (shapeReady) {
+                out->hot_x = (uint32_t)adapter->CursorHotX;
+                out->hot_y = (uint32_t)adapter->CursorHotY;
+                out->width = (uint32_t)adapter->CursorWidth;
+                out->height = (uint32_t)adapter->CursorHeight;
+                out->format = (uint32_t)adapter->CursorFormat;
+                out->fb_gpa = (uint64_t)adapter->CursorFbPa.QuadPart;
+                out->pitch_bytes = (uint32_t)adapter->CursorPitchBytes;
+            }
+
+            out->enable = (visible && shapeReady) ? 1u : 0u;
+
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
         return STATUS_SUCCESS;
     }
 
