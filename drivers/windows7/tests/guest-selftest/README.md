@@ -114,12 +114,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     set the per-session volume to 100% (so host-side wav capture is not accidentally silent due to a
     muted/zero-volume image or a muted per-application volume mixer entry).
   - Debug note: the in-tree virtio-snd driver supports a per-device `ForceNullBackend` registry flag
-    (under the device instance’s `Parameters` subkey) that disables the virtio transport and routes
+    (under the device instance’s `Device Parameters\\Parameters` subkey) that disables the virtio transport and routes
     the endpoint through the null backend. This makes host-side wav capture silent; the selftest will
     emit `...|FAIL|force_null_backend` if the flag is enabled.
     - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
     - Changing this value requires a reboot or disable/enable cycle so Windows re-runs `START_DEVICE`.
-  - Additional bring-up flag: `AllowPollingOnly` under the same per-device `Parameters` key:
+  - Additional bring-up flag: `AllowPollingOnly` under the same per-device `Device Parameters\\Parameters` key:
     - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
     - When set to `1`, the driver may start in polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx). Intended for early device-model bring-up.
     - Changing this value requires a reboot or disable/enable cycle so Windows re-runs `START_DEVICE`.

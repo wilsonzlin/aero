@@ -449,7 +449,7 @@ Then review:
 ### Bring-up toggles (registry)
 
 The virtio-snd driver exposes a couple of per-device bring-up toggles that can be flipped for diagnostics.
-They live under the device instance’s `Parameters` subkey:
+They live under the device instance’s `Device Parameters\\Parameters` subkey:
 
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
   - Default: `0`
