@@ -6,6 +6,7 @@ use libfuzzer_sys::fuzz_target;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::memory::MemoryBus;
+use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::{regs, trb::*, XhciController};
 
 const MEM_SIZE: usize = 256 * 1024;
@@ -21,10 +22,11 @@ const INPUT_CTX_BASE: u64 = 0x3000;
 const CMD_RING_BASE: u64 = 0x4000;
 const EVENT_RING_BASE: u64 = 0x5000;
 const ERST_BASE: u64 = 0x6000;
+const EP0_TR_BASE: u64 = 0x7000;
 
 /// Bounded guest-physical memory for xHCI ring fuzzing.
 ///
-/// Reads outside the provided buffer return zeros; writes are dropped.
+/// Reads outside the provided buffer return `0xff` bytes (unmapped/open-bus), writes are dropped.
 #[derive(Clone)]
 struct FuzzBus {
     data: Vec<u8>,
@@ -66,7 +68,9 @@ impl FuzzBus {
 
 impl MemoryBus for FuzzBus {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        buf.fill(0);
+        // Unmapped DMA reads on PC platforms often return all-ones; model that so the controller's
+        // InvalidDmaRead (all-0xFF) paths are reachable.
+        buf.fill(0xff);
         if buf.is_empty() {
             return;
         }
@@ -120,7 +124,7 @@ fn biased_offset(u: &mut Unstructured<'_>, port_count: usize) -> u64 {
     let sel: u8 = u.arbitrary().unwrap_or(0);
     // ~75% pick a known register; otherwise pick any offset in the MMIO window.
     if sel & 0b11 != 0 {
-        match sel % 14 {
+        match sel % 16 {
             0 => regs::REG_USBCMD,
             1 => regs::REG_USBSTS,
             2 => regs::REG_CRCR_LO,
@@ -133,7 +137,11 @@ fn biased_offset(u: &mut Unstructured<'_>, port_count: usize) -> u64 {
             9 => regs::REG_INTR0_ERDP_LO,
             10 => regs::port::portsc_offset(0),
             11 => regs::port::portsc_offset(port_count.saturating_sub(1)),
-            12 => u64::from(regs::DBOFF_VALUE),
+            12 => u64::from(regs::DBOFF_VALUE), // doorbell 0 (command ring)
+            13 => u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE), // slot 1
+            14 => {
+                u64::from(regs::DBOFF_VALUE) + 2 * u64::from(regs::doorbell::DOORBELL_STRIDE)
+            } // slot 2
             _ => regs::port::portsc_offset((sel as usize) % port_count.max(1)),
         }
     } else {
@@ -152,11 +160,20 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     bus.write_u32(INPUT_CTX_BASE, 0);
     bus.write_u32(INPUT_CTX_BASE + 0x04, (1 << 0) | (1 << 1));
 
+    // Input Slot Context: bind to roothub port 1 (the 0th port in the controller model).
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    slot_ctx.set_route_string(0);
+    slot_ctx.set_context_entries(1);
+    slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
+
     // Input EP0 context requests MPS=64 and Interval=5.
     bus.write_u32(INPUT_CTX_BASE + 0x40, 5u32 << 16);
     bus.write_u32(INPUT_CTX_BASE + 0x40 + 4, 64u32 << 16);
-    bus.write_u32(INPUT_CTX_BASE + 0x40 + 8, 0xdead_bee0);
-    bus.write_u32(INPUT_CTX_BASE + 0x40 + 12, 0);
+    // TR Dequeue Pointer (masked to 16-byte alignment) + DCS=1 so an all-zero ring reads as empty.
+    let tr_raw = EP0_TR_BASE | 1;
+    bus.write_u32(INPUT_CTX_BASE + 0x40 + 8, tr_raw as u32);
+    bus.write_u32(INPUT_CTX_BASE + 0x40 + 12, (tr_raw >> 32) as u32);
 
     // Command ring:
     //  - TRB0: Enable Slot (cycle=1)
@@ -200,19 +217,63 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 }
 
-fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController) {
+#[derive(Clone, Copy, Debug)]
+enum CommandRingSeed {
+    EnableSlot,
+    AddressDeviceAndEvaluateContext,
+}
+
+fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: CommandRingSeed) {
     // Reset command ring state back to TRB0 with cycle=1.
-    {
-        let mut trb0 = Trb::new(0, 0, 0);
-        trb0.set_trb_type(TrbType::EnableSlotCommand);
-        trb0.set_cycle(true);
-        bus.write_trb(CMD_RING_BASE, trb0);
-    }
-    {
-        let mut stop = Trb::new(0, 0, 0);
-        stop.set_trb_type(TrbType::NoOpCommand);
-        stop.set_cycle(false);
-        bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, stop);
+    match seed {
+        CommandRingSeed::EnableSlot => {
+            {
+                let mut trb0 = Trb::new(0, 0, 0);
+                trb0.set_trb_type(TrbType::EnableSlotCommand);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, stop);
+            }
+        }
+        CommandRingSeed::AddressDeviceAndEvaluateContext => {
+            // Reinstate input Slot Context fields so Address Device has a valid topology binding.
+            let mut slot_ctx = SlotContext::default();
+            slot_ctx.set_root_hub_port_number(1);
+            slot_ctx.set_route_string(0);
+            slot_ctx.set_context_entries(1);
+            slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
+
+            // Keep DCBAA[1] pointing at our device context.
+            bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
+
+            // Program Address Device then Evaluate Context for slot 1.
+            {
+                let mut trb0 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb0.set_trb_type(TrbType::AddressDeviceCommand);
+                trb0.set_slot_id(1);
+                trb0.set_address_device_bsr(false);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut trb1 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb1.set_trb_type(TrbType::EvaluateContextCommand);
+                trb1.set_slot_id(1);
+                trb1.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, trb1);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, stop);
+            }
+        }
     }
     xhci.mmio_write(regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
     xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
@@ -247,6 +308,11 @@ fuzz_target!(|data: &[u8]| {
     // subsequent commands have a valid output context target.
     bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
 
+    // Second command-ring pass: Address Device + Evaluate Context for slot 1. This exercises the
+    // topology resolution + SET_ADDRESS path as well as the context merge logic.
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::AddressDeviceAndEvaluateContext);
+    xhci.tick_1ms(&mut bus);
+
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let port_count = usize::from(xhci.port_count());
 
@@ -271,7 +337,13 @@ fuzz_target!(|data: &[u8]| {
             }
             7 => {
                 // Rearm the command ring back to a known, small sequence and ring DB0.
-                rearm_command_ring(&mut bus, &mut xhci);
+                let mode: u8 = u.arbitrary().unwrap_or(0);
+                let seed = if (mode & 1) == 0 {
+                    CommandRingSeed::EnableSlot
+                } else {
+                    CommandRingSeed::AddressDeviceAndEvaluateContext
+                };
+                rearm_command_ring(&mut bus, &mut xhci, seed);
                 xhci.tick_1ms(&mut bus);
             }
             8 => {
@@ -295,4 +367,3 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 });
-
