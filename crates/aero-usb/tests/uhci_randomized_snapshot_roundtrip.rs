@@ -410,6 +410,61 @@ fn prepare_resume_detect_edge_case(
     );
 }
 
+fn prepare_usbint_ioc_edge_case(ctrl: &mut UhciController, mem: &mut dyn MemoryBus) {
+    // Construct a minimal schedule that deterministically asserts USBSTS.USBINT and sets the
+    // internal `usbint_causes` bit (IOC), so snapshot/restore must preserve it for IRQ equivalence.
+    //
+    // This uses a TD that targets a non-existent address while the root port is suspended, so the
+    // schedule walker takes the "no device" error path and latches USBINT + IOC.
+    const FL_BASE: u32 = 0x2000;
+    const TD_ADDR: u32 = 0x3000;
+
+    // Frame list: point frame 0 at our TD, terminate all other frames.
+    for i in 0..1024u32 {
+        let ptr = if i == 0 { TD_ADDR } else { 1 };
+        mem.write_u32(FL_BASE.wrapping_add(i * 4) as u64, ptr);
+    }
+
+    // TD layout: link, ctrl/sts, token, buffer.
+    const TD_LINK_TERMINATE: u32 = 1;
+    const TD_STATUS_ACTIVE: u32 = 1 << 23;
+    const TD_CTRL_IOC: u32 = 1 << 24;
+    mem.write_u32(TD_ADDR as u64, TD_LINK_TERMINATE);
+    mem.write_u32((TD_ADDR + 4) as u64, TD_STATUS_ACTIVE | TD_CTRL_IOC);
+    // PID doesn't matter since we intentionally hit the "device missing" path. Use an OUT token
+    // with max_len=0 (field=0x7FF).
+    let token = 0xE1u32 | (5u32 << 8) | (0x7FFu32 << 21);
+    mem.write_u32((TD_ADDR + 8) as u64, token);
+    mem.write_u32((TD_ADDR + 12) as u64, 0);
+
+    // Enable IRQ for IOC (but not timeout/CRC) so IRQ level depends on usbint_causes.
+    ctrl.io_write(
+        regs::REG_USBINTR,
+        2,
+        (regs::USBINTR_RESUME | regs::USBINTR_IOC) as u32,
+    );
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FL_BASE);
+    ctrl.io_write(regs::REG_FRNUM, 2, 0);
+    ctrl.io_write(
+        regs::REG_USBCMD,
+        2,
+        (regs::USBCMD_RS | regs::USBCMD_CF | regs::USBCMD_MAXP) as u32,
+    );
+
+    ctrl.tick_1ms(mem);
+
+    let usbsts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_ne!(
+        usbsts & regs::USBSTS_USBINT,
+        0,
+        "expected USBSTS.USBINT to be set by IOC TD"
+    );
+    assert!(
+        ctrl.irq_level(),
+        "expected IRQ to be asserted due to USBINT+IOC"
+    );
+}
+
 fn exec_op(ctrl: &mut UhciController, mem: &mut dyn MemoryBus, op: &Op) -> Option<u32> {
     match *op {
         Op::Write {
@@ -442,6 +497,12 @@ fn uhci_randomized_snapshot_roundtrip_is_equivalent_after_restore() {
     // Make the first operation after restore a tick so missing edge-tracking state (e.g.
     // `prev_port_resume_detect`) is caught immediately.
     ops[CHECKPOINT] = Op::Tick;
+    // Follow with a USBSTS read so missed edge tracking is observable even if IRQ is already
+    // asserted for other reasons.
+    ops[CHECKPOINT + 1] = Op::Read {
+        offset: regs::REG_USBSTS,
+        size: 2,
+    };
 
     let kb = UsbHidKeyboardHandle::new();
     let mouse = UsbHidMouseHandle::new();
@@ -465,6 +526,8 @@ fn uhci_randomized_snapshot_roundtrip_is_equivalent_after_restore() {
     // the edge-tracking state, the first tick after restore will spuriously re-latch USBSTS and
     // raise an IRQ.
     prepare_resume_detect_edge_case(&mut ctrl_a, &mut mem_a, &kb);
+    // Also ensure USBINT bookkeeping is non-zero so `usbint_causes` must roundtrip correctly.
+    prepare_usbint_ioc_edge_case(&mut ctrl_a, &mut mem_a);
 
     let snapshot = ctrl_a.save_state();
     let mut mem_b = mem_a.clone();
@@ -473,6 +536,11 @@ fn uhci_randomized_snapshot_roundtrip_is_equivalent_after_restore() {
     ctrl_b
         .load_state(&snapshot)
         .expect("uhci snapshot restore should succeed");
+    assert_eq!(
+        ctrl_a.irq_level(),
+        ctrl_b.irq_level(),
+        "irq mismatch immediately after restore"
+    );
 
     // Continue executing the same operations on both controllers and assert equivalence.
     for (idx, op) in ops[CHECKPOINT..].iter().enumerate() {

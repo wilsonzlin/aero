@@ -1601,7 +1601,7 @@ impl XhciController {
     pub fn write_doorbell(&mut self, target: u8, value: u32) {
         if target == 0 {
             // Doorbell 0 rings the command ring (command TRBs).
-            // The low bits of `value` (DB Target) are reserved for doorbell 0, so ignore it.
+            // The low bits of `value` are reserved for doorbell 0, so ignore it.
             let _ = value;
             self.ring_doorbell0();
             return;
