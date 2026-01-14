@@ -3,6 +3,9 @@ use std::sync::Arc;
 use firmware::bios::{
     build_bios_rom, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SIZE, EBDA_BASE,
 };
+use firmware::smbios::{
+    find_eps, parse_eps_table_info, parse_structure_types, validate_eps_checksum,
+};
 use memory::{DenseMemory, MapError, PhysicalMemoryBus};
 
 struct TestMemory {
@@ -103,67 +106,6 @@ fn read_bytes(mem: &mut impl memory::MemoryBus, paddr: u64, len: usize) -> Vec<u
     out
 }
 
-fn scan_region_for_smbios(mem: &mut impl memory::MemoryBus, base: u64, len: u64) -> Option<u64> {
-    for off in (0..len).step_by(16) {
-        let addr = base + off;
-        if mem.read_u8(addr) == b'_'
-            && mem.read_u8(addr + 1) == b'S'
-            && mem.read_u8(addr + 2) == b'M'
-            && mem.read_u8(addr + 3) == b'_'
-        {
-            return Some(addr);
-        }
-    }
-    None
-}
-
-fn find_smbios_eps(mem: &mut impl memory::MemoryBus) -> Option<u64> {
-    // SMBIOS spec: search the first KiB of EBDA first, then scan 0xF0000-0xFFFFF
-    // on 16-byte boundaries.
-    let ebda_seg = mem.read_u16(0x040E);
-    if ebda_seg != 0 {
-        let ebda_base = (ebda_seg as u64) << 4;
-        if let Some(addr) = scan_region_for_smbios(mem, ebda_base, 1024) {
-            return Some(addr);
-        }
-    }
-    scan_region_for_smbios(mem, 0xF0000, 0x10000)
-}
-
-#[derive(Debug)]
-struct ParsedStructure {
-    ty: u8,
-}
-
-fn parse_smbios_table(table: &[u8]) -> Vec<ParsedStructure> {
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while i < table.len() {
-        let ty = table[i];
-        let len = table[i + 1] as usize;
-        let mut j = i + len;
-
-        // Skip strings.
-        loop {
-            if j + 1 >= table.len() {
-                panic!("unterminated string-set");
-            }
-            if table[j] == 0 && table[j + 1] == 0 {
-                j += 2;
-                break;
-            }
-            j += 1;
-        }
-
-        out.push(ParsedStructure { ty });
-        i = j;
-        if ty == 127 {
-            break;
-        }
-    }
-    out
-}
-
 #[test]
 fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0xAA));
@@ -192,27 +134,24 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     assert!(checksum_ok(&rsdp));
 
     // SMBIOS EPS should be discoverable by spec search rules.
-    let eps_addr = find_smbios_eps(&mut mem).expect("SMBIOS EPS not found after BIOS POST");
+    let eps_addr = find_eps(&mut mem).expect("SMBIOS EPS not found after BIOS POST");
     assert!((EBDA_BASE..EBDA_BASE + 1024).contains(&eps_addr));
 
     let eps = read_bytes(&mut mem, eps_addr, 0x1F);
     assert_eq!(&eps[0..4], b"_SM_");
-    assert!(checksum_ok(&eps));
-    assert_eq!(&eps[0x10..0x15], b"_DMI_");
-    assert!(checksum_ok(&eps[0x10..]));
+    assert!(validate_eps_checksum(&eps));
 
-    let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]) as usize;
-    let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]) as u64;
-    let table = read_bytes(&mut mem, table_addr, table_len);
-    let structures = parse_smbios_table(&table);
+    let table_info = parse_eps_table_info(&eps).expect("invalid SMBIOS EPS");
+    let table = read_bytes(&mut mem, table_info.table_addr, table_info.table_len);
+    let types = parse_structure_types(&table);
 
-    assert!(structures.iter().any(|s| s.ty == 0), "missing Type 0");
-    assert!(structures.iter().any(|s| s.ty == 1), "missing Type 1");
-    assert!(structures.iter().any(|s| s.ty == 4), "missing Type 4");
-    assert!(structures.iter().any(|s| s.ty == 16), "missing Type 16");
-    assert!(structures.iter().any(|s| s.ty == 17), "missing Type 17");
-    assert!(structures.iter().any(|s| s.ty == 19), "missing Type 19");
-    assert!(structures.iter().any(|s| s.ty == 127), "missing Type 127");
+    assert_eq!(types.last().copied(), Some(127), "missing Type 127");
+    assert!(types.contains(&0), "missing Type 0");
+    assert!(types.contains(&1), "missing Type 1");
+    assert!(types.contains(&4), "missing Type 4");
+    assert!(types.contains(&16), "missing Type 16");
+    assert!(types.contains(&17), "missing Type 17");
+    assert!(types.contains(&19), "missing Type 19");
 }
 
 #[test]

@@ -6,9 +6,14 @@
 //! BIOS/system/board/chassis/cpu/memory.
 
 mod builder;
+mod scan;
 mod structures;
 
 use crate::memory::MemoryBus;
+
+pub use scan::{
+    find_eps, parse_eps_table_info, parse_structure_types, validate_eps_checksum, EpsTableInfo,
+};
 
 /// Configuration for SMBIOS table generation.
 #[derive(Clone, Debug)]
@@ -73,10 +78,6 @@ mod tests {
         mem.write_physical(addr, &segment.to_le_bytes());
     }
 
-    fn checksum_ok(bytes: &[u8]) -> bool {
-        bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) == 0
-    }
-
     #[test]
     fn eps_checksum_validates() {
         let mut mem = VecMemory::new(2 * 1024 * 1024);
@@ -91,8 +92,7 @@ mod tests {
         let mut eps = [0u8; builder::EPS_LENGTH as usize];
         mem.read_physical(eps_addr as u64, &mut eps);
         assert_eq!(&eps[0..4], b"_SM_");
-        assert!(checksum_ok(&eps));
-        assert!(checksum_ok(&eps[0x10..]));
+        assert!(validate_eps_checksum(&eps));
     }
 
     #[derive(Debug)]
@@ -105,7 +105,7 @@ mod tests {
         let mut eps = [0u8; builder::EPS_LENGTH as usize];
         mem.read_physical(eps_addr as u64, &mut eps);
         assert_eq!(&eps[0..4], b"_SM_");
-        assert!(checksum_ok(&eps));
+        assert!(validate_eps_checksum(&eps));
 
         let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]);
         let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]);
