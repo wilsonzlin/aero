@@ -2,7 +2,7 @@ import { InputEventQueue, type InputBatchFlushHook, type InputBatchRecycleMessag
 import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
 import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
-import { negateI32Saturating } from "./int32";
+import { I32_MAX, I32_MIN, negateI32Saturating } from "./int32";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -1251,6 +1251,14 @@ export class InputCapture {
         return 0;
       }
       const whole = this.mouseFracX < 0 ? Math.ceil(this.mouseFracX) : Math.floor(this.mouseFracX);
+      if (whole > I32_MAX) {
+        this.mouseFracX = 0;
+        return I32_MAX;
+      }
+      if (whole < I32_MIN) {
+        this.mouseFracX = 0;
+        return I32_MIN;
+      }
       this.mouseFracX -= whole;
       return whole | 0;
     }
@@ -1260,6 +1268,14 @@ export class InputCapture {
       return 0;
     }
     const whole = this.mouseFracY < 0 ? Math.ceil(this.mouseFracY) : Math.floor(this.mouseFracY);
+    if (whole > I32_MAX) {
+      this.mouseFracY = 0;
+      return I32_MAX;
+    }
+    if (whole < I32_MIN) {
+      this.mouseFracY = 0;
+      return I32_MIN;
+    }
     this.mouseFracY -= whole;
     return whole | 0;
   }
@@ -1380,6 +1396,14 @@ export class InputCapture {
       return 0;
     }
     const whole = this.wheelFrac < 0 ? Math.ceil(this.wheelFrac) : Math.floor(this.wheelFrac);
+    if (whole > I32_MAX) {
+      this.wheelFrac = 0;
+      return I32_MAX;
+    }
+    if (whole < I32_MIN) {
+      this.wheelFrac = 0;
+      return I32_MIN;
+    }
     this.wheelFrac -= whole;
     return whole | 0;
   }
@@ -1390,6 +1414,14 @@ export class InputCapture {
       return 0;
     }
     const whole = this.wheelFracX < 0 ? Math.ceil(this.wheelFracX) : Math.floor(this.wheelFracX);
+    if (whole > I32_MAX) {
+      this.wheelFracX = 0;
+      return I32_MAX;
+    }
+    if (whole < I32_MIN) {
+      this.wheelFracX = 0;
+      return I32_MIN;
+    }
     this.wheelFracX -= whole;
     return whole | 0;
   }
