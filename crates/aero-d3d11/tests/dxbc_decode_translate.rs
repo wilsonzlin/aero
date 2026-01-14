@@ -2000,6 +2000,77 @@ fn decodes_and_translates_itof_conversion() {
 }
 
 #[test]
+fn decodes_and_translates_utof_conversion() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // mov r0, l(1, 2, 3, 4)  (raw unsigned integer bits stored in the untyped register file)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([1, 2, 3, 4]));
+
+    // utof_sat r1, r0
+    let len_without_ext = 1u32 + 2 + 2;
+    body.extend_from_slice(&opcode_token_with_sat(OPCODE_UTOF, len_without_ext));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // mov o0, r1
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        matches!(module.instructions[1], Sm4Inst::Utof { .. }),
+        "expected second instruction to decode as utof: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // `utof` should reinterpret lane bits as unsigned integers and then numeric-cast to f32.
+    assert!(
+        translated
+            .wgsl
+            .contains("vec4<f32>(bitcast<vec4<u32>>(r0))"),
+        "expected utof to emit vec4<f32>(bitcast<vec4<u32>>(...)):\n{}",
+        translated.wgsl
+    );
+    // Saturate should clamp float results.
+    assert!(
+        translated
+            .wgsl
+            .contains("clamp((vec4<f32>(bitcast<vec4<u32>>(r0)))"),
+        "expected utof_sat to clamp the float conversion result:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_ftoi_conversion() {
     const DCL_OUTPUT: u32 = 0x101;
 
@@ -2068,6 +2139,73 @@ fn decodes_and_translates_ftoi_conversion() {
     assert!(
         !translated.wgsl.contains("clamp(("),
         "did not expect any clamp() calls for ftoi:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_ftou_conversion() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // mov r0, l(1.5, 2.5, 3.0, -4.0)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([
+        1.5f32.to_bits(),
+        2.5f32.to_bits(),
+        3.0f32.to_bits(),
+        (-4.0f32).to_bits(),
+    ]));
+
+    // ftou r1, r0
+    let len_without_ext = 1u32 + 2 + 2;
+    body.push(opcode_token(OPCODE_FTOU, len_without_ext));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // mov o0, r1
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        matches!(module.instructions[1], Sm4Inst::Ftou { .. }),
+        "expected second instruction to decode as ftou: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // `ftou` should numeric-cast to u32 and then bitcast to the f32 register file.
+    assert!(
+        translated
+            .wgsl
+            .contains("bitcast<vec4<f32>>(vec4<u32>(r0))"),
+        "expected ftou to emit bitcast<vec4<f32>>(vec4<u32>(...)):\n{}",
         translated.wgsl
     );
 }
