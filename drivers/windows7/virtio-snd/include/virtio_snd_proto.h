@@ -376,6 +376,13 @@ _Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmFormatToBytesPerS
     }
 }
 
+/*
+ * Map a virtio-snd PCM format code to the container bit width of a single sample.
+ *
+ * Note: virtio-snd format codes are based on ALSA `snd_pcm_format_t`. In ALSA,
+ * S24/U24 correspond to 24-bit samples stored in a 32-bit container, so this
+ * helper returns 32 for those formats (the valid bit width is 24).
+ */
 _Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmFormatToBitsPerSample(_In_ UCHAR Format, _Out_ USHORT* BitsPerSample)
 {
     USHORT bytes;
