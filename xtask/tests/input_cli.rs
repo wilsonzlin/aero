@@ -55,6 +55,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "machine_i8042_snapshot_pending_bytes",
         ))
+        .stdout(predicate::str::contains(
+            "machine_input_batch_ps2_to_usb_backend_switch",
+        ))
         .stdout(predicate::str::contains("machine_virtio_input"))
         .stdout(predicate::str::contains("machine_uhci"))
         .stdout(predicate::str::contains("uhci_snapshot"))

@@ -69,6 +69,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
 
 const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
     "machine_i8042_snapshot_pending_bytes",
+    "machine_input_batch_ps2_to_usb_backend_switch",
     "machine_virtio_input",
     "machine_uhci",
     "uhci_snapshot",
