@@ -50,7 +50,11 @@ export const StatusIndex = {
   IoInputBatchCounter: 2,
   IoInputEventCounter: 3,
 
-  // I/O worker input backend selection status (debug HUD / tests).
+  // Input backend selection status (debug HUD / tests).
+  //
+  // Ownership:
+  // - `vmRuntime=legacy`: written by the I/O worker input routing layer
+  // - `vmRuntime=machine`: written by the machine CPU worker (typically conservative defaults)
   //
   // Integer encoding contract:
   //   0 = ps2
