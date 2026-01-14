@@ -429,7 +429,15 @@ static int RunD3D9MipmappedTextureSmoke(int argc, char** argv) {
 
   D3DLOCKED_RECT lr1;
   ZeroMemory(&lr1, sizeof(lr1));
-  hr = tex->LockRect(1, &lr1, NULL, 0);
+  // Lock a small non-zero sub-rect so the underlying DDI lock offset is inside
+  // the mip level, not exactly at its base. The Pitch must still match the full
+  // mip row pitch.
+  RECT mip1_rect;
+  mip1_rect.left = 1;
+  mip1_rect.top = 1;
+  mip1_rect.right = 2;
+  mip1_rect.bottom = 2;
+  hr = tex->LockRect(1, &lr1, &mip1_rect, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("LockRect(level1)", hr);
   }
