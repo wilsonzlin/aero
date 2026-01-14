@@ -909,6 +909,156 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
 }
 
 #[test]
+fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit_with_inline_code_version_guards() {
+    // Same loop trace as `tier2_trace_wasm_matches_interpreter_on_loop_side_exit`, but compile with
+    // `code_version_guard_import = false` so `GuardCodeVersion` reads the version table directly
+    // from linear memory (instead of calling a host import).
+    let func = Function {
+        entry: BlockId(0),
+        blocks: vec![
+            Block {
+                id: BlockId(0),
+                start_rip: 0,
+                code_len: 64,
+                instrs: vec![
+                    Instr::LoadReg {
+                        dst: v(0),
+                        reg: Gpr::Rax,
+                    },
+                    Instr::Const {
+                        dst: v(1),
+                        value: 1,
+                    },
+                    Instr::BinOp {
+                        dst: v(2),
+                        op: BinOp::Add,
+                        lhs: Operand::Value(v(0)),
+                        rhs: Operand::Value(v(1)),
+                        flags: FlagSet::ALU,
+                    },
+                    Instr::StoreReg {
+                        reg: Gpr::Rax,
+                        src: Operand::Value(v(2)),
+                    },
+                    Instr::Const {
+                        dst: v(3),
+                        value: 10,
+                    },
+                    Instr::BinOp {
+                        dst: v(4),
+                        op: BinOp::LtU,
+                        lhs: Operand::Value(v(2)),
+                        rhs: Operand::Value(v(3)),
+                        flags: FlagSet::EMPTY,
+                    },
+                ],
+                term: Terminator::Branch {
+                    cond: Operand::Value(v(4)),
+                    then_bb: BlockId(0),
+                    else_bb: BlockId(1),
+                },
+            },
+            Block {
+                id: BlockId(1),
+                start_rip: 100,
+                code_len: 1,
+                instrs: vec![],
+                term: Terminator::Return,
+            },
+        ],
+    };
+
+    let mut profile = ProfileData::default();
+    profile.block_counts.insert(BlockId(0), 10_000);
+    profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
+    profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
+    profile.hot_backedges.insert((BlockId(0), BlockId(0)));
+
+    let page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 7);
+
+    let builder = TraceBuilder::new(
+        &func,
+        &profile,
+        &page_versions,
+        TraceConfig {
+            hot_block_threshold: 1000,
+            max_blocks: 8,
+            max_instrs: 256,
+        },
+    );
+    let mut trace = builder.build_from(BlockId(0)).expect("trace");
+    assert_eq!(trace.ir.kind, TraceKind::Loop);
+
+    let opt = optimize_trace(&mut trace.ir, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace.ir,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            code_version_guard_import: false,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0;
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1 | RFLAGS_DF;
+    for flag in [Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of] {
+        init_state.cpu.rflags |= 1u64 << flag.rflags_bit();
+    }
+
+    let env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 7);
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let expected = run_trace_with_cached_regs(
+        &trace.ir,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1_000_000,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(expected.exit, RunExit::SideExit { next_rip: 100 });
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[7]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 100);
+    assert_eq!(
+        store.data().code_version_calls,
+        0,
+        "inline code-version guards should not call env.code_page_version"
+    );
+
+    let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+    memory.read(&store, 0, &mut got_guest_mem).unwrap();
+    assert_eq!(got_guest_mem.as_slice(), bus.mem());
+
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
 fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
     let mut trace = TraceIr {
         prologue: vec![],
@@ -1200,16 +1350,33 @@ fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_tabl
     );
     validate_wasm(&wasm);
 
-    let (mut store, memory, func) =
-        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
-
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
-    memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
     let mut init_state = T2State::default();
     init_state.cpu.rip = 0x1111;
     init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
     init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+
+    let env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 1);
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    bus.load(0, &guest_mem_init);
+    let expected = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        10,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(expected.exit, RunExit::Invalidate { next_rip: 0x9999 });
+    assert_eq!(env.page_versions.version(0), 2);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
     let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
     write_cpu_state(&mut cpu_bytes, &init_state.cpu);
@@ -1220,8 +1387,6 @@ fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_tabl
     let table_ptr = install_code_version_table(&memory, &mut store, &[1]);
 
     let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
-    assert_eq!(got_rip, 0x9999, "trace should invalidate via guard exit");
-
     let exit_reason = read_u32_from_memory(
         &memory,
         &store,
@@ -1232,6 +1397,27 @@ fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_tabl
         jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION,
         "trace should set TRACE_EXIT_REASON_CODE_INVALIDATION"
     );
+    assert_eq!(got_rip, 0x9999, "trace should invalidate via guard exit");
+    assert_eq!(
+        store.data().code_version_calls,
+        0,
+        "inline code-version guards should not call env.code_page_version"
+    );
+
+    // Guest memory.
+    let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+    memory.read(&store, 0, &mut got_guest_mem).unwrap();
+    assert_eq!(got_guest_mem.as_slice(), bus.mem());
+
+    // CPU state.
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
 
     // The store should bump page 0 once (1 -> 2) before the guard invalidates on the next
     // iteration.
