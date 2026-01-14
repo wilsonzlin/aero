@@ -297,8 +297,9 @@ fn win7_iso_el_torito_boot_smoke() {
     m.attach_ide_secondary_master_iso(Box::new(iso_disk))
         .expect("failed to attach ISO to IDE secondary master");
 
-    // Explicitly request CD boot. With the newer multi-drive BIOS wiring, POST follows the
-    // configured boot drive (0xE0) rather than auto-preferring the install media.
+    // Explicitly request CD boot. `Machine` defaults to booting from the first HDD
+    // (`boot_drive=0x80`), so this test must override it to the El Torito CD boot drive (`0xE0`)
+    // after attaching the install media and before running POST again.
     m.set_boot_drive(0xE0);
 
     // Re-run firmware POST now that the install media is attached.
@@ -344,7 +345,7 @@ fn win7_iso_el_torito_boot_smoke() {
     let loaded = m.read_physical_bytes(entry_paddr, expected_boot_bytes.len());
     assert!(
         !loaded.as_slice().starts_with(b"FAKEHDD!"),
-        "boot entrypoint matches the fake HDD marker; BIOS did not boot from the attached ISO (boot_drive=0xE0)"
+        "boot entrypoint matches the fake HDD marker; BIOS did not boot from the attached ISO (boot_drive must be 0xE0 for CD boot)"
     );
     assert_eq!(
         loaded.as_slice(),
