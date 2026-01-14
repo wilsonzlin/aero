@@ -68,6 +68,51 @@ fn writer_rejects_aerogpu_submission_in_container_v1() {
 }
 
 #[test]
+fn reject_trace_with_toc_offset_out_of_bounds() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let file_len = bytes.len() as u64;
+
+    // Patch footer.toc_offset to point past EOF.
+    bytes[footer_start + 16..footer_start + 24].copy_from_slice(&file_len.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_toc_entry_out_of_bounds() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+
+    // Corrupt the first TOC entry's start_offset to point before the record stream.
+    //
+    // TOC entry layout:
+    // u32 frame_index;
+    // u32 flags;
+    // u64 start_offset;
+    // u64 present_offset;
+    // u64 end_offset;
+    let entry_start = toc_offset + 16; // TOC_HEADER_SIZE
+    let start_offset_field = entry_start + 8;
+    bytes[start_offset_field..start_offset_field + 8].copy_from_slice(&0u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
 fn reject_trace_with_unsupported_header_size() {
     let mut bytes = minimal_trace_bytes(0);
 
@@ -151,6 +196,26 @@ fn reject_unknown_record_type_in_supported_container_version() {
 }
 
 #[test]
+fn reject_record_payload_out_of_bounds() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let meta_len = read_u32_le(&bytes, 24) as usize;
+    let record_stream_start = 32 + meta_len;
+
+    // BeginFrame record header starts at `record_stream_start`. Patch its payload_len to a huge
+    // value so the record would extend past the frame end.
+    bytes[record_stream_start + 4..record_stream_start + 8]
+        .copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let err = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .unwrap_err();
+    assert!(matches!(err, TraceReadError::RecordOutOfBounds));
+}
+
+#[test]
 fn reject_unknown_blob_kind() {
     let mut bytes = trace_with_blob(0);
 
@@ -172,6 +237,41 @@ fn reject_unknown_blob_kind() {
         err,
         TraceReadError::UnknownBlobKind(v) if v == 0xDEAD_BEEF
     ));
+}
+
+#[test]
+fn reject_malformed_blob_record() {
+    let mut bytes = trace_with_blob(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+
+    let meta_len = read_u32_le(&bytes, 24) as usize;
+    let record_stream_start = 32 + meta_len;
+
+    // BeginFrame record is always 12 bytes (8 header + 4 payload).
+    let blob_record_start = record_stream_start + 12;
+
+    // Corrupt the blob record to have payload_len = 0 (< 16-byte blob header).
+    bytes[blob_record_start + 4..blob_record_start + 8].copy_from_slice(&0u32.to_le_bytes());
+
+    // Patch the TOC entry to:
+    // - clear present_offset (0)
+    // - clamp end_offset to the end of the truncated blob record
+    let entry_start = toc_offset + 16;
+    let present_offset_field = entry_start + 16;
+    let end_offset_field = entry_start + 24;
+    bytes[present_offset_field..present_offset_field + 8].copy_from_slice(&0u64.to_le_bytes());
+    let truncated_end = (blob_record_start + 8) as u64;
+    bytes[end_offset_field..end_offset_field + 8].copy_from_slice(&truncated_end.to_le_bytes());
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let err = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .unwrap_err();
+    assert!(matches!(err, TraceReadError::MalformedBlob));
 }
 
 #[test]
