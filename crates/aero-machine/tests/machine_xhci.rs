@@ -544,7 +544,10 @@ fn xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
     let ctrl = cfg_read(&mut m, bdf, base + 0x02, 2) as u16;
     let is_64bit = (ctrl & (1 << 7)) != 0;
     let per_vector_masking = (ctrl & (1 << 8)) != 0;
-    assert!(per_vector_masking, "test requires per-vector masking support");
+    assert!(
+        per_vector_masking,
+        "test requires per-vector masking support"
+    );
     let pending_off = if is_64bit { base + 0x14 } else { base + 0x10 };
     cfg_write(&mut m, bdf, base + 0x02, 2, u32::from(ctrl | 1)); // MSI enable
 

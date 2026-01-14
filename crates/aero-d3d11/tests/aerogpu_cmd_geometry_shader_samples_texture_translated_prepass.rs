@@ -225,7 +225,11 @@ fn aerogpu_cmd_geometry_shader_samples_texture_translated_prepass() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, &build_gs_point_to_triangle_sample_t0_s0());
+        writer.create_shader_dxbc_ex(
+            GS,
+            AerogpuShaderStageEx::Geometry,
+            &build_gs_point_to_triangle_sample_t0_s0(),
+        );
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
         writer.set_input_layout(IL);
@@ -288,4 +292,3 @@ fn aerogpu_cmd_geometry_shader_samples_texture_translated_prepass() {
         );
     });
 }
-

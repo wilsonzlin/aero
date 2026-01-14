@@ -119,7 +119,14 @@ fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
 
 fn imm32_scalar(value: u32) -> Vec<u32> {
     vec![
-        operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0, false),
+        operand_token(
+            OPERAND_TYPE_IMMEDIATE32,
+            1,
+            OPERAND_SEL_SELECT1,
+            0,
+            0,
+            false,
+        ),
         value,
     ]
 }
@@ -154,10 +161,7 @@ fn build_gs_point_to_triangle_color_from_raw_srv_t0() -> Vec<u8> {
         Swizzle::XYZW,
         OperandModifier::None,
     );
-    tokens.push(opcode_token(
-        OPCODE_DCL_RESOURCE_RAW,
-        (1 + t0.len()) as u32,
-    ));
+    tokens.push(opcode_token(OPCODE_DCL_RESOURCE_RAW, (1 + t0.len()) as u32));
     tokens.extend_from_slice(&t0);
 
     // ld_raw r0.xyzw, l(0), t0

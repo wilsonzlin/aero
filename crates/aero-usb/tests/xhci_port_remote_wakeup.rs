@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use aero_usb::xhci::interrupter::{IMAN_IE, IMAN_IP};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_LWS, PORTSC_PLC, PORTSC_PR, PORTSC_PED};
+use aero_usb::xhci::{
+    regs, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_LWS, PORTSC_PED, PORTSC_PLC, PORTSC_PR,
+};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 mod util;
@@ -196,4 +198,3 @@ fn xhci_usb2_port_remote_wakeup_resumes_from_u3_and_sets_plc() {
         "remote wakeup should be consumed as an edge-triggered signal"
     );
 }
-
