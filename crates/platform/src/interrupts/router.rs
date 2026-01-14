@@ -182,6 +182,10 @@ impl PortIoDevice for ImcrPort {
 }
 
 impl PlatformInterrupts {
+    fn lapics_iter(&self) -> std::slice::Iter<'_, Arc<LocalApic>> {
+        self.lapics.iter()
+    }
+
     pub fn new() -> Self {
         Self::new_with_cpu_count(1)
     }
