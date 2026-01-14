@@ -10,7 +10,7 @@ mod util;
 
 use util::{
     actlen, install_frame_list, td_ctrl, td_token, write_qh, write_td, Alloc, TestMemory,
-    LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, TD_CTRL_ACTIVE,
+    LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC2, REG_USBCMD, REG_USBINTR, TD_CTRL_ACTIVE,
     TD_CTRL_NAK, TD_CTRL_STALLED, USBCMD_RUN, USBINTR_IOC,
 };
 
@@ -39,9 +39,13 @@ fn setup_controller() -> (
     u32,
     UsbWebUsbPassthroughDevice,
 ) {
+    // In the guest-visible topology convention, root port 1 is reserved for WebUSB passthrough.
+    const WEBUSB_ROOT_PORT: usize = 1;
+
     let mut ctrl = UhciController::new();
     let dev = UsbWebUsbPassthroughDevice::new();
-    ctrl.hub_mut().attach(0, Box::new(dev.clone()));
+    ctrl.hub_mut()
+        .attach(WEBUSB_ROOT_PORT, Box::new(dev.clone()));
 
     let mut mem = TestMemory::new(0x40000);
     let alloc = Alloc::new(0x2000);
@@ -50,8 +54,8 @@ fn setup_controller() -> (
     ctrl.io_write(REG_FRBASEADD, 4, fl_base);
     ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
 
-    // Reset + enable port 1.
-    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    // Reset + enable root port 2 (UHCI PORTSC2).
+    ctrl.io_write(REG_PORTSC2, 2, PORTSC_PR as u32);
     for _ in 0..50 {
         ctrl.tick_1ms(&mut mem);
     }

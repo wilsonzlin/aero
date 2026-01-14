@@ -7,6 +7,7 @@ pub const REG_USBCMD: u16 = regs::REG_USBCMD;
 pub const REG_USBINTR: u16 = regs::REG_USBINTR;
 pub const REG_FRBASEADD: u16 = regs::REG_FLBASEADD;
 pub const REG_PORTSC1: u16 = regs::REG_PORTSC1;
+pub const REG_PORTSC2: u16 = regs::REG_PORTSC2;
 
 pub const USBCMD_RUN: u16 = regs::USBCMD_RS;
 pub const USBINTR_IOC: u16 = regs::USBINTR_IOC;
