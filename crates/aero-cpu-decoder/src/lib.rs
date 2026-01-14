@@ -240,6 +240,12 @@ pub fn decode_instruction(
         return Err(DecodeError::EmptyInput);
     }
 
+    // If the caller provided at least 15 bytes, we have a full architectural decode window: any
+    // valid x86 instruction must decode within those 15 bytes. If the backend reports "no more
+    // bytes" in this case, that implies the instruction would have exceeded the architectural
+    // length limit and is therefore invalid (not truncated input).
+    let has_full_window = bytes.len() >= MAX_INSTRUCTION_LEN;
+
     let bytes = if bytes.len() > MAX_INSTRUCTION_LEN {
         &bytes[..MAX_INSTRUCTION_LEN]
     } else {
@@ -250,7 +256,13 @@ pub fn decode_instruction(
     let instruction = decoder.decode();
     match decoder.last_error() {
         IcedDecoderError::None => {}
-        IcedDecoderError::NoMoreBytes => return Err(DecodeError::UnexpectedEof),
+        IcedDecoderError::NoMoreBytes => {
+            return Err(if has_full_window {
+                DecodeError::InvalidInstruction
+            } else {
+                DecodeError::UnexpectedEof
+            })
+        }
         IcedDecoderError::InvalidInstruction => return Err(DecodeError::InvalidInstruction),
         // `DecoderError` is `#[non_exhaustive]`. Treat any future error kinds
         // as invalid instructions (this keeps the API stable and conservative).
