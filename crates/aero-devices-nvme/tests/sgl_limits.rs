@@ -408,7 +408,7 @@ fn sgl_rejects_inline_descriptor_with_nonzero_reserved_bytes() {
 }
 
 #[test]
-fn sgl_rejects_segment_descriptor_with_nonzero_reserved_bytes() {
+fn sgl_rejects_datablock_descriptor_with_nonzero_reserved_bytes_in_segment_list() {
     let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
 
     let list = 0x70000u64;
@@ -436,6 +436,38 @@ fn sgl_rejects_segment_descriptor_with_nonzero_reserved_bytes() {
 
     let cqe = read_cqe(&mut mem, io_cq);
     assert_eq!(cqe.cid, 0x33);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_segment_descriptor_with_nonzero_reserved_bytes_in_segment_list() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+    let child_list = 0x71000u64;
+
+    // Segment descriptor with reserved bytes set.
+    let mut desc = [0u8; 16];
+    desc[0..8].copy_from_slice(&child_list.to_le_bytes());
+    desc[8..12].copy_from_slice(&16u32.to_le_bytes());
+    desc[12] = 0xAA; // reserved
+    desc[15] = 0x02; // Segment, subtype=0
+    mem.write_physical(list, &desc);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3A);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3A);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
 
@@ -580,5 +612,53 @@ fn sgl_root_last_segment_descriptor_requires_alignment() {
 
     let cqe = read_cqe(&mut mem, io_cq);
     assert_eq!(cqe.cid, 0x39);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_root_segment_descriptor_with_nonzero_reserved_bits() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3B);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    // Reserved bits (DW12..DW13 bits 23:0) must be zero for address-based SGLs.
+    // Layout: dptr2[31:0]=len, dptr2[55:32]=reserved, dptr2[63:56]=type.
+    set_prp2(&mut cmd, 16u64 | (0x12u64 << 32) | ((0x02u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3B);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_root_last_segment_descriptor_with_nonzero_reserved_bits() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3C);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | (0x12u64 << 32) | ((0x03u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3C);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
