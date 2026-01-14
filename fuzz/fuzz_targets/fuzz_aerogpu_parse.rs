@@ -87,6 +87,18 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     if let Ok(iter) = cmd::AerogpuCmdStreamIter::new(cmd_bytes) {
         for pkt in iter.take(1024) {
             let Ok(pkt) = pkt else { continue };
+            // Also exercise the stage_ex decode helper for arbitrary `(shader_stage, reserved0)`
+            // pairs derived from guest-controlled packet bytes (don't assume the packet is valid).
+            //
+            // Many command packets use a `(u32 shader_stage, ..., u32 reserved0)` pattern, with
+            // stage_ex encoded via `(shader_stage=COMPUTE, reserved0=stage_ex)`.
+            if pkt.payload.len() >= 16 {
+                let a0 = u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
+                let a1 = u32::from_le_bytes(pkt.payload[4..8].try_into().unwrap());
+                let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
+                let _ = cmd::decode_stage_ex(a0, reserved0);
+                let _ = cmd::decode_stage_ex(a1, reserved0);
+            }
             match pkt.opcode {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
                     let _ = pkt.decode_create_shader_dxbc_payload_le();
@@ -1568,6 +1580,53 @@ fuzz_target!(|data: &[u8]| {
     let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 3);
     // Also try the same stream without providing allocations to trigger missing-alloc-table paths.
     let _ = proc.process_submission_with_allocations(&cmd_proc_synth, None, 4);
+
+    // Protocol extension coverage: stage_ex binding packets + extended BIND_SHADERS payload.
+    //
+    // This stream is small and synthetically constructed, but hits the new parsing surface even
+    // when the raw fuzzer input doesn't naturally form these layouts.
+    let mut w = AerogpuCmdWriter::new();
+    // Host-backed texture so bindings can succeed without allocations.
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 0,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    // stage_ex encoding uses (shader_stage=COMPUTE, reserved0=stage_ex).
+    w.set_texture_ex(cmd::AerogpuShaderStageEx::Geometry, /*slot=*/ 0, tex_handle);
+    w.set_texture_ex(cmd::AerogpuShaderStageEx::Hull, /*slot=*/ 1, tex_handle);
+    w.set_texture_ex(cmd::AerogpuShaderStageEx::Domain, /*slot=*/ 2, tex_handle);
+    // Keep BIND_SHADERS last so we can extend its payload by appending bytes.
+    w.bind_shaders(/*vs=*/ 10, /*ps=*/ 11, /*cs=*/ 12);
+    let mut cmd_proc_stage_ex_bind_shaders_ex = w.finish();
+    let bind_shaders_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+        + cmd::AerogpuCmdCreateTexture2d::SIZE_BYTES
+        + 3 * cmd::AerogpuCmdSetTexture::SIZE_BYTES;
+    // Patch BIND_SHADERS.size_bytes to include trailing `{gs, hs, ds}` handles.
+    if let Some(size_bytes) =
+        cmd_proc_stage_ex_bind_shaders_ex.get_mut(bind_shaders_off + 4..bind_shaders_off + 8)
+    {
+        size_bytes.copy_from_slice(
+            &((cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12) as u32).to_le_bytes(),
+        );
+    }
+    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&100u32.to_le_bytes()); // gs
+    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&101u32.to_le_bytes()); // hs
+    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&102u32.to_le_bytes()); // ds
+    // Update command stream header size_bytes.
+    let cmd_proc_stage_ex_bind_shaders_ex_size = cmd_proc_stage_ex_bind_shaders_ex.len() as u32;
+    if let Some(size_bytes) = cmd_proc_stage_ex_bind_shaders_ex.get_mut(8..12) {
+        size_bytes.copy_from_slice(&cmd_proc_stage_ex_bind_shaders_ex_size.to_le_bytes());
+    }
+    fuzz_cmd_stream(&cmd_proc_stage_ex_bind_shaders_ex);
+    fuzz_command_processor(&cmd_proc_stage_ex_bind_shaders_ex, None);
 
     // CommandProcessor edge-case: destroy the original shared surface handle while imported aliases
     // keep the underlying resource alive, then issue a dirty-range for the destroyed handle.
