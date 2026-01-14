@@ -37,6 +37,8 @@ const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 // - `crates/aero-storage/src/chunked_streaming.rs`
 const MAX_CHUNK_SIZE_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
 const MAX_COMPAT_CHUNK_COUNT: u64 = 500_000;
+// Manifest JSON size cap (defensive). This mirrors the reference runtime clients.
+const MAX_MANIFEST_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 const DEFAULT_CONCURRENCY: usize = 8;
 const DEFAULT_RETRIES: usize = 5;
 const CHUNK_INDEX_WIDTH: usize = 8;
@@ -700,7 +702,12 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     let (manifest_bytes, source) = if let Some(url) = &args.manifest_url {
         let manifest_url: reqwest::Url = url.parse().context("parse --manifest-url")?;
         let client = build_reqwest_client(&args.header)?;
-        let bytes = download_http_bytes_with_retry(&client, manifest_url.clone(), args.retries)
+        let bytes = download_http_bytes_with_retry(
+            &client,
+            manifest_url.clone(),
+            args.retries,
+            MAX_MANIFEST_JSON_BYTES,
+        )
             .await
             .context("download manifest.json")?;
         (
@@ -712,6 +719,22 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         )
     } else if let Some(path) = &args.manifest_file {
         let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let meta = tokio::fs::metadata(path)
+            .await
+            .with_context(|| format!("stat {}", path.display()))?;
+        let size: usize = meta.len().try_into().map_err(|_| {
+            anyhow!(
+                "manifest file {} is too large to fit in memory (len={})",
+                path.display(),
+                meta.len()
+            )
+        })?;
+        if size > MAX_MANIFEST_JSON_BYTES {
+            bail!(
+                "manifest file {} is too large (max {MAX_MANIFEST_JSON_BYTES} bytes, got {size})",
+                path.display()
+            );
+        }
         let bytes = tokio::fs::read(path)
             .await
             .with_context(|| format!("read {}", path.display()))?;
@@ -887,8 +910,24 @@ async fn verify_optional_meta_http_or_file(
     match source {
         VerifyHttpSource::File { base_dir } => {
             let meta_path = base_dir.join("meta.json");
-            match tokio::fs::read(&meta_path).await {
-                Ok(bytes) => {
+            match tokio::fs::metadata(&meta_path).await {
+                Ok(meta) => {
+                    let size: usize = meta.len().try_into().map_err(|_| {
+                        anyhow!(
+                            "meta.json at {} is too large to fit in memory (len={})",
+                            meta_path.display(),
+                            meta.len()
+                        )
+                    })?;
+                    if size > MAX_MANIFEST_JSON_BYTES {
+                        bail!(
+                            "meta.json at {} is too large (max {MAX_MANIFEST_JSON_BYTES} bytes, got {size})",
+                            meta_path.display()
+                        );
+                    }
+                    let bytes = tokio::fs::read(&meta_path)
+                        .await
+                        .with_context(|| format!("read {}", meta_path.display()))?;
                     let meta: Meta = serde_json::from_slice(&bytes)
                         .with_context(|| format!("parse meta.json at {}", meta_path.display()))?;
                     validate_meta_matches_manifest(&meta, manifest)?;
@@ -900,9 +939,9 @@ async fn verify_optional_meta_http_or_file(
                     );
                 }
                 Err(err) => {
-                    return Err(err).with_context(|| format!("read {}", meta_path.display()));
+                    return Err(err).with_context(|| format!("stat {}", meta_path.display()));
                 }
-            }
+            };
         }
         VerifyHttpSource::Url {
             manifest_url,
@@ -914,7 +953,13 @@ async fn verify_optional_meta_http_or_file(
             // Preserve querystring auth material from the manifest URL (e.g. signed URLs).
             meta_url.set_query(manifest_url.query());
             meta_url.set_fragment(None);
-            match download_http_bytes_optional_with_retry(client, meta_url.clone(), retries).await?
+            match download_http_bytes_optional_with_retry(
+                client,
+                meta_url.clone(),
+                retries,
+                MAX_MANIFEST_JSON_BYTES,
+            )
+            .await?
             {
                 None => {
                     eprintln!("Note: {meta_url} not found; skipping meta.json validation.");
@@ -1014,6 +1059,7 @@ async fn download_http_bytes_with_retry(
     client: &reqwest::Client,
     url: reqwest::Url,
     retries: usize,
+    max_bytes: usize,
 ) -> Result<Vec<u8>> {
     let mut attempt = 0usize;
     loop {
@@ -1024,22 +1070,9 @@ async fn download_http_bytes_with_retry(
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    if let Some(encoding) = resp
-                        .headers()
-                        .get(CONTENT_ENCODING)
-                        .and_then(|v| v.to_str().ok())
-                    {
-                        let encoding = encoding.trim();
-                        if !encoding.eq_ignore_ascii_case("identity") {
-                            return Err(anyhow!("unexpected Content-Encoding: {encoding}"))
-                                .with_context(|| format!("GET {url}"));
-                        }
-                    }
-                    return resp
-                        .bytes()
+                    return read_http_response_bytes_with_limit(resp, max_bytes)
                         .await
-                        .with_context(|| format!("read body for GET {url}"))
-                        .map(|b| b.to_vec());
+                        .with_context(|| format!("GET {url}"));
                 }
 
                 let err = anyhow!(HttpStatusFailure {
@@ -1073,10 +1106,51 @@ async fn download_http_bytes_with_retry(
     }
 }
 
+async fn read_http_response_bytes_with_limit(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    if let Some(encoding) = resp
+        .headers()
+        .get(CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+    {
+        let encoding = encoding.trim();
+        if !encoding.eq_ignore_ascii_case("identity") {
+            bail!("unexpected Content-Encoding: {encoding}");
+        }
+    }
+
+    if let Some(len) = resp.content_length() {
+        let max_u64: u64 = max_bytes.try_into().unwrap_or(u64::MAX);
+        if len > max_u64 {
+            bail!("response too large: max {max_bytes} bytes, got {len} (Content-Length)");
+        }
+    }
+
+    let mut out = Vec::new();
+    if max_bytes > 0 {
+        out.reserve(max_bytes.min(1024));
+    }
+
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .context("read response body chunk")?
+    {
+        if out.len().saturating_add(chunk.len()) > max_bytes {
+            bail!("response too large: max {max_bytes} bytes");
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 async fn download_http_bytes_optional_with_retry(
     client: &reqwest::Client,
     url: reqwest::Url,
     retries: usize,
+    max_bytes: usize,
 ) -> Result<Option<Vec<u8>>> {
     let mut attempt = 0usize;
     loop {
@@ -1090,22 +1164,10 @@ async fn download_http_bytes_optional_with_retry(
                     return Ok(None);
                 }
                 if status.is_success() {
-                    if let Some(encoding) = resp
-                        .headers()
-                        .get(CONTENT_ENCODING)
-                        .and_then(|v| v.to_str().ok())
-                    {
-                        let encoding = encoding.trim();
-                        if !encoding.eq_ignore_ascii_case("identity") {
-                            bail!("unexpected Content-Encoding for {url}: {encoding}");
-                        }
-                    }
-                    return Ok(Some(
-                        resp.bytes()
-                            .await
-                            .with_context(|| format!("read body for GET {url}"))?
-                            .to_vec(),
-                    ));
+                    let bytes = read_http_response_bytes_with_limit(resp, max_bytes)
+                        .await
+                        .with_context(|| format!("GET {url}"))?;
+                    return Ok(Some(bytes));
                 }
 
                 let err = Err(anyhow!(HttpStatusFailure {
@@ -2328,12 +2390,32 @@ async fn download_object_bytes_with_retry(
         let result = s3.get_object().bucket(bucket).key(key).send().await;
         match result {
             Ok(output) => {
+                if let Some(content_length) = output.content_length() {
+                    let len_u64: u64 = content_length.try_into().map_err(|_| {
+                        anyhow!(
+                            "invalid Content-Length {content_length} for s3://{bucket}/{key}"
+                        )
+                    })?;
+                    let max_u64: u64 = MAX_MANIFEST_JSON_BYTES.try_into().unwrap_or(u64::MAX);
+                    if len_u64 > max_u64 {
+                        bail!(
+                            "object too large for s3://{bucket}/{key}: max {MAX_MANIFEST_JSON_BYTES} bytes, got {len_u64} (Content-Length)"
+                        );
+                    }
+                }
                 let aggregated = output
                     .body
                     .collect()
                     .await
                     .with_context(|| format!("read s3://{bucket}/{key}"))?;
-                return Ok(aggregated.into_bytes());
+                let bytes = aggregated.into_bytes();
+                if bytes.len() > MAX_MANIFEST_JSON_BYTES {
+                    bail!(
+                        "object too large for s3://{bucket}/{key}: max {MAX_MANIFEST_JSON_BYTES} bytes, got {}",
+                        bytes.len()
+                    );
+                }
+                return Ok(bytes);
             }
             Err(err) if is_no_such_key_error(&err) => {
                 return Err(anyhow!("object not found (404) for s3://{bucket}/{key}"));
@@ -2367,12 +2449,32 @@ async fn download_object_bytes_optional_with_retry(
         let result = s3.get_object().bucket(bucket).key(key).send().await;
         match result {
             Ok(output) => {
+                if let Some(content_length) = output.content_length() {
+                    let len_u64: u64 = content_length.try_into().map_err(|_| {
+                        anyhow!(
+                            "invalid Content-Length {content_length} for s3://{bucket}/{key}"
+                        )
+                    })?;
+                    let max_u64: u64 = MAX_MANIFEST_JSON_BYTES.try_into().unwrap_or(u64::MAX);
+                    if len_u64 > max_u64 {
+                        bail!(
+                            "object too large for s3://{bucket}/{key}: max {MAX_MANIFEST_JSON_BYTES} bytes, got {len_u64} (Content-Length)"
+                        );
+                    }
+                }
                 let aggregated = output
                     .body
                     .collect()
                     .await
                     .with_context(|| format!("read s3://{bucket}/{key}"))?;
-                return Ok(Some(aggregated.into_bytes()));
+                let bytes = aggregated.into_bytes();
+                if bytes.len() > MAX_MANIFEST_JSON_BYTES {
+                    bail!(
+                        "object too large for s3://{bucket}/{key}: max {MAX_MANIFEST_JSON_BYTES} bytes, got {}",
+                        bytes.len()
+                    );
+                }
+                return Ok(Some(bytes));
             }
             Err(err) if is_no_such_key_error(&err) => return Ok(None),
             Err(err) if attempt < retries => {
@@ -3136,6 +3238,33 @@ mod tests {
         });
 
         Ok((base_url, shutdown_tx, handle))
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_with_retry_rejects_oversized_response() -> Result<()> {
+        let (base_url, shutdown_tx, handle) = start_test_http_server(Arc::new(|_req| {
+            let body = vec![b'a'; 11];
+            (200, vec![("Content-Type".to_string(), "application/json".to_string())], body)
+        }))
+        .await?;
+
+        let url: reqwest::Url = format!("{base_url}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let err = download_http_bytes_with_retry(&client, url, 1, 10)
+            .await
+            .expect_err("expected download to be rejected");
+        assert!(
+            err.root_cause()
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("too large"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
     }
 
     #[test]

@@ -180,6 +180,7 @@ Notes:
   - `chunkSize <= 64 MiB`
   - `chunkCount <= 500,000`
   - `chunkIndexWidth <= 32`
+  - manifest JSON size `<= 64 MiB`
 
 ### 1.4 Versioning / immutability
 
