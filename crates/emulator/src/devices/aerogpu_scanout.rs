@@ -165,6 +165,20 @@ mod tests {
     const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
     const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
 
+    #[test]
+    fn scanout_config_types_are_reexported_from_aero_devices_gpu() {
+        // Ensure the emulator does not accidentally drift away from the canonical device-side
+        // scanout/cursor register block definitions.
+        let scanout = aero_devices_gpu::AeroGpuScanoutConfig::default();
+        let _: AeroGpuScanoutConfig = scanout;
+
+        let cursor = aero_devices_gpu::AeroGpuCursorConfig::default();
+        let _: AeroGpuCursorConfig = cursor;
+
+        let format = aero_devices_gpu::AeroGpuFormat::B8G8R8X8Unorm;
+        let _: AeroGpuFormat = format;
+    }
+
     #[derive(Clone, Debug)]
     struct VecMemory {
         data: Vec<u8>,
