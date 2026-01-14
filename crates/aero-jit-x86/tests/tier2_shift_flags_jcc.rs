@@ -210,6 +210,54 @@ fn tier2_shr16_count_eq_operand_width_sets_cf_from_old_msb() {
 }
 
 #[test]
+fn tier2_sar8_count_eq_operand_width_sets_cf_from_old_msb() {
+    // mov al, 0x80
+    // sar al, 8         ; CF=old MSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x80, // mov al, 0x80
+        0xC0, 0xF8, 0x08, // sar al, 8
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar16_count_eq_operand_width_sets_cf_from_old_msb() {
+    // 66 mov ax, 0x8000
+    // 66 sar ax, 16     ; CF=old MSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
+        0x66, 0xC1, 0xF8, 0x10, // sar ax, 16
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shift_count_0_leaves_cf_unchanged() {
     // mov al, 0x12
     // shl al, 0
@@ -578,6 +626,62 @@ fn tier2_sar_count_1_sets_of_to_0() {
 
     // Branch should not be taken; we should stop at the first int3.
     assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar16_count_1_sets_of_to_0() {
+    // 66 mov ax, 0x8001
+    // 66 sar ax, 1
+    // jo +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x80, // mov ax, 0x8001
+        0x66, 0xD1, 0xF8, // sar ax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar32_count_1_sets_of_to_0() {
+    // mov eax, 0x8000_0001
+    // sar eax, 1
+    // jo +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
+    const CODE: &[u8] = &[
+        0xB8, 0x01, 0x00, 0x00, 0x80, // mov eax, 0x8000_0001
+        0xD1, 0xF8, // sar eax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
 }
 
