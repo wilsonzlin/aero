@@ -178,30 +178,58 @@ pub fn write_cpu_to_wasm_bytes(cpu: &CpuState, bytes: &mut [u8]) {
 /// support for additional instructions over time.
 #[must_use]
 pub fn pick_invalid_opcode(bitness: u32) -> u8 {
-    // Use a fixed RIP and stable trailing bytes so the result is deterministic.
-    let rip = 0x1000u64;
-    for opcode in 0u16..=0xff {
-        let opcode = opcode as u8;
-        // Avoid bytes that are treated as prefixes by the minimal decoder; those can change
-        // instruction semantics based on the following bytes.
-        if matches!(opcode, 0x66 | 0x67 | 0xf2 | 0xf3 | 0x0f) {
-            continue;
-        }
-        if bitness == 64 && (0x40..=0x4f).contains(&opcode) {
-            // REX prefix.
-            continue;
-        }
+    use std::sync::OnceLock;
 
-        // The Tier-1 decoder expects up to 15 bytes; provide stable trailing bytes so decoding
-        // doesn't depend on whatever happens to follow in the test harness memory.
-        let mut bytes = [0u8; 15];
-        bytes[0] = opcode;
-        bytes[1] = 0xeb; // arbitrary non-prefix byte (also used by some tests for `JMP rel8`)
+    static OP_16: OnceLock<u8> = OnceLock::new();
+    static OP_32: OnceLock<u8> = OnceLock::new();
+    static OP_64: OnceLock<u8> = OnceLock::new();
 
-        let inst = decode_one_mode(rip, &bytes, bitness);
-        if inst.len == 1 && matches!(inst.kind, InstKind::Invalid) {
-            return opcode;
+    let slot = match bitness {
+        16 => &OP_16,
+        32 => &OP_32,
+        64 => &OP_64,
+        other => panic!("unsupported bitness {other}"),
+    };
+
+    *slot.get_or_init(|| {
+        // Use a fixed RIP so the result is deterministic.
+        let rip = 0x1000u64;
+
+        // We want a single-byte opcode that the Tier-1 minimal decoder *always* treats as
+        // `InstKind::Invalid`, regardless of what bytes follow it. This avoids test brittleness
+        // when the next bytes happen to form a valid ModRM/imm sequence for partially-supported
+        // opcodes.
+        //
+        // Checking all possible second bytes is still cheap (256*256 decode attempts) and ensures
+        // the chosen opcode is unambiguously "invalid" for the current decoder.
+        for opcode in 0u16..=0xff {
+            let opcode = opcode as u8;
+
+            // Skip the most common prefix bytes to reduce the search space.
+            if matches!(opcode, 0x66 | 0x67 | 0xf2 | 0xf3 | 0x0f) {
+                continue;
+            }
+            if bitness == 64 && (0x40..=0x4f).contains(&opcode) {
+                // REX prefix.
+                continue;
+            }
+
+            let mut always_invalid = true;
+            for second in 0u16..=0xff {
+                let second = second as u8;
+                let mut bytes = [0u8; 15];
+                bytes[0] = opcode;
+                bytes[1] = second;
+                let inst = decode_one_mode(rip, &bytes, bitness);
+                if inst.len != 1 || !matches!(inst.kind, InstKind::Invalid) {
+                    always_invalid = false;
+                    break;
+                }
+            }
+            if always_invalid {
+                return opcode;
+            }
         }
-    }
-    panic!("failed to find an opcode that decodes as InstKind::Invalid for bitness={bitness}");
+        panic!("failed to find an opcode that always decodes as InstKind::Invalid for bitness={bitness}");
+    })
 }
