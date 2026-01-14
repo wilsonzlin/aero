@@ -24,11 +24,17 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
 - Feature negotiation:
   - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_F_RING_INDIRECT_DESC`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
-  - Optional (wanted): `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6`
-- 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
+  - Optional (wanted):
+    - `VIRTIO_F_RING_EVENT_IDX` (opportunistic: suppress kicks/interrupts when supported)
+    - `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_GUEST_CSUM` (checksum offloads / RX checksum reporting)
+    - `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6` (TSO/LSO)
+    - `VIRTIO_NET_F_CTRL_VQ` + `VIRTIO_NET_F_CTRL_MAC_ADDR` / `VIRTIO_NET_F_CTRL_VLAN` (optional control virtqueue for runtime MAC/VLAN commands)
+- Virtqueues:
+  - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
+  - Optional control virtqueue (queue index = the device’s last queue; commonly queue 2) when `VIRTIO_NET_F_CTRL_VQ` is negotiated
 - Interrupts:
   - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
-  - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages.
+  - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages. The optional control virtqueue does not get a dedicated MSI-X vector and is serviced via polling.
 - TX offloads (when offered by the host and enabled by Windows):
   - TCP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
   - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6`
@@ -71,9 +77,10 @@ When MSI-X is available and Windows grants enough messages, the driver uses:
 - **Vector/message 1:** queue 0 (`rxq`)
 - **Vector/message 2:** queue 1 (`txq`)
 
-If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
+If Windows grants fewer than `3` messages (config + RX + TX), the driver falls back to:
 
-- **All sources on vector/message 0** (config + all queues)
+- **Vector/message 0:** config + RX + TX
+- The optional **control virtqueue** (when negotiated) does not get a dedicated MSI-X vector; the driver disables its MSI-X routing and polls for completions.
 
 ### Troubleshooting / verifying MSI is active
 
