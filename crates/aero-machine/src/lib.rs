@@ -10360,7 +10360,7 @@ impl Machine {
         // layers can follow (and so any previous WDDM claim is cleared on reset).
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(scanout_state) = &self.scanout_state {
-            scanout_state.publish(ScanoutStateUpdate {
+            let _ = scanout_state.try_publish(ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_TEXT,
                 base_paddr_lo: 0,
                 base_paddr_hi: 0,
@@ -10375,7 +10375,7 @@ impl Machine {
         // cursor so hosts don't display stale WDDM cursor state after a reset.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(cursor_state) = &self.cursor_state {
-            cursor_state.publish(CursorStateUpdate {
+            let _ = cursor_state.try_publish(CursorStateUpdate {
                 enable: 0,
                 x: 0,
                 y: 0,
@@ -10579,7 +10579,7 @@ impl Machine {
 
                 match self.bios.video.vbe.current_mode {
                     None => {
-                        scanout_state.publish(legacy_text);
+                        let _ = scanout_state.try_publish(legacy_text);
                     }
                     Some(mode) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
@@ -10589,13 +10589,12 @@ impl Machine {
                             // - 16bpp packed pixels `B5G6R5`
                             //
                             // If the guest selected a palettized VBE mode (e.g. 8bpp), fall back to
-                            // the implicit legacy path rather than publishing a misleading 32bpp
-                            // descriptor.
+                            // the implicit legacy path rather than publishing a misleading descriptor.
                             let (format, bytes_per_pixel) = match mode_info.bpp {
                                 32 => (SCANOUT_FORMAT_B8G8R8X8, 4u64),
                                 16 => (SCANOUT_FORMAT_B5G6R5, 2u64),
                                 _ => {
-                                    scanout_state.publish(legacy_text);
+                                    let _ = scanout_state.try_publish(legacy_text);
                                     return;
                                 }
                             };
@@ -10622,7 +10621,7 @@ impl Machine {
                                     u64::from(self.bios.video.vbe.display_start_x)
                                         .saturating_mul(bytes_per_pixel),
                                 );
-                            scanout_state.publish(ScanoutStateUpdate {
+                            let _ = scanout_state.try_publish(ScanoutStateUpdate {
                                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                                 base_paddr_lo: base as u32,
                                 base_paddr_hi: (base >> 32) as u32,
@@ -10639,7 +10638,7 @@ impl Machine {
             if let Some(update) = dev.take_scanout0_state_update() {
                 // Publish WDDM scanout updates derived from BAR0 scanout registers once the guest
                 // has claimed WDDM ownership.
-                scanout_state.publish(update);
+                let _ = scanout_state.try_publish(update);
             } else {
                 // If the shared scanout descriptor currently indicates WDDM scanout but the device
                 // itself has not claimed WDDM ownership (e.g. after a reset/restore mismatch),
@@ -10647,10 +10646,12 @@ impl Machine {
                 //
                 // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
                 // to BIOS VBE state (for correct legacy mode reporting).
-                if scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM
-                    && !dev.scanout0_state().wddm_scanout_active
-                {
-                    publish_legacy_scanout_descriptor(scanout_state);
+                if !dev.scanout0_state().wddm_scanout_active {
+                    if let Some(snap) = scanout_state.try_snapshot() {
+                        if snap.source == SCANOUT_SOURCE_WDDM {
+                            publish_legacy_scanout_descriptor(scanout_state);
+                        }
+                    }
                 }
             }
         }
@@ -10659,7 +10660,7 @@ impl Machine {
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(cursor_state) = &self.cursor_state {
             if let Some(update) = dev.take_cursor_state_update() {
-                cursor_state.publish(update);
+                let _ = cursor_state.try_publish(update);
             }
         }
     }
@@ -11722,13 +11723,15 @@ impl Machine {
                 let Some(scanout_state) = &self.scanout_state else {
                     return;
                 };
-                if scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM {
-                    return;
+                match scanout_state.try_snapshot() {
+                    Some(snap) if snap.source == SCANOUT_SOURCE_WDDM => return,
+                    None => return,
+                    _ => {}
                 }
 
                 match vbe_scanout_sig_after {
                     None => {
-                        scanout_state.publish(ScanoutStateUpdate {
+                        let _ = scanout_state.try_publish(ScanoutStateUpdate {
                             source: SCANOUT_SOURCE_LEGACY_TEXT,
                             base_paddr_lo: 0,
                             base_paddr_hi: 0,
@@ -11757,7 +11760,7 @@ impl Machine {
                             // the implicit legacy path rather than publishing a misleading 32bpp
                             // descriptor.
                             if mode_info.bpp != 32 {
-                                scanout_state.publish(legacy_text);
+                                let _ = scanout_state.try_publish(legacy_text);
                             } else {
                                 let pitch = u64::from(
                                     bytes_per_scan_line.max(mode_info.bytes_per_scan_line()),
@@ -11771,7 +11774,7 @@ impl Machine {
                                         u64::from(start_x).saturating_mul(bytes_per_pixel),
                                     );
 
-                                scanout_state.publish(ScanoutStateUpdate {
+                                let _ = scanout_state.try_publish(ScanoutStateUpdate {
                                     source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                                     base_paddr_lo: base as u32,
                                     base_paddr_hi: (base >> 32) as u32,

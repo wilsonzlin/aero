@@ -239,18 +239,19 @@ impl AeroGpuPciDevice {
             return;
         };
 
-        let cur = state.snapshot();
-        if cur.source == update.source
-            && cur.base_paddr_lo == update.base_paddr_lo
-            && cur.base_paddr_hi == update.base_paddr_hi
-            && cur.width == update.width
-            && cur.height == update.height
-            && cur.pitch_bytes == update.pitch_bytes
-            && cur.format == update.format
-        {
-            return;
+        if let Some(cur) = state.try_snapshot() {
+            if cur.source == update.source
+                && cur.base_paddr_lo == update.base_paddr_lo
+                && cur.base_paddr_hi == update.base_paddr_hi
+                && cur.width == update.width
+                && cur.height == update.height
+                && cur.pitch_bytes == update.pitch_bytes
+                && cur.format == update.format
+            {
+                return;
+            }
         }
-        state.publish(update);
+        let _ = state.try_publish(update);
     }
 
     #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]

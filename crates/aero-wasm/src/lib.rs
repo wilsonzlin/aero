@@ -5391,21 +5391,23 @@ impl Machine {
 
         // Avoid bumping generation if the underlying machine/device model already published the
         // same update (e.g. BIOS INT10 mode set updates).
-        let snap = self.scanout_state.snapshot();
-        if snap.source == update.source
-            && snap.base_paddr_lo == update.base_paddr_lo
-            && snap.base_paddr_hi == update.base_paddr_hi
-            && snap.width == update.width
-            && snap.height == update.height
-            && snap.pitch_bytes == update.pitch_bytes
-            && snap.format == update.format
-        {
-            self.last_published_scanout = Some(update);
-            return;
+        if let Some(snap) = self.scanout_state.try_snapshot() {
+            if snap.source == update.source
+                && snap.base_paddr_lo == update.base_paddr_lo
+                && snap.base_paddr_hi == update.base_paddr_hi
+                && snap.width == update.width
+                && snap.height == update.height
+                && snap.pitch_bytes == update.pitch_bytes
+                && snap.format == update.format
+            {
+                self.last_published_scanout = Some(update);
+                return;
+            }
         }
 
-        self.scanout_state.publish(update);
-        self.last_published_scanout = Some(update);
+        if self.scanout_state.try_publish(update).is_some() {
+            self.last_published_scanout = Some(update);
+        }
     }
 
     #[cfg(all(
@@ -5432,8 +5434,10 @@ impl Machine {
     ))]
     fn maybe_publish_legacy_scanout_from_vga(&mut self) {
         // Do not override WDDM ownership (see `docs/16-aerogpu-vga-vesa-compat.md`).
-        if self.scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM {
-            return;
+        match self.scanout_state.try_snapshot() {
+            Some(snap) if snap.source == SCANOUT_SOURCE_WDDM => return,
+            None => return,
+            _ => {}
         }
 
         let Some(vga) = self.inner.vga() else {
