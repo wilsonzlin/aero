@@ -1186,7 +1186,10 @@ impl IoSnapshot for UsbHubDevice {
             }
         }
 
-        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        let configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        // Hubs only expose a single configuration value (1); treat any non-zero snapshot value as
+        // configured to preserve older snapshots while rejecting impossible values.
+        self.configuration = if configuration == 0 { 0 } else { 1 };
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
         self.upstream_suspended = r.bool(TAG_UPSTREAM_SUSPENDED)?.unwrap_or(false);
         self.interrupt_ep_halted = r.bool(TAG_INTERRUPT_HALTED)?.unwrap_or(false);
