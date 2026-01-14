@@ -151,13 +151,15 @@ def main() -> int:
     # Also forbid: assign InterlockedAnd(old) result into a variable and then use
     # that variable to program IRQ_ENABLE.
     #
-    # NOTE: Be permissive about cast style; the KMD commonly spells the pointer
-    # cast as `(volatile LONG*)&adapter->IrqEnableMask` (rather than
-    # `(volatile LONG*)&(adapter->IrqEnableMask)` or `(volatile LONG*)&adapter->...`).
+    # NOTE: Be permissive about cast/paren style:
+    # - The KMD commonly spells the pointer cast as `(volatile LONG*)&adapter->IrqEnableMask`
+    #   (rather than `(volatile LONG*)&(adapter->IrqEnableMask)`).
+    # - Future edits may write the result cast as either `(ULONG)InterlockedAnd(...)` or
+    #   `(ULONG)(InterlockedAnd(...))`.
     #
     # We don't attempt to parse C here; this is a best-effort regex guardrail.
     assign_re = re.compile(
-        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*)?InterlockedAnd\s*\(\s*"
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*)?(?:\(\s*)*InterlockedAnd\s*\(\s*"
         r"[^,;]*\b(?:adapter|Adapter)->IrqEnableMask\b[^,;]*,",
         re.S,
     )
