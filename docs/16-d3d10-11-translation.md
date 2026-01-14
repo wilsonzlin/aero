@@ -892,8 +892,8 @@ column `c = 0..(L_r - 1)`.
 
 The barycentric `SV_DomainLocation` for vertex `(r, c)` is:
 
-- `u = f32(c) / f32(T)`
-- `v = f32(r) / f32(T)`
+- `u = f32(r) / f32(T)`
+- `v = f32(c) / f32(T)`
 - `w = 1.0 - u - v`
 
 The linear index of `(r, c)` within the patch vertex array is:
@@ -928,15 +928,15 @@ Then compute `SV_DomainLocation` using the formulas above.
 
 For each row `r = 0..(T - 1)`:
 
-- Emit the “lower-left” triangle for `c = 0..(T - r - 1)`:
+- Emit the “up” triangle for `c = 0..(T - r - 1)`:
   - `a = idx(r, c)`
-  - `b = idx(r, c + 1)`
-  - `c0 = idx(r + 1, c)`
+  - `b = idx(r + 1, c)`
+  - `c0 = idx(r, c + 1)`
   - triangle = `(a, b, c0)`
-- Emit the “upper-right” triangle for `c = 0..(T - r - 2)`:
-  - `a = idx(r, c + 1)`
+- Emit the “down” triangle for `c = 0..(T - r - 2)`:
+  - `a = idx(r + 1, c)`
   - `b = idx(r + 1, c + 1)`
-  - `c0 = idx(r + 1, c)`
+  - `c0 = idx(r, c + 1)`
   - triangle = `(a, b, c0)`
 
 This produces exactly `T*T` triangles and `(T+1)(T+2)/2` vertices.
