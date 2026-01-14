@@ -91,11 +91,13 @@ fn run_one_jit_block(vm: &mut WasmTieredVm) {
 #[wasm_bindgen_test]
 fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    {
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
-    // Tiny real-mode loop: INC AX; JMP -2 (2 instructions).
-    guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+        // Tiny real-mode loop: INC AX; JMP -2 (2 instructions).
+        guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+    }
 
     let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
     vm.reset_real_mode(0x1000);
@@ -132,11 +134,13 @@ fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
 #[wasm_bindgen_test]
 fn tiered_vm_commit_flag_default_means_retirement_node() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    {
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
-    // Tiny real-mode loop: INC AX; JMP -2 (2 instructions).
-    guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+        // Tiny real-mode loop: INC AX; JMP -2 (2 instructions).
+        guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+    }
 
     let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
     vm.reset_real_mode(0x1000);
