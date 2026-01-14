@@ -1300,6 +1300,100 @@ fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_store_w32_bumps_both_code_pages() {
+    const VALUE: u64 = 0x1122_3344_5566_7788;
+
+    // For a W32 store, the last 3 bytes of a 4KiB page cross into the next page.
+    for addr in 0xFFDu64..=0xFFFu64 {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.const_int(Width::W32, VALUE);
+        b.store(Width::W32, a0, v0);
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        // Two RAM pages so the cross-page store spans RAM→RAM.
+        let ram = vec![0u8; 0x2000];
+
+        let (next_rip, got_cpu, got_ram, host_state, table) =
+            run_wasm_inner_with_code_version_table(
+                &block,
+                cpu,
+                ram,
+                0x2000,
+                Tier1WasmOptions {
+                    inline_tlb: true,
+                    inline_tlb_cross_page_fastpath: true,
+                    ..Default::default()
+                },
+                2,
+            );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(
+            &got_ram[addr as usize..addr as usize + 4],
+            &Width::W32.truncate(VALUE).to_le_bytes()[..4],
+            "addr={addr:#x}"
+        );
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+        assert_eq!(table, vec![1, 1], "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_w16_bumps_both_code_pages() {
+    const VALUE: u64 = 0x1122_3344_5566_7788;
+
+    // For a W16 store, only the last byte of a 4KiB page crosses into the next page.
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, VALUE);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Two RAM pages so the cross-page store spans RAM→RAM.
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+        2,
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 2],
+        &Width::W16.truncate(VALUE).to_le_bytes()[..2],
+    );
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![1, 1]);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured() {
     let addr = 0xFF9u64;
 
