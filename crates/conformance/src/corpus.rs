@@ -1109,7 +1109,7 @@ impl TestCase {
 }
 
 fn is_fault_template(kind: TemplateKind) -> bool {
-    matches!(kind, TemplateKind::Ud2 | TemplateKind::MovRaxM64Abs0)
+    kind.is_fault_template()
 }
 
 fn apply_auto_fixups(

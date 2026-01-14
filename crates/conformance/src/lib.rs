@@ -144,6 +144,10 @@ pub fn run(
     let mem_base = reference.memory_base();
     let mut rng = corpus::XorShift64::new(seed);
     let mut report = ConformanceReport::new_for_templates(cases, &templates);
+    let filter_env = std::env::var("AERO_CONFORMANCE_FILTER")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
 
     for (case_idx, template) in templates.iter().cycle().take(cases).enumerate() {
         let test_case = TestCase::generate(case_idx, template, &mut rng, mem_base);
@@ -159,11 +163,30 @@ pub fn run(
                 let _ = report.write_json(report_path);
             }
             let isolate_setting = if isolate { 1 } else { 0 };
-            let repro = format!(
-                "repro:\n  AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting} \\\n  AERO_CONFORMANCE_CASES={cases} \\\n  AERO_CONFORMANCE_SEED={seed:#x} \\\n  AERO_CONFORMANCE_FILTER=key:{} \\\n  cargo test -p conformance --locked instruction_conformance\n",
+            let minimal_cases = case_idx + 1;
+
+            let mut repro_lines = vec![
+                format!("AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting}"),
+                format!("AERO_CONFORMANCE_CASES={minimal_cases}"),
+                format!("AERO_CONFORMANCE_SEED={seed:#x}"),
+            ];
+            if let Some(filter) = filter_env.as_deref() {
+                repro_lines.push(format!(
+                    "AERO_CONFORMANCE_FILTER={}",
+                    shell_quote_single(filter)
+                ));
+            }
+            repro_lines.push(
+                "cargo test -p conformance --locked instruction_conformance".to_string(),
+            );
+
+            let repro = format!("repro:\n  {}", repro_lines.join(" \\\n  "));
+            let hint = format!(
+                "\nhint: to narrow the template set, try `AERO_CONFORMANCE_FILTER=key:{}` or `AERO_CONFORMANCE_FILTER=name:<substring>`\n\
+(note: changing the filter changes the template order and may require increasing AERO_CONFORMANCE_CASES).",
                 template.coverage_key
             );
-            return Err(format!("{repro}\n{message}"));
+            return Err(format!("{repro}{hint}\n\n{message}"));
         }
     }
 
@@ -175,6 +198,16 @@ pub fn run(
 
     report.print_summary();
     Ok(report)
+}
+
+fn shell_quote_single(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    // In POSIX shells, single quotes can't be escaped inside single quotes, so we close the quote,
+    // insert an escaped quote, and reopen:  'foo'\''bar'
+    let escaped = s.replace('\'', r"'\''");
+    format!("'{escaped}'")
 }
 
 fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
