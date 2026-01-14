@@ -1,6 +1,6 @@
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, PM1_STS_SLPBTN,
-    PM1_STS_WAK, SLP_TYP_S5,
+    PM1_STS_WAK, SLP_TYP_S4, SLP_TYP_S5,
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
@@ -129,6 +129,30 @@ fn s5_sleep_requests_poweroff() {
     register_acpi_pm(&mut bus, pm);
 
     let pm1_cnt = ((SLP_TYP_S5 as u32) << 10) | (1u32 << 13);
+    bus.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
+    assert_eq!(power_off_count.get(), 1);
+}
+
+#[test]
+fn s4_sleep_requests_poweroff() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let power_off_count = Rc::new(Cell::new(0u32));
+    let power_off_cb = power_off_count.clone();
+
+    let callbacks = AcpiPmCallbacks {
+        request_power_off: Some(Box::new(move || power_off_cb.set(power_off_cb.get() + 1))),
+        ..Default::default()
+    };
+
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm);
+
+    let pm1_cnt = ((SLP_TYP_S4 as u32) << 10) | (1u32 << 13);
     bus.write(cfg.pm1a_cnt_blk, 2, pm1_cnt);
     assert_eq!(power_off_count.get(), 1);
 }

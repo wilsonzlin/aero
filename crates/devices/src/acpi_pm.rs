@@ -6,10 +6,22 @@
 //! - `PM1a_EVT` (status + enable) and `PM1a_CNT` (control).
 //! - `PM_TMR` (24-bit free-running timer at 3.579545MHz) and a minimal `GPE0` block.
 //!
-//! This device also watches `PM1a_CNT.SLP_TYP/SLP_EN` and surfaces S5 shutdown
-//! requests via a host callback. It can also surface non-S5 sleep state requests
-//! (e.g. S3/S4) via a separate callback so embeddings can decide how to handle
-//! suspend/hibernate.
+//! This device also watches `PM1a_CNT.SLP_TYP/SLP_EN` and surfaces guest sleep
+//! requests via host callbacks.
+//!
+//! New integrations can use [`AcpiPmCallbacks::request_sleep`] to observe all
+//! ACPI sleep-state requests (S1..S5) and decide how to handle them. For
+//! historical compatibility, [`AcpiPmCallbacks::request_power_off`] is also
+//! provided for "shutdown-style" requests.
+//!
+//! In physical hardware, S4 is "hibernate": the OS saves its state to disk and
+//! then requests the platform to transition into a powered-off state. In a VM,
+//! there is no standard, firmware-managed hibernate image to resume from; once
+//! the guest has written its hibernate file, it expects the machine to power
+//! down. From the emulator's point of view this is indistinguishable from S5, so
+//! we treat S4 as a power-off style request and invoke `request_power_off` for
+//! both S4 and S5. This avoids guests (notably Windows 7) hanging while waiting
+//! for the platform to shut down.
 //!
 //! Note: Reset via the FADT `ResetReg` (commonly port `0xCF9`) is implemented by
 //! [`crate::reset_ctrl`], not this module.
@@ -46,6 +58,9 @@ pub const PM1_STS_WAK: u16 = 1 << 15;
 
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
+
+/// DSDT `_S4_` typically encodes `{ 0x04, 0x04 }` for `SLP_TYP`.
+pub const SLP_TYP_S4: u8 = 0x04;
 
 /// Guest-requested ACPI sleep states via `PM1a_CNT.SLP_TYP/SLP_EN`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,10 +139,16 @@ pub struct AcpiPmCallbacks {
     pub sci_irq: Box<dyn IrqLine>,
     /// Called when the guest requests an ACPI sleep state via `PM1a_CNT.SLP_TYP/SLP_EN`.
     ///
-    /// The host is responsible for deciding what to do for each sleep state. For example, some
-    /// embeddings treat S4 as power-off, while others may want to snapshot/hibernate the VM.
+    /// The host is responsible for deciding what to do for each sleep state.
     pub request_sleep: Option<Box<dyn FnMut(AcpiSleepState)>>,
-    /// Called when the guest requests S5 (soft-off).
+    /// Called when the guest requests a power-off style sleep state.
+    ///
+    /// This callback is invoked for both S4 (hibernate) and S5 (soft-off). In a VM, S4 ultimately
+    /// results in a powered-off state after the guest writes its hibernate file, so we treat it as
+    /// equivalent to S5 for the legacy callback.
+    ///
+    /// Embeddings that need to distinguish S4 vs S5 should use
+    /// [`AcpiPmCallbacks::request_sleep`] instead.
     pub request_power_off: Option<Box<dyn FnMut()>>,
 }
 
@@ -356,9 +377,9 @@ impl<C: Clock> AcpiPmIo<C> {
             cb(sleep_state);
         }
 
-        // Preserve the legacy S5-only shutdown callback so existing integrations do not need to
-        // opt into the richer `request_sleep` API.
-        if sleep_state == AcpiSleepState::S5 {
+        // Preserve the legacy shutdown callback so existing integrations do not need to opt into
+        // the richer `request_sleep` API. We treat S4 as shutdown-style in a VM (see module docs).
+        if matches!(sleep_state, AcpiSleepState::S4 | AcpiSleepState::S5) {
             if let Some(cb) = self.callbacks.request_power_off.as_mut() {
                 cb();
             }
