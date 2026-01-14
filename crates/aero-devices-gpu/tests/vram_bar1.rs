@@ -27,6 +27,13 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
 }
 
 #[test]
+fn vbe_lfb_offset_matches_machine_vga_vram_layout_contract() {
+    // `aero_machine` reserves 256KiB for legacy VGA planar storage (4 × 64KiB planes) and starts
+    // the VBE linear framebuffer after that region.
+    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+}
+
+#[test]
 fn vbe_lfb_alias_maps_lfb_base_to_expected_vram_offset() {
     let bar1_base = 0x4000_0000u64;
     let paddr = bar1_base + VBE_LFB_OFFSET;
