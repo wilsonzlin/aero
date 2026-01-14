@@ -83,6 +83,8 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseUdp(const uint8_t* 
                                                                  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
   VIRTIO_NET_HDR_OFFLOAD_STATUS St;
 
+  (void)Frame;
+
   St = VirtioNetHdrOffloadBoundsCheck(L4Offset, 8, FrameLen);
   if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
     return St;
