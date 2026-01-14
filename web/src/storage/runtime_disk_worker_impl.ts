@@ -239,6 +239,14 @@ function remoteRangeMetaFileName(cacheFileName: string): string {
 // to avoid pathological allocations and JSON parse overhead.
 const MAX_OPFS_BINDING_BYTES = 64 * 1024 * 1024; // 64 MiB
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function opfsRemoteRangeDiskMetadataStore(metaFileName: string): RemoteRangeDiskMetadataStore {
   return {
     async read(_cacheId: string) {
@@ -311,11 +319,16 @@ async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | 
     } catch {
       return null;
     }
-    if (!parsed || typeof parsed !== "object") return null;
-    const obj = parsed as Partial<RemoteCacheBinding>;
-    if (obj.version !== 1) return null;
-    if (!obj.base || typeof obj.base !== "object") return null;
-    return obj as RemoteCacheBinding;
+    if (!isRecord(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    const version = hasOwn(obj, "version") ? obj.version : undefined;
+    if (version !== 1) return null;
+    const base = hasOwn(obj, "base") ? obj.base : undefined;
+    if (!isRecord(base)) return null;
+    const out = Object.create(null) as RemoteCacheBinding;
+    out.version = 1;
+    out.base = base as RemoteCacheBinding["base"];
+    return out;
   } catch (err) {
     if (err instanceof DOMException && err.name === "NotFoundError") return null;
     return null;
@@ -388,11 +401,16 @@ async function readIdbOverlayBinding(overlayDiskId: string): Promise<RemoteCache
     const store = tx.objectStore("remote_chunk_meta");
     const rec = (await idbReq(store.get(key))) as unknown;
     await idbTxDone(tx);
-    if (!rec || typeof rec !== "object") return null;
-    const maybe = rec as Partial<RemoteCacheBinding> & { cacheKey?: unknown };
-    if (maybe.version !== 1) return null;
-    if (!maybe.base || typeof maybe.base !== "object") return null;
-    return maybe as RemoteCacheBinding;
+    if (!isRecord(rec)) return null;
+    const maybe = rec as Record<string, unknown>;
+    const version = hasOwn(maybe, "version") ? maybe.version : undefined;
+    if (version !== 1) return null;
+    const base = hasOwn(maybe, "base") ? maybe.base : undefined;
+    if (!isRecord(base)) return null;
+    const out = Object.create(null) as RemoteCacheBinding;
+    out.version = 1;
+    out.base = base as RemoteCacheBinding["base"];
+    return out;
   } finally {
     db.close();
   }

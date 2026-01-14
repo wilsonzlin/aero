@@ -224,6 +224,38 @@ describe("runtime disk snapshot payload", () => {
     ).toBe(true);
   });
 
+  it("does not accept remote cache binding fields inherited from Object.prototype", () => {
+    const expected: RemoteDiskBaseSnapshot = {
+      imageId: "win7",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(1024),
+      expectedValidator: { kind: "etag", value: "\"abc\"" },
+      chunkSize: 1024,
+    };
+
+    const existingVersion = Object.getOwnPropertyDescriptor(Object.prototype, "version");
+    const existingBase = Object.getOwnPropertyDescriptor(Object.prototype, "base");
+    if (
+      (existingVersion && existingVersion.configurable === false) ||
+      (existingBase && existingBase.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "version", { value: 1, configurable: true });
+      Object.defineProperty(Object.prototype, "base", { value: { ...expected }, configurable: true });
+
+      // Missing `version`/`base` must not be satisfied by prototype pollution.
+      expect(shouldInvalidateRemoteCache(expected, {} as any)).toBe(true);
+    } finally {
+      if (existingVersion) Object.defineProperty(Object.prototype, "version", existingVersion);
+      else delete (Object.prototype as any).version;
+      if (existingBase) Object.defineProperty(Object.prototype, "base", existingBase);
+      else delete (Object.prototype as any).base;
+    }
+  });
+
   it("does not invalidate remote overlays when binding is missing, but does when base identity changes", () => {
     const expected: RemoteDiskBaseSnapshot = {
       imageId: "win7",
@@ -269,5 +301,41 @@ describe("runtime disk snapshot payload", () => {
         base: { ...expected, version: "v2" },
       }),
     ).toBe(true);
+  });
+
+  it("does not accept remote overlay binding fields inherited from Object.prototype", () => {
+    const expected: RemoteDiskBaseSnapshot = {
+      imageId: "win7",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(1024),
+      expectedValidator: { kind: "etag", value: "\"abc\"" },
+      chunkSize: 1024,
+    };
+
+    const existingVersion = Object.getOwnPropertyDescriptor(Object.prototype, "version");
+    const existingBase = Object.getOwnPropertyDescriptor(Object.prototype, "base");
+    if (
+      (existingVersion && existingVersion.configurable === false) ||
+      (existingBase && existingBase.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "version", { value: 1, configurable: true });
+      Object.defineProperty(Object.prototype, "base", {
+        value: { imageId: "evil", version: expected.version, deliveryType: expected.deliveryType, chunkSize: expected.chunkSize },
+        configurable: true,
+      });
+
+      // Missing `version`/`base` must not be satisfied by prototype pollution. If they are, this would
+      // cause overlay invalidation (data loss).
+      expect(shouldInvalidateRemoteOverlay(expected, {} as any)).toBe(false);
+    } finally {
+      if (existingVersion) Object.defineProperty(Object.prototype, "version", existingVersion);
+      else delete (Object.prototype as any).version;
+      if (existingBase) Object.defineProperty(Object.prototype, "base", existingBase);
+      else delete (Object.prototype as any).base;
+    }
   });
 });

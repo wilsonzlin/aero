@@ -518,9 +518,12 @@ export function shouldInvalidateRemoteOverlay(
   // Overlay invalidation must be conservative: if we don't have a binding, keep the overlay
   // (it may contain user state). Only invalidate when we have positive evidence that the
   // overlay was created against a different remote base identity.
-  if (!binding || binding.version !== 1) return false;
-  const base = binding.base;
-  if (!base) return false;
+  if (!binding || !isRecord(binding)) return false;
+  const bindingAny = binding as unknown as Record<string, unknown>;
+  const bindingVersion = hasOwn(bindingAny, "version") ? bindingAny.version : undefined;
+  if (bindingVersion !== 1) return false;
+  const base = hasOwn(bindingAny, "base") ? bindingAny.base : undefined;
+  if (!isRecord(base)) return false;
   const baseAny = base as unknown as Record<string, unknown>;
   const imageId = hasOwn(baseAny, "imageId") ? baseAny.imageId : undefined;
   const version = hasOwn(baseAny, "version") ? baseAny.version : undefined;
@@ -551,9 +554,12 @@ export function shouldInvalidateRemoteCache(
   expected: RemoteDiskBaseSnapshot,
   binding: RemoteCacheBinding | null | undefined,
 ): boolean {
-  if (!binding || binding.version !== 1) return true;
-  const base = binding.base;
-  if (!base) return true;
+  if (!binding || !isRecord(binding)) return true;
+  const bindingAny = binding as unknown as Record<string, unknown>;
+  const bindingVersion = hasOwn(bindingAny, "version") ? bindingAny.version : undefined;
+  if (bindingVersion !== 1) return true;
+  const base = hasOwn(bindingAny, "base") ? bindingAny.base : undefined;
+  if (!isRecord(base)) return true;
   const baseAny = base as unknown as Record<string, unknown>;
   const imageId = hasOwn(baseAny, "imageId") ? baseAny.imageId : undefined;
   const version = hasOwn(baseAny, "version") ? baseAny.version : undefined;
