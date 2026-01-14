@@ -3054,6 +3054,55 @@ fn decodes_ld_structured_from_uav() {
 }
 
 #[test]
+fn decodes_ld_structured_uav_via_structural_fallback() {
+    let mut body = Vec::<u32>::new();
+
+    // Some SM5 producers may use a distinct opcode for `ld_uav_structured` instead of reusing the
+    // `ld_structured` opcode with a `u#` operand. The decoder includes a structural fallback path
+    // so we can still recognize the instruction even when the opcode ID differs.
+    //
+    // Encode: ld_uav_structured r0, r1.x, r2.x, u0
+    let index = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let offset = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let uav = uav_operand(0, WriteMask::XYZW);
+
+    // Use an opcode ID that the decoder does not have a direct match arm for.
+    let unknown_opcode = 0x7a;
+    let mut ld_structured = vec![opcode_token(
+        unknown_opcode,
+        (1 + 2 + index.len() + offset.len() + uav.len()) as u32,
+    )];
+    ld_structured.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld_structured.extend_from_slice(&index);
+    ld_structured.extend_from_slice(&offset);
+    ld_structured.extend_from_slice(&uav);
+    body.extend_from_slice(&ld_structured);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::LdStructuredUav { .. }),
+        "expected structural fallback to decode LdStructuredUav, got {:?}",
+        module.instructions[0]
+    );
+}
+
+#[test]
 fn decodes_store_structured_with_mask() {
     let mut body = Vec::<u32>::new();
 

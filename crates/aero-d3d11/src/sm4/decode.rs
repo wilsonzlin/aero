@@ -1340,6 +1340,10 @@ pub fn decode_instruction(
             // Structural fallback for UAV raw load (ld_uav_raw) when opcode IDs differ.
             } else if let Some(ld_uav_raw) = try_decode_ld_uav_raw_like(saturate, inst_toks, at)? {
                 Ok(ld_uav_raw)
+            // Structural fallback for structured buffer loads (`ld_structured` / `ld_uav_structured`)
+            // when opcode IDs differ.
+            } else if let Some(ld_struct) = try_decode_ld_structured_like(saturate, inst_toks, at)? {
+                Ok(ld_struct)
             // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
             } else if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
                 Ok(atomic)
@@ -2273,6 +2277,71 @@ fn try_decode_ld_uav_raw_like(
     }
 
     Ok(None)
+}
+
+fn try_decode_ld_structured_like(
+    saturate: bool,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let mut dst = match decode_dst(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    dst.saturate = saturate;
+
+    let index = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let offset = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    // Structured loads use scalar element index + byte offset; typed loads use vector coords.
+    if !index.swizzle.0.iter().all(|&c| c == index.swizzle.0[0]) {
+        return Ok(None);
+    }
+    if !offset.swizzle.0.iter().all(|&c| c == offset.swizzle.0[0]) {
+        return Ok(None);
+    }
+
+    let buf_op = match decode_raw_operand(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    if buf_op.imm32.is_some() {
+        return Ok(None);
+    }
+    let slot = match one_index(buf_op.ty, &buf_op.indices, r.base_at) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if !r.is_eof() {
+        return Ok(None);
+    }
+
+    match buf_op.ty {
+        OPERAND_TYPE_RESOURCE => Ok(Some(Sm4Inst::LdStructured {
+            dst,
+            index,
+            offset,
+            buffer: BufferRef { slot },
+        })),
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW => Ok(Some(Sm4Inst::LdStructuredUav {
+            dst,
+            index,
+            offset,
+            uav: UavRef { slot },
+        })),
+        _ => Ok(None),
+    }
 }
 
 fn try_decode_atomic_add_like(
