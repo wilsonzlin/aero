@@ -15,18 +15,20 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 
 #[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
+    // Default to a CI-friendly profile so `cargo bench` completes under `scripts/safe-run.sh`'s
+    // default timeout. Opt into longer runs explicitly with `AERO_BENCH_PROFILE=full`.
     match std::env::var("AERO_BENCH_PROFILE").as_deref() {
-        Ok("ci") => Criterion::default()
-            // Keep PR runtime low.
-            .warm_up_time(Duration::from_millis(150))
-            .measurement_time(Duration::from_millis(400))
-            .sample_size(20)
-            .noise_threshold(0.05),
-        _ => Criterion::default()
+        Ok("full") => Criterion::default()
             .warm_up_time(Duration::from_secs(1))
             .measurement_time(Duration::from_secs(2))
             .sample_size(50)
             .noise_threshold(0.03),
+        _ => Criterion::default()
+            // Keep PR/CI runtime low.
+            .warm_up_time(Duration::from_millis(150))
+            .measurement_time(Duration::from_millis(400))
+            .sample_size(20)
+            .noise_threshold(0.05),
     }
 }
 
