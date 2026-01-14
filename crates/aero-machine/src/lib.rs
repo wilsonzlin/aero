@@ -10720,7 +10720,7 @@ mod tests {
         );
 
         // Smoke test LAPIC + HPET MMIO mappings as well.
-        let svr = m.mem.read_u32(LAPIC_MMIO_BASE + 0xF0);
+        let svr = m.read_lapic_u32(0, 0xF0);
         assert_eq!(svr & 0x1FF, 0x1FF);
 
         let caps = m.mem.read_u64(hpet::HPET_MMIO_BASE);
