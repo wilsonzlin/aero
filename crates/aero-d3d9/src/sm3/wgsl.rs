@@ -102,6 +102,33 @@ pub fn translate_to_wgsl(token_stream: &[u8]) -> Result<WgslTranslation, Sm3Wgsl
     })
 }
 
+/// Options that affect the emitted WGSL *semantics*.
+///
+/// These must participate in any shader cache key derivation because toggling them changes the
+/// generated WGSL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WgslOptions {
+    /// When enabled, apply the classic D3D9 half-pixel center adjustment in the vertex shader.
+    ///
+    /// D3D9's viewport transform effectively subtracts 0.5 from the final window-space X/Y
+    /// coordinate (see the "half-pixel offset" discussion in D3D9 docs / many D3D9->D3D10 porting
+    /// guides). WebGPU follows the D3D10+ convention (no -0.5 bias), so we emulate D3D9 by
+    /// translating clip-space XY by:
+    ///
+    ///   pos.xy += vec2(-1/viewport_width, +1/viewport_height) * pos.w
+    ///
+    /// This shifts the final rasterization by (-0.5, -0.5) pixels in window space.
+    pub half_pixel_center: bool,
+}
+
+impl Default for WgslOptions {
+    fn default() -> Self {
+        Self {
+            half_pixel_center: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScalarTy {
     F32,
@@ -2127,6 +2154,13 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
 }
 
 pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslError> {
+    generate_wgsl_with_options(ir, WgslOptions::default())
+}
+
+pub fn generate_wgsl_with_options(
+    ir: &crate::sm3::ir::ShaderIr,
+    options: WgslOptions,
+) -> Result<WgslOutput, WgslError> {
     // Collect usage so we can declare required locals and constant defs.
     let mut usage = RegUsage::new();
     collect_reg_usage(&ir.body, &mut usage, 0)?;
@@ -2263,6 +2297,15 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     }
     if !usage.samplers.is_empty() {
         wgsl.push('\n');
+    }
+
+    if ir.version.stage == ShaderStage::Vertex && options.half_pixel_center {
+        // Separate bind group so the half-pixel fix is opt-in and cache-keyed.
+        //
+        // NOTE: group(1) and group(2) are reserved for VS/PS sampler bindings respectively, so the
+        // half-pixel uniform lives in group(3).
+        wgsl.push_str("struct HalfPixel { inv_viewport: vec2<f32>, _pad: vec2<f32>, };\n");
+        wgsl.push_str("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;\n\n");
     }
 
     let const_base = match ir.version.stage {
@@ -2509,6 +2552,14 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
+            if options.half_pixel_center {
+                wgsl.push_str(
+                    "  out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;\n",
+                );
+                wgsl.push_str(
+                    "  out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;\n",
+                );
+            }
             for &(file, index) in vs_varying_locations.keys() {
                 let reg = RegRef {
                     file,

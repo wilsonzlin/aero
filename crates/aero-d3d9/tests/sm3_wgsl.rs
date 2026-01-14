@@ -5,7 +5,10 @@ use std::fs;
 use aero_d3d9::dxbc;
 use aero_d3d9::sm3::decode::{Opcode, TextureType};
 use aero_d3d9::sm3::types::ShaderStage;
-use aero_d3d9::sm3::{build_ir, decode_u32_tokens, decode_u8_le_bytes, generate_wgsl, verify_ir};
+use aero_d3d9::sm3::{
+    build_ir, decode_u32_tokens, decode_u8_le_bytes, generate_wgsl, generate_wgsl_with_options,
+    verify_ir, WgslOptions,
+};
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/dxbc/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -3019,4 +3022,97 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     device.poll(wgpu::Maintain::Poll);
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "wgpu validation error: {err:?}");
+}
+
+#[test]
+fn wgsl_vs_half_pixel_center_enabled_emits_uniform_and_adjustment() {
+    // vs_2_0:
+    //   mov oPos, v0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),     // oPos
+        src_token(1, 0, 0xE4, 0), // v0
+        0x0000_FFFF,              // end
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl_with_options(
+        &ir,
+        WgslOptions {
+            half_pixel_center: true,
+        },
+    )
+    .unwrap()
+    .wgsl;
+
+    assert!(
+        wgsl.contains("struct HalfPixel { inv_viewport: vec2<f32>, _pad: vec2<f32>, };"),
+        "{wgsl}"
+    );
+    assert!(
+        wgsl.contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
+        "{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;"),
+        "{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_vs_half_pixel_center_disabled_omits_uniform_and_adjustment() {
+    // vs_2_0:
+    //   mov oPos, v0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),     // oPos
+        src_token(1, 0, 0xE4, 0), // v0
+        0x0000_FFFF,              // end
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+    assert!(
+        !wgsl.contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
+        "{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;"),
+        "{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
 }

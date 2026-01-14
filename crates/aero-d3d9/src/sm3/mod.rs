@@ -18,4 +18,7 @@ pub use translate::{
 };
 pub use types::{ShaderStage, ShaderVersion};
 pub use verify::verify_ir;
-pub use wgsl::{generate_wgsl, BindGroupLayout, Sm3WgslError, WgslError, WgslOutput, WgslTranslation};
+pub use wgsl::{
+    generate_wgsl, generate_wgsl_with_options, BindGroupLayout, Sm3WgslError, WgslError,
+    WgslOptions, WgslOutput, WgslTranslation,
+};
