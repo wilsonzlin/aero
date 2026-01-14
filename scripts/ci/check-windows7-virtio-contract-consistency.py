@@ -2139,10 +2139,10 @@ def validate_virtio_input_model_lines(
       - `require_fallback=False`: forbid the strict fallback HWID.
       - `require_fallback=True`: require the strict fallback HWID.
 
-    The legacy filename alias is a *filename alias only*: from the first section
-    header (typically `[Version]`) onward, it is expected to remain byte-for-byte
-    identical to the canonical INF (only the leading banner/comment block may
-    differ).
+    The virtio-input legacy filename alias is a *filename alias only*: it is
+    expected to remain byte-for-byte identical to the canonical INF outside the
+    models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`). Only the leading
+    banner/comment block may differ.
     """
 
     model_entries = parse_inf_model_entries(inf_path)
