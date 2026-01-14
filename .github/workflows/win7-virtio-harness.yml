@@ -954,6 +954,8 @@ jobs:
           blk_marker=""
           blk_marker_line=""
           blk_counters_marker=""
+          blk_miniport_flags_marker=""
+          blk_miniport_reset_recovery_marker=""
           blk_resize_marker=""
           blk_resize_marker_line=""
           blk_reset_marker=""
@@ -1048,6 +1050,12 @@ jobs:
             )"
             blk_counters_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            blk_miniport_flags_marker="$(
+              grep -F 'virtio-blk-miniport-flags|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            blk_miniport_reset_recovery_marker="$(
+              grep -F 'virtio-blk-miniport-reset-recovery|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker_line="$(
@@ -1299,6 +1307,12 @@ jobs:
             fi
             if [[ -n "${blk_reset_recovery_marker}" ]]; then
               echo "- Guest virtio-blk-reset-recovery marker: \`${blk_reset_recovery_marker}\`"
+            fi
+            if [[ -n "${blk_miniport_flags_marker}" ]]; then
+              echo "- Guest virtio-blk-miniport-flags diagnostic: \`${blk_miniport_flags_marker}\`"
+            fi
+            if [[ -n "${blk_miniport_reset_recovery_marker}" ]]; then
+              echo "- Guest virtio-blk-miniport-reset-recovery diagnostic: \`${blk_miniport_reset_recovery_marker}\`"
             fi
             if [[ -n "${blk_reset_host_marker}" ]]; then
               echo "- Host virtio-blk-reset marker: \`${blk_reset_host_marker}\`"
