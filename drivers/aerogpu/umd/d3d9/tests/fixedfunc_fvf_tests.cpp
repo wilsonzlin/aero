@@ -773,7 +773,7 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 0 || sc->vec4_count != 4) {
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -1197,7 +1197,7 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 0 || sc->vec4_count != 4) {
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);

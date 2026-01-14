@@ -14210,13 +14210,13 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1 (from A)")) {
     return false;
   }
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w (from A)")) {
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w (from A)")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w (from A)")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w (from A)")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w (from A)")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w (from A)")) {
     return false;
   }
   return Check(set_consts.offset < draw.offset, "WVP constants uploaded before draw");
