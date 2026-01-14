@@ -799,6 +799,55 @@ fn sm5_gs_atomic_add_emits_atomic_buffer_struct_and_atomic_add() {
 }
 
 #[test]
+fn sm5_gs_store_uav_typed_emits_group3_storage_texture_and_texture_store() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::UavTyped2D { slot: 0, format: 28 }, // DXGI_FORMAT_R8G8B8A8_UNORM
+        ],
+        instructions: vec![
+            Sm4Inst::StoreUavTyped {
+                uav: UavRef { slot: 0 },
+                coord: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+                value: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1.0f32.to_bits(), 0, 0, 1.0f32.to_bits()]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var u0: texture_storage_2d<rgba8unorm, write>;",
+            BINDING_BASE_UAV
+        )),
+        "expected group(3) UAV storage texture declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("textureStore(u0, vec2<i32>("),
+        "expected store_uav_typed lowering to textureStore in WGSL:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
     // Build a minimal gs_4_0 token stream with:
     // - dcl_inputprimitive triangle

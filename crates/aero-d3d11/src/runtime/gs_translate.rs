@@ -43,10 +43,11 @@
 //! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`, `bufinfo`)
 //! - SM5 UAV buffer ops (`ld_uav_raw`, `ld_structured_uav`, `store_raw`, `store_structured`,
 //!   `atomic_add`, `bufinfo` on `u#`)
+//! - SM5 typed UAV texture stores (`store_uav_typed` with `dcl_uav_typed` for `RWTexture2D`)
 //!
-//! Other resource writes/stores (typed UAV stores, texture stores), and barrier/synchronization
-//! instructions are not supported, and any unsupported instruction or operand shape is rejected by
-//! translation.
+//! Other resource writes/stores (e.g. typed UAV loads, other texture/UAV dimensions), and
+//! barrier/synchronization instructions are not supported, and any unsupported instruction or
+//! operand shape is rejected by translation.
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -61,6 +62,7 @@ use crate::sm4_ir::{
     PredicateDstOperand, PredicateOperand, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst,
     Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
+use crate::shader_translate::StorageTextureFormat;
 
 /// `@group(0)` binding numbers used by the translated GS compute prepass.
 ///
@@ -697,7 +699,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     let mut sampler_decls: BTreeSet<u32> = BTreeSet::new();
     let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
     let mut uav_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
-    let mut uav_typed2d_decls: BTreeSet<u32> = BTreeSet::new();
+    let mut uav_typed2d_decls: BTreeMap<u32, u32> = BTreeMap::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
@@ -749,8 +751,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     })
                     .or_insert((*kind, *stride));
             }
-            Sm4Decl::UavTyped2D { slot, .. } => {
-                uav_typed2d_decls.insert(*slot);
+            Sm4Decl::UavTyped2D { slot, format } => {
+                uav_typed2d_decls.insert(*slot, *format);
             }
             Sm4Decl::InputSiv {
                 reg,
@@ -811,6 +813,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     let mut used_srv_buffers: BTreeSet<u32> = BTreeSet::new();
     let mut used_uav_buffers: BTreeSet<u32> = BTreeSet::new();
     let mut used_uavs_atomic: BTreeSet<u32> = BTreeSet::new();
+    let mut used_uav_textures: BTreeMap<u32, StorageTextureFormat> = BTreeMap::new();
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         // Unwrap instruction-level predication so register scanning sees the underlying opcode.
@@ -1659,7 +1662,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     &cbuffer_decls,
                     &mut used_cbuffers,
                 )?;
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "ld_uav_raw",
@@ -1745,7 +1748,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         &mut used_cbuffers,
                     )?;
                 }
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "ld_structured_uav",
@@ -1797,7 +1800,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         &mut used_cbuffers,
                     )?;
                 }
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "store_raw",
@@ -1840,7 +1843,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         &mut used_cbuffers,
                     )?;
                 }
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "store_structured",
@@ -1895,7 +1898,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         &mut used_cbuffers,
                     )?;
                 }
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "atomic_add",
@@ -1917,6 +1920,60 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 }
                 used_uav_buffers.insert(uav.slot);
                 used_uavs_atomic.insert(uav.slot);
+            }
+            Sm4Inst::StoreUavTyped {
+                uav,
+                coord,
+                value,
+                mask: _,
+            } => {
+                for src in [coord, value] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "store_uav_typed",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+
+                if uav_buffer_decls.contains_key(&uav.slot) || used_uav_buffers.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_uav_typed",
+                        msg: format!(
+                            "uav slot u{} is used as both a UAV buffer and a typed UAV texture",
+                            uav.slot
+                        ),
+                    });
+                }
+
+                let Some(&dxgi_format) = uav_typed2d_decls.get(&uav.slot) else {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_uav_typed",
+                        msg: format!(
+                            "uav u{} used by store_uav_typed is missing a dcl_uav_typed declaration",
+                            uav.slot
+                        ),
+                    });
+                };
+                let Some(format) = decode_uav_typed2d_format_dxgi(dxgi_format) else {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_uav_typed",
+                        msg: format!(
+                            "uav u{} used by store_uav_typed has unsupported DXGI format {dxgi_format}",
+                            uav.slot
+                        ),
+                    });
+                };
+                used_uav_textures.insert(uav.slot, format);
             }
             Sm4Inst::BufInfoRaw { dst, buffer }
             | Sm4Inst::BufInfoStructured { dst, buffer, .. } => {
@@ -1950,7 +2007,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 stride_bytes: _,
             } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
-                if uav_typed2d_decls.contains(&uav.slot) {
+                if uav_typed2d_decls.contains_key(&uav.slot) {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: opcode_name(inst),
@@ -2245,7 +2302,15 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
             ));
         }
     }
-    if !used_uav_buffers.is_empty() {
+    for (&slot, &format) in &used_uav_textures {
+        w.line(&format!(
+            "@group({}) @binding({}) var u{slot}: texture_storage_2d<{}, write>;",
+            BIND_GROUP_INTERNAL_EMULATION,
+            BINDING_BASE_UAV + slot,
+            format.wgsl_format()
+        ));
+    }
+    if !used_uav_buffers.is_empty() || !used_uav_textures.is_empty() {
         w.line("");
     }
 
@@ -3979,6 +4044,76 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         }
                     }
                 }
+                Sm4Inst::StoreUavTyped {
+                    uav,
+                    coord,
+                    value,
+                    mask,
+                } => {
+                    let Some(&format) = used_uav_textures.get(&uav.slot) else {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "store_uav_typed",
+                        });
+                    };
+
+                    // DXBC `store_uav_typed` carries a write mask on the `u#` operand. WebGPU/WGSL
+                    // `textureStore()` always writes a whole texel, so partial component stores
+                    // would require a read-modify-write sequence (not supported yet).
+                    //
+                    // Many typed UAV formats have fewer than 4 channels (`r32*`, `rg32*`). For
+                    // those, ignore writes to unused components and require that all meaningful
+                    // components be present in the mask.
+                    let required_mask = match format {
+                        StorageTextureFormat::R32Float
+                        | StorageTextureFormat::R32Uint
+                        | StorageTextureFormat::R32Sint => WriteMask::X.0,
+                        StorageTextureFormat::Rg32Float
+                        | StorageTextureFormat::Rg32Uint
+                        | StorageTextureFormat::Rg32Sint => WriteMask::X.0 | WriteMask::Y.0,
+                        _ => WriteMask::XYZW.0,
+                    };
+
+                    let mask_bits = mask.0 & 0xF;
+                    let effective_mask = mask_bits & required_mask;
+                    if effective_mask != 0 && effective_mask != required_mask {
+                        return Err(GsTranslateError::UnsupportedOperand {
+                            inst_index,
+                            opcode: "store_uav_typed",
+                            msg: format!(
+                                "partial typed UAV stores are not supported (format={format:?}, mask={mask:?})",
+                            ),
+                        });
+                    }
+
+                    // Typed UAV stores use integer texel coordinates, similar to `ld`.
+                    //
+                    // DXBC registers are untyped; interpret the coordinate lanes strictly as
+                    // integer bits (bitcast `f32` -> `i32`) with no float-to-int heuristics.
+                    let coord_i = emit_src_vec4_i32(inst_index, "store_uav_typed", coord, &input_sivs)?;
+                    let x = format!("({coord_i}).x");
+                    let y = format!("({coord_i}).y");
+
+                    let value = match uav_typed_value_type(format) {
+                        UavTypedValueType::F32 => {
+                            emit_src_vec4(inst_index, "store_uav_typed", value, &input_sivs)?
+                        }
+                        UavTypedValueType::U32 => {
+                            emit_src_vec4_u32(inst_index, "store_uav_typed", value, &input_sivs)?
+                        }
+                        UavTypedValueType::I32 => {
+                            emit_src_vec4_i32(inst_index, "store_uav_typed", value, &input_sivs)?
+                        }
+                    };
+
+                    // Only emit the store when at least one meaningful component is enabled.
+                    if effective_mask != 0 {
+                        w.line(&format!(
+                            "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
+                            uav.slot
+                        ));
+                    }
+                }
                 Sm4Inst::AtomicAdd {
                     dst,
                     uav,
@@ -4946,6 +5081,72 @@ fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
         OperandModifier::Neg | OperandModifier::AbsNeg => format!("vec4<u32>(0u) - ({expr})"),
         // `abs` is a no-op for unsigned integers.
         OperandModifier::Abs => expr,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UavTypedValueType {
+    F32,
+    U32,
+    I32,
+}
+
+fn decode_uav_typed2d_format_dxgi(dxgi_format: u32) -> Option<StorageTextureFormat> {
+    Some(match dxgi_format {
+        // DXGI_FORMAT_R8G8B8A8_UNORM
+        28 => StorageTextureFormat::Rgba8Unorm,
+        // DXGI_FORMAT_R8G8B8A8_SNORM
+        31 => StorageTextureFormat::Rgba8Snorm,
+        // DXGI_FORMAT_R8G8B8A8_UINT
+        30 => StorageTextureFormat::Rgba8Uint,
+        // DXGI_FORMAT_R8G8B8A8_SINT
+        32 => StorageTextureFormat::Rgba8Sint,
+        // DXGI_FORMAT_R16G16B16A16_FLOAT
+        10 => StorageTextureFormat::Rgba16Float,
+        // DXGI_FORMAT_R16G16B16A16_UINT
+        12 => StorageTextureFormat::Rgba16Uint,
+        // DXGI_FORMAT_R16G16B16A16_SINT
+        14 => StorageTextureFormat::Rgba16Sint,
+        // DXGI_FORMAT_R32G32_FLOAT
+        16 => StorageTextureFormat::Rg32Float,
+        // DXGI_FORMAT_R32G32_UINT
+        17 => StorageTextureFormat::Rg32Uint,
+        // DXGI_FORMAT_R32G32_SINT
+        18 => StorageTextureFormat::Rg32Sint,
+        // DXGI_FORMAT_R32G32B32A32_FLOAT
+        2 => StorageTextureFormat::Rgba32Float,
+        // DXGI_FORMAT_R32G32B32A32_UINT
+        3 => StorageTextureFormat::Rgba32Uint,
+        // DXGI_FORMAT_R32G32B32A32_SINT
+        4 => StorageTextureFormat::Rgba32Sint,
+        // DXGI_FORMAT_R32_FLOAT
+        41 => StorageTextureFormat::R32Float,
+        // DXGI_FORMAT_R32_UINT
+        42 => StorageTextureFormat::R32Uint,
+        // DXGI_FORMAT_R32_SINT
+        43 => StorageTextureFormat::R32Sint,
+        _ => return None,
+    })
+}
+
+fn uav_typed_value_type(format: StorageTextureFormat) -> UavTypedValueType {
+    match format {
+        StorageTextureFormat::Rgba8Unorm
+        | StorageTextureFormat::Rgba8Snorm
+        | StorageTextureFormat::Rgba16Float
+        | StorageTextureFormat::Rg32Float
+        | StorageTextureFormat::Rgba32Float
+        | StorageTextureFormat::R32Float => UavTypedValueType::F32,
+        StorageTextureFormat::Rgba8Uint
+        | StorageTextureFormat::Rgba16Uint
+        | StorageTextureFormat::Rg32Uint
+        | StorageTextureFormat::Rgba32Uint
+        | StorageTextureFormat::R32Uint => UavTypedValueType::U32,
+        StorageTextureFormat::Rgba8Sint
+        | StorageTextureFormat::Rgba16Sint
+        | StorageTextureFormat::Rg32Sint
+        | StorageTextureFormat::Rgba32Sint
+        | StorageTextureFormat::R32Sint => UavTypedValueType::I32,
     }
 }
 
