@@ -847,6 +847,78 @@ fn decodes_and_translates_predicated_continuec_in_loop() {
 }
 
 #[test]
+fn decodes_and_translates_predicated_breakc_in_switch_case() {
+    // switch l(0)
+    //   case 0:
+    //     (+p0.x) breakc_eq l(0.0), l(0.0)
+    // endswitch
+    // ret
+    //
+    // This exercises the `inside_case` path for predicated `breakc` lowering.
+    let mut body = Vec::<u32>::new();
+
+    let selector = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+
+    let pred_p0x = pred_operand(0, 0);
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(0.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_BREAKC,
+        1 + pred_p0x.len() as u32 + a.len() as u32 + b.len() as u32,
+        2, // eq (D3D10_SB_INSTRUCTION_TEST)
+    ));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Switch { .. })));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::BreakC { .. }))));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let wgsl = &translated.wgsl;
+    assert!(wgsl.contains("switch("), "expected switch in WGSL:\n{wgsl}");
+    let idx_case0 = wgsl.find("case 0i").expect("case 0");
+    let idx_default = wgsl.find("default:").expect("default");
+    let case0_body = &wgsl[idx_case0..idx_default];
+    assert!(
+        case0_body.contains("p0.x") && case0_body.contains("break;"),
+        "expected predicated conditional break inside switch case:\n{wgsl}"
+    );
+}
+
+#[test]
 fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
     let mut body = Vec::<u32>::new();
 
