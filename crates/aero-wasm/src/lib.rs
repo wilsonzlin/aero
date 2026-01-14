@@ -1369,14 +1369,11 @@ impl WebHidPassthroughBridge {
         let report_descriptor = webhid::synthesize_report_descriptor(&collections)
             .map_err(|e| js_error(&format!("failed to synthesize HID report descriptor: {e}")))?;
 
+        let (interface_subclass, interface_protocol) = webhid::infer_boot_interface(&collections)
+            .map(|(subclass, protocol)| (Some(subclass), Some(protocol)))
+            .unwrap_or((None, None));
         let max_output_on_wire = webhid::max_output_report_bytes_on_wire(&collections);
         let has_interrupt_out = max_output_on_wire > 0 && max_output_on_wire <= 64;
-
-        let (interface_subclass, interface_protocol) =
-            match webhid::infer_boot_interface_subclass_protocol(&collections) {
-                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
-                None => (None, None),
-            };
 
         let device = UsbHidPassthroughHandle::new(
             vendor_id,
@@ -1507,7 +1504,6 @@ impl UsbHidPassthroughBridge {
         self.device.clone()
     }
 }
-
 #[cfg(all(test, target_arch = "wasm32"))]
 mod webhid_passthrough_bridge_tests {
     use super::*;

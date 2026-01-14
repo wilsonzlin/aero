@@ -92,6 +92,26 @@ fn parse_webhid_collections(
     ))
     .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
 }
+
+fn hidp_snapshot_interface_fields(bytes: &[u8]) -> (Option<u8>, Option<u8>) {
+    const TAG_INTERFACE_SUBCLASS: u16 = 23;
+    const TAG_INTERFACE_PROTOCOL: u16 = 24;
+
+    let Ok(r) = SnapshotReader::parse(bytes, <UsbHidPassthroughHandle as IoSnapshot>::DEVICE_ID)
+    else {
+        return (None, None);
+    };
+
+    if r.ensure_device_major(<UsbHidPassthroughHandle as IoSnapshot>::DEVICE_VERSION.major)
+        .is_err()
+    {
+        return (None, None);
+    }
+
+    let subclass = r.u8(TAG_INTERFACE_SUBCLASS).ok().flatten();
+    let protocol = r.u8(TAG_INTERFACE_PROTOCOL).ok().flatten();
+    (subclass, protocol)
+}
 struct WebHidDeviceState {
     location: WebHidDeviceLocation,
     dev: UsbHidPassthroughHandle,
@@ -276,16 +296,14 @@ impl UhciRuntime {
                 ))
             })?;
 
+        let (interface_subclass, interface_protocol) = webhid::infer_boot_interface(&collections)
+            .map(|(subclass, protocol)| (Some(subclass), Some(protocol)))
+            .unwrap_or((None, None));
+
         let has_interrupt_out = compute_has_interrupt_out(&collections);
         let product = Self::sanitize_usb_string_owned(
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
-
-        let (interface_subclass, interface_protocol) =
-            match webhid::infer_boot_interface_subclass_protocol(&collections) {
-                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
-                None => (None, None),
-            };
 
         let dev = UsbHidPassthroughHandle::new(
             vendor_id,
@@ -356,16 +374,14 @@ impl UhciRuntime {
                 ))
             })?;
 
+        let (interface_subclass, interface_protocol) = webhid::infer_boot_interface(&collections)
+            .map(|(subclass, protocol)| (Some(subclass), Some(protocol)))
+            .unwrap_or((None, None));
+
         let has_interrupt_out = compute_has_interrupt_out(&collections);
         let product = Self::sanitize_usb_string_owned(
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
-
-        let (interface_subclass, interface_protocol) =
-            match webhid::infer_boot_interface_subclass_protocol(&collections) {
-                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
-                None => (None, None),
-            };
 
         let dev = UsbHidPassthroughHandle::new(
             vendor_id,
@@ -1365,20 +1381,8 @@ impl UhciRuntime {
         for entry in webhid_entries {
             // Preserve the boot-interface subclass/protocol recorded in the nested HIDP snapshot so
             // snapshot restore roundtrips the device descriptor accurately.
-            //
-            // These tags are defined in `aero-usb`'s HID passthrough snapshot format.
-            const HIDP_SNAP_TAG_INTERFACE_SUBCLASS: u16 = 23;
-            const HIDP_SNAP_TAG_INTERFACE_PROTOCOL: u16 = 24;
-
             let (interface_subclass, interface_protocol) =
-                match SnapshotReader::parse(&entry.state, *b"HIDP") {
-                    Ok(r) => (
-                        r.u8(HIDP_SNAP_TAG_INTERFACE_SUBCLASS).unwrap_or(None),
-                        r.u8(HIDP_SNAP_TAG_INTERFACE_PROTOCOL).unwrap_or(None),
-                    ),
-                    Err(_) => (None, None),
-                };
-
+                hidp_snapshot_interface_fields(&entry.state);
             let mut dev = UsbHidPassthroughHandle::new(
                 entry.vendor_id,
                 entry.product_id,

@@ -2,6 +2,8 @@ use serde::de::{Error as DeError, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
+use alloc::collections::BTreeMap;
+
 use super::report_descriptor;
 fn default_true() -> bool {
     true
@@ -237,11 +239,10 @@ pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result
 ///   - subclass = 0x01 (Boot), and
 ///   - protocol = 0x01 (Keyboard) or 0x02 (Mouse).
 /// - If both are present or neither is present, return `None` (do not guess).
-pub fn infer_boot_interface_subclass_protocol(
-    collections: &[HidCollectionInfo],
-) -> Option<(u8, u8)> {
+pub fn infer_boot_interface(collections: &[HidCollectionInfo]) -> Option<(u8, u8)> {
     let mut has_keyboard = false;
     let mut has_mouse = false;
+
     for col in collections {
         if col.collection_type != HidCollectionType::Application {
             continue;
@@ -263,6 +264,13 @@ pub fn infer_boot_interface_subclass_protocol(
     }
 }
 
+/// Backwards-compatible alias (historical name used by some callers).
+pub fn infer_boot_interface_subclass_protocol(
+    collections: &[HidCollectionInfo],
+) -> Option<(u8, u8)> {
+    infer_boot_interface(collections)
+}
+
 /// Compute the maximum output report size, in bytes, as it would appear on the USB wire.
 ///
 /// This mirrors the browser/TypeScript WebHID policy (`computeMaxOutputReportBytesOnWire`):
@@ -274,8 +282,6 @@ pub fn infer_boot_interface_subclass_protocol(
 ///
 /// Note: This uses saturating arithmetic to avoid panics on malformed/hostile inputs.
 pub fn max_output_report_bytes_on_wire(collections: &[HidCollectionInfo]) -> u32 {
-    use alloc::collections::BTreeMap;
-
     fn report_bits(report: &HidReportInfo) -> u64 {
         let mut bits: u64 = 0;
         for item in &report.items {
@@ -316,6 +322,11 @@ pub fn max_output_report_bytes_on_wire(collections: &[HidCollectionInfo]) -> u32
     }
 
     u32::try_from(max_on_wire).unwrap_or(u32::MAX)
+}
+
+/// Backwards-compatible alias (historical name used by some callers).
+pub fn max_output_report_bytes(collections: &[HidCollectionInfo]) -> u32 {
+    max_output_report_bytes_on_wire(collections)
 }
 
 #[derive(Debug, Clone, Copy)]
