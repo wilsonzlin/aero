@@ -853,26 +853,38 @@ static void ReportNotImpl(D3D11DDI_HDEVICECONTEXT hCtx) {
   SetError(DeviceFromContext(hCtx), E_NOTIMPL);
 }
 
-static void EmitBindShadersLocked(Device* dev) {
+static bool EmitBindShadersCmdLocked(Device* dev,
+                                     aerogpu_handle_t vs,
+                                     aerogpu_handle_t ps,
+                                     aerogpu_handle_t cs,
+                                     aerogpu_handle_t gs) {
   if (!dev) {
-    return;
+    return false;
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return false;
   }
-  cmd->vs = dev->current_vs;
-  cmd->ps = dev->current_ps;
-  cmd->cs = dev->current_cs;
+  cmd->vs = vs;
+  cmd->ps = ps;
+  cmd->cs = cs;
   // Geometry shader (GS) handle is carried via `reserved0` for legacy compatibility.
   //
   // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
   // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
   // hosts/tools can still observe a bound GS. If mirrored, it should match the appended `gs`
   // handle.
-  cmd->reserved0 = dev->current_gs;
+  cmd->reserved0 = gs;
+  return true;
+}
+
+static bool EmitBindShadersLocked(Device* dev) {
+  if (!dev) {
+    return false;
+  }
+  return EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, dev->current_cs, dev->current_gs);
 }
 
 static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
@@ -6341,9 +6353,9 @@ void AEROGPU_APIENTRY IaSetTopology11(D3D11DDI_HDEVICECONTEXT hCtx, D3D10_DDI_PR
 }
 
 void AEROGPU_APIENTRY VsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                   D3D11DDI_HVERTEXSHADER hShader,
-                                   const D3D11DDI_HCLASSINSTANCE*,
-                                   UINT) {
+                                    D3D11DDI_HVERTEXSHADER hShader,
+                                    const D3D11DDI_HCLASSINSTANCE*,
+                                    UINT) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -6351,37 +6363,52 @@ void AEROGPU_APIENTRY VsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   Shader* sh = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HVERTEXSHADER, Shader>(hShader) : nullptr;
-  dev->current_vs = sh ? sh->handle : 0;
-  dev->current_vs_forced_z_valid = sh ? sh->forced_ndc_z_valid : false;
-  dev->current_vs_forced_z = (sh && sh->forced_ndc_z_valid) ? sh->forced_ndc_z : 0.0f;
-  EmitBindShadersLocked(dev);
-}
+  const aerogpu_handle_t new_vs = sh ? sh->handle : 0;
+  const bool new_forced_z_valid = sh ? sh->forced_ndc_z_valid : false;
+  const float new_forced_z = (sh && sh->forced_ndc_z_valid) ? sh->forced_ndc_z : 0.0f;
 
-void AEROGPU_APIENTRY PsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                   D3D11DDI_HPIXELSHADER hShader,
-                                   const D3D11DDI_HCLASSINSTANCE*,
-                                   UINT) {
-  auto* dev = DeviceFromContext(hCtx);
-  if (!dev) {
+  if (!EmitBindShadersCmdLocked(dev, new_vs, dev->current_ps, dev->current_cs, dev->current_gs)) {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_ps = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HPIXELSHADER, Shader>(hShader)->handle : 0;
-  EmitBindShadersLocked(dev);
+  dev->current_vs = new_vs;
+  dev->current_vs_forced_z_valid = new_forced_z_valid;
+  dev->current_vs_forced_z = new_forced_z_valid ? new_forced_z : 0.0f;
 }
 
-void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                    D3D11DDI_HGEOMETRYSHADER hShader,
+void AEROGPU_APIENTRY PsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                    D3D11DDI_HPIXELSHADER hShader,
                                     const D3D11DDI_HCLASSINSTANCE*,
                                     UINT) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
+
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_gs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader)->handle : 0;
-  EmitBindShadersLocked(dev);
+  const aerogpu_handle_t new_ps =
+      hShader.pDrvPrivate ? FromHandle<D3D11DDI_HPIXELSHADER, Shader>(hShader)->handle : 0;
+  if (!EmitBindShadersCmdLocked(dev, dev->current_vs, new_ps, dev->current_cs, dev->current_gs)) {
+    return;
+  }
+  dev->current_ps = new_ps;
+}
+
+void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                     D3D11DDI_HGEOMETRYSHADER hShader,
+                                     const D3D11DDI_HCLASSINSTANCE*,
+                                     UINT) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const aerogpu_handle_t new_gs =
+      hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader)->handle : 0;
+  if (!EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, dev->current_cs, new_gs)) {
+    return;
+  }
+  dev->current_gs = new_gs;
 }
 
 static void SetConstantBuffers11Locked(Device* dev,
@@ -6697,9 +6724,9 @@ void AEROGPU_APIENTRY DsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY CsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                   D3D11DDI_HCOMPUTESHADER hShader,
-                                   const D3D11DDI_HCLASSINSTANCE*,
-                                   UINT) {
+                                    D3D11DDI_HCOMPUTESHADER hShader,
+                                    const D3D11DDI_HCLASSINSTANCE*,
+                                    UINT) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
@@ -6707,8 +6734,11 @@ void AEROGPU_APIENTRY CsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   Shader* sh = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HCOMPUTESHADER, Shader>(hShader) : nullptr;
-  dev->current_cs = sh ? sh->handle : 0;
-  EmitBindShadersLocked(dev);
+  const aerogpu_handle_t new_cs = sh ? sh->handle : 0;
+  if (!EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, new_cs, dev->current_gs)) {
+    return;
+  }
+  dev->current_cs = new_cs;
 }
 
 void AEROGPU_APIENTRY CsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -7141,9 +7171,9 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
                                          pRects,
                                          [&](HRESULT hr) { SetError(dev, hr); });
 }
-static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
+static bool EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   if (!dev) {
-    return;
+    return false;
   }
 
   uint32_t fill_mode = static_cast<uint32_t>(D3D11_FILL_SOLID);
@@ -7164,7 +7194,7 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return false;
   }
 
   cmd->state.fill_mode = D3DFillModeToAerogpu(fill_mode);
@@ -7182,11 +7212,12 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   cmd->state.depth_bias = depth_bias;
   cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
                                        : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
+  return true;
 }
 
-static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
+static bool EmitBlendStateLocked(Device* dev, const BlendState* bs, const float blend_factor[4], uint32_t sample_mask) {
   if (!dev) {
-    return;
+    return false;
   }
 
   uint32_t blend_enable = 0u;
@@ -7234,7 +7265,7 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return false;
   }
 
   cmd->state.enable = blend_enable ? 1u : 0u;
@@ -7250,20 +7281,24 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   cmd->state.dst_factor_alpha = D3dBlendFactorToAerogpuOr(dst_blend_alpha, cmd->state.dst_factor);
   cmd->state.blend_op_alpha = D3dBlendOpToAerogpuOr(blend_op_alpha, cmd->state.blend_op);
 
-  cmd->state.blend_constant_rgba_f32[0] = f32_bits(dev->current_blend_factor[0]);
-  cmd->state.blend_constant_rgba_f32[1] = f32_bits(dev->current_blend_factor[1]);
-  cmd->state.blend_constant_rgba_f32[2] = f32_bits(dev->current_blend_factor[2]);
-  cmd->state.blend_constant_rgba_f32[3] = f32_bits(dev->current_blend_factor[3]);
-  cmd->state.sample_mask = dev->current_sample_mask;
+  const float* bf = blend_factor ? blend_factor : dev->current_blend_factor;
+  cmd->state.blend_constant_rgba_f32[0] = f32_bits(bf[0]);
+  cmd->state.blend_constant_rgba_f32[1] = f32_bits(bf[1]);
+  cmd->state.blend_constant_rgba_f32[2] = f32_bits(bf[2]);
+  cmd->state.blend_constant_rgba_f32[3] = f32_bits(bf[3]);
+  cmd->state.sample_mask = sample_mask;
+  return true;
 }
 
-static void EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* dss) {
+static bool EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* dss) {
   if (!dev) {
-    return;
+    return false;
   }
   if (!EmitDepthStencilStateCmdLocked(dev, dss)) {
     SetError(dev, E_OUTOFMEMORY);
+    return false;
   }
+  return true;
 }
 
 void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRASTERIZERSTATE hState) {
@@ -7273,44 +7308,54 @@ void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DD
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_rs = hState.pDrvPrivate ? FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState) : nullptr;
-  EmitRasterizerStateLocked(dev, dev->current_rs);
+  RasterizerState* new_rs =
+      hState.pDrvPrivate ? FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState) : nullptr;
+  if (!EmitRasterizerStateLocked(dev, new_rs)) {
+    return;
+  }
+  dev->current_rs = new_rs;
 }
 
 void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                     D3D11DDI_HBLENDSTATE hState,
-                                     const FLOAT blend_factor[4],
-                                     UINT sample_mask) {
+                                      D3D11DDI_HBLENDSTATE hState,
+                                      const FLOAT blend_factor[4],
+                                      UINT sample_mask) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_bs = hState.pDrvPrivate ? FromHandle<D3D11DDI_HBLENDSTATE, BlendState>(hState) : nullptr;
+  BlendState* new_bs = hState.pDrvPrivate ? FromHandle<D3D11DDI_HBLENDSTATE, BlendState>(hState) : nullptr;
+  float new_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   if (blend_factor) {
-    std::memcpy(dev->current_blend_factor, blend_factor, sizeof(dev->current_blend_factor));
-  } else {
-    dev->current_blend_factor[0] = 1.0f;
-    dev->current_blend_factor[1] = 1.0f;
-    dev->current_blend_factor[2] = 1.0f;
-    dev->current_blend_factor[3] = 1.0f;
+    std::memcpy(new_blend_factor, blend_factor, sizeof(new_blend_factor));
   }
-  dev->current_sample_mask = sample_mask;
-  EmitBlendStateLocked(dev, dev->current_bs);
+  const uint32_t new_sample_mask = sample_mask;
+
+  if (!EmitBlendStateLocked(dev, new_bs, new_blend_factor, new_sample_mask)) {
+    return;
+  }
+
+  dev->current_bs = new_bs;
+  std::memcpy(dev->current_blend_factor, new_blend_factor, sizeof(dev->current_blend_factor));
+  dev->current_sample_mask = new_sample_mask;
 }
 void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                              D3D11DDI_HDEPTHSTENCILSTATE hState,
-                                              UINT stencil_ref) {
+                                               D3D11DDI_HDEPTHSTENCILSTATE hState,
+                                               UINT stencil_ref) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_dss =
+  DepthStencilState* new_dss =
       hState.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILSTATE, DepthStencilState>(hState) : nullptr;
+  if (!EmitDepthStencilStateLocked(dev, new_dss)) {
+    return;
+  }
+  dev->current_dss = new_dss;
   dev->current_stencil_ref = stencil_ref;
-  EmitDepthStencilStateLocked(dev, dev->current_dss);
 }
 
 void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -7555,11 +7600,11 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 
   EmitSetRenderTargetsLocked(dev);
 
-  EmitBlendStateLocked(dev, nullptr);
-  EmitDepthStencilStateLocked(dev, nullptr);
-  EmitRasterizerStateLocked(dev, nullptr);
+  (void)EmitBlendStateLocked(dev, nullptr, dev->current_blend_factor, dev->current_sample_mask);
+  (void)EmitDepthStencilStateLocked(dev, nullptr);
+  (void)EmitRasterizerStateLocked(dev, nullptr);
 
-  EmitBindShadersLocked(dev);
+  (void)EmitBindShadersLocked(dev);
 
   // Reset viewport/scissor state as part of ClearState. The AeroGPU protocol
   // uses a degenerate (0x0) viewport/scissor to encode "use default".
