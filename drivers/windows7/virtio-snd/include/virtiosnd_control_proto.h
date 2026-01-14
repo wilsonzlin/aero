@@ -45,9 +45,10 @@ typedef struct _VIRTIOSND_PCM_CONFIG {
  * Select a deterministic "best" (channels, format, rate) tuple from a device's
  * advertised PCM_INFO.
  *
- * This is used during START_DEVICE (VIO-020) so the driver can pick a single
- * stream configuration and then expose exactly one mix format per pin via
- * WaveRT/KSDATARANGE.
+ * This is used during START_DEVICE (VIO-020) to pick the initial/default stream
+ * configuration (preferring the contract-v1 baseline). The WaveRT miniport may
+ * later update the selected stream configuration if Windows opens a stream in a
+ * different supported format.
  *
  * Selection policy:
  *  - Prefer the legacy Aero contract v1 default when available:
