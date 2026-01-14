@@ -641,6 +641,10 @@ mod tests {
             AERO_USB_FOCUSED_TESTS.contains(&"xhci_usbcmd_run_gates_transfers"),
             "expected xhci_usbcmd_run_gates_transfers to remain part of the focused aero-usb subset"
         );
+        assert!(
+            AERO_USB_FOCUSED_TESTS.contains(&"xhci_stop_endpoint_unschedules"),
+            "expected xhci_stop_endpoint_unschedules to remain part of the focused aero-usb subset"
+        );
 
         assert_deduped("AERO_MACHINE_FOCUSED_TESTS", AERO_MACHINE_FOCUSED_TESTS);
         assert_deduped("WASM_PACK_TESTS", WASM_PACK_TESTS);
