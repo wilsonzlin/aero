@@ -122,6 +122,21 @@ func (b *udpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
 	if maxAllowed > 0 {
 		desiredSize := len(b.allowed) + 1
 		if desiredSize > maxAllowed {
+			// Prune expired entries before evicting due to the cap. This prevents
+			// stale allowlist entries from inflating eviction metrics and avoids
+			// evicting active remotes when expired entries would have been removed
+			// anyway.
+			//
+			// Note: evictOldestAllowedLocked is already O(n), so forcing a prune in
+			// this path does not change the asymptotic complexity.
+			b.pruneAllowedLockedForce(now)
+			desiredSize = len(b.allowed) + 1
+			if desiredSize <= maxAllowed {
+				// Pruning freed enough space; no eviction required.
+				b.allowed[k] = now
+				b.allowedMu.Unlock()
+				return
+			}
 			evicted := b.evictOldestAllowedLocked(desiredSize - maxAllowed)
 			if evicted > 0 && b.metrics != nil {
 				b.metrics.Add(metrics.UDPRemoteAllowlistEvictionsTotal, uint64(evicted))
@@ -173,12 +188,20 @@ func (b *udpPortBinding) evictOldestAllowedLocked(n int) int {
 }
 
 func (b *udpPortBinding) pruneAllowedLocked(now time.Time) {
+	b.pruneAllowedLockedInternal(now, false)
+}
+
+func (b *udpPortBinding) pruneAllowedLockedForce(now time.Time) {
+	b.pruneAllowedLockedInternal(now, true)
+}
+
+func (b *udpPortBinding) pruneAllowedLockedInternal(now time.Time, force bool) {
 	if b.cfg.RemoteAllowlistIdleTimeout <= 0 {
 		return
 	}
 	// Prune at most once per RemoteAllowlistIdleTimeout to avoid turning every
 	// outbound packet into an O(n) scan.
-	if !b.lastPrune.IsZero() && now.Sub(b.lastPrune) <= b.cfg.RemoteAllowlistIdleTimeout {
+	if !force && !b.lastPrune.IsZero() && now.Sub(b.lastPrune) <= b.cfg.RemoteAllowlistIdleTimeout {
 		return
 	}
 

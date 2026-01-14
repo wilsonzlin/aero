@@ -137,6 +137,57 @@ func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
+	cfg.MaxAllowedRemotesPerBinding = 2
+
+	m := metrics.New()
+	b := &udpPortBinding{
+		cfg:     cfg,
+		metrics: m,
+		allowed: make(map[remoteKey]time.Time),
+	}
+
+	remoteA := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	remoteB := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002}
+	remoteC := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10003}
+
+	start := time.Unix(0, 0)
+	b.AllowRemote(remoteA, start)
+	b.AllowRemote(remoteB, start.Add(500*time.Millisecond))
+
+	// Advance time so A is expired, but B is still (barely) valid. If AllowRemote
+	// counts the stale A entry toward the cap, it would evict and increment the
+	// eviction metric. Instead, we expect expired entries to be pruned before any
+	// eviction occurs.
+	b.AllowRemote(remoteC, start.Add(1500*time.Millisecond))
+
+	keyA, _ := makeRemoteKey(remoteA)
+	keyB, _ := makeRemoteKey(remoteB)
+	keyC, _ := makeRemoteKey(remoteC)
+
+	b.allowedMu.Lock()
+	defer b.allowedMu.Unlock()
+	if _, ok := b.allowed[keyA]; ok {
+		t.Fatalf("expected expired remote (A) to be pruned before eviction")
+	}
+	if _, ok := b.allowed[keyB]; !ok {
+		t.Fatalf("expected remote (B) to be retained")
+	}
+	if _, ok := b.allowed[keyC]; !ok {
+		t.Fatalf("expected new remote (C) to be added")
+	}
+
+	if len(b.allowed) != cfg.MaxAllowedRemotesPerBinding {
+		t.Fatalf("allowlist size=%d, want %d", len(b.allowed), cfg.MaxAllowedRemotesPerBinding)
+	}
+	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+		t.Fatalf("eviction metric=%d, want 0 (expired entry should be pruned, not evicted)", got)
+	}
+}
+
 func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.InboundFilterMode = InboundFilterAny
