@@ -587,6 +587,45 @@ static void test_set_message_route_validation(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_route_can_enable_all_on_vector0_fallback(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+
+    /*
+     * Simulate a system where Windows granted >1 message interrupt, but a driver
+     * chooses to route all virtio interrupt sources to vector 0 (e.g. because
+     * MessageCount < (1 + QueueCount) for a multi-queue device).
+     *
+     * The helper does not know the device's queue count, so callers must override
+     * routing for message 0 to include queue work.
+     */
+    desc = make_msg_desc(3);
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected = &intr;
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+
+    /* Route message 0 to config + queue(all), and disable other messages. */
+    assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 0, TRUE, VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN) == STATUS_SUCCESS);
+    assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 1, FALSE, VIRTIO_PCI_WDM_QUEUE_INDEX_NONE) == STATUS_SUCCESS);
+    assert(VirtioPciWdmInterruptSetMessageRoute(&intr, 2, FALSE, VIRTIO_PCI_WDM_QUEUE_INDEX_NONE) == STATUS_SUCCESS);
+
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 0) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[0]) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.last_queue_index == VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 int main(void)
 {
     test_connect_validation();
@@ -601,6 +640,7 @@ int main(void)
     test_disconnect_waits_for_inflight_dpc();
     test_disconnect_cancels_queued_dpc();
     test_set_message_route_validation();
+    test_message_route_can_enable_all_on_vector0_fallback();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
     return 0;
