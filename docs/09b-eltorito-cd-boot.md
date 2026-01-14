@@ -342,31 +342,35 @@ Minimum behavior:
 * Require `buffer_size >= 0x1A`.
 * Fill the EDD parameter table fields needed by Windows boot code (in particular, **bytes per
   sector** and **total sector count**).
-  * For **CD drives**, this means reporting `bytes_per_sector = 2048` and `total_sectors` in
-    **2048-byte units**.
+    * For **CD drives**, this means reporting `bytes_per_sector = 2048` and `total_sectors` in
+      **2048-byte units**.
 
-### 6.4 AH=4Bh — El Torito disk emulation services (optional compatibility)
+### 6.4 AH=4Bh — El Torito disk emulation services (compatibility)
 
-Some CD boot images query El Torito metadata via INT 13h `AH=4Bh`. Windows 7 install media does not
-typically require this path, but Aero implements a minimal subset for compatibility when booting via
-El Torito (since it is closely tied to boot-catalog parsing).
+Some El Torito boot images query El Torito metadata via INT 13h `AH=4Bh`. Windows 7 install media does
+not typically require this path, but Aero implements a minimal subset for compatibility when booting
+via El Torito (since it is closely tied to boot-catalog parsing).
 
-Notes:
+Constraints:
 
 * Only available when the BIOS actually booted via El Torito and captured boot-catalog metadata
   during POST.
-* Only valid for the El Torito boot drive (must match `DL` used to boot, typically `0xE0`).
+* Only valid for the El Torito boot drive (must match the `DL` used to boot, typically `0xE0`).
 
-Supported subfunctions (in `AL`):
+Supported subfunctions (selected by `AL`; Aero supports only these `AX` values):
 
-* `AL=00h` (`AX=4B00h`) — terminate disk emulation
+* `AX=4B00h` (`AL=00h`) — Terminate disk emulation
   * For **no-emulation** boots, Aero treats this as a no-op success.
-* `AL=01h` (`AX=4B01h`) — get disk emulation status
+* `AX=4B01h` (`AL=01h`) — Get disk emulation status
   * Writes a status packet at `ES:DI` (caller provides the buffer).
   * Compatibility rule: if the caller sets the first byte to a non-zero buffer size, Aero requires
     it to be `>= 0x13`.
 
-#### `AL=01h` status packet layout (0x13 bytes)
+All other subfunctions are unsupported.
+
+#### Status packet layout (0x13 bytes)
+
+All multi-byte fields are little-endian.
 
 | Offset | Size | Field | Notes |
 |---:|---:|---|---|
@@ -374,11 +378,15 @@ Supported subfunctions (in `AL`):
 | `0x01` | 1 | media type | `0x00` = no-emulation |
 | `0x02` | 1 | boot drive | `DL` value used for El Torito boot (typically `0xE0`) |
 | `0x03` | 1 | controller index | currently `0` |
-| `0x04` | 4 | boot image LBA | ISO LBA (**2048-byte units**) |
-| `0x08` | 4 | boot catalog LBA | ISO LBA (**2048-byte units**) |
+| `0x04` | 4 | boot image LBA | ISO LBA (**2048-byte units**) of the boot image (`u32` LE) |
+| `0x08` | 4 | boot catalog LBA | ISO LBA (**2048-byte units**) of the boot catalog (`u32` LE) |
 | `0x0C` | 2 | load segment | real-mode segment used to load boot image (e.g. `0x07C0`) |
 | `0x0E` | 2 | sector count | number of **512-byte** sectors loaded for the initial image |
 | `0x10` | 3 | reserved | zero |
+
+`boot image LBA` and `boot catalog LBA` use **ISO logical block addressing** (2048-byte sectors, the
+same unit as ISO9660 and the El Torito boot catalog). If you need underlying 512-byte LBAs:
+`lba512 = lba2048 * 4`.
 
 ---
 
