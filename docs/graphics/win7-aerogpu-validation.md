@@ -343,6 +343,7 @@ For quick guest-side sanity checks:
     * D3D9Ex: `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` and `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc`
     * D3D9Ex (Win7 x64 cross-bitness; DWM scenario): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_wow64`
     * D3D9Ex (alloc_id collision/persistence stress): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_many_producers` and `drivers/aerogpu/tests/win7/d3d9ex_alloc_id_persistence`
+    * D3D9Ex (shared allocation policy: shared surfaces must be single-allocation): `drivers/aerogpu/tests/win7/d3d9ex_shared_allocations`
     * D3D10: `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc`
     * D3D10.1: `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc`
     * D3D11: `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc`

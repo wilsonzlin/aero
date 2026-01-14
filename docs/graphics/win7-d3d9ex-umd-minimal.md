@@ -489,6 +489,7 @@ Guest-side validation:
 * `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc` is a smaller producer/consumer variant that focuses on opening a shared D3D9Ex render-target texture in a second process and validating a readback of the producer’s clear color.
 * On Win7 x64, `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_wow64` validates cross-bitness shared-surface interop (WOW64 producer → native consumer; DWM scenario).
 * For DWM-like multi-process batching and `alloc_id` collision coverage, also run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_many_producers` and `drivers/aerogpu/tests/win7/d3d9ex_alloc_id_persistence`.
+* For MVP shared-surface allocation policy coverage (shared surfaces must be single-allocation; reject shared full mip chains), also run `drivers/aerogpu/tests/win7/d3d9ex_shared_allocations`.
 
 ---
 

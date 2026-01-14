@@ -187,7 +187,8 @@ DWM composition commonly depends on the ability to share render targets/textures
 Define a guest/host sharing model that does **not** attempt to expose host OS handles:
 
 - The D3D9/D3D9Ex API surface uses a user-mode `HANDLE` (`pSharedHandle`) to represent “shared resources”.
-  - This value is a normal Windows handle: **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
+  - This value is typically a normal Windows handle (**NT handle**): **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
+    - Some D3D9Ex implementations use “token-style” shared handles that are not real NT handles and cannot be duplicated; even in that case, the numeric value is not a stable protocol key.
   - **AeroGPU does *not* use the numeric `HANDLE` value as the protocol `share_token`.**
 - In the AeroGPU protocol, `share_token` is a stable 64-bit value persisted in the preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   - The Win7 KMD generates a stable non-zero `share_token` for each shared allocation and writes it into the blob during `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`.
@@ -202,7 +203,8 @@ Expected sequence:
    - The UMD submits `EXPORT_SHARED_SURFACE { resource_handle, share_token=ShareToken }` so the host can map `share_token → resource`.
 
 2. **Open shared resource → import (token)**
-   - Consumer process opens the resource via the OS shared handle mechanism (the handle must already be valid in the consumer process via `DuplicateHandle`/inheritance).
+   - Consumer process opens the resource via the OS shared handle mechanism.
+     - If the shared handle is a real NT handle, it must already be valid in the consumer process via `DuplicateHandle`/inheritance.
    - The KMD resolves the shared allocation and returns the same `{alloc_id, share_token}` (allocation private driver data).
    - The UMD submits `IMPORT_SHARED_SURFACE { share_token=ShareToken } -> resource_handle` to obtain a host resource alias.
 
