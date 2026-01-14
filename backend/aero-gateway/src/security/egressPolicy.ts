@@ -1,6 +1,8 @@
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 
+import { normalizeIpv4Literal } from "./ipPolicy.js";
+
 export type HostnamePattern =
   | { kind: "exact"; hostname: string }
   | { kind: "wildcard"; suffix: string }
@@ -166,6 +168,15 @@ export function classifyTargetHost(rawHost: string): TargetHost {
       kind: "ip",
       ip: hasAsciiHexUppercase(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6,
       version,
+    };
+  }
+
+  const v4Normalized = normalizeIpv4Literal(maybeBracketedV6);
+  if (v4Normalized) {
+    return {
+      kind: "ip",
+      ip: v4Normalized,
+      version: 4,
     };
   }
 

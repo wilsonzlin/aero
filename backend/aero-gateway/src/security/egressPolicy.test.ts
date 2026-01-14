@@ -101,3 +101,21 @@ test("host policy: allow/deny lists apply to IP-literal targets", () => {
   assert.equal(deniedDnsName.allowed, false);
   if (!deniedDnsName.allowed) assert.equal(deniedDnsName.reason, "ip-literal-disallowed");
 });
+
+test("host policy: TCP_REQUIRE_DNS_NAME rejects non-canonical IPv4 literals", () => {
+  const policy = { allowed: [], blocked: [], requireDnsName: true };
+  for (const host of [
+    "0177.0.0.1", // octal dotted-quad
+    "0x7f.0.0.1", // hex dotted-quad
+    "2130706433", // 32-bit integer
+    "127.1", // shorthand
+    "010.0.0.1", // octal => 8.0.0.1
+    "08.0.0.1", // decimal fallback dotted-quad
+    "8.8.8.8.", // trailing dot dotted-quad
+    "010.0.0.1.", // trailing dot forces decimal => 10.0.0.1
+  ]) {
+    const decision = evaluateTcpHostPolicy(host, policy);
+    assert.equal(decision.allowed, false);
+    if (!decision.allowed) assert.equal(decision.reason, "ip-literal-disallowed");
+  }
+});

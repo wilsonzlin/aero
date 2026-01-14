@@ -16,6 +16,12 @@ export function isPublicIpAddress(ip: string): boolean {
   return false;
 }
 
+export function normalizeIpv4Literal(ip: string): string | null {
+  const v4 = parseIpv4(ip);
+  if (!v4) return null;
+  return `${v4[0]}.${v4[1]}.${v4[2]}.${v4[3]}`;
+}
+
 function parseIpv4(ip: string): Uint8Array | null {
   // Manual parser: avoid allocations and regex overhead in this hot path.
   //
@@ -29,6 +35,18 @@ function parseIpv4(ip: string): Uint8Array | null {
   // Node can successfully resolve as numeric addresses.
   const ipLen = ip.length;
   if (ipLen === 0) return null;
+
+  // Some platforms accept dotted-quad IPv4 literals with a single trailing dot,
+  // but interpret them as *decimal* only (no inet_aton-style octal/hex parsing).
+  // Example: "010.0.0.1." -> "10.0.0.1".
+  if (ip.charCodeAt(ipLen - 1) === 0x2e /* '.' */) {
+    if (ipLen < 2) return null;
+    if (ip.charCodeAt(ipLen - 2) === 0x2e /* '.' */) return null;
+
+    const bytes = new Uint8Array(4);
+    if (!tryParseIpv4DottedQuadDecimal(ip.slice(0, -1), bytes)) return null;
+    return bytes;
+  }
 
   let dots = 0;
   for (let i = 0; i < ipLen; i += 1) {
