@@ -140,8 +140,11 @@ mod tests {
     use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionOut};
     use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
+    const EXTERNAL_HUB_ROOT_PORT: usize = aero_machine::Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize;
+    const EXTERNAL_HUB_PORT_COUNT: u8 = aero_machine::Machine::UHCI_EXTERNAL_HUB_PORT_COUNT;
+
     fn is_external_hub_attached(ctrl: &mut EhciController) -> bool {
-        let Some(dev) = ctrl.hub_mut().port_device(0) else {
+        let Some(dev) = ctrl.hub_mut().port_device(EXTERNAL_HUB_ROOT_PORT) else {
             return false;
         };
         let model_any = dev.model() as &dyn core::any::Any;
@@ -152,7 +155,10 @@ mod tests {
     fn webusb_reserved_port_does_not_clobber_external_hub() {
         let mut ctrl = EhciController::new();
         ctrl.hub_mut()
-            .attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(16)))
+            .attach_at_path(
+                &[EXTERNAL_HUB_ROOT_PORT as u8],
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            )
             .unwrap();
         assert!(is_external_hub_attached(&mut ctrl));
 
@@ -165,7 +171,10 @@ mod tests {
     fn disconnect_scans_topology_without_detaching_unrelated_devices() {
         let mut ctrl = EhciController::new();
         ctrl.hub_mut()
-            .attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(16)))
+            .attach_at_path(
+                &[EXTERNAL_HUB_ROOT_PORT as u8],
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            )
             .unwrap();
         assert!(is_external_hub_attached(&mut ctrl));
 
@@ -188,7 +197,10 @@ mod tests {
     fn connect_moves_legacy_webusb_device_to_reserved_root_port() {
         let mut ctrl = EhciController::new();
         ctrl.hub_mut()
-            .attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(16)))
+            .attach_at_path(
+                &[EXTERNAL_HUB_ROOT_PORT as u8],
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            )
             .unwrap();
         assert!(is_external_hub_attached(&mut ctrl));
 
@@ -307,7 +319,10 @@ mod tests {
     fn restore_style_handle_clearing_prefers_restored_webusb_state_over_stale_handle() {
         let mut ctrl = EhciController::new();
         ctrl.hub_mut()
-            .attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(16)))
+            .attach_at_path(
+                &[EXTERNAL_HUB_ROOT_PORT as u8],
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            )
             .unwrap();
 
         // Simulate a snapshot-restored WebUSB device that already has some internal monotonic
