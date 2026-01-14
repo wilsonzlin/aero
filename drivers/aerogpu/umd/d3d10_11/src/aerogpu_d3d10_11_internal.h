@@ -67,25 +67,29 @@ inline void ResetObject(T* obj) {
   new (obj) T();
 }
 
-inline void LogModulePathOnce() {
+inline void LogModulePathOnce() noexcept {
 #if defined(_WIN32)
   // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
   // correct UMD bitness was loaded (System32 vs SysWOW64).
-  static std::once_flag once;
-  std::call_once(once, [] {
-    HMODULE module = NULL;
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCSTR>(&LogModulePathOnce),
-                           &module)) {
-      char path[MAX_PATH] = {};
-      if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
-        OutputDebugStringA("aerogpu-d3d10_11: module_path=");
-        OutputDebugStringA(path);
-        OutputDebugStringA("\n");
+  // Best-effort: avoid letting `std::call_once` failures break device creation.
+  try {
+    static std::once_flag once;
+    std::call_once(once, [] {
+      HMODULE module = NULL;
+      if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                 GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                             reinterpret_cast<LPCSTR>(&LogModulePathOnce),
+                             &module)) {
+        char path[MAX_PATH] = {};
+        if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+          OutputDebugStringA("aerogpu-d3d10_11: module_path=");
+          OutputDebugStringA(path);
+          OutputDebugStringA("\n");
+        }
       }
-    }
-  });
+    });
+  } catch (...) {
+  }
 #endif
 }
 
@@ -1520,12 +1524,16 @@ inline aerogpu_handle_t allocate_rng_fallback_handle() {
   }
 }
 
-inline void log_global_handle_fallback_once() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    OutputDebugStringA(
-        "aerogpu-d3d10_11: GlobalHandleCounter mapping unavailable; using RNG fallback\n");
-  });
+inline void log_global_handle_fallback_once() noexcept {
+  // Best-effort: handle allocation should keep working even if logging fails.
+  try {
+    static std::once_flag once;
+    std::call_once(once, [] {
+      OutputDebugStringA(
+          "aerogpu-d3d10_11: GlobalHandleCounter mapping unavailable; using RNG fallback\n");
+    });
+  } catch (...) {
+  }
 }
 
 } // namespace detail
