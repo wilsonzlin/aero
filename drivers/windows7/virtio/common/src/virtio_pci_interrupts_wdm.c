@@ -200,6 +200,21 @@ NTSTATUS VirtioPciWdmInterruptConnect(
 
         Interrupts->u.Message.DpcInFlight = 0;
 
+        /*
+         * Mark the structure as initialized for the message ISR before calling
+         * IoConnectInterruptEx.
+         *
+         * On real systems, an MSI/MSI-X interrupt can arrive on another CPU
+         * immediately after (or even while) IoConnectInterruptEx establishes the
+         * connection. If we defer setting Mode/Initialized until after the call
+         * returns, the ISR could reject a legitimate interrupt as "not ours".
+         *
+         * The fields required by the ISR (Mode, MessageDpcs, MessageCount) are
+         * already set up at this point.
+         */
+        Interrupts->Mode = VirtioPciWdmInterruptModeMessage;
+        Interrupts->Initialized = TRUE;
+
         RtlZeroMemory(&params, sizeof(params));
         params.Version = CONNECT_MESSAGE_BASED;
         params.MessageBased.PhysicalDeviceObject = PhysicalDeviceObject;
@@ -222,8 +237,6 @@ NTSTATUS VirtioPciWdmInterruptConnect(
 
         Interrupts->u.Message.ConnectionContext = params.MessageBased.ConnectionContext;
         Interrupts->u.Message.MessageInfo = params.MessageBased.MessageInfo;
-        Interrupts->Mode = VirtioPciWdmInterruptModeMessage;
-        Interrupts->Initialized = TRUE;
         return STATUS_SUCCESS;
     }
 }

@@ -69,6 +69,28 @@ static VOID ke_insert_queue_dpc_hook(_Inout_ PKDPC Dpc,
     ctx->call_count++;
 }
 
+typedef struct io_connect_interrupt_ex_hook_ctx {
+    ULONG message_id_to_trigger;
+    int call_count;
+} io_connect_interrupt_ex_hook_ctx_t;
+
+static VOID io_connect_interrupt_ex_hook_trigger_message(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameters, _In_opt_ PVOID Context)
+{
+    io_connect_interrupt_ex_hook_ctx_t* ctx = (io_connect_interrupt_ex_hook_ctx_t*)Context;
+    assert(ctx != NULL);
+    assert(Parameters != NULL);
+    assert(Parameters->Version == CONNECT_MESSAGE_BASED);
+    assert(Parameters->MessageBased.MessageInfo != NULL);
+    assert(ctx->message_id_to_trigger < Parameters->MessageBased.MessageInfo->MessageCount);
+    ctx->call_count++;
+
+    /*
+     * Simulate an interrupt arriving immediately after IoConnectInterruptEx
+     * establishes the connection, but before the driver's connect helper returns.
+     */
+    assert(WdkTestTriggerMessageInterrupt(Parameters->MessageBased.MessageInfo, ctx->message_id_to_trigger) != FALSE);
+}
+
 static VOID evt_config(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts, _In_opt_ PVOID Cookie)
 {
     interrupts_test_ctx_t* ctx = (interrupts_test_ctx_t*)Cookie;
@@ -735,6 +757,49 @@ static void test_message_isr_returns_false_for_out_of_range_message_id(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_interrupt_during_connect_is_handled(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    io_connect_interrupt_ex_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(2); /* msg0=config, msg1=queue0 */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    hook_ctx.message_id_to_trigger = 1;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptExHook(io_connect_interrupt_ex_hook_trigger_message, &hook_ctx);
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+
+    /* Hook must have fired exactly once and queued a DPC for message 1. */
+    assert(hook_ctx.call_count == 1);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+    assert(intr.u.Message.IsrCount == 1);
+    assert(intr.u.Message.DpcInFlight == 1);
+    assert(intr.u.Message.MessageDpcs[1].Inserted != FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    WdkTestClearIoConnectInterruptExHook();
+
+    /* Now run the queued DPC and verify dispatch. */
+    ctx.expected = &intr;
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[1]) != FALSE);
+    assert(ctx.queue_calls == 1);
+    assert(ctx.last_queue_index == 0);
+    assert(ctx.config_calls == 0);
+    assert(intr.u.Message.DpcInFlight == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_message_isr_increments_dpc_inflight_before_queueing_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -805,6 +870,7 @@ int main(void)
     test_message_route_can_enable_all_on_vector0_fallback();
     test_message_default_mapping_multivector_message0_is_config_only();
     test_message_isr_returns_false_for_out_of_range_message_id();
+    test_message_interrupt_during_connect_is_handled();
     test_message_isr_increments_dpc_inflight_before_queueing_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");

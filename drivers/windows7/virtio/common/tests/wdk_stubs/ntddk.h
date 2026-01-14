@@ -557,6 +557,19 @@ VOID WdkTestAutoCompleteDpcInFlightAfterDelayCalls(_Inout_ volatile LONG* DpcInF
 VOID WdkTestClearAutoCompleteDpcInFlight(VOID);
 
 /*
+ * Test-only hook invoked from IoConnectInterruptEx(CONNECT_MESSAGE_BASED) after
+ * the stub has created the interrupt objects and filled:
+ *   - Parameters->MessageBased.MessageInfo
+ *   - Parameters->MessageBased.ConnectionContext
+ *
+ * This lets tests simulate an interrupt arriving before the driver's connect
+ * helper returns (a real-world race on SMP systems).
+ */
+typedef VOID (*WDK_TEST_IO_CONNECT_INTERRUPT_EX_HOOK)(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameters, _In_opt_ PVOID Context);
+VOID WdkTestSetIoConnectInterruptExHook(_In_opt_ WDK_TEST_IO_CONNECT_INTERRUPT_EX_HOOK Hook, _In_opt_ PVOID Context);
+VOID WdkTestClearIoConnectInterruptExHook(VOID);
+
+/*
  * Test-only hook invoked on every KeInsertQueueDpc() call.
  *
  * This lets tests validate ordering expectations (e.g. DpcInFlight is incremented

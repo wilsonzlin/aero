@@ -41,6 +41,9 @@ static ULONG g_ke_remove_queue_dpc_fail_count = 0;
 static volatile LONG* g_test_auto_complete_dpc_inflight_ptr = NULL;
 static ULONG g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
 
+static WDK_TEST_IO_CONNECT_INTERRUPT_EX_HOOK g_test_io_connect_interrupt_ex_hook = NULL;
+static PVOID g_test_io_connect_interrupt_ex_hook_ctx = NULL;
+
 static WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK g_test_ke_insert_queue_dpc_hook = NULL;
 static PVOID g_test_ke_insert_queue_dpc_hook_ctx = NULL;
 
@@ -281,6 +284,10 @@ NTSTATUS IoConnectInterruptEx(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameter
     Parameters->MessageBased.MessageInfo = info;
     Parameters->MessageBased.ConnectionContext = connection;
 
+    if (g_test_io_connect_interrupt_ex_hook != NULL) {
+        g_test_io_connect_interrupt_ex_hook(Parameters, g_test_io_connect_interrupt_ex_hook_ctx);
+    }
+
     return STATUS_SUCCESS;
 }
 
@@ -401,6 +408,18 @@ VOID WdkTestClearAutoCompleteDpcInFlight(VOID)
 {
     g_test_auto_complete_dpc_inflight_ptr = NULL;
     g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
+}
+
+VOID WdkTestSetIoConnectInterruptExHook(_In_opt_ WDK_TEST_IO_CONNECT_INTERRUPT_EX_HOOK Hook, _In_opt_ PVOID Context)
+{
+    g_test_io_connect_interrupt_ex_hook = Hook;
+    g_test_io_connect_interrupt_ex_hook_ctx = Context;
+}
+
+VOID WdkTestClearIoConnectInterruptExHook(VOID)
+{
+    g_test_io_connect_interrupt_ex_hook = NULL;
+    g_test_io_connect_interrupt_ex_hook_ctx = NULL;
 }
 
 VOID WdkTestSetKeInsertQueueDpcHook(_In_opt_ WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK Hook, _In_opt_ PVOID Context)
