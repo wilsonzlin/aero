@@ -98,13 +98,12 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     stop_marker.set_cycle(false);
     stop_marker.write_to(&mut mem, transfer_ring + 2 * TRB_LEN as u64);
 
-    // Start the controller so transfer ring processing is enabled.
+    // Start the controller so transfer ring processing is enabled. Transfer execution is gated on
+    // USBCMD.RUN (matching real xHCI controllers).
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Doorbell the endpoint and execute one transfer. Since another TRB is ready, the controller
     // keeps the endpoint active without requiring another doorbell.
-    // Transfer execution is gated on USBCMD.RUN (matching real xHCI controllers).
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     xhci.ring_doorbell(slot_id, endpoint_id);
     let work0 = xhci.step_1ms(&mut mem);
     assert_eq!(work0.doorbells_serviced, 1);
