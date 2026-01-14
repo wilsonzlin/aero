@@ -532,6 +532,15 @@ async function spawnRelayServer(extraEnv = {}) {
          MAX_SIGNALING_MESSAGES_PER_SECOND: "",
          UDP_WS_IDLE_TIMEOUT: "",
          UDP_WS_PING_INTERVAL: "",
+         // Clear WebRTC ICE/network env vars that can break localhost connectivity
+         // when a developer shell carries production NAT/listen settings.
+         WEBRTC_NAT_1TO1_IPS: "",
+         WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE: "",
+         WEBRTC_UDP_LISTEN_IP: "",
+         WEBRTC_UDP_PORT_MIN: "",
+         WEBRTC_UDP_PORT_MAX: "",
+         WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES: "",
+         WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES: "",
          // Let the Playwright-served page (random localhost port) talk to the relay.
          ALLOWED_ORIGINS: "*",
          // Keep /webrtc/ice stable even when no STUN/TURN is configured.
