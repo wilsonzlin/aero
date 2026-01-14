@@ -1147,6 +1147,110 @@ fn tier2_shl32_updates_sf_observed_by_js() {
 }
 
 #[test]
+fn tier2_shl16_count_1_sets_of_observed_by_jo() {
+    // 66 mov ax, 0x8000
+    // 66 shl ax, 1
+    // jo +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
+        0x66, 0xD1, 0xE0, // shl ax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl32_count_1_sets_of_observed_by_jo() {
+    // mov eax, 0x8000_0000
+    // shl eax, 1
+    // jo +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
+        0xD1, 0xE0, // shl eax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr16_count_1_sets_of_from_old_msb_observed_by_jo() {
+    // 66 mov ax, 0x8000
+    // 66 shr ax, 1
+    // jo +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
+        0x66, 0xD1, 0xE8, // shr ax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr32_count_1_sets_of_from_old_msb_observed_by_jo() {
+    // mov eax, 0x8000_0000
+    // shr eax, 1
+    // jo +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
+        0xD1, 0xE8, // shr eax, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shl_high8_updates_cf_observed_by_jc() {
     // mov ah, 0x81
     // shl ah, 1
