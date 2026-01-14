@@ -4634,7 +4634,7 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
                                                 const D3D11DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                                 D3D11DDI_HGEOMETRYSHADER hShader,
                                                 D3D11DDI_HRTGEOMETRYSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate) {
+  if (!pDesc || !hShader.pDrvPrivate || !pDesc->pShaderCode || pDesc->ShaderCodeSize == 0) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
