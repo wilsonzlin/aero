@@ -230,7 +230,9 @@ export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | 
       if (entries > 1_000_000) return null;
       // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any other keys
       // as corrupt so we can invalidate and rebuild the cache directory.
-      if (!/^\d+$/.test(key)) return null;
+      // Keys are written using `String(chunkIndex)` ("0", "1", ...). Reject non-canonical numeric
+      // encodings (e.g. "01") so corrupt metadata doesn't create duplicate indices.
+      if (!/^(0|[1-9]\d*)$/.test(key)) return null;
       const idx = Number(key);
       if (!Number.isSafeInteger(idx) || idx < 0 || idx >= maxChunkIndex) return null;
       const value = lastAccess[key];

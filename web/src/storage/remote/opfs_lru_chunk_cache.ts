@@ -168,7 +168,10 @@ function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1
     //
     // This intentionally rejects keys like "__proto__" (prototype pollution hazard) and other
     // non-numeric keys that can break eviction accounting.
-    if (!/^\d+$/.test(key)) return null;
+    // Keys are written using `String(chunkIndex)`, which yields a canonical base-10 integer string
+    // ("0", "1", ...). Reject non-canonical numeric encodings (e.g. "01") so corrupt indices don't
+    // create duplicate entries for the same on-disk chunk.
+    if (!/^(0|[1-9]\d*)$/.test(key)) return null;
     const idx = Number(key);
     if (!Number.isSafeInteger(idx) || idx < 0) return null;
 

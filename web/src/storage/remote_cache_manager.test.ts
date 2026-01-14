@@ -285,6 +285,24 @@ describe("RemoteCacheManager", () => {
     expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
   });
 
+  it("rejects meta.json files with non-canonical numeric chunkLastAccess keys", () => {
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      accessCounter: 0,
+      // Leading zeros are not a canonical `String(chunkIndex)` encoding.
+      chunkLastAccess: { "01": 1 },
+      cachedRanges: [],
+    };
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
   it("aborts meta.json writes on error", async () => {
     let aborted = false;
 

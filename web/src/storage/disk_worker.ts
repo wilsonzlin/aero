@@ -246,7 +246,9 @@ async function opfsReadLruChunkCacheBytes(
                 if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
                 // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any
                 // other keys as a corrupt index and fall back to scanning chunk files.
-                if (!/^\d+$/.test(key)) {
+                // `OpfsLruChunkCache` writes chunk keys using `String(chunkIndex)` ("0", "1", ...).
+                // Treat other encodings (e.g. "01") as corrupt so we can fall back to scanning.
+                if (!/^(0|[1-9]\d*)$/.test(key)) {
                   throw new Error("index.json contains non-numeric chunk keys");
                 }
                 const idx = Number(key);
@@ -330,7 +332,9 @@ async function opfsReadLruChunkCacheIndexStats(
       if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
       // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any other keys
       // as a corrupt index so callers can fall back to scanning on-disk chunk files.
-      if (!/^\d+$/.test(key)) return null;
+      // `OpfsLruChunkCache` writes chunk keys using `String(chunkIndex)` ("0", "1", ...). Treat
+      // other encodings (e.g. "01") as corrupt.
+      if (!/^(0|[1-9]\d*)$/.test(key)) return null;
       const idx = Number(key);
       if (!Number.isSafeInteger(idx) || idx < 0) return null;
       const meta = obj[key];

@@ -113,6 +113,52 @@ describe("OpfsLruChunkCache", () => {
     expect(stats.chunkCount).toBe(1);
   });
 
+  it("treats index.json files with non-canonical numeric chunk keys as corrupt and rebuilds from disk", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+
+    const aeroDir = await root.getDirectoryHandle("aero", { create: true });
+    const disksDir = await aeroDir.getDirectoryHandle("disks", { create: true });
+    const remoteCacheDir = await disksDir.getDirectoryHandle("remote-cache", { create: true });
+    const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: true });
+    const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: true });
+
+    // Write two chunks on disk.
+    {
+      const h0 = await chunksDir.getFileHandle("0.bin", { create: true });
+      const w0 = await h0.createWritable({ keepExistingData: false });
+      await w0.write(new Uint8Array([1, 2, 3, 4]));
+      await w0.close();
+      const h1 = await chunksDir.getFileHandle("1.bin", { create: true });
+      const w1 = await h1.createWritable({ keepExistingData: false });
+      await w1.write(new Uint8Array([5, 6, 7, 8]));
+      await w1.close();
+    }
+
+    // Corrupt index.json: uses a leading-zero key ("01") which is not a canonical `String(index)`
+    // encoding and can otherwise create duplicate metadata entries.
+    const index = {
+      version: 1,
+      chunkSize: 4,
+      accessCounter: 2,
+      chunks: {
+        "0": { byteLength: 4, lastAccess: 1 },
+        "01": { byteLength: 4, lastAccess: 2 },
+      },
+    };
+    const indexHandle = await cacheDir.getFileHandle("index.json", { create: true });
+    const indexWritable = await indexHandle.createWritable({ keepExistingData: false });
+    await indexWritable.write(JSON.stringify(index));
+    await indexWritable.close();
+
+    const cache = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+    await expect(cache.getChunkIndices()).resolves.toEqual([0, 1]);
+    await expect(cache.getChunk(0, 4)).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+    await expect(cache.getChunk(1, 4)).resolves.toEqual(new Uint8Array([5, 6, 7, 8]));
+  });
+
   it("respects maxBytes by evicting older entries", async () => {
     const root = new MemoryDirectoryHandle("root");
     restoreOpfs = installMemoryOpfs(root).restore;
