@@ -278,13 +278,13 @@ impl AeroGpuPciDevice {
         // `tick` has early-return paths (no vblank yet); update IRQ after polling completions.
         self.update_irq_level();
 
-        // Complete any pending ring reset DMA work (head update + fence page) if bus mastering is
-        // enabled.
+        // Complete any pending ring reset DMA work (head update + fence page).
+        // If bus mastering is disabled, defer this until DMA is permitted.
         if self.ring_reset_pending_dma {
             if dma_enabled {
                 self.reset_ring_dma(mem);
+                self.ring_reset_pending_dma = false;
             }
-            self.ring_reset_pending_dma = false;
         }
 
         // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
