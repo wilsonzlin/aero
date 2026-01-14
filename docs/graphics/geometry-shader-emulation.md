@@ -150,6 +150,7 @@ Test pointers:
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
 - Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
   (and `*_primitive_id.rs`, `*_vertex_pulling.rs`, etc)
 - GS translator unit tests (standalone): `crates/aero-d3d11/tests/gs_translate.rs`
