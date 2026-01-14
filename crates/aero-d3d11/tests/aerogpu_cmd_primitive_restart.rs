@@ -47,12 +47,14 @@ struct Vertex {
     color: [f32; 4],
 }
 
-fn build_stream(
+fn build_stream_with_index_params(
     vb_bytes: &[u8],
     ib_bytes: &[u8],
     topology: AerogpuPrimitiveTopology,
     index_format: u32,
     index_count: u32,
+    index_buffer_offset_bytes: u64,
+    first_index: u32,
 ) -> Vec<u8> {
     const VB: u32 = 1;
     const IB: u32 = 2;
@@ -237,7 +239,10 @@ fn build_stream(
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetIndexBuffer as u32);
     stream.extend_from_slice(&IB.to_le_bytes());
     stream.extend_from_slice(&index_format.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+    let offset_u32: u32 = index_buffer_offset_bytes
+        .try_into()
+        .expect("index_buffer_offset_bytes must fit in u32");
+    stream.extend_from_slice(&offset_u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
     end_cmd(&mut stream, start);
 
@@ -245,12 +250,30 @@ fn build_stream(
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DrawIndexed as u32);
     stream.extend_from_slice(&index_count.to_le_bytes()); // index_count
     stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
-    stream.extend_from_slice(&0u32.to_le_bytes()); // first_index
+    stream.extend_from_slice(&first_index.to_le_bytes()); // first_index
     stream.extend_from_slice(&0i32.to_le_bytes()); // base_vertex
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
     end_cmd(&mut stream, start);
 
     finish_stream(stream)
+}
+
+fn build_stream(
+    vb_bytes: &[u8],
+    ib_bytes: &[u8],
+    topology: AerogpuPrimitiveTopology,
+    index_format: u32,
+    index_count: u32,
+) -> Vec<u8> {
+    build_stream_with_index_params(
+        vb_bytes,
+        ib_bytes,
+        topology,
+        index_format,
+        index_count,
+        0,
+        0,
+    )
 }
 
 fn build_stream_two_ib_two_draws(
@@ -883,6 +906,78 @@ fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip() {
             AerogpuPrimitiveTopology::TriangleStrip,
             1,
             indices.len() as u32,
+        );
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        assert_restart_gap(&pixels, WIDTH, HEIGHT);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u32() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+        const WIDTH: u32 = 64;
+        const HEIGHT: u32 = 64;
+        const RT: u32 = 3;
+
+        // Reuse the existing restart-gap geometry from `aerogpu_cmd_enables_primitive_restart_for_triangle_strip`.
+        let vertices = [
+            // Left triangle.
+            Vertex {
+                pos: [-1.0, -1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [-1.0, 1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [-0.2, 0.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            // Right triangle.
+            Vertex {
+                pos: [0.2, -1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [1.0, 1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            Vertex {
+                pos: [1.0, -1.0, 0.0],
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+        ];
+        let vb_bytes = bytemuck::bytes_of(&vertices);
+
+        // Index buffer includes padding at the start. The draw call must apply:
+        // - IASetIndexBuffer.offset_bytes=8 (skip 2 u32s), and
+        // - DrawIndexed.first_index=1
+        // so that the executor sees exactly `[0, 1, 2, CUT, 3, 4, 5]`.
+        let indices: [u32; 10] = [10, 11, 12, 0, 1, 2, 0xFFFF_FFFF, 3, 4, 5];
+        let ib_bytes = bytemuck::bytes_of(&indices);
+
+        let stream = build_stream_with_index_params(
+            vb_bytes,
+            ib_bytes,
+            AerogpuPrimitiveTopology::TriangleStrip,
+            1,  // u32
+            7,  // index_count
+            8,  // index_buffer_offset_bytes
+            1,  // first_index
         );
 
         let mut guest_mem = VecGuestMemory::new(0);
