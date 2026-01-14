@@ -35,7 +35,7 @@ fn xhci_detach_at_path_clears_pending_endpoints() {
     ctrl.set_dcbaap(0x1000);
 
     let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(3, Box::new(DummyDevice::default()));
+    hub.attach(3, Box::new(DummyDevice));
     ctrl.attach_device(0, Box::new(hub));
 
     let enable = ctrl.enable_slot(&mut mem);
@@ -63,7 +63,7 @@ fn xhci_detach_at_path_clears_pending_endpoints() {
     ctrl.detach_at_path(&[0, 3]).expect("detach_at_path");
 
     // Reattach a new device at the same path and rebind the existing slot.
-    ctrl.attach_at_path(&[0, 3], Box::new(DummyDevice::default()))
+    ctrl.attach_at_path(&[0, 3], Box::new(DummyDevice))
         .expect("attach_at_path");
     let addr2 = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr2.completion_code, CommandCompletionCode::Success);
