@@ -5420,9 +5420,20 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   // Some newer headers expose depth-stencil view flags (read-only depth/stencil).
   // The current command stream has no way to encode this; reject if requested.
   __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Flags) {
-    if (pDesc->Flags != 0) {
+    uint32_t flags = 0;
+    bool have_flags = false;
+    using FlagsT = decltype(pDesc->Flags);
+    __if_exists(FlagsT::Value) {
+      flags = static_cast<uint32_t>(pDesc->Flags.Value);
+      have_flags = true;
+    }
+    __if_not_exists(FlagsT::Value) {
+      flags = static_cast<uint32_t>(pDesc->Flags);
+      have_flags = true;
+    }
+    if (have_flags && flags != 0) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV flags=0x%08X (unsupported)",
-                           static_cast<unsigned>(pDesc->Flags));
+                           static_cast<unsigned>(flags));
       return E_NOTIMPL;
     }
   }
