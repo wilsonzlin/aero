@@ -111,7 +111,7 @@ func TestStartupSecurityWarnings_UDPInboundFilterModeAny(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                 config.ModeProd,
+		Mode:                 "prod",
 		AuthMode:             config.AuthModeAPIKey,
 		APIKey:               "secret",
 		MaxSessions:          1,
@@ -143,7 +143,7 @@ func TestStartupSecurityWarnings_AuthModeNone(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:     config.ModeDev,
+		Mode:     "dev",
 		AuthMode: config.AuthModeNone,
 	}
 	destPolicy := &policy.DestinationPolicy{Preset: "prod", DefaultAllow: false, AllowPrivateNetworks: false}
@@ -172,7 +172,7 @@ func TestStartupSecurityWarnings_AllowedOriginsWildcard(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:           config.ModeDev,
+		Mode:           "dev",
 		AuthMode:       config.AuthModeAPIKey,
 		AllowedOrigins: []string{"*"},
 		APIKey:         "secret",
@@ -200,7 +200,7 @@ func TestStartupSecurityWarnings_DestinationPolicyPresetDev(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:        config.ModeProd,
+		Mode:        "prod",
 		AuthMode:    config.AuthModeAPIKey,
 		APIKey:      "secret",
 		MaxSessions: 1,
@@ -231,7 +231,7 @@ func TestStartupSecurityWarnings_AllowPrivateNetworksInProd(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:        config.ModeProd,
+		Mode:        "prod",
 		AuthMode:    config.AuthModeAPIKey,
 		APIKey:      "secret",
 		MaxSessions: 1,
@@ -263,7 +263,7 @@ func TestStartupSecurityWarnings_MaxSessionsUnlimitedInProd(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:        config.ModeProd,
+		Mode:        "prod",
 		AuthMode:    config.AuthModeAPIKey,
 		APIKey:      "secret",
 		MaxSessions: 0,
@@ -291,7 +291,7 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeJWT,
 		JWTSecret:                "secret",
 		MaxSessions:              1,
@@ -327,7 +327,7 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery_WarnsWhenL2Disabled(t *t
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeJWT,
 		JWTSecret:                "secret",
 		MaxSessions:              1,
@@ -363,7 +363,7 @@ func TestStartupSecurityWarnings_WebRTCDataChannelMaxMessageLarge(t *testing.T) 
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                             config.ModeProd,
+		Mode:                             "prod",
 		AuthMode:                         config.AuthModeAPIKey,
 		APIKey:                           "secret",
 		MaxSessions:                      1,
@@ -401,7 +401,7 @@ func TestStartupSecurityWarnings_WebRTCSCTPMaxReceiveBufferLarge(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                            config.ModeProd,
+		Mode:                            "prod",
 		AuthMode:                        config.AuthModeAPIKey,
 		APIKey:                          "secret",
 		MaxSessions:                     1,
@@ -439,7 +439,7 @@ func TestStartupSecurityWarnings_WebRTCSessionConnectTimeoutLarge(t *testing.T) 
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:                        config.ModeProd,
+		Mode:                        "prod",
 		AuthMode:                    config.AuthModeAPIKey,
 		APIKey:                      "secret",
 		MaxSessions:                 1,

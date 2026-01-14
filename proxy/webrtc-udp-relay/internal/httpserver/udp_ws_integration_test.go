@@ -117,7 +117,7 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:               "127.0.0.1:0",
 		ShutdownTimeout:          2 * time.Second,
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeNone,
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
@@ -199,7 +199,7 @@ func TestUDPWebSocket_APIKeyAuth(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:               "127.0.0.1:0",
 		ShutdownTimeout:          2 * time.Second,
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeAPIKey,
 		APIKey:                   "secret",
 		SignalingAuthTimeout:     200 * time.Millisecond,
@@ -277,7 +277,7 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:               "127.0.0.1:0",
 		ShutdownTimeout:          2 * time.Second,
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeJWT,
 		JWTSecret:                "secret",
 		SignalingAuthTimeout:     2 * time.Second,
@@ -358,7 +358,7 @@ func TestUDPWebSocket_ShutdownClosesConnections(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:               "127.0.0.1:0",
 		ShutdownTimeout:          250 * time.Millisecond,
-		Mode:                     config.ModeDev,
+		Mode:                     "dev",
 		AuthMode:                 config.AuthModeNone,
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,

@@ -80,7 +80,7 @@ func TestHealthzReadyzVersion(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 	}
 
@@ -141,7 +141,7 @@ func TestICEEndpointSchema(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.example.com:3478"}},
@@ -199,7 +199,7 @@ func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      nil,
 	}
@@ -238,7 +238,7 @@ func TestICEEndpoint_NoStoreHeaders_HEAD(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
@@ -291,7 +291,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeAPIKey,
 		APIKey:          "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
@@ -399,7 +399,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeJWT,
 		JWTSecret:       "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
@@ -589,7 +589,7 @@ func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 	}
 	cfg.TURNREST.SharedSecret = "shared-secret"
@@ -616,7 +616,7 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
@@ -649,7 +649,7 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
@@ -682,7 +682,7 @@ func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
@@ -715,7 +715,7 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AllowedOrigins:  []string{"https://app.example.com"},
 		AuthMode:        config.AuthModeNone,
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
@@ -759,7 +759,7 @@ func TestOriginMiddleware_Preflight(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
@@ -836,7 +836,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 	}
 
 	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
@@ -901,7 +901,7 @@ func TestRecoverMiddleware(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 	}
 
 	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
@@ -937,7 +937,7 @@ func TestRequestLoggerMiddleware_AllowsWebSocketHijack(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        config.AuthModeNone,
 	}
 

@@ -49,7 +49,7 @@ func logStartupSecurityWarnings(logger *slog.Logger, cfg config.Config, destPoli
 				"default_allow", destPolicy.DefaultAllow,
 				"mode", cfg.Mode,
 			)
-		} else if cfg.Mode == config.ModeProd && destPolicy.AllowPrivateNetworks {
+		} else if cfg.Mode == "prod" && destPolicy.AllowPrivateNetworks {
 			logger.Warn("startup security warning: ALLOW_PRIVATE_NETWORKS=true while --mode=prod",
 				"warning_code", "allow_private_networks_in_prod",
 				"destination_policy_preset", destPolicy.Preset,
@@ -60,7 +60,7 @@ func logStartupSecurityWarnings(logger *slog.Logger, cfg config.Config, destPoli
 		}
 	}
 
-	if cfg.Mode == config.ModeProd && cfg.MaxSessions <= 0 {
+	if cfg.Mode == "prod" && cfg.MaxSessions <= 0 {
 		logger.Warn("startup security warning: MAX_SESSIONS is unset/0 (unlimited) while --mode=prod",
 			"warning_code", "max_sessions_unlimited_in_prod",
 			"max_sessions", cfg.MaxSessions,

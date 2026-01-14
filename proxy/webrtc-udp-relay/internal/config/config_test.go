@@ -24,8 +24,8 @@ func TestDefaultsDev(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Mode != ModeDev {
-		t.Fatalf("mode=%q, want %q", cfg.Mode, ModeDev)
+	if cfg.Mode != modeDev {
+		t.Fatalf("mode=%q, want %q", cfg.Mode, modeDev)
 	}
 	if cfg.LogFormat != logFormatText {
 		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, logFormatText)
@@ -543,8 +543,8 @@ func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Mode != ModeProd {
-		t.Fatalf("mode=%q, want %q", cfg.Mode, ModeProd)
+	if cfg.Mode != modeProd {
+		t.Fatalf("mode=%q, want %q", cfg.Mode, modeProd)
 	}
 	if cfg.LogFormat != logFormatJSON {
 		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, logFormatJSON)

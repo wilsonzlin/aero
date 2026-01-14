@@ -209,7 +209,7 @@ func startTestRelayServer(t *testing.T, relayCfg relay.Config, destPolicy *polic
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	httpSrv := httpserver.New(cfg, log, "", "", nil)
@@ -251,7 +251,7 @@ func startTestRelayServerWithAuth(t *testing.T, relayCfg relay.Config, destPolic
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 		AuthMode:        authMode,
 		APIKey:          apiKey,
 	}

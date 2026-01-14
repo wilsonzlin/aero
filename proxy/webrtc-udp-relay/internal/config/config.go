@@ -86,12 +86,12 @@ const (
 	envVarTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
 	envVarTURNRESTRealm          = "TURN_REST_REALM"
 
-	defaultListenAddr                       = "127.0.0.1:8080"
-	defaultShutdown                         = 15 * time.Second
-	defaultICEGatherTimeout                 = 2 * time.Second
-	defaultWebRTCSessionConnectTimeout      = 30 * time.Second
-	defaultViolationWindow                  = 10 * time.Second
-	defaultMode                        Mode = ModeDev
+	defaultListenAddr                  = "127.0.0.1:8080"
+	defaultShutdown                    = 15 * time.Second
+	defaultICEGatherTimeout            = 2 * time.Second
+	defaultWebRTCSessionConnectTimeout = 30 * time.Second
+	defaultViolationWindow             = 10 * time.Second
+	defaultMode                        = modeDev
 	// defaultSessionPreallocTTL is a safety bound for POST /session to avoid
 	// permanently consuming session quota due to buggy or malicious callers.
 	// Must be non-zero to avoid unbounded session leaks by default.
@@ -180,11 +180,9 @@ const (
 // failures.
 const recommendedWebRTCUDPPortRangeSize = 100
 
-type Mode string
-
 const (
-	ModeDev  Mode = "dev"
-	ModeProd Mode = "prod"
+	modeDev  = "dev"
+	modeProd = "prod"
 )
 
 type logFormat string
@@ -251,7 +249,7 @@ type Config struct {
 	// WebRTCSessionConnectTimeout bounds how long a server-side PeerConnection may
 	// remain unconnected before being closed.
 	WebRTCSessionConnectTimeout time.Duration
-	Mode                        Mode
+	Mode                        string
 
 	// Signaling / WebSocket auth + hardening.
 	AuthMode  AuthMode
@@ -352,7 +350,7 @@ func Load(args []string) (Config, error) {
 
 func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	envMode, _ := lookup(envVarMode)
-	modeDefault := string(defaultMode)
+	modeDefault := defaultMode
 	if envMode != "" {
 		modeDefault = envMode
 	}
@@ -782,10 +780,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	if !envLogFormatSet && !setFlags["log-format"] {
-		logFormatStr = defaultLogFormatForMode(string(mode))
+		logFormatStr = defaultLogFormatForMode(mode)
 	}
 	if !envLogLevelSet && !setFlags["log-level"] {
-		logLevelStr = defaultLogLevelForMode(string(mode))
+		logLevelStr = defaultLogLevelForMode(mode)
 	}
 
 	logFormat, err := parseLogFormat(logFormatStr)
@@ -1210,7 +1208,7 @@ func envIntOrDefault(lookup func(string) (string, bool), key string, fallback in
 
 func defaultLogFormatForMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case string(ModeProd), "production":
+	case modeProd, "production":
 		return string(logFormatJSON)
 	default:
 		return string(logFormatText)
@@ -1219,19 +1217,19 @@ func defaultLogFormatForMode(mode string) string {
 
 func defaultLogLevelForMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case string(ModeProd), "production":
+	case modeProd, "production":
 		return "info"
 	default:
 		return "debug"
 	}
 }
 
-func parseMode(raw string) (Mode, error) {
+func parseMode(raw string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(ModeDev), "development":
-		return ModeDev, nil
-	case string(ModeProd), "production":
-		return ModeProd, nil
+	case modeDev, "development":
+		return modeDev, nil
+	case modeProd, "production":
+		return modeProd, nil
 	default:
 		return "", fmt.Errorf("invalid mode %q (expected dev or prod)", raw)
 	}

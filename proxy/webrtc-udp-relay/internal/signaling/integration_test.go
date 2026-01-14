@@ -48,7 +48,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	httpSrv := httpserver.New(cfg, log, "", "", nil)
@@ -233,7 +233,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
-		Mode:            config.ModeDev,
+		Mode:            "dev",
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	httpSrv := httpserver.New(cfg, log, "", "", nil)
