@@ -1295,6 +1295,48 @@ describe("runtime/coordinator", () => {
     });
   });
 
+  it("completes AeroGPU fences if posting submit_aerogpu to the GPU worker throws", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuWorker = cpuInfo.worker;
+    const gpuWorker = gpuInfo.worker;
+
+    // Bring GPU worker to READY so the coordinator attempts to post submits immediately.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+
+    cpuWorker.posted.length = 0;
+    gpuWorker.posted.length = 0;
+
+    // Simulate a transient postMessage failure (e.g. worker crash / structured clone error).
+    gpuWorker.postMessage = () => {
+      throw new Error("postMessage failed");
+    };
+
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 0,
+      signalFence: 42n,
+      cmdStream: new Uint8Array([1, 2, 3]).buffer,
+    });
+
+    // Coordinator should not strand the guest waiting on a fence completion.
+    expect(cpuWorker.posted).toContainEqual({
+      message: { kind: "aerogpu.complete_fence", fence: 42n },
+      transfer: undefined,
+    });
+
+    // Ensure we didn't leak an in-flight tracking entry.
+    expect(((coordinator as any).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
+    expect(((coordinator as any).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
+  });
+
   it("rejects pending net trace requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
