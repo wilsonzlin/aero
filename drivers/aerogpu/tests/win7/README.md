@@ -233,6 +233,10 @@ This writes (one pair per test) into `logs\`:
 
 `--log-dir` may be absolute or relative to `win7\bin\`.
 
+When `--json` is enabled, the suite runner also appends these per-test log file paths to the failing test’s `artifacts`
+array (in both the aggregated suite report and the per-test JSON output), so CI consumers can link failures to the
+captured stdout/stderr.
+
 ### Capturing driver status on failures (dbgctl)
 
 If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture:

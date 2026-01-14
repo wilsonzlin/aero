@@ -1271,7 +1271,7 @@ int main(int argc, char** argv) {
     aerogpu_test::TestReport fallback;
     fallback.test_name = test_name;
     fallback.adapter = suite_adapter;
-    std::vector<std::wstring> dbgctl_artifacts;
+    std::vector<std::wstring> runner_artifacts;
 
     if (!FileExistsW(exe_path)) {
       bool should_skip = false;
@@ -1337,7 +1337,16 @@ int main(int argc, char** argv) {
       fallback.status = "FAIL";
       fallback.exit_code = 1;
       fallback.failure = rr.err;
+      if (out_files_ptr) {
+        AppendArtifactIfExistsW(out_files.stdout_path, &runner_artifacts);
+        if (out_files.stderr_path != out_files.stdout_path) {
+          AppendArtifactIfExistsW(out_files.stderr_path, &runner_artifacts);
+        }
+      }
       if (emit_json) {
+        for (size_t j = 0; j < runner_artifacts.size(); ++j) {
+          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(runner_artifacts[j]));
+        }
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
@@ -1354,6 +1363,13 @@ int main(int argc, char** argv) {
       fallback.failure =
           aerogpu_test::FormatString("timed out after %lu ms", (unsigned long)per_test_timeout_ms);
 
+      if (out_files_ptr) {
+        AppendArtifactIfExistsW(out_files.stdout_path, &runner_artifacts);
+        if (out_files.stderr_path != out_files.stdout_path) {
+          AppendArtifactIfExistsW(out_files.stderr_path, &runner_artifacts);
+        }
+      }
+
       if (!dbgctl_path.empty()) {
         const std::wstring out_dir = !log_dir.empty() ? log_dir : (!report_dir.empty() ? report_dir : bin_dir);
         std::wstring snapshot_path;
@@ -1361,7 +1377,7 @@ int main(int argc, char** argv) {
         if (DumpDbgctlStatusSnapshotBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
-          AppendArtifactIfExistsW(snapshot_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(snapshot_path, &runner_artifacts);
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
@@ -1372,19 +1388,19 @@ int main(int argc, char** argv) {
         if (DumpDbgctlLastCmdDumpBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
-          AppendArtifactIfExistsW(cmd_log_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_log_path, &runner_artifacts);
           // Best-effort: collect expected output names. dbgctl may emit either:
           // - a single file at cmd_base_path (if only one descriptor is available), or
           // - multiple files derived from cmd_base_path (if multiple descriptors are available).
           static const uint32_t kDumpLastCmdCount = 4;
-          AppendArtifactIfExistsW(cmd_base_path, &dbgctl_artifacts);
-          AppendArtifactIfExistsW(cmd_base_path + L".txt", &dbgctl_artifacts);
-          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path, &runner_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".txt", &runner_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &runner_artifacts);
           for (uint32_t j = 0; j < kDumpLastCmdCount; ++j) {
             const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
-            AppendArtifactIfExistsW(indexed, &dbgctl_artifacts);
-            AppendArtifactIfExistsW(indexed + L".txt", &dbgctl_artifacts);
-            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed, &runner_artifacts);
+            AppendArtifactIfExistsW(indexed + L".txt", &runner_artifacts);
+            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &runner_artifacts);
           }
         } else if (!cmd_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
@@ -1392,8 +1408,8 @@ int main(int argc, char** argv) {
       }
 
       if (emit_json) {
-        for (size_t j = 0; j < dbgctl_artifacts.size(); ++j) {
-          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(dbgctl_artifacts[j]));
+        for (size_t j = 0; j < runner_artifacts.size(); ++j) {
+          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(runner_artifacts[j]));
         }
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
@@ -1404,6 +1420,12 @@ int main(int argc, char** argv) {
     if (rr.exit_code != 0) {
       failures++;
       aerogpu_test::PrintfStdout("FAIL: %s (exit_code=%lu)", test_name.c_str(), (unsigned long)rr.exit_code);
+      if (out_files_ptr) {
+        AppendArtifactIfExistsW(out_files.stdout_path, &runner_artifacts);
+        if (out_files.stderr_path != out_files.stdout_path) {
+          AppendArtifactIfExistsW(out_files.stderr_path, &runner_artifacts);
+        }
+      }
       if (!dbgctl_path.empty()) {
         const std::wstring out_dir = !log_dir.empty() ? log_dir : (!report_dir.empty() ? report_dir : bin_dir);
         std::wstring snapshot_path;
@@ -1411,7 +1433,7 @@ int main(int argc, char** argv) {
         if (DumpDbgctlStatusSnapshotBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
-          AppendArtifactIfExistsW(snapshot_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(snapshot_path, &runner_artifacts);
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
@@ -1422,16 +1444,16 @@ int main(int argc, char** argv) {
         if (DumpDbgctlLastCmdDumpBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
-          AppendArtifactIfExistsW(cmd_log_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_log_path, &runner_artifacts);
           static const uint32_t kDumpLastCmdCount = 4;
-          AppendArtifactIfExistsW(cmd_base_path, &dbgctl_artifacts);
-          AppendArtifactIfExistsW(cmd_base_path + L".txt", &dbgctl_artifacts);
-          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path, &runner_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".txt", &runner_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &runner_artifacts);
           for (uint32_t j = 0; j < kDumpLastCmdCount; ++j) {
             const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
-            AppendArtifactIfExistsW(indexed, &dbgctl_artifacts);
-            AppendArtifactIfExistsW(indexed + L".txt", &dbgctl_artifacts);
-            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed, &runner_artifacts);
+            AppendArtifactIfExistsW(indexed + L".txt", &runner_artifacts);
+            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &runner_artifacts);
           }
         } else if (!cmd_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
@@ -1462,10 +1484,10 @@ int main(int argc, char** argv) {
             obj_modified = true;
           }
         }
-        if (!dbgctl_artifacts.empty()) {
+        if (!runner_artifacts.empty()) {
           std::string inject_err;
-          if (!AppendArtifactsToTestReportJsonObject(&obj, dbgctl_artifacts, &inject_err)) {
-            aerogpu_test::PrintfStdout("INFO: %s: failed to inject dbgctl artifacts into JSON: %s",
+          if (!AppendArtifactsToTestReportJsonObject(&obj, runner_artifacts, &inject_err)) {
+            aerogpu_test::PrintfStdout("INFO: %s: failed to inject runner artifacts into JSON: %s",
                                        test_name.c_str(),
                                        inject_err.c_str());
           } else {
@@ -1492,8 +1514,8 @@ int main(int argc, char** argv) {
         fallback.failure = (rr.exit_code == 0)
                                ? std::string()
                                : aerogpu_test::FormatString("exit_code=%lu", (unsigned long)rr.exit_code);
-        for (size_t j = 0; j < dbgctl_artifacts.size(); ++j) {
-          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(dbgctl_artifacts[j]));
+        for (size_t j = 0; j < runner_artifacts.size(); ++j) {
+          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(runner_artifacts[j]));
         }
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
