@@ -51,6 +51,33 @@ describe("workers/io_disk_dma", () => {
     expect(Array.from(guest)).toEqual(Array.from(diskData.subarray(0, guest.byteLength)));
   });
 
+  it("reads unaligned ranges correctly while chunking", async () => {
+    const sectorSize = 512;
+    const diskData = new Uint8Array(sectorSize * 10);
+    for (let i = 0; i < diskData.length; i++) diskData[i] = (0x80 + i) & 0xff;
+
+    const { client, calls } = createMockClient(diskData, sectorSize);
+
+    const guest = new Uint8Array(2000);
+    const range = computeAlignedDiskIoRange(1n, guest.byteLength, sectorSize);
+    expect(range).toEqual({ lba: 0, byteLength: 2048, offset: 1 });
+
+    await diskReadIntoGuest({
+      client,
+      handle: 1,
+      range: range!,
+      sectorSize,
+      guestView: guest,
+      maxIoBytes: sectorSize * 2,
+    });
+
+    expect(calls).toEqual([
+      { op: "read", lba: 0, byteLength: 1024 },
+      { op: "read", lba: 2, byteLength: 1024 },
+    ]);
+    expect(Array.from(guest)).toEqual(Array.from(diskData.subarray(1, 1 + guest.byteLength)));
+  });
+
   it("chunks aligned reads via readInto() when guest memory is SharedArrayBuffer", async () => {
     const sectorSize = 512;
     const diskData = new Uint8Array(sectorSize * 5);
