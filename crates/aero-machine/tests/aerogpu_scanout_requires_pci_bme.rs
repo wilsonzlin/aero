@@ -111,7 +111,8 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Explicit disable releases WDDM scanout ownership and allows falling back to legacy text.
+    // Explicit scanout disable releases WDDM scanout ownership and returns presentation to the
+    // legacy BIOS source (text mode here).
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
