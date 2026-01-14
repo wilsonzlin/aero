@@ -5277,6 +5277,7 @@ def main() -> int:
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_net_large_host_marker(tail)
+        _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
@@ -6238,6 +6239,43 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
+
+
+def _emit_virtio_net_udp_dns_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker for the guest's UDP DNS smoke test.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+
+    Example guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|PASS|server=10.0.2.3|query=example.com|sent=40|recv=128|rcode=0
+
+    Example host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS|server=10.0.2.3|query=example.com|sent=40|recv=128|rcode=0
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|")
+    if marker_line is None:
+        return
+
+    parts = marker_line.split("|")
+    status = parts[3] if len(parts) >= 4 else "INFO"
+    if status not in ("PASS", "FAIL", "SKIP", "INFO"):
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+
+    out = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|{status}"]
+    for k in ("server", "query", "sent", "recv", "rcode"):
+        if k in fields:
+            out.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    # If the guest marker included a trailing reason token (no '='), preserve it for SKIP/FAIL.
+    if status in ("SKIP", "FAIL") and "reason" not in fields and len(parts) >= 5:
+        reason = parts[4].strip()
+        if reason and "=" not in reason:
+            out.append(f"reason={_sanitize_marker_value(reason)}")
+
+    print("|".join(out))
 
 
 def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
