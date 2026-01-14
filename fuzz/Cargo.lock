@@ -168,6 +168,7 @@ name = "aero-net-backend"
 version = "0.1.0"
 dependencies = [
  "aero-ipc",
+ "aero-l2-protocol",
 ]
 
 [[package]]
@@ -1323,7 +1324,6 @@ dependencies = [
  "aero-cpu-core",
  "aero-d3d11",
  "aero-d3d9",
- "aero-d3d11",
  "aero-devices",
  "aero-devices-storage",
  "aero-dxbc",
