@@ -1016,6 +1016,7 @@ impl Mmu {
         walk_res.map_err(TranslateFault::PageFault)
     }
 
+    #[inline]
     fn paging_mode(&self) -> PagingMode {
         if self.cr0 & CR0_PG == 0 {
             return PagingMode::Disabled;
@@ -1090,6 +1091,7 @@ impl Mmu {
         }
     }
 
+    #[inline]
     fn check_perms_from_tlb(
         &self,
         vaddr: u64,
@@ -1100,6 +1102,7 @@ impl Mmu {
         self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user)
     }
 
+    #[inline]
     fn check_perms(
         &self,
         vaddr: u64,
