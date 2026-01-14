@@ -75,27 +75,36 @@ function Read-InfText {
     return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
   }
 
-  # Heuristic for BOM-less UTF-16: ASCII INF text encoded in UTF-16 typically has ~50% NUL bytes.
-  # If we see a high NUL ratio, treat as UTF-16 and guess endianness by whether NULs are mostly in
-  # even (BE) or odd (LE) byte positions.
+  # Heuristic for BOM-less UTF-16:
+  # INF text encoded in UTF-16 will contain a high concentration of NUL bytes, typically biased to
+  # either even (UTF-16BE) or odd (UTF-16LE) byte offsets (especially when the file is mostly ASCII).
+  # Use this to detect UTF-16 without a BOM so this guardrail doesn't silently miss HWIDs.
   if (($bytes.Length % 2) -eq 0) {
     $nulCount = 0
     $nulEven = 0
     $nulOdd = 0
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
+    $sampleLen = [Math]::Min($bytes.Length, 4096)
+    if (($sampleLen % 2) -ne 0) { $sampleLen-- }
+    for ($i = 0; $i -lt $sampleLen; $i++) {
       if ($bytes[$i] -eq 0) {
         $nulCount++
         if (($i % 2) -eq 0) { $nulEven++ } else { $nulOdd++ }
       }
     }
-    $nulRatio = $nulCount / [double]$bytes.Length
+    if ($nulCount -gt 0 -and $sampleLen -gt 0) {
+      $nulRatio = $nulCount / [double]$sampleLen
 
-    # Threshold chosen to be comfortably below typical UTF-16LE/BE ASCII (0.5) while rejecting UTF-8/ANSI.
-    if ($nulRatio -ge 0.30) {
-      if ($nulOdd -ge $nulEven) {
-        return [System.Text.Encoding]::Unicode.GetString($bytes)
-      } else {
-        return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+      # Heuristic thresholds:
+      # - Typical UTF-16 ASCII-ish text is ~0.5 NUL ratio.
+      # - We accept a lower ratio (>= 0.10) if NULs are strongly biased to one byte parity.
+      $biasedLe = ($nulOdd -gt 0 -and $nulOdd -ge ($nulEven * 2))
+      $biasedBe = ($nulEven -gt 0 -and $nulEven -ge ($nulOdd * 2))
+      if ($nulRatio -ge 0.10 -and ($biasedLe -or $biasedBe)) {
+        if ($biasedLe) {
+          return [System.Text.Encoding]::Unicode.GetString($bytes)
+        } else {
+          return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+        }
       }
     }
   }
