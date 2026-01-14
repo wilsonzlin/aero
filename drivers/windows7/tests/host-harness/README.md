@@ -155,7 +155,7 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
 - Python:
   - `--require-virtio-net-msix`
   - `--require-virtio-blk-msix`
-  - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`)*
+  - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `--require-virtio-input-msix` *(requires a guest selftest binary that emits `virtio-input-msix` markers)*
 
 Notes:
@@ -210,6 +210,13 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -RequireVirtioBlkMsix `
   -TimeoutSeconds 600
 ```
+
+### virtio-snd MSI/MSI-X interrupt mode (guest-observed, optional)
+
+Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-snd interrupt mode/vectors:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`.
+
+When `--require-virtio-snd-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 ### virtio-input event delivery (QMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.

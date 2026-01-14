@@ -1606,8 +1606,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--require-virtio-snd-msix",
         action="store_true",
         help=(
-            "After drivers load, require that the virtio-snd PCI function has MSI-X enabled (checked via QMP/QEMU "
-            "introspection). This option requires --with-virtio-snd."
+            "Require virtio-snd to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
+            "and also requires the guest marker: "
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|... "
+            "(this option requires --with-virtio-snd)."
         ),
     )
     parser.add_argument(
@@ -3054,6 +3056,16 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if args.require_virtio_snd_msix:
+                            ok, reason = _require_virtio_snd_msix_marker(tail)
+                            if not ok:
+                                print(
+                                    f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
 
                         if bool(args.require_virtio_input_msix):
                             if virtio_input_msix_marker is None:
@@ -3716,6 +3728,16 @@ def main() -> int:
                                 if not ok:
                                     print(
                                         f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.require_virtio_snd_msix:
+                                ok, reason = _require_virtio_snd_msix_marker(tail)
+                                if not ok:
+                                    print(
+                                        f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -4687,6 +4709,31 @@ def _require_virtio_blk_msix_marker(tail: bytes) -> tuple[bool, str]:
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-blk-msix marker missing mode=... field"
+    if mode != "msix":
+        msgs = fields.get("messages", "?")
+        return False, f"mode={mode} (expected msix) messages={msgs}"
+    return True, "ok"
+
+
+def _require_virtio_snd_msix_marker(tail: bytes) -> tuple[bool, str]:
+    """
+    Return (ok, reason). `ok` is True iff the guest reported virtio-snd running in MSI-X mode
+    via the marker: AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|")
+    if marker_line is None:
+        return False, "missing virtio-snd-msix marker (guest selftest too old?)"
+
+    parts = marker_line.split("|")
+    if "FAIL" in parts:
+        return False, "virtio-snd-msix marker reported FAIL"
+    if "SKIP" in parts:
+        return False, "virtio-snd-msix marker reported SKIP"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    mode = fields.get("mode")
+    if mode is None:
+        return False, "virtio-snd-msix marker missing mode=... field"
     if mode != "msix":
         msgs = fields.get("messages", "?")
         return False, f"mode={mode} (expected msix) messages={msgs}"

@@ -1177,11 +1177,14 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
   EmitVirtioIrqMarkerForDevInst(log, dev_name, matches.front().devinst);
 }
 
-static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log) {
+static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log,
+                                                                   DWORD* out_err = nullptr) {
   // Best-effort: the virtio-snd diag device is optional and may not exist on older drivers/images.
+  if (out_err) *out_err = ERROR_SUCCESS;
   HANDLE h = CreateFileW(L"\\\\.\\aero_virtio_snd_diag", GENERIC_READ,
                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
+    if (out_err) *out_err = GetLastError();
     return std::nullopt;
   }
 
@@ -1194,16 +1197,19 @@ static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log) 
 
   if (!ok) {
     log.Logf("virtio-snd: diag query failed err=%lu", static_cast<unsigned long>(err));
+    if (out_err) *out_err = err;
     return std::nullopt;
   }
   if (bytes < sizeof(info)) {
     log.Logf("virtio-snd: diag query returned too few bytes=%lu expected=%zu", static_cast<unsigned long>(bytes),
              sizeof(info));
+    if (out_err) *out_err = ERROR_INVALID_DATA;
     return std::nullopt;
   }
   if (info.Version != AERO_VIRTIO_SND_DIAG_VERSION) {
     log.Logf("virtio-snd: diag version mismatch got=%lu expected=%u", static_cast<unsigned long>(info.Version),
              static_cast<unsigned>(AERO_VIRTIO_SND_DIAG_VERSION));
+    if (out_err) *out_err = ERROR_INVALID_DATA;
     return std::nullopt;
   }
   return info;
@@ -1273,6 +1279,47 @@ static std::string IrqFieldsForTestMarker(const std::vector<std::wstring>& hwid_
     return "|irq_mode=none|irq_message_count=0|irq_reason=device_missing";
   }
   return IrqFieldsForTestMarkerFromDevInst(matches.front().devinst);
+}
+
+static void EmitVirtioSndMsixMarker(Logger& log, DEVINST devinst) {
+  if (devinst == 0) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=device_missing");
+    return;
+  }
+
+  DWORD err = ERROR_SUCCESS;
+  const auto info_opt = QueryVirtioSndDiag(log, &err);
+  if (!info_opt.has_value()) {
+    const unsigned long e = static_cast<unsigned long>(err);
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=diag_unavailable|err=%lu", e);
+    return;
+  }
+
+  const auto& info = *info_opt;
+  const char* mode = "unknown";
+  if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_INTX) {
+    mode = "intx";
+  } else if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_MSIX) {
+    mode = "msix";
+  } else if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_NONE) {
+    mode = "none";
+  }
+
+  auto vec_to_string = [](USHORT v) -> std::string {
+    if (v == kVirtioPciMsiNoVector) return "none";
+    return std::to_string(static_cast<unsigned int>(v));
+  };
+
+  log.Logf(
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=%s|messages=%lu|config_vector=%s|queue0_vector=%s|"
+      "queue1_vector=%s|queue2_vector=%s|queue3_vector=%s|interrupts=%lu|dpcs=%lu|drain0=%lu|drain1=%lu|drain2=%lu|"
+      "drain3=%lu",
+      mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
+      vec_to_string(info.QueueMsixVector[0]).c_str(), vec_to_string(info.QueueMsixVector[1]).c_str(),
+      vec_to_string(info.QueueMsixVector[2]).c_str(), vec_to_string(info.QueueMsixVector[3]).c_str(),
+      static_cast<unsigned long>(info.InterruptCount), static_cast<unsigned long>(info.DpcCount),
+      static_cast<unsigned long>(info.QueueDrainCount[0]), static_cast<unsigned long>(info.QueueDrainCount[1]),
+      static_cast<unsigned long>(info.QueueDrainCount[2]), static_cast<unsigned long>(info.QueueDrainCount[3]));
 }
 
 struct VirtioSndPciIdInfo {
@@ -9315,10 +9362,13 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!snd_pci.empty() && snd_pci.front().devinst != 0) {
     // Prefer driver-provided diag info (vector mapping + counters); fall back to resource inspection.
+    EmitVirtioSndMsixMarker(log, snd_pci.front().devinst);
     EmitVirtioSndIrqMarker(log, snd_pci.front().devinst);
   } else if (opt.allow_virtio_snd_transitional) {
+    EmitVirtioSndMsixMarker(log, 0);
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"});
   } else {
+    EmitVirtioSndMsixMarker(log, 0);
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
   }
 
