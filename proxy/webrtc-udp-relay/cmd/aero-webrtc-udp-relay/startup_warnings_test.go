@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
@@ -358,14 +359,134 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery_WarnsWhenL2Disabled(t *t
 	}
 }
 
-func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
+func TestStartupSecurityWarnings_WebRTCDataChannelMaxMessageLarge(t *testing.T) {
 	logger, records := newRecordingLogger()
 
 	cfg := config.Config{
-		Mode:        config.ModeProd,
-		AuthMode:    config.AuthModeAPIKey,
-		APIKey:      "secret",
-		MaxSessions: 10,
+		Mode:                             config.ModeProd,
+		AuthMode:                         config.AuthModeAPIKey,
+		APIKey:                           "secret",
+		MaxSessions:                      1,
+		WebRTCDataChannelMaxMessageBytes: 2 * 1024 * 1024, // 2MiB
+		// Avoid query-string auth forwarding mode (which would produce its own warning).
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "webrtc_datachannel_max_message_large" {
+			found = true
+			got, ok := r.attrs["webrtc_datachannel_max_message_bytes"].(int64)
+			if !ok {
+				t.Fatalf("webrtc_datachannel_max_message_bytes=%#v, want int64", r.attrs["webrtc_datachannel_max_message_bytes"])
+			}
+			if got != 2*1024*1024 {
+				t.Fatalf("webrtc_datachannel_max_message_bytes=%d, want %d", got, 2*1024*1024)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=webrtc_datachannel_max_message_large, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_WebRTCSCTPMaxReceiveBufferLarge(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:                            config.ModeProd,
+		AuthMode:                        config.AuthModeAPIKey,
+		APIKey:                          "secret",
+		MaxSessions:                     1,
+		WebRTCSCTPMaxReceiveBufferBytes: 16 * 1024 * 1024, // 16MiB
+		// Avoid query-string auth forwarding mode (which would produce its own warning).
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "webrtc_sctp_max_receive_buffer_large" {
+			found = true
+			got, ok := r.attrs["webrtc_sctp_max_receive_buffer_bytes"].(int64)
+			if !ok {
+				t.Fatalf("webrtc_sctp_max_receive_buffer_bytes=%#v, want int64", r.attrs["webrtc_sctp_max_receive_buffer_bytes"])
+			}
+			if got != 16*1024*1024 {
+				t.Fatalf("webrtc_sctp_max_receive_buffer_bytes=%d, want %d", got, 16*1024*1024)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=webrtc_sctp_max_receive_buffer_large, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_WebRTCSessionConnectTimeoutLarge(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:                        config.ModeProd,
+		AuthMode:                    config.AuthModeAPIKey,
+		APIKey:                      "secret",
+		MaxSessions:                 1,
+		WebRTCSessionConnectTimeout: 10 * time.Minute,
+		// Avoid query-string auth forwarding mode (which would produce its own warning).
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "webrtc_session_connect_timeout_large" {
+			found = true
+			if r.attrs["webrtc_session_connect_timeout"] != 10*time.Minute {
+				t.Fatalf("webrtc_session_connect_timeout=%#v, want %s", r.attrs["webrtc_session_connect_timeout"], (10 * time.Minute).String())
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=webrtc_session_connect_timeout_large, got %#v", records())
+	}
+}
+
+func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	// Mirror the typical runtime defaults for the WebRTC DoS hardening caps.
+	minDataChannelMax := config.DefaultL2MaxMessageBytes
+	if max := config.DefaultMaxDatagramPayloadBytes + 24; max > minDataChannelMax {
+		minDataChannelMax = max
+	}
+	webrtcDataChannelMaxMessageBytes := minDataChannelMax + config.DefaultWebRTCDataChannelMaxMessageOverheadBytes
+
+	cfg := config.Config{
+		Mode:                             config.ModeProd,
+		AuthMode:                         config.AuthModeAPIKey,
+		APIKey:                           "secret",
+		MaxSessions:                      10,
+		WebRTCSessionConnectTimeout:      config.DefaultWebRTCSessionConnectTimeout,
+		WebRTCDataChannelMaxMessageBytes: webrtcDataChannelMaxMessageBytes,
+		WebRTCSCTPMaxReceiveBufferBytes:  config.DefaultWebRTCSCTPMaxReceiveBufferBytes,
 		// Explicitly avoid query-string auth forwarding mode (the default in config.Load)
 		// so we assert a truly "safe" config produces no warnings.
 		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,

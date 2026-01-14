@@ -22,10 +22,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
-func makeTestJWT(secret, sid string) string {
-	return makeTestJWTWithIat(secret, sid, time.Now().Unix())
-}
-
 func makeTestJWTWithIat(secret, sid string, iat int64) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	payloadJSON, _ := json.Marshal(struct {
