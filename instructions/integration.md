@@ -447,8 +447,9 @@ implements scanout0 + vblank register storage (including vblank counters/timesta
 semantics) and a host presentation path that can read/present the guest-programmed scanout
 framebuffer via `Machine::display_present`.
 
-The full AeroGPU **command execution** model (AEROGPU_CMD processing, resource management, GPU worker
-backends, etc) still lives in `crates/emulator` and is not yet wired into the canonical machine.
+The full AeroGPU **command execution** model is not wired into the canonical machine yet. Shared
+device-side building blocks (ring executor + backend boundary) live in `crates/aero-devices-gpu`,
+with a legacy/sandbox integration surface still in `crates/emulator`.
 
 When AeroGPU owns the boot display path, firmware derives the VBE mode-info linear framebuffer base
 from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x40000`, aka `VBE_LFB_OFFSET` in `aero_machine`).
