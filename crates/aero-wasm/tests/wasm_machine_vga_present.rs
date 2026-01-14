@@ -257,6 +257,124 @@ fn boot_sector_vbe_64x64x32_red_pixel() -> [u8; 512] {
     sector
 }
 
+fn boot_sector_vbe_64x64x8_palette_red_pixel() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // Program a tiny Bochs VBE mode (64x64x8) and write palette index 1 to the first pixel via the
+    // banked window at 0xA0000. Then program the VGA DAC palette entry 1 to pure red.
+
+    // cld (ensure stosb increments DI)
+    sector[i] = 0xFC;
+    i += 1;
+
+    // mov dx, 0x01CE  (Bochs VBE index port)
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xCE, 0x01]);
+    i += 3;
+
+    let write_vbe_reg = |sector: &mut [u8; 512], i: &mut usize, index: u16, value: u16| {
+        // dx is expected to be 0x01CE here.
+        // mov ax, index
+        sector[*i..*i + 3].copy_from_slice(&[0xB8, (index & 0xFF) as u8, (index >> 8) as u8]);
+        *i += 3;
+        // out dx, ax
+        sector[*i] = 0xEF;
+        *i += 1;
+        // inc dx (0x01CF)
+        sector[*i] = 0x42;
+        *i += 1;
+        // mov ax, value
+        sector[*i..*i + 3].copy_from_slice(&[0xB8, (value & 0xFF) as u8, (value >> 8) as u8]);
+        *i += 3;
+        // out dx, ax
+        sector[*i] = 0xEF;
+        *i += 1;
+        // dec dx (back to 0x01CE)
+        sector[*i] = 0x4A;
+        *i += 1;
+    };
+
+    // XRES = 64
+    write_vbe_reg(&mut sector, &mut i, 0x0001, 64);
+    // YRES = 64
+    write_vbe_reg(&mut sector, &mut i, 0x0002, 64);
+    // BPP = 8 (palettized)
+    write_vbe_reg(&mut sector, &mut i, 0x0003, 8);
+    // ENABLE = 0x0041 (enable + LFB)
+    write_vbe_reg(&mut sector, &mut i, 0x0004, 0x0041);
+    // BANK = 0
+    write_vbe_reg(&mut sector, &mut i, 0x0005, 0);
+
+    // Program VGA DAC palette entry 1 to pure red (6-bit DAC values).
+    // mov dx, 0x3C6 (PEL mask)
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xC6, 0x03]);
+    i += 3;
+    // mov al, 0xFF
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0xFF]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov dx, 0x3C8 (DAC write index)
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xC8, 0x03]);
+    i += 3;
+    // mov al, 0x01
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x01]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+
+    // inc dx (0x3C9 - DAC data port)
+    sector[i] = 0x42;
+    i += 1;
+    // mov al, 63  ; R
+    sector[i..i + 2].copy_from_slice(&[0xB0, 63]);
+    i += 2;
+    // out dx, al
+    sector[i] = 0xEE;
+    i += 1;
+    // xor al, al  ; G=0, B=0
+    sector[i..i + 2].copy_from_slice(&[0x30, 0xC0]);
+    i += 2;
+    // out dx, al (G)
+    sector[i] = 0xEE;
+    i += 1;
+    // out dx, al (B)
+    sector[i] = 0xEE;
+    i += 1;
+
+    // mov ax, 0xA000
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x00, 0xA0]);
+    i += 3;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+    // xor di, di
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xFF]);
+    i += 2;
+
+    // Write palette index 1 at (0,0).
+    // mov al, 0x01
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x01]);
+    i += 2;
+    // stosb
+    sector[i] = 0xAA;
+    i += 1;
+
+    // cli; hlt; jmp $
+    sector[i] = 0xFA;
+    i += 1;
+    sector[i] = 0xF4;
+    i += 1;
+    sector[i..i + 2].copy_from_slice(&[0xEB, 0xFE]);
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -442,6 +560,61 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     assert_eq!(disp_len, 64 * 64 * 4);
     let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
     assert_eq!(&disp_fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+}
+
+#[wasm_bindgen_test]
+fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
+    #[cfg(feature = "wasm-threaded")]
+    ensure_runtime_reserved_floor();
+
+    let boot = boot_sector_vbe_64x64x8_palette_red_pixel();
+    // `Machine::new` defaults to AeroGPU; this test specifically targets the legacy VGA/VBE path.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config");
+    machine
+        .set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+
+    let scanout_ptr = machine.scanout_state_ptr();
+    machine.reset();
+
+    let mut halted = false;
+    for _ in 0..10_000 {
+        let exit = machine.run_slice(50_000);
+        match exit.kind() {
+            RunExitKind::Completed => {}
+            RunExitKind::Halted => {
+                halted = true;
+                break;
+            }
+            other => panic!("unexpected RunExitKind: {other:?}"),
+        }
+    }
+    assert!(halted, "guest never reached HLT");
+
+    if scanout_ptr != 0 {
+        let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+        assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+        assert_ne!(
+            snap.generation, 0,
+            "expected reset to publish a legacy scanout update"
+        );
+    }
+
+    machine.vga_present();
+    assert_eq!(machine.vga_width(), 64);
+    assert_eq!(machine.vga_height(), 64);
+    assert_eq!(machine.vga_stride_bytes(), 64 * 4);
+
+    let ptr = machine.vga_framebuffer_ptr();
+    let len = machine.vga_framebuffer_len_bytes();
+    assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
+    assert_eq!(len, 64 * 64 * 4);
+
+    // Safety: ptr/len is a view into the module's own linear memory.
+    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    assert_eq!(&fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }
 
 #[wasm_bindgen_test]

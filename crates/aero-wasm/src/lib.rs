@@ -5027,6 +5027,16 @@ impl Machine {
         let vbe_enabled = (regs.enable & 0x0001) != 0;
         let lfb_enabled = (regs.enable & 0x0040) != 0;
         if vbe_enabled && lfb_enabled {
+            // `ScanoutState` currently only supports a single representable scanout pixel format:
+            // B8G8R8X8 (32bpp).
+            //
+            // If the guest programs a palettized VBE mode (e.g. 8bpp), fall back to the implicit
+            // legacy scanout path rather than publishing a misleading B8G8R8X8 descriptor.
+            if regs.bpp != 32 {
+                self.publish_legacy_text_scanout();
+                return;
+            }
+
             let width = regs.xres as u32;
             let height = regs.yres as u32;
             if width == 0 || height == 0 {
@@ -5040,7 +5050,7 @@ impl Machine {
             } else {
                 width
             };
-            let bytes_per_pixel = ((regs.bpp as u32).saturating_add(7)) / 8;
+            let bytes_per_pixel = 4u32;
             let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel);
 
             let base = u64::from(vga.borrow().lfb_base());
