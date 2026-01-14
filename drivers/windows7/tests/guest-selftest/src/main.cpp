@@ -9851,6 +9851,41 @@ int wmain(int argc, wchar_t** argv) {
       log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=ioctl_payload_v1_or_truncated|returned_len=%zu",
                blk_miniport_info->returned_len);
     }
+
+    /*
+     * Dedicated marker for miniport recovery/reset/abort counters (used by the host harness).
+     *
+     * Keep this separate from the virtio-blk perf marker so its stable fields/order remain
+     * unchanged for throughput regression tracking.
+     */
+    {
+      constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
+      constexpr size_t kCapEventsEnd = offsetof(AEROVBLK_QUERY_INFO, CapacityChangeEvents) + sizeof(ULONG);
+      if (blk_miniport_info->returned_len >= kCountersEnd) {
+        const auto& info = blk_miniport_info->info;
+        std::string counter_marker = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO";
+        counter_marker += "|abort=";
+        counter_marker += std::to_string(static_cast<unsigned long>(info.AbortSrbCount));
+        counter_marker += "|reset_device=";
+        counter_marker += std::to_string(static_cast<unsigned long>(info.ResetDeviceSrbCount));
+        counter_marker += "|reset_bus=";
+        counter_marker += std::to_string(static_cast<unsigned long>(info.ResetBusSrbCount));
+        counter_marker += "|pnp=";
+        counter_marker += std::to_string(static_cast<unsigned long>(info.PnpSrbCount));
+        counter_marker += "|ioctl_reset=";
+        counter_marker += std::to_string(static_cast<unsigned long>(info.IoctlResetCount));
+        counter_marker += "|capacity_change_events=";
+        if (blk_miniport_info->returned_len >= kCapEventsEnd) {
+          counter_marker += std::to_string(static_cast<unsigned long>(info.CapacityChangeEvents));
+        } else {
+          counter_marker += "not_supported";
+        }
+        log.LogLine(counter_marker);
+      } else {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=%zu",
+                 blk_miniport_info->returned_len);
+      }
+    }
   } else {
     marker += "|irq_mode=";
     marker += irq_mode;

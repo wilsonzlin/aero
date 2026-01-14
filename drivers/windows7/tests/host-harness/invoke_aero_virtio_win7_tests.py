@@ -5938,6 +5938,7 @@ def main() -> int:
         _emit_virtio_blk_msix_host_marker(tail)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
+        _emit_virtio_blk_counters_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
@@ -7766,6 +7767,51 @@ def _emit_virtio_blk_io_host_marker(tail: bytes, *, blk_test_line: Optional[str]
     for k in ("write_ok", "write_bytes", "write_mbps", "flush_ok", "read_ok", "read_bytes", "read_mbps"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_counters_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's virtio-blk recovery/reset/abort counters.
+
+    Guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=...|returned_len=...
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    status = toks[3] if len(toks) >= 4 else "INFO"
+    if status not in ("PASS", "FAIL", "SKIP", "INFO"):
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|{status}"]
+
+    ordered = (
+        "abort",
+        "reset_device",
+        "reset_bus",
+        "pnp",
+        "ioctl_reset",
+        "capacity_change_events",
+        "reason",
+        "returned_len",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
 
 
