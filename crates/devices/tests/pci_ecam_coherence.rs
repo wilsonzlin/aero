@@ -134,3 +134,66 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
     let bar0_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32;
     assert_eq!(bar0_ecam, 0xE000_0000);
 }
+
+#[test]
+fn pci_bar_probe_via_ecam_dword_write_sets_probe_flag() {
+    struct Stub {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for Stub {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let cfg_ports = Rc::new(RefCell::new(PciConfigPorts::new()));
+    let bdf = PciBdf::new(0, 2, 0);
+
+    cfg_ports.borrow_mut().bus_mut().add_device(
+        bdf,
+        Box::new(Stub {
+            cfg: {
+                let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+                cfg.set_bar_definition(
+                    0,
+                    PciBarDefinition::Mmio32 {
+                        size: BAR0_SIZE,
+                        prefetchable: false,
+                    },
+                );
+                cfg
+            },
+        }),
+    );
+
+    let ecam_base = 0xC000_0000;
+    let ecam_cfg = PciEcamConfig {
+        segment: 0,
+        start_bus: 0,
+        end_bus: 0,
+    };
+
+    let mut mem = Bus::new(0);
+    mem.map_mmio(
+        ecam_base,
+        ecam_cfg.window_size_bytes(),
+        Box::new(PciEcamMmio::new(cfg_ports.clone(), ecam_cfg)),
+    );
+
+    // Perform the BAR size probe via a single 32-bit ECAM store.
+    mem.write(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4, 0xFFFF_FFFF);
+
+    // The guest-visible value is not sufficient to distinguish probe mode from a programmed base
+    // of all ones (after masking to BAR alignment). Assert that the internal probe flag is set.
+    let probe = {
+        let mut ports = cfg_ports.borrow_mut();
+        let cfg = ports.bus_mut().device_config(bdf).expect("device missing");
+        cfg.snapshot_state().bar_probe[0]
+    };
+    assert!(probe, "ECAM dword write should enter BAR probe mode");
+}

@@ -122,6 +122,53 @@ impl memory::MmioHandler for PciEcamMmio {
             return;
         }
 
+        // Fast-path aligned 32-bit (and 64-bit as two 32-bit) accesses in the first 256 bytes so
+        // BAR size probing semantics work correctly.
+        //
+        // The canonical PCI model treats BAR probing as a single aligned 32-bit write of
+        // `0xFFFF_FFFF` to the BAR register. If we always split ECAM writes into bytes, then a
+        // guest performing a 32-bit ECAM store would incorrectly be interpreted as four byte
+        // writes, and BAR probing would not be observed (especially for BARs whose probe mask
+        // equals the maximum aligned base).
+        //
+        // We still fall back to byte splitting for accesses that:
+        // - are non-standard sizes,
+        // - partially spill beyond the first 256 bytes (extended config), or
+        // - overlap the BAR window in a way that crosses a DWORD boundary (e.g. 16-bit at 0x13).
+        if matches!(size, 1 | 2 | 4 | 8) {
+            if let Some((bdf, reg)) = self.decode(offset) {
+                let reg_usize = usize::from(reg);
+                let end = reg_usize.saturating_add(size);
+                if reg < 0x100 && end <= 0x100 {
+                    let overlaps_bar = reg_usize < 0x28 && end > 0x10;
+                    let crosses_dword = (reg_usize & 0x3) + size > 4;
+
+                    if size == 8 {
+                        // Treat a QWORD store as two DWORD stores when it is DWORD-aligned.
+                        if (reg_usize & 0x3) == 0 {
+                            let mut ports = self.cfg_ports.borrow_mut();
+                            let bus = ports.bus_mut();
+                            bus.write_config(bdf, reg, 4, value as u32);
+                            bus.write_config(bdf, reg + 4, 4, (value >> 32) as u32);
+                            return;
+                        }
+                    } else if !(overlaps_bar && crosses_dword) {
+                        let mut ports = self.cfg_ports.borrow_mut();
+                        let bus = ports.bus_mut();
+                        match size {
+                            1 => bus.write_config(bdf, reg, 1, u32::from(value as u8)),
+                            2 => bus.write_config(bdf, reg, 2, u32::from(value as u16)),
+                            4 => bus.write_config(bdf, reg, 4, value as u32),
+                            _ => {}
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Slow path: byte-split to preserve partial updates near the 256-byte boundary and to
+        // emulate byte-enable semantics for unaligned/cross-dword accesses.
         let bytes = value.to_le_bytes();
         for (i, byte) in bytes.iter().copied().enumerate().take(size) {
             let Some(off) = offset.checked_add(i as u64) else {
