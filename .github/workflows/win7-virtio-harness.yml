@@ -199,22 +199,22 @@ on:
         default: false
         type: boolean
       require_no_blk_recovery:
-        description: Fail if virtio-blk recovery/reset/abort counters are non-zero (when available from guest markers)
+        description: Fail if virtio-blk recovery/reset/abort counters are non-zero (from virtio-blk per-test fields or virtio-blk-counters marker when available)
         required: false
         default: false
         type: boolean
       fail_on_blk_recovery:
-        description: Fail if virtio-blk-counters marker reports abort/reset_device/reset_bus activity (subset of require_no_blk_recovery)
+        description: Fail if virtio-blk counters report abort/reset_device/reset_bus activity (virtio-blk-counters marker when present; falls back to legacy *_srb fields)
         required: false
         default: false
         type: boolean
       require_no_blk_reset_recovery:
-        description: Fail if virtio-blk-reset-recovery marker reports reset_detected or hw_reset_bus activity (when available from guest markers)
+        description: Fail if virtio-blk reset-recovery counters report reset_detected or hw_reset_bus activity (virtio-blk-reset-recovery marker when present; falls back to legacy miniport diag)
         required: false
         default: false
         type: boolean
       fail_on_blk_reset_recovery:
-        description: Fail if virtio-blk-reset-recovery marker reports hw_reset_bus activity (subset of require_no_blk_reset_recovery)
+        description: Fail if virtio-blk reset-recovery counters report hw_reset_bus activity (virtio-blk-reset-recovery marker when present; falls back to legacy miniport diag)
         required: false
         default: false
         type: boolean
