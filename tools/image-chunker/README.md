@@ -195,6 +195,7 @@ After publishing, you can re-download and validate the published artifacts end-t
 - **Local directory**: `--manifest-file ./path/to/manifest.json` (expects `./path/to/chunks/*.bin`)
 - **HTTP/CDN**: `--manifest-url https://.../manifest.json` (fetches `chunks/*.bin` relative to the manifest URL)
   - Optional repeatable `--header "Name: value"` can be used for auth (cookies, bearer tokens, etc)
+  - Chunk and `meta.json` URLs are resolved relative to the manifest URL and preserve the manifest query string (useful for signed URLs)
 
 ### Example: verify a versioned prefix
 
@@ -369,6 +370,7 @@ curl -fSs "<presigned-url>"
 - `imageId` and `version`: identifiers for the image/version
 - `mimeType`: MIME type for chunk objects
 - `totalSize`: logical disk size in bytes (`VirtualDisk::capacity_bytes()`), which may differ from the on-disk container file size for sparse formats
+  - `totalSize` must be a multiple of 512 bytes (disk images are sector-addressed)
 - `chunkSize`: the chosen chunk size in bytes
 - `chunkCount`: total number of chunk objects
 - `chunkIndexWidth`: decimal zero-padding width (8)
