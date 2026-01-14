@@ -293,10 +293,17 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
     assert_eq!(fadt[92], DEFAULT_GPE0_BLK_LEN, "GPE0_BLK_LEN must be 0x08");
 
     // Offsets per ACPI 2.0+ FADT layout (see `acpi::structures::Fadt`).
+    const CENTURY_OFFSET: usize = 108;
     const FLAGS_OFFSET: usize = 112;
     const RESET_REG_OFFSET: usize = 116;
 
+    assert_eq!(
+        fadt[CENTURY_OFFSET], 0x32,
+        "Century register must point to CMOS index 0x32"
+    );
+
     let flags = u32::from_le_bytes(fadt[FLAGS_OFFSET..FLAGS_OFFSET + 4].try_into().unwrap());
+    assert_ne!(flags & (1 << 6), 0, "FIX_RTC flag must be set");
     assert_ne!(flags & (1 << 10), 0, "RESET_REG_SUP flag must be set");
 
     // ResetReg is a Generic Address Structure (GAS).

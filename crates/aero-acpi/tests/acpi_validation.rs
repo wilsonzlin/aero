@@ -1,6 +1,7 @@
 use aero_acpi::{
     AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory, DEFAULT_ACPI_ALIGNMENT,
-    DEFAULT_ACPI_NVS_SIZE,
+    DEFAULT_ACPI_NVS_SIZE, FADT_FLAG_FIX_RTC, FADT_FLAG_PWR_BUTTON, FADT_FLAG_RESET_REG_SUP,
+    FADT_FLAG_SLP_BUTTON,
 };
 use aero_pci_routing as pci_routing;
 
@@ -405,17 +406,20 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(fadt[52], cfg.acpi_enable_cmd);
     assert_eq!(fadt[53], cfg.acpi_disable_cmd);
 
+    // RTC century register.
+    //
+    // This must match the emulated RTC/CMOS device model (see `devices::rtc_cmos::REG_CENTURY`).
+    assert_eq!(fadt[108], 0x32, "FADT CENTURY must be set to CMOS index 0x32");
+
     // FADT flags should advertise the fixed-feature PWRBTN/SLPBTN events (PM1_STS/PM1_EN),
-    // matching the `AcpiPmIo` device model.
+    // matching the `AcpiPmIo` device model, along with FIX_RTC + RESET_REG_SUP.
     let flags = read_u32_le(fadt, 112);
-    const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4; // PWR_BUTTON
-    const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5; // SLP_BUTTON
-    const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10; // RESET_REG_SUP
-    let expected = FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON | FADT_FLAG_RESET_REG_SUP;
+    let expected =
+        FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON | FADT_FLAG_FIX_RTC | FADT_FLAG_RESET_REG_SUP;
     assert_eq!(
         flags & expected,
         expected,
-        "FADT Flags missing expected PWR/SLP/RESET bits (flags=0x{flags:08x})"
+        "FADT Flags missing expected PWR/SLP/FIX_RTC/RESET bits (flags=0x{flags:08x})"
     );
 
     // DSDT header + checksum.

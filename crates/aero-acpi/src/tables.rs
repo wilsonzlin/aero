@@ -14,6 +14,7 @@ pub const DEFAULT_ACPI_NVS_SIZE: u64 = 0x1000;
 // Bit positions are defined by the ACPI specification (FADT "Flags" field).
 pub const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4; // bit 4: PWR_BUTTON (fixed-feature power button)
 pub const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5; // bit 5: SLP_BUTTON (fixed-feature sleep button)
+pub const FADT_FLAG_FIX_RTC: u32 = 1 << 6; // bit 6: FIX_RTC (RTC is a fixed hardware feature)
 pub const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10; // bit 10: RESET_REG_SUP (ResetReg/ResetValue supported)
 
 /// Physical memory writing abstraction used by firmware to place tables in
@@ -566,13 +567,18 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.push(0); // DUTY_WIDTH
     out.push(0); // DAY_ALRM
     out.push(0); // MON_ALRM
-    out.push(0); // CENTURY
+    // Century byte stored in the emulated RTC/CMOS device model.
+    //
+    // Many PC firmware implementations (and QEMU) set this to 0x32 so ACPI OSes
+    // can read the full year without relying on heuristics.
+    out.push(0x32); // CENTURY (CMOS century register index)
     out.extend_from_slice(&(0x0003u16).to_le_bytes()); // IAPC_BOOT_ARCH (legacy devices + 8042)
     out.push(0); // reserved
 
     // Advertise fixed-feature power/sleep buttons so OSes (notably Windows 7)
     // use the PM1 event bits (`PWRBTN_STS` / `SLPBTN_STS`) as button input.
-    let flags = FADT_FLAG_RESET_REG_SUP | FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON;
+    let flags =
+        FADT_FLAG_RESET_REG_SUP | FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON | FADT_FLAG_FIX_RTC;
     out.extend_from_slice(&flags.to_le_bytes());
 
     // RESET_REG + RESET_VALUE (use standard PCI reset port 0xCF9).
