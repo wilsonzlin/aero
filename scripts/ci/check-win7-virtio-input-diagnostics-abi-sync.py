@@ -5,10 +5,12 @@ driver-visible diagnostics ABI.
 
 Why:
   - The virtio-input driver exposes a small set of private IOCTLs
-    (IOCTL_VIOINPUT_QUERY_COUNTERS / IOCTL_VIOINPUT_QUERY_STATE) whose output
+    (IOCTL_VIOINPUT_QUERY_COUNTERS / IOCTL_VIOINPUT_QUERY_STATE /
+    IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO) whose output
     structs are user-mode visible:
       - VIOINPUT_COUNTERS
       - VIOINPUT_STATE
+      - VIOINPUT_INTERRUPT_INFO
   - `drivers/windows7/virtio-input/tools/hidtest/main.c` intentionally duplicates
     these struct layouts so it can be built with non-WDK toolchains (SDK or
     MinGW-w64) without including the driver's WDK-only headers.
@@ -18,8 +20,8 @@ This script prevents accidental drift between:
   - the user-mode tooling copies: `drivers/windows7/virtio-input/tools/hidtest/main.c`
 
 It checks:
-  - VIOINPUT_COUNTERS_VERSION / VIOINPUT_STATE_VERSION match
-  - field order/name lists for VIOINPUT_COUNTERS and VIOINPUT_STATE match
+  - VIOINPUT_COUNTERS_VERSION / VIOINPUT_STATE_VERSION / VIOINPUT_INTERRUPT_INFO_VERSION match
+  - field order/name lists for VIOINPUT_COUNTERS / VIOINPUT_STATE / VIOINPUT_INTERRUPT_INFO match
 
 Note: it intentionally ignores qualifiers like `volatile`, and does not attempt
 to validate packing/alignment beyond field order/name equivalence (the structs
@@ -89,7 +91,11 @@ def extract_struct_body(text: str, typedef_regex: str, *, file: Path, what: str)
 
 
 FIELD_RE = re.compile(
-    r"(?m)^\s*(?:volatile\s+)?(?:ULONG|LONG|UINT64|ULONGLONG)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+    r"(?m)^\s*(?:volatile\s+)?"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\s+|\s*\*+)"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*(?:\[[^\]]*\])?\s*;"
 )
 
 
@@ -146,6 +152,14 @@ def main() -> int:
     if driver_state_version != tool_state_version:
         failures.append(f"VIOINPUT_STATE_VERSION mismatch: driver={driver_state_version} hidtest={tool_state_version}")
 
+    driver_interrupt_version = extract_define_int(driver_text, "VIOINPUT_INTERRUPT_INFO_VERSION", file=LOG_H)
+    tool_interrupt_version = extract_define_int(tool_text, "VIOINPUT_INTERRUPT_INFO_VERSION", file=HIDTEST_C)
+    if driver_interrupt_version != tool_interrupt_version:
+        failures.append(
+            "VIOINPUT_INTERRUPT_INFO_VERSION mismatch: "
+            f"driver={driver_interrupt_version} hidtest={tool_interrupt_version}"
+        )
+
     driver_counters_body = extract_struct_body(
         driver_text,
         r"\btypedef\s+struct\s+_VIOINPUT_COUNTERS\s*\{",
@@ -188,6 +202,27 @@ def main() -> int:
         label="VIOINPUT_STATE",
     )
 
+    driver_interrupt_body = extract_struct_body(
+        driver_text,
+        r"\btypedef\s+struct\s+_VIOINPUT_INTERRUPT_INFO\s*\{",
+        file=LOG_H,
+        what="typedef struct _VIOINPUT_INTERRUPT_INFO { ... }",
+    )
+    tool_interrupt_body = extract_struct_body(
+        tool_text,
+        r"\btypedef\s+struct\s+_VIOINPUT_INTERRUPT_INFO\s*\{",
+        file=HIDTEST_C,
+        what="typedef struct _VIOINPUT_INTERRUPT_INFO { ... } (hidtest)",
+    )
+
+    driver_interrupt_fields = extract_field_names(driver_interrupt_body)
+    tool_interrupt_fields = extract_field_names(tool_interrupt_body)
+    failures += compare_field_lists(
+        driver_fields=driver_interrupt_fields,
+        tool_fields=tool_interrupt_fields,
+        label="VIOINPUT_INTERRUPT_INFO",
+    )
+
     if failures:
         print("error: Win7 virtio-input diagnostics ABI is out of sync:\n", file=sys.stderr)
         for line in failures:
@@ -202,11 +237,10 @@ def main() -> int:
 
     print(
         "ok: Win7 virtio-input diagnostics ABI is in sync "
-        f"(counters v{driver_counters_version}, state v{driver_state_version})"
+        f"(counters v{driver_counters_version}, state v{driver_state_version}, interrupt v{driver_interrupt_version})"
     )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
