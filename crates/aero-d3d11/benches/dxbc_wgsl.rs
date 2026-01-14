@@ -17,6 +17,8 @@
 //! Note: Criterion's cargo integration also supports a fast "smoke test" mode
 //! (no timings) when the benchmark binary is executed without `--bench`. Using
 //! `cargo bench` as shown above will run the full benchmark measurements.
+//! (Avoid passing `--bench` yourself after `--`; Cargo already supplies it, and
+//! duplicating it can cause argument parsing errors.)
 //!
 //! Shader fixture blobs are loaded from `crates/aero-d3d11/tests/fixtures/*.dxbc`.
 
