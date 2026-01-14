@@ -498,7 +498,8 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
         - Do **not** install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time.
     - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`,
       `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`). That match is more specific than the generic fallback, so it wins when
-      it matches.
+      it matches. If the tablet INF is not installed, the generic fallback entry (if enabled via the alias INF) can also bind
+      to tablet devices (but will use the generic device name).
     - Sync policy note (if you need the legacy INF basename): `virtio-input.inf.disabled` is expected to match
       `aero_virtio_input.inf` from `[Version]` onward **excluding** the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`),
       and the leading banner/comments may differ. See `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.

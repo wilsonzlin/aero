@@ -257,7 +257,7 @@ Examples (illustrative) INF model entries:
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
 ; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
-  
+
 ; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
 ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 ; - Opt-in strict generic fallback (no SUBSYS) by adding the model line:

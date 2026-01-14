@@ -79,16 +79,16 @@ drivers/windows7/tests/
     - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches.
     - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
       - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
-      - In that case, `aero_virtio_input.inf` can still bind the tablet via its strict revision-gated generic fallback
-        match (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01` (expected for stock QEMU
-        `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+      - The canonical `aero_virtio_input.inf` is SUBSYS-only and will not match.
+      - In that case, you must either emulate/fix the subsystem IDs to the contract values, or enable/install the optional
+        `*.inf.disabled` INF under `drivers/windows7/virtio-input/inf/` to opt into a strict revision-gated generic fallback
+        match (`PCI\VEN_1AF4&DEV_1052&REV_01`).
         - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-        - When binding via the generic fallback entry, Device Manager will show the generic
-          **Aero VirtIO Input Device** name.
+        - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
       - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values so it binds to
         `aero_virtio_tablet.inf`.
-      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename compatibility alias
-        only; enabling it is **not** required for fallback binding.
+      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy compatibility and
+        provides the opt-in fallback binding entry. Enabling it **does** change HWID matching behavior.
       - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
         CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
         the `*.inf.disabled` file.

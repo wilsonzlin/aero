@@ -177,7 +177,8 @@ The canonical Windows 7 virtio-input driver source lives at:
 - `drivers/windows7/virtio-input/` (INF: `inf/aero_virtio_input.inf`, service: `aero_virtio_input`)
 
 The repo also carries an optional legacy alias INF (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
-for compatibility with older workflows/tools that still reference `virtio-input.inf`.
+for compatibility with older workflows/tools that still reference `virtio-input.inf`, and as an **opt-in** path to enable the
+strict generic fallback binding entry (`PCI\VEN_1AF4&DEV_1052&REV_01`).
 
 Policy:
 
