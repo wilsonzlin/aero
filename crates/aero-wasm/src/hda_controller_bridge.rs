@@ -736,7 +736,9 @@ mod tests {
 
         // Writes must also treat `addr+len` overflow as out-of-bounds and be ignored.
         mem.write_physical(u64::MAX - 1, &[0xCC; 8]);
-        assert_eq!(guest[0], 0xAB);
+        let mut check = [0u8; 1];
+        mem.read_physical(0, &mut check);
+        assert_eq!(check[0], 0xAB);
     }
 
     #[wasm_bindgen_test]
