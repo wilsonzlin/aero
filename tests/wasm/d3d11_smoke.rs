@@ -32,14 +32,12 @@ async fn new_runtime(test_name: &str) -> Option<D3D11Runtime> {
 // The Aero D3D11 translator uses a stage-scoped bind group scheme:
 //   @group(0) = VS, @group(1) = PS, @group(2) = CS.
 //
-// The `protocol_d3d11` command-stream runtime (`D3D11Runtime`) binds only bind group 0, so we
-// can't execute translator-produced compute WGSL (which uses `@group(2)`) through that path.
+// The `protocol_d3d11` command-stream runtime (`D3D11Runtime`) follows the same convention for
+// compute: resources are bound at `@group(2)`, with empty bind groups 0/1 to satisfy WebGPU's
+// requirement that pipeline layouts include all groups up to the maximum used index.
 //
-// Instead we use a minimal wgpu harness:
-// - Build an explicit pipeline layout containing empty groups 0/1.
-// - Bind resources at group 2.
-//
-// This avoids relying on any implicit group remapping.
+// For these smoke tests we use a minimal wgpu harness so the WGSL snippets can bind resources at
+// group 2 directly without coupling to any implicit command-stream binding behavior.
 
 async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
     let slice = buffer.slice(..);
