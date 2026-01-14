@@ -5,6 +5,12 @@ current **in-tree implementations and tests**, to reduce duplicate work.
 
 All file paths are repository-relative.
 
+**Test-running notes (agent environments):**
+- If you see Cargo stuck at `Blocking waiting for file lock on package cache`, retry with an isolated
+  Cargo home to avoid shared registry lock contention:
+  `AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ...`
+- On cold builds, some targets may need a longer timeout (e.g. `AERO_TIMEOUT=1200`).
+
 ---
 
 ## Task 40 — SM3 IR → WGSL generator + naga tests
