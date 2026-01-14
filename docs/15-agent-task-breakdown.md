@@ -108,17 +108,17 @@ pub trait CpuBus {
 ### Graphics Interface
 
 ```rust
+// `aero_gpu_vga::DisplayOutput` (implemented by `aero_gpu_vga::VgaDevice`).
 pub trait DisplayOutput {
     fn get_framebuffer(&self) -> &[u32];
     fn get_resolution(&self) -> (u32, u32);
     fn present(&mut self);
 }
-
-pub trait GpuCommandProcessor {
-    fn submit_commands(&mut self, commands: &[GpuCommand]);
-    fn flush(&mut self);
-}
 ```
+
+Host-side AeroGPU command parsing/state is implemented as a concrete type:
+
+- `aero_gpu::AeroGpuCommandProcessor` (see `crates/aero-gpu/src/command_processor.rs`)
 
 ---
 
