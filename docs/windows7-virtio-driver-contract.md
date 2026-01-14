@@ -1040,10 +1040,12 @@ Harness validation (non-normative, QEMU):
           `mode=msix` (end-to-end validation).
       - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
    - Guest selftest (optional hard requirement):
-     - virtio-blk: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
-       - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
-     - virtio-net: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
-       - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-RequireNetMsix`.
+      - virtio-blk: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+        - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
+      - virtio-net: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
+        - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-RequireNetMsix`.
+      - virtio-input: `--require-input-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+        - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-RequireInputMsix`.
 
 See:
 - `drivers/windows7/tests/README.md`
