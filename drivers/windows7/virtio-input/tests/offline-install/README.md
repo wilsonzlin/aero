@@ -7,16 +7,18 @@ test images where you want input working immediately).
 > Note: The in-tree Aero Win7 virtio-input INFs are **revision-gated** to the `AERO-W7-VIRTIO` v1 contract (`REV_01`).
 > Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
-> 
-> - Keyboard/mouse (`aero_virtio_input.inf`):
+>
+> - Keyboard/mouse (`aero_virtio_input.inf`; **SUBSYS-only**):
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (subsystem-qualified)
->   - strict generic fallback (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
-> - Optional legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
->   - Filename-only alias for workflows/tools that still reference `virtio-input.inf`.
->   - Expected to stay byte-for-byte identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward
->     (only the banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (they match the same HWIDs).
+> - Legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable (disabled by default).
+>   - This is a legacy filename alias for workflows/tools that reference `virtio-input.inf`.
+>   - It also adds an **opt-in** strict revision-gated generic fallback HWID: `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - The alias is allowed to differ from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`),
+>     but is expected to stay in sync elsewhere from the first section header (`[Version]`) onward
+>     (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+>   - Do **not** stage both keyboard/mouse INF filenames at once (`aero_virtio_input.inf` and `virtio-input.inf`): they match
+>     overlapping HWIDs and can confuse driver selection.
 
 The commands below assume you already have a **built driver package directory** containing:
 
