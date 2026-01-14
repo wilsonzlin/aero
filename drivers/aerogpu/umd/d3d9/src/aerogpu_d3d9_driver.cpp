@@ -3651,6 +3651,30 @@ inline D3DDDIVIEWPORTINFO viewport_effective_locked(Device* dev) {
   return vp;
 }
 
+inline int32_t d3d9_f32_to_i32_or(float v, int32_t fallback) {
+  if (!std::isfinite(v)) {
+    return fallback;
+  }
+  const double dv = static_cast<double>(v);
+  if (dv < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+      dv > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+    return fallback;
+  }
+  return static_cast<int32_t>(dv);
+}
+
+inline LONG d3d9_i64_to_long_clamp(int64_t v) {
+  const int64_t lo = static_cast<int64_t>(std::numeric_limits<LONG>::min());
+  const int64_t hi = static_cast<int64_t>(std::numeric_limits<LONG>::max());
+  if (v < lo) {
+    v = lo;
+  }
+  if (v > hi) {
+    v = hi;
+  }
+  return static_cast<LONG>(v);
+}
+
 // Effective scissor rect for GetScissorRect and state blocks:
 // - If the app explicitly set a rect, preserve it (even if empty).
 // - Otherwise, if the current rect is unset/empty, fall back to the effective
@@ -3671,15 +3695,15 @@ inline RECT scissor_rect_effective_locked(Device* dev) {
     return r;
   }
   const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
-  const int32_t x = static_cast<int32_t>(vp.X);
-  const int32_t y = static_cast<int32_t>(vp.Y);
-  const int32_t w = static_cast<int32_t>(vp.Width);
-  const int32_t h = static_cast<int32_t>(vp.Height);
+  const int32_t x = d3d9_f32_to_i32_or(vp.X, 0);
+  const int32_t y = d3d9_f32_to_i32_or(vp.Y, 0);
+  const int32_t w = d3d9_f32_to_i32_or(vp.Width, 0);
+  const int32_t h = d3d9_f32_to_i32_or(vp.Height, 0);
   if (w > 0 && h > 0) {
     r.left = static_cast<LONG>(x);
     r.top = static_cast<LONG>(y);
-    r.right = static_cast<LONG>(x + w);
-    r.bottom = static_cast<LONG>(y + h);
+    r.right = d3d9_i64_to_long_clamp(static_cast<int64_t>(x) + static_cast<int64_t>(w));
+    r.bottom = d3d9_i64_to_long_clamp(static_cast<int64_t>(y) + static_cast<int64_t>(h));
   }
   return r;
 }
@@ -3716,10 +3740,10 @@ inline void scissor_fixup_unset_rect_locked(Device* dev) {
   int32_t h = 0;
 
   // Prefer the current viewport.
-  const int32_t vx = static_cast<int32_t>(dev->viewport.X);
-  const int32_t vy = static_cast<int32_t>(dev->viewport.Y);
-  const int32_t vw = static_cast<int32_t>(dev->viewport.Width);
-  const int32_t vh = static_cast<int32_t>(dev->viewport.Height);
+  const int32_t vx = d3d9_f32_to_i32_or(dev->viewport.X, 0);
+  const int32_t vy = d3d9_f32_to_i32_or(dev->viewport.Y, 0);
+  const int32_t vw = d3d9_f32_to_i32_or(dev->viewport.Width, 0);
+  const int32_t vh = d3d9_f32_to_i32_or(dev->viewport.Height, 0);
   if (vw > 0 && vh > 0) {
     x = vx;
     y = vy;
@@ -3742,8 +3766,8 @@ inline void scissor_fixup_unset_rect_locked(Device* dev) {
   if (w > 0 && h > 0) {
     r.left = static_cast<LONG>(x);
     r.top = static_cast<LONG>(y);
-    r.right = static_cast<LONG>(x + w);
-    r.bottom = static_cast<LONG>(y + h);
+    r.right = d3d9_i64_to_long_clamp(static_cast<int64_t>(x) + static_cast<int64_t>(w));
+    r.bottom = d3d9_i64_to_long_clamp(static_cast<int64_t>(y) + static_cast<int64_t>(h));
   }
 }
 
@@ -13918,15 +13942,38 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  // Keep viewport state sane even if upstream code passes non-finite values.
+  // This avoids propagating NaNs/Infs into the command stream and prevents UB
+  // in code that converts viewport dimensions to integers (e.g. scissor fixups).
+  D3DDDIVIEWPORTINFO vp = *pViewport;
+  if (!std::isfinite(vp.X)) {
+    vp.X = 0.0f;
+  }
+  if (!std::isfinite(vp.Y)) {
+    vp.Y = 0.0f;
+  }
+  if (!std::isfinite(vp.Width) || vp.Width <= 0.0f) {
+    vp.Width = 1.0f;
+  }
+  if (!std::isfinite(vp.Height) || vp.Height <= 0.0f) {
+    vp.Height = 1.0f;
+  }
+  if (!std::isfinite(vp.MinZ)) {
+    vp.MinZ = 0.0f;
+  }
+  if (!std::isfinite(vp.MaxZ)) {
+    vp.MaxZ = 1.0f;
+  }
+
   const bool cached_same =
-      f32_bits(dev->viewport.X) == f32_bits(pViewport->X) &&
-      f32_bits(dev->viewport.Y) == f32_bits(pViewport->Y) &&
-      f32_bits(dev->viewport.Width) == f32_bits(pViewport->Width) &&
-      f32_bits(dev->viewport.Height) == f32_bits(pViewport->Height) &&
-      f32_bits(dev->viewport.MinZ) == f32_bits(pViewport->MinZ) &&
-      f32_bits(dev->viewport.MaxZ) == f32_bits(pViewport->MaxZ);
+      f32_bits(dev->viewport.X) == f32_bits(vp.X) &&
+      f32_bits(dev->viewport.Y) == f32_bits(vp.Y) &&
+      f32_bits(dev->viewport.Width) == f32_bits(vp.Width) &&
+      f32_bits(dev->viewport.Height) == f32_bits(vp.Height) &&
+      f32_bits(dev->viewport.MinZ) == f32_bits(vp.MinZ) &&
+      f32_bits(dev->viewport.MaxZ) == f32_bits(vp.MaxZ);
   if (!cached_same) {
-    dev->viewport = *pViewport;
+    dev->viewport = vp;
   }
   stateblock_record_viewport_locked(dev, dev->viewport);
 
@@ -13940,12 +13987,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
   }
-  cmd->x_f32 = f32_bits(pViewport->X);
-  cmd->y_f32 = f32_bits(pViewport->Y);
-  cmd->width_f32 = f32_bits(pViewport->Width);
-  cmd->height_f32 = f32_bits(pViewport->Height);
-  cmd->min_depth_f32 = f32_bits(pViewport->MinZ);
-  cmd->max_depth_f32 = f32_bits(pViewport->MaxZ);
+  cmd->x_f32 = f32_bits(vp.X);
+  cmd->y_f32 = f32_bits(vp.Y);
+  cmd->width_f32 = f32_bits(vp.Width);
+  cmd->height_f32 = f32_bits(vp.Height);
+  cmd->min_depth_f32 = f32_bits(vp.MinZ);
+  cmd->max_depth_f32 = f32_bits(vp.MaxZ);
   return trace.ret(S_OK);
 }
 

@@ -4092,6 +4092,60 @@ bool TestApplyStateBlockViewportEmitsSetViewport() {
   return true;
 }
 
+bool TestSetViewportSanitizesNonFiniteValues() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = nan;
+  vp.Y = inf;
+  vp.Width = nan;
+  vp.Height = inf;
+  vp.MinZ = nan;
+  vp.MaxZ = inf;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport(non-finite values)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(std::isfinite(dev->viewport.X) && dev->viewport.X == 0.0f, "viewport X sanitized to 0")) {
+      return false;
+    }
+    if (!Check(std::isfinite(dev->viewport.Y) && dev->viewport.Y == 0.0f, "viewport Y sanitized to 0")) {
+      return false;
+    }
+    if (!Check(std::isfinite(dev->viewport.Width) && dev->viewport.Width == 1.0f, "viewport Width sanitized to 1")) {
+      return false;
+    }
+    if (!Check(std::isfinite(dev->viewport.Height) && dev->viewport.Height == 1.0f, "viewport Height sanitized to 1")) {
+      return false;
+    }
+    if (!Check(std::isfinite(dev->viewport.MinZ) && dev->viewport.MinZ == 0.0f, "viewport MinZ sanitized to 0")) {
+      return false;
+    }
+    if (!Check(std::isfinite(dev->viewport.MaxZ) && dev->viewport.MaxZ == 1.0f, "viewport MaxZ sanitized to 1")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -23557,6 +23611,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockViewportEmitsSetViewport()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetViewportSanitizesNonFiniteValues()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands()) {
