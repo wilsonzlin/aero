@@ -149,6 +149,60 @@ fn xhci_mmio_is_gated_on_pci_command_mem_bit() {
 }
 
 #[test]
+fn xhci_run_stop_toggles_usbsts_hchalted_bit() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let bar0_base = m.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Enable memory decoding + bus mastering so MMIO behaves like a real PCI device.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let usbsts_before = m.read_physical_u32(bar0_base + regs::REG_USBSTS);
+    assert_ne!(
+        usbsts_before & regs::USBSTS_HCHALTED,
+        0,
+        "controller should start halted"
+    );
+
+    // Set USBCMD.RUN (bit 0) and observe USBSTS.HCHALTED clear.
+    let usbcmd_before = m.read_physical_u32(bar0_base + regs::REG_USBCMD);
+    m.write_physical_u32(bar0_base + regs::REG_USBCMD, usbcmd_before | regs::USBCMD_RUN);
+
+    let usbsts_running = m.read_physical_u32(bar0_base + regs::REG_USBSTS);
+    assert_eq!(
+        usbsts_running & regs::USBSTS_HCHALTED,
+        0,
+        "USBSTS.HCHALTED should clear when USBCMD.RUN is set"
+    );
+
+    // Clear USBCMD.RUN and observe USBSTS.HCHALTED set again.
+    let usbcmd_running = m.read_physical_u32(bar0_base + regs::REG_USBCMD);
+    m.write_physical_u32(bar0_base + regs::REG_USBCMD, usbcmd_running & !regs::USBCMD_RUN);
+
+    let usbsts_after = m.read_physical_u32(bar0_base + regs::REG_USBSTS);
+    assert_ne!(
+        usbsts_after & regs::USBSTS_HCHALTED,
+        0,
+        "USBSTS.HCHALTED should set when USBCMD.RUN is cleared"
+    );
+}
+
+#[test]
 fn xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
