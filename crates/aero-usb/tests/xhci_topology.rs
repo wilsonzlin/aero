@@ -1,6 +1,6 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::xhci::context::SlotContext;
+use aero_usb::xhci::context::{InputContext32, InputControlContext, SlotContext};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
@@ -32,7 +32,20 @@ fn xhci_route_string_binds_device_behind_external_hub() {
         .set_route_string_from_root_ports(&[3])
         .expect("encode route string");
 
-    let completion = ctrl.address_device(slot_id, slot_ctx);
+    // Build an input context in guest memory and issue Address Device via that pointer.
+    let input_ctx_base: u64 = 0x2000;
+    let input_ctx = InputContext32::new(input_ctx_base);
+    let mut icc = InputControlContext::default();
+    // Slot context + EP0 are typically set for Address Device.
+    icc.set_add_flags((1 << 0) | (1 << 1));
+    input_ctx
+        .write_input_control(&mut mem, &icc)
+        .expect("write ICC");
+    input_ctx
+        .write_slot_context(&mut mem, &slot_ctx)
+        .expect("write slot context");
+
+    let completion = ctrl.address_device_input_context(&mut mem, slot_id, input_ctx_base);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
     let dev = ctrl

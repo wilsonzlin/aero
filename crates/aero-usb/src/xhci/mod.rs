@@ -593,12 +593,62 @@ impl XhciController {
         CommandCompletion::success(slot_id)
     }
 
+    /// Address Device using an Input Context pointer in guest memory.
+    ///
+    /// This is a thin wrapper that reads the Slot Context from the input context (32-byte
+    /// contexts, `HCCPARAMS1.CSZ = 0`) and then applies the same topology binding as
+    /// [`XhciController::address_device`].
+    ///
+    /// Note: This does **not** implement full xHCI Address Device semantics yet; it exists so test
+    /// harnesses and future command ring plumbing can use the architectural input-context format.
+    pub fn address_device_input_context(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        input_ctx_ptr: u64,
+    ) -> CommandCompletion {
+        // xHCI spec: input contexts are 64-byte aligned.
+        if (input_ctx_ptr & 0x3f) != 0 {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let input_ctx = context::InputContext32::new(input_ctx_ptr);
+        let slot_ctx = match input_ctx.slot_context(mem) {
+            Ok(ctx) => ctx,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        self.address_device(slot_id, slot_ctx)
+    }
+
     /// Topology-only Configure Endpoint handling.
     ///
     /// For now, configuring endpoints is equivalent to re-validating that the slot context still
     /// resolves to a reachable device.
     pub fn configure_endpoint(&mut self, slot_id: u8, slot_ctx: SlotContext) -> CommandCompletion {
         self.address_device(slot_id, slot_ctx)
+    }
+
+    /// Configure Endpoint using an Input Context pointer in guest memory.
+    ///
+    /// Like [`XhciController::address_device_input_context`], this is a thin wrapper that reads the
+    /// Slot Context from guest memory and re-validates topology. Full endpoint configuration state
+    /// machines are future work.
+    pub fn configure_endpoint_input_context(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        input_ctx_ptr: u64,
+    ) -> CommandCompletion {
+        if (input_ctx_ptr & 0x3f) != 0 {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let input_ctx = context::InputContext32::new(input_ctx_ptr);
+        let slot_ctx = match input_ctx.slot_context(mem) {
+            Ok(ctx) => ctx,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        self.configure_endpoint(slot_id, slot_ctx)
     }
 
     fn read_device_context_ptr(
