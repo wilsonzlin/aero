@@ -137,4 +137,39 @@ describe("requestWebGpuDevice()", () => {
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
+
+  it("bounds default uncaptured error dedupe cache size", async () => {
+    const unset = (_ev: any) => {
+      throw new Error("uncapturederror handler was not installed");
+    };
+    let uncapturedHandler: (ev: any) => void = unset;
+    const device = {
+      addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
+        if (type === "uncapturederror") uncapturedHandler = handler;
+      }),
+    };
+
+    const adapter = { requestDevice: vi.fn(async () => device) };
+    const gpu = {
+      requestAdapter: vi.fn(async () => adapter),
+      getPreferredCanvasFormat: vi.fn(() => "bgra8unorm"),
+    };
+    Object.defineProperty(globalThis, "navigator", { value: { gpu }, configurable: true });
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await requestWebGpuDevice();
+
+    expect(uncapturedHandler).not.toBe(unset);
+    for (let i = 0; i < 129; i += 1) {
+      uncapturedHandler({ error: `msg-${i}` });
+    }
+    expect(spy).toHaveBeenCalledTimes(129);
+
+    // After exceeding the bound, the cache is cleared and re-seeded with the last key.
+    // Re-emitting the most recent message should be deduped.
+    uncapturedHandler({ error: "msg-128" });
+    expect(spy).toHaveBeenCalledTimes(129);
+
+    spy.mockRestore();
+  });
 });
