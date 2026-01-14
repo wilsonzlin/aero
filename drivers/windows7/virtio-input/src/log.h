@@ -114,7 +114,7 @@
  * (keeps the duplicated copies in tools/hidtest/main.c in sync with this header).
  */
 #define VIOINPUT_COUNTERS_VERSION 3
-#define VIOINPUT_STATE_VERSION 2
+#define VIOINPUT_STATE_VERSION 3
 #define VIOINPUT_INTERRUPT_INFO_VERSION 1
 
 /*
@@ -232,6 +232,20 @@ typedef struct _VIOINPUT_STATE {
 
     // Whether StatusQDropOnFull is enabled for this device instance.
     ULONG StatusQDropOnFull;
+
+    /*
+     * Keyboard LED support advertised by the virtio-input device via EV_BITS(EV_LED).
+     *
+     * This is a 5-bit mask for EV_LED codes 0..4:
+     *   bit0=NumLock, bit1=CapsLock, bit2=ScrollLock, bit3=Compose, bit4=Kana
+     *
+     * If 0, the device did not advertise EV_LED support (or it could not be
+     * discovered) and the driver will not send LED events on statusq.
+     */
+    ULONG KeyboardLedSupportedMask;
+
+    // Whether statusq is currently active (driver will emit EV_LED events).
+    ULONG StatusQActive;
 } VIOINPUT_STATE, *PVIOINPUT_STATE;
 
 /*

@@ -173,7 +173,7 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #endif
 #define VIOINPUT_COUNTERS_VERSION 3
-#define VIOINPUT_STATE_VERSION 2
+#define VIOINPUT_STATE_VERSION 3
 #define VIOINPUT_INTERRUPT_INFO_VERSION 1
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
@@ -259,6 +259,8 @@ typedef struct VIOINPUT_STATE {
     ULONG VirtioStarted;
     ULONGLONG NegotiatedFeatures;
     ULONG StatusQDropOnFull;
+    ULONG KeyboardLedSupportedMask;
+    ULONG StatusQActive;
 } VIOINPUT_STATE;
 
 typedef enum _VIOINPUT_INTERRUPT_MODE {
@@ -1015,6 +1017,16 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
         wprintf(L"  StatusQDropOnFull: %lu\n", st->StatusQDropOnFull);
     } else {
         wprintf(L"  StatusQDropOnFull: <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, KeyboardLedSupportedMask) + sizeof(ULONG)) {
+        wprintf(L"  KeyboardLedSupportedMask: 0x%02lX\n", st->KeyboardLedSupportedMask & 0x1Ful);
+    } else {
+        wprintf(L"  KeyboardLedSupportedMask: <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, StatusQActive) + sizeof(ULONG)) {
+        wprintf(L"  StatusQActive:     %lu\n", st->StatusQActive);
+    } else {
+        wprintf(L"  StatusQActive:     <missing>\n");
     }
 }
 
