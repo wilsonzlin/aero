@@ -178,7 +178,7 @@ impl TlbSet {
         // Common case: TLB contains only 4KiB entries (no large pages have been
         // inserted since the last full flush), so we can skip page-size probes
         // and the page-size compare in the way loop.
-        if self.count_1g == 0 && self.count_2m == 0 && self.count_4m == 0 {
+        if (self.count_1g | self.count_2m | self.count_4m) == 0 {
             let vbase = vaddr & !0xfff;
             let tag = vaddr >> 12;
             let set = set_index(tag);
