@@ -2838,14 +2838,14 @@ mod tests {
   "imageId": "demo",
   "version": "sha256-abc",
   "mimeType": "application/octet-stream",
-  "totalSize": 1025,
-  "chunkSize": 512,
+  "totalSize": 2560,
+  "chunkSize": 1024,
   "chunkCount": 3,
   "chunkIndexWidth": 8,
   "chunks": [
-    { "size": 512, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "size": 512 },
-    { "size": 1 }
+    { "size": 1024, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "size": 1024 },
+    { "size": 512 }
   ]
 }
 "#;
@@ -2853,7 +2853,7 @@ mod tests {
         assert_eq!(manifest.image_id, "demo");
         let chunks = manifest.chunks.as_ref().expect("chunks present");
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].size, 512);
+        assert_eq!(chunks[0].size, 1024);
         assert_eq!(
             chunks[0].sha256.as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -2890,9 +2890,9 @@ mod tests {
             .await
             .context("create chunks dir")?;
 
-        let chunk_size: u64 = 512;
+        let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
-        let chunk1 = b"xyz".to_vec();
+        let chunk1 = vec![b'b'; 512];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
         let chunk0_path = dir.path().join(chunk_object_key(0)?);
@@ -2950,9 +2950,9 @@ mod tests {
             .await
             .context("create chunks dir")?;
 
-        let chunk_size: u64 = 512;
+        let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
-        let chunk1 = b"xyz".to_vec();
+        let chunk1 = vec![b'b'; 512];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
         let chunk0_path = dir.path().join(chunk_object_key(0)?);
