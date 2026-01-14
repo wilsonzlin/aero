@@ -1703,6 +1703,43 @@ impl AerogpuCmdRuntime {
                 )
             })?;
 
+        // Validate compute-stage resource requirements up front so downlevel backends fail with a
+        // clear error instead of hitting wgpu validation panics during pipeline/bind-group creation.
+        //
+        // VS-as-compute (GS input fill) binds:
+        // - 1 storage buffer for `gs_inputs` in @group(0)
+        // - N storage buffers (vertex buffers) + 1 uniform (IA params) in @group(3)
+        let pulling_slot_count: u32 = pulling
+            .pulling_slot_to_d3d_slot
+            .len()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        let limits = self.device.limits();
+        let max_bindings_per_bind_group = limits.max_bindings_per_bind_group;
+        let max_storage_buffers_per_shader_stage = limits.max_storage_buffers_per_shader_stage;
+        let max_uniform_buffers_per_shader_stage = limits.max_uniform_buffers_per_shader_stage;
+
+        let pulling_bindings_in_group3 = pulling_slot_count.saturating_add(1);
+        if pulling_bindings_in_group3 > max_bindings_per_bind_group {
+            bail!(
+                "geometry shader prepass requires {pulling_bindings_in_group3} bindings in compute bind group {} ({} vertex buffers + 1 uniform), but device limit max_bindings_per_bind_group={max_bindings_per_bind_group}",
+                super::vertex_pulling::VERTEX_PULLING_GROUP,
+                pulling_slot_count
+            );
+        }
+        if max_uniform_buffers_per_shader_stage == 0 {
+            bail!(
+                "geometry shader prepass requires uniform buffers (vertex pulling params), but this device reports max_uniform_buffers_per_shader_stage=0"
+            );
+        }
+        let required_storage_buffers_fill = pulling_slot_count.saturating_add(1); // vertex buffers + gs_inputs
+        if required_storage_buffers_fill > max_storage_buffers_per_shader_stage {
+            bail!(
+                "geometry shader prepass requires {required_storage_buffers_fill} storage buffers in compute stage ({} vertex buffers + 1 internal), but device limit max_storage_buffers_per_shader_stage={max_storage_buffers_per_shader_stage}",
+                pulling_slot_count
+            );
+        }
+
         let mut slots: Vec<super::vertex_pulling::VertexPullingSlot> =
             Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
         let mut vertex_buffers: Vec<&wgpu::Buffer> =
@@ -2076,6 +2113,92 @@ impl AerogpuCmdRuntime {
                 &provider,
             )?)
         };
+
+        // Validate the combined GS-as-compute pipeline resource usage (internal + stage resources).
+        //
+        // Internal bind group 0 bindings:
+        // - 4 storage buffers: out_vertices, out_indices, out_state, gs_inputs
+        // - 1 uniform buffer: params
+        //
+        // Stage bind group 3 (`gs_stage_bindings`) may add additional resources. wgpu validates
+        // per-stage limits across the entire pipeline layout, so count both sets here.
+        let internal_storage_buffers = 4u32;
+        let internal_uniform_buffers = 1u32;
+        let internal_bindings_in_group0 = 5u32;
+
+        if internal_bindings_in_group0 > max_bindings_per_bind_group {
+            bail!(
+                "geometry shader prepass requires {internal_bindings_in_group0} bindings in internal compute bind group 0, but device limit max_bindings_per_bind_group={max_bindings_per_bind_group}"
+            );
+        }
+
+        let mut stage_uniform_buffers = 0u32;
+        let mut stage_sampled_textures = 0u32;
+        let mut stage_samplers = 0u32;
+        let mut stage_storage_buffers = 0u32;
+        let mut stage_storage_textures = 0u32;
+        for binding in &gs_stage_bindings {
+            if !binding.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                continue;
+            }
+            match binding.kind {
+                crate::BindingKind::ConstantBuffer { .. } => {
+                    stage_uniform_buffers = stage_uniform_buffers.saturating_add(1);
+                }
+                crate::BindingKind::Texture2D { .. }
+                | crate::BindingKind::Texture2DArray { .. } => {
+                    stage_sampled_textures = stage_sampled_textures.saturating_add(1);
+                }
+                crate::BindingKind::Sampler { .. } => {
+                    stage_samplers = stage_samplers.saturating_add(1);
+                }
+                crate::BindingKind::SrvBuffer { .. }
+                | crate::BindingKind::UavBuffer { .. }
+                | crate::BindingKind::ExpansionStorageBuffer { .. } => {
+                    stage_storage_buffers = stage_storage_buffers.saturating_add(1);
+                }
+                crate::BindingKind::UavTexture2DWriteOnly { .. } => {
+                    stage_storage_textures = stage_storage_textures.saturating_add(1);
+                }
+            }
+        }
+
+        let total_uniform_buffers_compute =
+            internal_uniform_buffers.saturating_add(stage_uniform_buffers);
+        if total_uniform_buffers_compute > max_uniform_buffers_per_shader_stage {
+            bail!(
+                "geometry shader prepass uses {total_uniform_buffers_compute} uniform buffers in compute stage ({} internal + {} stage), but device limit max_uniform_buffers_per_shader_stage={max_uniform_buffers_per_shader_stage}",
+                internal_uniform_buffers,
+                stage_uniform_buffers
+            );
+        }
+        if stage_sampled_textures > limits.max_sampled_textures_per_shader_stage {
+            bail!(
+                "geometry shader prepass uses {stage_sampled_textures} sampled textures in compute stage, but device limit max_sampled_textures_per_shader_stage={}",
+                limits.max_sampled_textures_per_shader_stage
+            );
+        }
+        if stage_samplers > limits.max_samplers_per_shader_stage {
+            bail!(
+                "geometry shader prepass uses {stage_samplers} samplers in compute stage, but device limit max_samplers_per_shader_stage={}",
+                limits.max_samplers_per_shader_stage
+            );
+        }
+        let total_storage_buffers_compute =
+            internal_storage_buffers.saturating_add(stage_storage_buffers);
+        if total_storage_buffers_compute > max_storage_buffers_per_shader_stage {
+            bail!(
+                "geometry shader prepass uses {total_storage_buffers_compute} storage buffers in compute stage ({} internal + {} stage), but device limit max_storage_buffers_per_shader_stage={max_storage_buffers_per_shader_stage}",
+                internal_storage_buffers,
+                stage_storage_buffers
+            );
+        }
+        if stage_storage_textures > limits.max_storage_textures_per_shader_stage {
+            bail!(
+                "geometry shader prepass uses {stage_storage_textures} storage textures in compute stage, but device limit max_storage_textures_per_shader_stage={}",
+                limits.max_storage_textures_per_shader_stage
+            );
+        }
 
         // GS prepass pipeline layout: group0(internal) + group3(stage resources).
         let gs_layout_key = PipelineLayoutKey {
