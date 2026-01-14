@@ -506,5 +506,6 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_control_set_configuration.rs`
 - `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
+- `crates/emulator/tests/xhci_mmio_gating.rs` (emulator-side PCI/MMIO/BME gating; requires `--features legacy-usb-xhci`)
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
