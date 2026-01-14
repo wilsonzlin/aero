@@ -330,7 +330,9 @@ This issue is specific to the Guest Tools diagnostics output (it’s detected by
 
 1. Replace the Guest Tools ISO/zip with a fresh copy.
 2. Ensure you copy/extract **the entire media root** (including `drivers\`, `config\`, and `certs\` when present/required by `manifest.json` `signing_policy`).
-3. Re-run `setup.cmd` as Administrator after replacing the media.
+3. (Optional) Validate the new media before installing:
+   - `setup.cmd /check /verify-media`
+4. Re-run `setup.cmd` as Administrator after replacing the media.
 
 ## Issue: Missing KB3033929 (SHA-256 signature support)
 

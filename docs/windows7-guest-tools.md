@@ -185,8 +185,10 @@ Running directly from the mounted CD/DVD is fine. Copying the files locally is o
 1. Navigate to the Guest Tools folder:
    - Mounted CD/DVD (for example `X:\`), **or**
    - `C:\AeroGuestTools\media\` (if you copied the files locally)
-2. Right-click `setup.cmd` → **Run as administrator**.
-3. Accept any UAC prompts.
+2. Optional (recommended for automation / cautious installs): validate media integrity first (no system changes; does not require Administrator):
+   - `setup.cmd /check /verify-media`
+3. Right-click `setup.cmd` → **Run as administrator**.
+4. Accept any UAC prompts.
 
 During installation you may see driver install prompts:
 
