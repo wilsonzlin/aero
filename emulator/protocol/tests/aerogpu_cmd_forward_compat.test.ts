@@ -11,6 +11,7 @@ import {
   AEROGPU_CMD_DISPATCH_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE,
   AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
   AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE,
@@ -29,6 +30,7 @@ import {
   decodeCmdDispatchPayload,
   decodeCmdStreamView,
   decodeCmdSetBlendState,
+  decodeCmdSetShaderConstantsBPayload,
   decodeCmdSetShaderResourceBuffersPayload,
   decodeCmdSetUnorderedAccessBuffersPayload,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -244,6 +246,27 @@ test("COPY_TEXTURE2D decoder accepts trailing bytes in cmd.size_bytes", () => {
   assert.equal(decoded.height, 8);
   assert.equal(decoded.flags, 9);
   assert.equal(decoded.reserved0, 0);
+});
+
+test("SET_SHADER_CONSTANTS_B decoder accepts trailing bytes in cmd.size_bytes", () => {
+  const bytes: number[] = [];
+  pushU32(bytes, AerogpuCmdOpcode.SetShaderConstantsB);
+  // Base packet + bool_count * 4 + trailing u32.
+  pushU32(bytes, AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 2 * 4 + 4);
+  pushU32(bytes, 1); // stage=Pixel
+  pushU32(bytes, 0); // start_register
+  pushU32(bytes, 2); // bool_count
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0); // b0 = false
+  pushU32(bytes, 1); // b1 = true
+  pushU32(bytes, 0xdead_beef); // trailing extension
+
+  const out = new Uint8Array(bytes);
+  const decoded = decodeCmdSetShaderConstantsBPayload(out, 0);
+  assert.equal(decoded.stage, 1);
+  assert.equal(decoded.startRegister, 0);
+  assert.equal(decoded.boolCount, 2);
+  assert.deepEqual(Array.from(decoded.data), [0, 1]);
 });
 
 test("SRV/UAV binding table decoders accept trailing bytes in cmd.size_bytes", () => {
