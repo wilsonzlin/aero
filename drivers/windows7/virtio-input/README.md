@@ -11,12 +11,17 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 
 - SYS: `aero_virtio_input.sys`
 - Service: `aero_virtio_input`
-- INF: `inf/aero_virtio_input.inf`
-- CAT: `inf/aero_virtio_input.cat`
+- INFs:
+  - `inf/aero_virtio_input.inf` (keyboard + mouse)
+  - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer)
+- CATs:
+  - `inf/aero_virtio_input.cat`
+  - `inf/aero_virtio_tablet.cat`
 
 > Note: `inf/virtio-input.inf.disabled` is a legacy filename alias kept for compatibility with older tooling/workflows
-> that still reference `virtio-input.inf`. It installs the same driver/service as `inf/aero_virtio_input.inf`, but is
-> disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs.
+> that still reference `virtio-input.inf`. It is an alias of `inf/aero_virtio_input.inf` (keyboard/mouse), but is
+> disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs. (Tablet uses the
+> separate `inf/aero_virtio_tablet.inf`.)
 
 ## KMDF version / WDF runtime (Win7 SP1)
 
@@ -26,8 +31,8 @@ The Windows 7 installation story is intentionally simple: the driver is built ag
 - **Built against:** KMDF **1.9**
 - **Runtime on a clean Win7 SP1 machine:** present (`%SystemRoot%\System32\drivers\Wdf01000.sys`)
 - **KMDF coinstaller required on Win7 SP1:** **No**
-- **INF policy:** `inf/aero_virtio_input.inf` pins `KmdfLibraryVersion = 1.9` and intentionally does **not** include any
-  `CoInstallers32` / `WdfCoInstaller*` sections.
+- **INF policy:** `inf/aero_virtio_{input,tablet}.inf` pin `KmdfLibraryVersion = 1.9` and intentionally do **not**
+  include any `CoInstallers32` / `WdfCoInstaller*` sections.
 
 If you intentionally rebuild the driver against **KMDF > 1.9** (for example, by using WDK 10 defaults), Windows 7 will
 require a matching WDF coinstaller/runtime in the driver package.
@@ -37,7 +42,7 @@ require a matching WDF coinstaller/runtime in the driver package.
   and consult the kit's redist/EULA documentation for exact terms.
 - If you add a coinstaller:
   1. Add the matching `WdfCoInstaller010xx.dll` to `inf/`
-  2. Update `aero_virtio_input.inf` to reference it
+  2. Update `aero_virtio_input.inf` and `aero_virtio_tablet.inf` to reference it
   3. Regenerate the catalog and re-sign
   4. Ensure release packaging includes it (see `release/README.md`)
 
@@ -106,7 +111,7 @@ If your environment does not expose the Aero subsystem IDs, the legacy alias INF
 includes a fallback `PCI\VEN_1AF4&DEV_1052&REV_01` match (rename it to `virtio-input.inf` to enable it). Keep in mind
 that shipping multiple overlapping INFs that match the same device can lead to confusing install behavior.
 
-It does **not** match:
+The INFs do **not** match:
 
 - the transitional virtio-input PCI ID (`DEV_1011`), or
 - any non-revision-gated variants (no `&REV_01`).
@@ -304,6 +309,7 @@ Expected output (once `aero_virtio_input.sys` exists in `inf/`):
 
 ```text
 inf\aero_virtio_input.cat
+inf\aero_virtio_tablet.cat
 ```
 
 ## Signing (SYS + CAT)
@@ -320,6 +326,7 @@ This signs:
 
 - `inf\aero_virtio_input.sys`
 - `inf\aero_virtio_input.cat`
+- If you are shipping the tablet INF: also sign `inf\aero_virtio_tablet.cat`
 
 ## Verifying signatures (SYS + CAT)
 
@@ -345,7 +352,9 @@ The script exits non-zero if `signtool.exe` is not available in `PATH` or if eit
 2. **Browse my computer**
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-input/inf/`
-5. Select `aero_virtio_input.inf`
+5. Select the matching INF:
+   - `aero_virtio_input.inf` (keyboard + mouse)
+   - `aero_virtio_tablet.inf` (tablet / absolute pointer)
 
 ### pnputil (Windows 7)
 
@@ -355,12 +364,13 @@ From an elevated command prompt:
 
 ```cmd
 pnputil -i -a C:\path\to\aero_virtio_input.inf
+pnputil -i -a C:\path\to\aero_virtio_tablet.inf
 ```
 
 If you are using the deterministic release ZIP produced by `scripts/package-release.ps1`, the extracted folder also includes:
 
 - `INSTALL_CERT.cmd` (optional; installs `aero-virtio-input-test.cer` into `Root` + `TrustedPublisher`; requires elevation)
-- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf` when present; otherwise uses the per-arch INF; requires elevation)
+- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf` when present; otherwise uses the per-arch INF; for tablets, run `pnputil -i -a aero_virtio_tablet.inf` manually; requires elevation)
 
 ## Verifying the driver loaded
 
@@ -370,6 +380,7 @@ If you are using the deterministic release ZIP produced by `scripts/package-rele
 - When the device exposes the Aero contract subsystem IDs, the two virtio-input PCI functions appear as:
   - **Aero VirtIO Keyboard**
   - **Aero VirtIO Mouse**
+  - **Aero VirtIO Tablet Device** (tablet / absolute pointer)
 - Driver details should show `aero_virtio_input.sys`.
 
 ### Service state
@@ -484,7 +495,8 @@ Device kind / report descriptor selection:
 - `DeviceKind==Mouse` exposes ReportID `2` (mouse).
 - `DeviceKind==Tablet` exposes ReportID `4` (tablet / absolute pointer).
 
-`DeviceKind` is derived from virtio `ID_NAME` and cross-checked against the PCI subsystem device ID when present.
+`DeviceKind` is derived from virtio `ID_NAME` / `ID_DEVIDS` and cross-checked against the PCI subsystem device ID when present.
+See `docs/virtio-input-notes.md` for details.
 
 #### Mouse button mapping (`EV_KEY` → HID buttons 1–8)
 
@@ -517,20 +529,22 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` (expects BAR0 `len >= 0x4000`, caps at offsets `0x0000/0x1000/0x2000/0x3000`, `notify_off_multiplier = 4`) |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64 and `queue_notify_off` of `0/1`) |
 | Virtqueue/ring feature negotiation | **Split ring only** | `src/device.c` requires `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` and refuses to negotiate `VIRTIO_F_RING_EVENT_IDX` (no EVENT_IDX / packed rings in contract v1). |
-| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces a minimum `EV_BITS` subset per device kind to fail fast on misconfigured devices. The **normative** Aero device-model requirements are defined in `docs/windows7-virtio-driver-contract.md` (§3.3.5). |
-| Device identification strings | **Required** | `src/device.c` enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. |
+| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces a minimum `EV_BITS` subset per device kind to fail fast on misconfigured devices. The **normative** Aero device-model requirements are defined in `docs/windows7-virtio-driver-contract.md` (§3.3.5). Tablet (`EV_ABS`) devices require `ABS_X/ABS_Y` and `ABS_INFO` ranges. |
+| Device identification strings | **Strict** | Strictly enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. |
 
 ### QEMU compatibility expectations
 
-This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`).
+This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`) and expects the contract
+`ID_NAME` / `ID_DEVIDS` values.
 
-It expects the contract `ID_NAME` / `ID_DEVIDS` values and will refuse to start if the device does not match (typically
-Code 10 / `STATUS_NOT_SUPPORTED`).
+It will refuse to start if the device does not match (typically Code 10 / `STATUS_NOT_SUPPORTED`).
 
-Stock QEMU `virtio-*-pci` devices are not Aero contract compliant out of the box (they typically emit different
-`ID_NAME` strings, and may not use the Aero subsystem IDs). For this driver to bind and start under QEMU, you must use
-an Aero contract-compliant device model (or configure/patch QEMU to satisfy the contract); at minimum this typically
-includes `disable-legacy=on,x-pci-revision=0x01` plus the contract `ID_NAME`/`ID_DEVIDS` values.
+Stock QEMU virtio-input devices are not Aero contract compliant out of the box: they typically emit different
+`ID_NAME` strings (for example `QEMU Virtio Keyboard`) and may not use the Aero subsystem IDs. For this driver to bind
+and start under QEMU, you must use an Aero contract-compliant device model (or configure/patch QEMU to satisfy the
+contract), including the contract `ID_NAME`/`ID_DEVIDS` values.
+
+Even with contract-compliant IDs, under QEMU you typically still need `disable-legacy=on,x-pci-revision=0x01`.
 
 For authoritative PCI-ID and contract rules, see:
 

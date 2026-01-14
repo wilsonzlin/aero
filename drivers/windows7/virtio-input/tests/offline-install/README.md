@@ -4,17 +4,20 @@ This document describes how to **stage** (preinstall) the `virtio-input` driver 
 Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated
 test images where you want input working immediately).
 
-> Note: The in-tree Aero Win7 virtio-input INF is **revision-gated** to the
-> `AERO-W7-VIRTIO` v1 contract and matches only `PCI\VEN_1AF4&DEV_1052&REV_01` (plus
-> the more specific `...&SUBSYS_...&REV_01` variants). Ensure your virtio-input PCI
-> device reports `REV_01` (for example in QEMU: `-device virtio-*-pci,...,x-pci-revision=0x01`)
-> or Windows will not bind the staged driver.
+> Note: The in-tree Aero Win7 virtio-input INFs are **revision-gated** and **subsystem-qualified** to the
+> `AERO-W7-VIRTIO` v1 contract. Ensure your virtio-input PCI device reports `REV_01` and the expected contract
+> subsystem IDs, or Windows will not bind the staged driver.
+>
+> - Keyboard/mouse: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (`aero_virtio_input.inf`)
+> - Tablet/absolute pointer: `SUBSYS_00121AF4` (`aero_virtio_tablet.inf`)
 
 The commands below assume you already have a **built driver package directory** containing:
 
-- `aero_virtio_input.inf`
+- `aero_virtio_input.inf` (keyboard + mouse)
+- `aero_virtio_tablet.inf` (tablet / absolute pointer)
 - `aero_virtio_input.sys`
 - `aero_virtio_input.cat` (recommended for Win7 x64 unless you plan to use `/ForceUnsigned`)
+- `aero_virtio_tablet.cat` (if staging the tablet INF; recommended for Win7 x64 unless you plan to use `/ForceUnsigned`)
 
 In this repo, CI produces signed packages under:
 

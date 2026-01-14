@@ -140,7 +140,11 @@ If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BI
 
 ### QEMU/non-Aero virtio-input devices
 
-Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard`, which do not match the strict Aero contract strings above. In this case, the driver will refuse to start (Code 10 / `STATUS_NOT_SUPPORTED`).
+Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard` and do not use the Aero
+contract subsystem IDs. This driver is contract-first and will refuse to start on such devices.
+
+For QEMU development/testing, use a contract-compliant virtio-input device model (Aero `ID_NAME` strings + `SUBSYS_0010/0011/0012` + `REV_01`).
+See [`docs/virtio-input-notes.md`](./virtio-input-notes.md) for the expected identifiers.
 
 ## `hidtest` can’t open the device
 

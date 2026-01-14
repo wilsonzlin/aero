@@ -95,10 +95,11 @@ the PCI Subsystem Device ID to distinguish keyboard vs mouse:
   * mouse: `0x0011` → `SUBSYS_00111AF4`
   * (optional) tablet / absolute pointer: `0x0012` → `SUBSYS_00121AF4`
 
-The in-tree Win7 virtio-input INF uses these subsystem-qualified HWIDs to assign **distinct Device Manager names**:
+The in-tree Win7 virtio-input INFs use these subsystem-qualified HWIDs to assign **distinct Device Manager names**:
 
-- `SUBSYS_00101AF4` → **Aero VirtIO Keyboard**
-- `SUBSYS_00111AF4` → **Aero VirtIO Mouse**
+- `SUBSYS_00101AF4` → **Aero VirtIO Keyboard** (`inf/aero_virtio_input.inf`)
+- `SUBSYS_00111AF4` → **Aero VirtIO Mouse** (`inf/aero_virtio_input.inf`)
+- `SUBSYS_00121AF4` → **Aero VirtIO Tablet Device** (`inf/aero_virtio_tablet.inf`)
 
 Topology notes:
 

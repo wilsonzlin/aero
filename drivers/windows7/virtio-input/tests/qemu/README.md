@@ -215,11 +215,14 @@ Expected values include at least:
 
 The list will also include more specific forms, e.g.:
 
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (when using `x-pci-revision=0x01`)
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_...&REV_01` (depending on the device model)
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_...&REV_01` (Aero contract v1 subsystem IDs)
 
-The Aero Win7 virtio-input INF is intentionally **revision-gated**, so it matches the
-`...&REV_01` hardware IDs and does not bind to `REV_00` devices.
+The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** and **subsystem-qualified**:
+
+- Keyboard/mouse: matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (`aero_virtio_input.inf`)
+- Tablet: matches `SUBSYS_00121AF4` (`aero_virtio_tablet.inf`)
+
+If your device does not expose these subsystem IDs, Windows will not bind automatically without adjusting the device model and/or INF.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
@@ -263,7 +266,7 @@ QEMU_BIN=/path/to/qemu-system-x86_64 bash ./drivers/windows7/virtio-input/tests/
       - Often shows under **Other devices** as an unknown PCI device until the INF is installed.
     - Right click → **Update Driver Software...**
     - **Browse my computer for driver software**
-    - Point it to a directory containing `aero_virtio_input.inf` + `aero_virtio_input.sys` (for example: `out\packages\windows7\virtio-input\x64\`)
+     - Point it to a directory containing `aero_virtio_input.inf` + `aero_virtio_input.sys` (and optionally `aero_virtio_tablet.inf`) (for example: `out\packages\windows7\virtio-input\x64\`)
 4. Reboot when prompted.
 
 ## Verify the Windows HID stacks attach (`kbdhid.sys` / `mouhid.sys`)
