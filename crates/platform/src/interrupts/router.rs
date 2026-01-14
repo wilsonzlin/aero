@@ -459,7 +459,7 @@ impl PlatformInterrupts {
 
         // Reset LAPIC state in-place so any machine-level wiring (EOI/ICR notifiers, held `Arc`s)
         // survives across resets.
-        for (idx, lapic) in self.lapics.iter().enumerate() {
+        for (idx, lapic) in self.lapics_iter().enumerate() {
             let apic_id = u8::try_from(idx).unwrap_or(u8::MAX);
             lapic.reset_state(apic_id);
             // Keep LAPICs enabled for platform-level interrupt injection (tests and early bring-up).
