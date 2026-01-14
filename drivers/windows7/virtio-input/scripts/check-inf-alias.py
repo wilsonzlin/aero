@@ -11,8 +11,16 @@ filename alias INF (checked in disabled-by-default):
   - drivers/windows7/virtio-input/inf/virtio-input.inf.disabled
 
 Policy:
-  - The alias INF is allowed to differ in the models sections (`Aero.NTx86` /
-    `Aero.NTamd64`), but should otherwise remain identical to the canonical INF.
+  - The canonical INF *and* the legacy alias INF both include:
+      - explicit SUBSYS-qualified model lines for the Aero contract v1 keyboard
+        (SUBSYS_0010) and mouse (SUBSYS_0011), and
+      - a strict revision-gated generic fallback HWID (no SUBSYS):
+          PCI\\VEN_1AF4&DEV_1052&REV_01
+    The fallback is required by the current Windows device/driver contract policy
+    (and by `tools/device_contract_validator`) so binding remains revision-gated
+    even when subsystem IDs are absent/ignored.
+  - The alias INF is allowed to differ in the models sections (`[Aero.NTx86]` /
+    `[Aero.NTamd64]`), but must include the same required HWID bindings.
   - Outside the models sections, the alias must stay in sync with the canonical
     INF (from the first section header onward).
 
@@ -32,7 +40,11 @@ from pathlib import Path
 
 
 MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
+BASE_HWID = r"PCI\VEN_1AF4&DEV_1052"
 FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
+KEYBOARD_HWID = r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01"
+MOUSE_HWID = r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01"
+TABLET_SUBSYS = "SUBSYS_00121AF4"
 
 
 def strip_inf_comments(line: str) -> str:
@@ -137,6 +149,101 @@ def find_hwid_model_lines(*, path: Path, section: str, hwid: str) -> tuple[bool,
     return section_seen, matches
 
 
+def section_active_lines(*, path: Path, section: str) -> tuple[bool, list[str]]:
+    """
+    Return all non-empty, comment-stripped lines within a section.
+
+    This is used for lightweight policy checks (no full INF parser).
+    """
+
+    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    target = section.lower()
+    section_seen = False
+    current: str | None = None
+    lines: list[str] = []
+
+    for line in raw_lines:
+        stripped = line.lstrip(" \t")
+        if stripped.startswith("[") and "]" in stripped:
+            current = stripped[1 : stripped.index("]")].strip().lower()
+            if current == target:
+                section_seen = True
+            continue
+
+        if current != target:
+            continue
+
+        no_comment = strip_inf_comments(line).strip()
+        if not no_comment:
+            continue
+        lines.append(no_comment)
+
+    return section_seen, lines
+
+
+def enforce_models_policy(*, path: Path) -> list[str]:
+    """
+    Enforce the virtio-input model line policy for a given INF.
+
+    Returns a list of human-readable error strings (empty if OK).
+    """
+
+    errors: list[str] = []
+    for sect in ("Aero.NTx86", "Aero.NTamd64"):
+        seen, lines = section_active_lines(path=path, section=sect)
+        if not seen:
+            errors.append(f"{path}: missing required models section [{sect}].")
+            continue
+
+        def _matches(needle: str) -> list[str]:
+            n = needle.lower()
+            return [l for l in lines if n in l.lower()]
+
+        kb = _matches(KEYBOARD_HWID)
+        ms = _matches(MOUSE_HWID)
+        fb = _matches(FALLBACK_HWID)
+
+        if len(kb) != 1:
+            errors.append(
+                f"{path}: [{sect}] expected exactly one keyboard model line ({KEYBOARD_HWID}); "
+                + ("missing." if not kb else f"found {len(kb)}:\n  " + "\n  ".join(kb))
+            )
+        if len(ms) != 1:
+            errors.append(
+                f"{path}: [{sect}] expected exactly one mouse model line ({MOUSE_HWID}); "
+                + ("missing." if not ms else f"found {len(ms)}:\n  " + "\n  ".join(ms))
+            )
+        if len(fb) != 1:
+            errors.append(
+                f"{path}: [{sect}] expected exactly one strict fallback model line ({FALLBACK_HWID}); "
+                + ("missing." if not fb else f"found {len(fb)}:\n  " + "\n  ".join(fb))
+            )
+
+        # Reject any rev-less matches: we require revision gating to encode the contract major
+        # version and to avoid binding to non-contract devices.
+        revless = [
+            l
+            for l in lines
+            if BASE_HWID.lower() in l.lower() and "&rev_" not in l.lower()
+        ]
+        if revless:
+            errors.append(
+                f"{path}: [{sect}] contains rev-less model line(s) matching {BASE_HWID} (missing &REV_.. qualifier):\n  "
+                + "\n  ".join(revless)
+            )
+
+        # Tablet subsystem IDs belong in `aero_virtio_tablet.inf` (more specific HWID), not here.
+        tablet = [l for l in lines if TABLET_SUBSYS.lower() in l.lower()]
+        if tablet:
+            errors.append(
+                f"{path}: [{sect}] contains unexpected tablet subsystem model line(s) ({TABLET_SUBSYS}); "
+                "tablet devices must bind via aero_virtio_tablet.inf:\n  " + "\n  ".join(tablet)
+            )
+
+    return errors
+
+
 def main() -> int:
     virtio_input_root = Path(__file__).resolve().parents[1]
     repo_root = virtio_input_root.parents[2]
@@ -162,38 +269,15 @@ def main() -> int:
     canonical_body = inf_functional_lines(canonical)
     alias_body = inf_functional_lines(alias)
     if canonical_body == alias_body:
-        # Even if the functional regions match, ensure both INFs include the strict,
-        # revision-gated generic fallback HWID so driver binding works even when
-        # subsystem IDs are not exposed/recognized.
-        for sect in ("Aero.NTx86", "Aero.NTamd64"):
-            canonical_seen, canonical_matches = find_hwid_model_lines(
-                path=canonical, section=sect, hwid=FALLBACK_HWID
-            )
-            alias_seen, alias_matches = find_hwid_model_lines(path=alias, section=sect, hwid=FALLBACK_HWID)
-
-            if not canonical_seen:
-                sys.stderr.write(f"{canonical}: missing required models section [{sect}].\n")
-                return 1
-            if not alias_seen:
-                sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
-                return 1
-
-            if not canonical_matches:
-                sys.stderr.write(
-                    "virtio-input INF policy violation: the canonical INF must include the strict "
-                    f"generic fallback model line {FALLBACK_HWID}.\n"
-                )
-                sys.stderr.write(f"Missing fallback model line in {canonical} [{sect}].\n")
-                return 1
-
-            if not alias_matches:
-                sys.stderr.write(
-                    "virtio-input INF policy violation: the legacy alias INF must include the strict "
-                    f"fallback model line {FALLBACK_HWID}.\n"
-                )
-                sys.stderr.write(f"Missing fallback model line in {alias} [{sect}].\n")
-                return 1
-
+        # Even if the non-models sections match, enforce the models/HWID policy.
+        # This guards against accidental driver binding changes which can silently
+        # break in-guest installs and Guest Tools packaging/validation.
+        errors = [*enforce_models_policy(path=canonical), *enforce_models_policy(path=alias)]
+        if errors:
+            sys.stderr.write("virtio-input INF models policy violation(s):\n")
+            for e in errors:
+                sys.stderr.write(f"- {e}\n")
+            return 1
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
