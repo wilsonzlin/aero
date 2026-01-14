@@ -129,3 +129,53 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
     expect(((backend as any).seenUncapturedErrorKeys as Set<string>).size).toBeLessThanOrEqual(128);
   });
 });
+
+describe("WebGpuPresenterBackend presentDirtyRects", () => {
+  it("passes only the populated portion of the dirty-rect staging buffer to writeTexture()", () => {
+    const backend = new WebGpuPresenterBackend();
+
+    const writeTexture = vi.fn();
+    (backend as any).canvas = {} as any;
+    (backend as any).device = {} as any;
+    (backend as any).queue = { writeTexture } as any;
+    (backend as any).ctx = {} as any;
+    (backend as any).pipeline = {} as any;
+    (backend as any).bindGroup = {} as any;
+    (backend as any).frameTexture = {} as any;
+    // Avoid pulling in the full WebGPU rendering path; presentDirtyRects should still upload.
+    (backend as any).renderToCanvas = () => true;
+
+    const srcWidth = 256;
+    const srcHeight = 256;
+    const stride = srcWidth * 4;
+    (backend as any).srcWidth = srcWidth;
+    (backend as any).srcHeight = srcHeight;
+
+    const frame = new Uint8Array(stride * srcHeight);
+
+    // First rect is large, causing the staging buffer to be allocated/grown.
+    // Second rect is tiny and reuses the existing staging buffer; we should not
+    // pass the full oversized buffer to writeTexture().
+    const dirtyRects = [
+      { x: 0, y: 0, w: 128, h: 128 },
+      { x: 0, y: 0, w: 1, h: 1 },
+    ];
+
+    const didPresent = backend.presentDirtyRects(frame, stride, dirtyRects);
+    expect(didPresent).toBe(true);
+
+    expect(writeTexture).toHaveBeenCalledTimes(2);
+    const call0 = writeTexture.mock.calls[0];
+    const call1 = writeTexture.mock.calls[1];
+
+    const data0 = call0?.[1] as Uint8Array;
+    const data1 = call1?.[1] as Uint8Array;
+    expect(data0).toBeInstanceOf(Uint8Array);
+    expect(data1).toBeInstanceOf(Uint8Array);
+
+    // 128px wide rect => rowBytes=512, bytesPerRow=512, height=128 => 512*128 bytes.
+    expect(data0.byteLength).toBe(512 * 128);
+    // 1px wide rect => rowBytes=4, bytesPerRow=256, height=1 => 256 bytes.
+    expect(data1.byteLength).toBe(256);
+  });
+});

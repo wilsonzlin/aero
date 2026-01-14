@@ -272,7 +272,9 @@ export class WebGpuPresenterBackend implements Presenter {
 
       this.queue.writeTexture(
         dst,
-        buffer,
+        // `packRgba8RectToAlignedBuffer` may reuse an oversized scratch buffer. Pass only the
+        // bytes we just populated so browsers don't have to consider/copy unrelated tail data.
+        buffer.subarray(0, this.dirtyRectPack.byteLength),
         layout,
         size,
       );
