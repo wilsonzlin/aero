@@ -55,7 +55,7 @@ use aero_devices::a20_gate::{A20Gate as A20GateDevice, A20_GATE_PORT};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
-use aero_devices::clock::ManualClock;
+use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::debugcon::{register_debugcon, SharedDebugConLog};
 use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::hpet;
@@ -11037,6 +11037,12 @@ impl Machine {
             return;
         };
 
+        // Some integration tests drive the machine by advancing the deterministic `platform_clock`
+        // and then calling `process_aerogpu()` (rather than using the full device tick loop). Keep
+        // the AeroGPU device model's internal timebase coherent with that clock so vblank-paced
+        // fences can make forward progress.
+        let platform_now_ns = self.platform_clock.as_ref().map(|clock| clock.now_ns());
+
         let bdf = aero_devices::pci::profile::AEROGPU.bdf;
         let (command, bar0_base, bar1_base) = {
             let mut pci_cfg = pci_cfg.borrow_mut();
@@ -11063,6 +11069,10 @@ impl Machine {
             aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
             bar1_base,
         );
+
+        if let Some(now_ns) = platform_now_ns {
+            dev.tick_vblank(now_ns);
+        }
         dev.process(&mut self.mem);
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
