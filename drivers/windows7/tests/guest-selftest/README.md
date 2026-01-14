@@ -77,6 +77,11 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       - Host flaps link down/up (default: 3s down)
       - Guest waits for link down, then link up + valid IPv4, then performs a small HTTP GET to confirm datapath
       - Guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS/FAIL|...`
+      - When the installed `aero_virtio_net` driver exposes the diagnostics device (`\\.\AeroVirtioNetDiag`) with
+        interrupt counters, the marker also includes best-effort config interrupt fields:
+        - `cfg_vector`, `cfg_intr_before`, `cfg_intr_down`, `cfg_intr_up`
+        - `cfg_intr_down_delta`, `cfg_intr_up_delta`
+        and the test FAILs if it does not observe a non-zero delta across both the DOWN and UP transitions.
     - Intended to be paired with host-harness gating:
       - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -WithNetLinkFlap`
       - Python: `invoke_aero_virtio_win7_tests.py --with-net-link-flap`
