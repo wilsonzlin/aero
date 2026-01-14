@@ -71,6 +71,8 @@ export function mountStatusPanel(
           count: coordinator.getResetRequestCount(),
           lastAtMs: coordinator.getLastResetRequestAtMs(),
         },
+        bootDisks: coordinator.getBootDisks(),
+        machineCpuActiveBootDevice: coordinator.getMachineCpuActiveBootDevice(),
       },
       null,
       2,
