@@ -158,9 +158,9 @@ describe("workers/io.worker (worker_threads)", () => {
           fileName: "dummy.img",
           sizeBytes: 0,
           createdAtMs: 0,
-        } as any,
+        },
         cd: null,
-      } as unknown as SetBootDisksMessage);
+      } satisfies SetBootDisksMessage);
 
       await expect(diskWorkerCreated).rejects.toThrow(/timed out/i);
     } finally {
