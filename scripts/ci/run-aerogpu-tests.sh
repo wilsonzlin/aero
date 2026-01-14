@@ -6,7 +6,7 @@
 # - TypeScript protocol mirrors (ABI drift): `npm run test:protocol`
 # - Rust protocol mirrors: `cargo test -p aero-protocol`
 # - Shared device-side model: `cargo test -p aero-devices-gpu`
-# - Canonical machine ring/fence/bridge plumbing: `cargo test -p aero-machine --test aerogpu_*`
+# - Canonical machine ring/fence/bridge plumbing (selected `aerogpu_*` regression tests)
 #
 # Usage:
 #   bash ./scripts/ci/run-aerogpu-tests.sh
@@ -40,6 +40,7 @@ run cargo test -p aero-devices-gpu --locked
 
 run cargo test -p aero-machine --locked \
   --test aerogpu_submission_bridge \
+  --test aerogpu_deferred_fence_completion \
   --test aerogpu_complete_fence_gating \
   --test aerogpu_vsync_fence_pacing \
   --test aerogpu_ring_noop_fence \
