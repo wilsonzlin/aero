@@ -92,7 +92,10 @@ class QemuVirtioInputLedPreflightTests(unittest.TestCase):
 
             self.assertEqual(cm.exception.code, 2)
             err = stderr.getvalue()
-            self.assertIn("--with-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support", err)
+            self.assertIn(
+                "--with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support",
+                err,
+            )
             mock_popen.assert_not_called()
             mock_httpd.assert_not_called()
             mock_udp.assert_not_called()
@@ -100,4 +103,3 @@ class QemuVirtioInputLedPreflightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

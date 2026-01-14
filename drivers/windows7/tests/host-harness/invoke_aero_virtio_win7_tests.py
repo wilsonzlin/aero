@@ -57,10 +57,10 @@ It:
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
-  - when --with-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing) (provision the guest with
+  - when --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing) (provision the guest with
     --test-input-leds; newer guest selftests also accept --test-input-led and emit the legacy marker)
   - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
-  - when --with-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
+  - when --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
   - when --with-blk-reset is enabled, virtio-blk-reset must PASS (not SKIP/FAIL/missing)
@@ -2981,21 +2981,21 @@ def _virtio_input_led_skip_failure_message(tail: bytes, *, marker_line: Optional
         if reason:
             if reason == "flag_not_set":
                 return (
-                    "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led was enabled "
+                    "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled "
                     "(provision the guest with --test-input-led)"
                 )
             return (
-                f"FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ({reason}) but --with-input-led was enabled "
+                f"FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ({reason}) but --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled "
                 "(provision the guest with --test-input-led)"
             )
 
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set" in tail:
         return (
-            "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led was enabled "
+            "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled "
             "(provision the guest with --test-input-led)"
         )
     return (
-        "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped but --with-input-led was enabled "
+        "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped but --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled "
         "(provision the guest with --test-input-led)"
     )
 
@@ -3036,11 +3036,11 @@ def _virtio_input_led_fail_failure_message(tail: bytes, *, marker_line: Optional
         if parts:
             details = " (" + " ".join(parts) + ")"
         return (
-            "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
+            "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled"
             + details
         )
     return (
-        "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
+        "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled"
     )
 
 
@@ -3078,7 +3078,7 @@ def _virtio_input_led_required_failure_message(
     if saw_skip or prefix + b"SKIP" in tail:
         return _virtio_input_led_skip_failure_message(tail, marker_line=marker_line)
     return (
-        "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led PASS marker while --with-input-led was enabled "
+        "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led PASS marker while --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled "
         "(provision the guest with --test-input-led)"
     )
 
@@ -3766,11 +3766,11 @@ def _virtio_input_leds_fail_failure_message(tail: bytes, *, marker_line: Optiona
         if parts:
             details = " (" + " ".join(parts) + ")"
         return (
-            "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
+            "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled"
             + details
         )
     return (
-        "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
+        "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled"
     )
 
 
@@ -3803,7 +3803,7 @@ def _virtio_input_leds_required_failure_message(
                 if reason:
                     return (
                         f"FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ({reason}) "
-                        "but --with-input-leds was enabled (provision the guest with --test-input-leds; "
+                        "but --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled (provision the guest with --test-input-leds; "
                         "newer guest selftests also accept --test-input-led)"
                     )
 
@@ -3823,15 +3823,15 @@ def _virtio_input_leds_required_failure_message(
             if reason:
                 return (
                     f"FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ({reason}) "
-                    "but --with-input-leds was enabled (provision the guest with --test-input-leds; "
+                    "but --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled (provision the guest with --test-input-leds; "
                     "newer guest selftests also accept --test-input-led)"
                 )
         return (
-            "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped but --with-input-leds was enabled "
+            "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped but --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled "
             "(provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
         )
     return (
-        "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds PASS marker while --with-input-leds was enabled "
+        "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds PASS marker while --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds was enabled "
         "(guest selftest too old or missing --test-input-leds/--test-input-led)"
     )
 
@@ -4993,7 +4993,7 @@ def main() -> int:
             args.qemu_system, "virtio-mouse-pci"
         ):
             parser.error(
-                "--with-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "--with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
                 "Upgrade QEMU or omit LED/statusq validation."
             )
 
@@ -5002,7 +5002,7 @@ def main() -> int:
             args.qemu_system, "virtio-mouse-pci"
         ):
             parser.error(
-                "--with-input-leds requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "--with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
                 "Upgrade QEMU or omit LED/statusq validation."
             )
 
@@ -8438,7 +8438,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led marker after virtio-input completed while "
-                        "--with-input-led was enabled (guest selftest too old or missing --test-input-led)",
+                        "--with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led was enabled (guest selftest too old or missing --test-input-led)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
