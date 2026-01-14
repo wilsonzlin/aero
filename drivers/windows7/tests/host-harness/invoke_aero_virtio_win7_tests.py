@@ -4293,6 +4293,19 @@ def main() -> int:
                         if marker is not None:
                             virtio_input_msix_marker = marker
 
+                    # Prefer the incrementally captured virtio-blk test marker line so we don't miss
+                    # PASS/FAIL when the rolling tail buffer truncates earlier output.
+                    if virtio_blk_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_blk_marker_line)
+                        if not saw_virtio_blk_pass and status_tok == "PASS":
+                            saw_virtio_blk_pass = True
+                            if virtio_blk_marker_time is None:
+                                virtio_blk_marker_time = time.monotonic()
+                        if not saw_virtio_blk_fail and status_tok == "FAIL":
+                            saw_virtio_blk_fail = True
+                            if virtio_blk_marker_time is None:
+                                virtio_blk_marker_time = time.monotonic()
+
                     if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                         saw_virtio_blk_pass = True
                         if virtio_blk_marker_time is None:
@@ -6128,6 +6141,17 @@ def main() -> int:
                             marker = _parse_virtio_input_msix_marker(tail)
                             if marker is not None:
                                 virtio_input_msix_marker = marker
+
+                        if virtio_blk_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_blk_marker_line)
+                            if not saw_virtio_blk_pass and status_tok == "PASS":
+                                saw_virtio_blk_pass = True
+                                if virtio_blk_marker_time is None:
+                                    virtio_blk_marker_time = time.monotonic()
+                            if not saw_virtio_blk_fail and status_tok == "FAIL":
+                                saw_virtio_blk_fail = True
+                                if virtio_blk_marker_time is None:
+                                    virtio_blk_marker_time = time.monotonic()
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
                             if virtio_blk_marker_time is None:
