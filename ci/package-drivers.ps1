@@ -366,6 +366,19 @@ function Test-IsReparsePoint {
     param([Parameter(Mandatory = $true)] $Item)
 
     try {
+        # PowerShell Core / .NET 6+ exposes LinkTarget for symlink detection on all platforms.
+        # Windows PowerShell 5.1 relies on the ReparsePoint file attribute.
+        if ($Item -and ($Item.PSObject.Properties.Match("LinkTarget").Count -gt 0)) {
+            $lt = "" + $Item.LinkTarget
+            if (-not [string]::IsNullOrWhiteSpace($lt)) {
+                return $true
+            }
+        }
+    } catch {
+        # ignore and fall back
+    }
+
+    try {
         return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
     } catch {
         return $false

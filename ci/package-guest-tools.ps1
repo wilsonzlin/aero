@@ -137,6 +137,70 @@ function Test-HiddenRelPath {
   return $false
 }
 
+function Test-IsReparsePoint {
+  param([Parameter(Mandatory = $true)] $Item)
+
+  # PowerShell Core / .NET 6+ exposes LinkTarget for symlink detection on all platforms.
+  # Windows PowerShell 5.1 relies on the ReparsePoint file attribute.
+  try {
+    if ($Item -and ($Item.PSObject.Properties.Match("LinkTarget").Count -gt 0)) {
+      $lt = "" + $Item.LinkTarget
+      if (-not [string]::IsNullOrWhiteSpace($lt)) {
+        return $true
+      }
+    }
+  } catch {
+    # ignore and fall back
+  }
+
+  try {
+    return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+  } catch {
+    return $false
+  }
+}
+
+function Assert-NoReparsePointsInTree {
+  param(
+    [Parameter(Mandatory = $true)][string] $Root,
+    [string] $Context
+  )
+
+  $rootItem = Get-Item -LiteralPath $Root -ErrorAction SilentlyContinue
+  if (-not $rootItem) {
+    return
+  }
+  if (Test-IsReparsePoint -Item $rootItem) {
+    $msg = "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($rootItem.FullName)"
+    if (-not [string]::IsNullOrWhiteSpace($Context)) {
+      $msg = "$Context: $msg"
+    }
+    throw $msg
+  }
+
+  # Walk without `Get-ChildItem -Recurse` so we never traverse a reparse-point directory
+  # before detecting it.
+  $stack = New-Object "System.Collections.Generic.Stack[string]"
+  $stack.Push($rootItem.FullName)
+
+  while ($stack.Count -gt 0) {
+    $dir = $stack.Pop()
+    $items = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)
+    foreach ($it in $items) {
+      if (Test-IsReparsePoint -Item $it) {
+        $msg = "Refusing to package reparse-point/symlink item (nondeterministic/unsafe): $($it.FullName)"
+        if (-not [string]::IsNullOrWhiteSpace($Context)) {
+          $msg = "$Context: $msg"
+        }
+        throw $msg
+      }
+      if ($it.PSIsContainer) {
+        $stack.Push($it.FullName)
+      }
+    }
+  }
+}
+
 function Copy-TreeWithSafetyFilters {
   [CmdletBinding()]
   param(
@@ -147,6 +211,7 @@ function Copy-TreeWithSafetyFilters {
   if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
     throw "ExtraToolsDir does not exist: '$SourceDir'."
   }
+  Assert-NoReparsePointsInTree -Root $SourceDir -Context "ExtraToolsDir"
 
   if (-not (Test-Path -LiteralPath $DestDir -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
@@ -1208,6 +1273,8 @@ function Stage-GuestTools {
     [Parameter(Mandatory = $true)][bool] $IncludeCerts
   )
 
+  Assert-NoReparsePointsInTree -Root $SourceDir -Context "GuestToolsDir"
+
   Ensure-EmptyDirectory -Path $DestDir
   Copy-Item -Path (Join-Path $SourceDir "*") -Destination $DestDir -Recurse -Force
 
@@ -1686,6 +1753,8 @@ function Invoke-GuestToolsPackagingRun {
         throw "InputRoot is a file with unsupported extension '$inputExt'. Expected a directory, or a .zip."
       }
     }
+ 
+    Assert-NoReparsePointsInTree -Root $inputRootForStaging -Context "InputRoot"
 
     $bundleDriversDir = Join-Path $inputRootForStaging "drivers"
     $looksLikeBundle = (Test-Path -LiteralPath $bundleDriversDir -PathType Container) -and (Get-ChildItem -LiteralPath $bundleDriversDir -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
