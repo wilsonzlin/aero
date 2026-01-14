@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use aero_gpu_vga::{PortIO as _, VgaDevice};
+use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::scanout_state::ScanoutStateUpdate;
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
@@ -135,18 +136,11 @@ impl AeroGpuPciDevice {
         // Interrupt pin INTA#.
         config_space.write(0x3d, 1, 1);
 
-        let vblank_interval_ns = cfg.vblank_hz.and_then(|hz| {
-            if hz == 0 {
-                return None;
-            }
-            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
-            let period_ns = 1_000_000_000u64.div_ceil(hz as u64);
-            Some(period_ns)
-        });
+        let vblank_interval_ns = period_ns_from_hz(cfg.vblank_hz);
 
         let mut regs = AeroGpuRegs::default();
         if let Some(interval_ns) = vblank_interval_ns {
-            regs.scanout0_vblank_period_ns = interval_ns.min(u64::from(u32::MAX)) as u32;
+            regs.scanout0_vblank_period_ns = period_ns_to_reg(interval_ns);
         } else {
             // If vblank is disabled by configuration, also clear the advertised feature bit so
             // guests don't wait on a vblank that will never arrive.
@@ -400,7 +394,7 @@ impl AeroGpuPciDevice {
 
         self.regs = AeroGpuRegs::default();
         if let Some(interval_ns) = vblank_interval_ns {
-            self.regs.scanout0_vblank_period_ns = interval_ns.min(u64::from(u32::MAX)) as u32;
+            self.regs.scanout0_vblank_period_ns = period_ns_to_reg(interval_ns);
         } else {
             self.regs.features &= !FEATURE_VBLANK;
         }

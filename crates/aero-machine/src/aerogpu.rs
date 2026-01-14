@@ -10,6 +10,7 @@ use aero_devices_gpu::ring::write_fence_page;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
@@ -563,8 +564,8 @@ pub(crate) struct AeroGpuMmioSnapshotV1 {
 impl Default for AeroGpuMmioDevice {
     fn default() -> Self {
         // Default vblank pacing is 60Hz.
-        let vblank_period_ns = 1_000_000_000u64.div_ceil(60);
-        let scanout0_vblank_period_ns = vblank_period_ns.min(u64::from(u32::MAX)) as u32;
+        let vblank_period_ns = period_ns_from_hz(Some(60)).expect("60Hz must yield a vblank period");
+        let scanout0_vblank_period_ns = period_ns_to_reg(vblank_period_ns);
 
         let mut config = aero_devices::pci::profile::AEROGPU.build_config_space();
         // Start with decoding disabled; the canonical PCI config space (owned by `Machine`) will be
