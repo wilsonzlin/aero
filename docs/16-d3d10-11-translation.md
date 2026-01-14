@@ -1034,8 +1034,8 @@ them in the executor’s shared internal/emulation bind group:
 
 When wiring that translator into the executor, either adapt its declarations to the baseline
 internal scheme, or bind a separate internal group(0) for the GS pass (the current translated-GS
-prepass paths for `PointList` and `TriangleList` draws use the separate group(0) approach; see
-section 2.2.1).
+ prepass paths for `PointList`, `LineList`, and `TriangleList` draws use the separate group(0) approach; see
+ section 2.2.1).
 
 Example declaration:
 
@@ -1084,10 +1084,10 @@ To populate `gs_inputs`, the runtime must:
 2. for each vertex in the assembled primitive, populate the required `v#[]` input registers:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
-   - Current in-tree implementation note: the point-list and triangle-list translated-GS prepass
-     paths in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS
-     outputs** via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with
-     a guarded IA-fill fallback:
+   - Current in-tree implementation note: the point-list, line-list, and triangle-list translated-GS prepass
+      paths in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS
+      outputs** via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with
+      a guarded IA-fill fallback:
      - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
        VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
        IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
@@ -1897,7 +1897,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Optionally, implementations may pack upstream stage output registers into a dense `gs_inputs`
         buffer (see “GS input register payload layout”) and have the translated GS read from that.
       - Note (current in-tree translated-GS prepass):
-        - Point-list and triangle-list draws populate `gs_inputs` from **VS outputs** via a separate
+        - Point-list, line-list, and triangle-list draws populate `gs_inputs` from **VS outputs** via a separate
           VS-as-compute input-fill pass (vertex pulling + a minimal SM4 VS subset). If VS-as-compute
           translation fails, the executor only falls back to IA-fill when the VS is a strict
           passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for
@@ -2039,7 +2039,7 @@ resources** in `@group(3)`:
   - The in-tree translated-GS prepass builds `gs_inputs` via a separate **input fill** compute pass:
     - IA vertex pulling bindings live in `@group(3)` (internal range), and the input-fill kernel
       writes the packed register payload into a `@group(0)` storage buffer (`gs_inputs`).
-    - Point-list and triangle-list draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
+    - Point-list, line-list, and triangle-list draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
       so the GS observes VS output registers. If VS-as-compute translation fails, the executor only
       falls back to IA-fill when the VS is a strict passthrough (or
       `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender).
@@ -2407,7 +2407,7 @@ Each test should:
 3. Issue a draw that exercises the expansion path.
 4. Read back the render target and compare to a tiny reference image (or a simple expected pattern).
 
-Now that a minimal point-list and triangle-list translated GS DXBC execution path exists, keep the existing
+Now that a minimal point-list, line-list, and triangle-list translated GS DXBC execution path exists, keep the existing
 “ignore GS payloads” robustness test
 (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) using a GS DXBC payload that is
 intentionally **outside** the translator/execution subset. This test is meant to be a cheap

@@ -45,7 +45,7 @@ Coordination note:
 | AeroGPU sandbox device model + executor (legacy integration surface) | `[~]` | [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs) + [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs) |
 | Scanout shared-memory contracts | `[x]` | [`crates/aero-shared/src/`](../../crates/aero-shared/src/) + [`web/src/ipc/`](../../web/src/ipc/) |
 | D3D9 translation/execution (subset) | `[~]` | [`crates/aero-d3d9/`](../../crates/aero-d3d9/) + [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) + [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md) |
-| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (translated GS prepass supports `PointList` and `TriangleList` IA topologies; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
+| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (translated GS prepass supports `PointList`, `LineList`, and `TriangleList` IA topologies; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
 | Web presenters/backends (WebGPU + WebGL2) | `[x]` | [`web/src/gpu/`](../../web/src/gpu/) |
 | End-to-end Win7 WDDM + accelerated rendering in the **canonical browser machine** | `[ ]` | See [7) Critical path integration gaps](#7-current-critical-path-integration-gaps-factual) |
 
@@ -472,7 +472,7 @@ For Win7 D3D9Ex/DWM context:
 
 `crates/aero-d3d11` contains:
 
-1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed via the translated-GS prepass for a small set of IA input topologies (`PointList` and `TriangleList`); HS/DS translation/execution is not implemented).
+1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed via the translated-GS prepass for a small set of IA input topologies (`PointList`, `LineList`, and `TriangleList`); HS/DS translation/execution is not implemented).
 2. A wgpu-backed executor for the AeroGPU command stream (`aerogpu_cmd.h`).
 
 Code pointers:
@@ -518,7 +518,7 @@ Known gaps / limitations (enforced by code/tests):
     - Internal-only helpers use `@binding >= BINDING_BASE_INTERNAL` (`256`) to stay disjoint from D3D register
       spaces (e.g. IA vertex pulling, expanded-draw buffers).
   - The compute prepass includes a built-in WGSL path that emits deterministic synthetic triangle geometry for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL`).
-  - For a small supported subset of geometry shaders with supported IA input topologies (`PointList` and `TriangleList`), the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for eligible draws (`Draw` and `DrawIndexed`) (see `exec_geometry_shader_prepass_*` in `aerogpu_cmd_executor.rs`):
+  - For a small supported subset of geometry shaders with supported IA input topologies (`PointList`, `LineList`, and `TriangleList`), the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for eligible draws (`Draw` and `DrawIndexed`) (see `exec_geometry_shader_prepass_*` in `aerogpu_cmd_executor.rs`):
     - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs)
     - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
     - GS input feeding (current in-tree behavior):
@@ -552,7 +552,7 @@ Known gaps / limitations (enforced by code/tests):
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
   for state tracking and are not executed. GS shaders attempt translation to a compute prepass at
   create time:
-  - If translation succeeds, draws with supported IA input topologies (`PointList` and `TriangleList`) execute translated GS DXBC; other cases use synthetic expansion (guest GS DXBC does not execute).
+  - If translation succeeds, draws with supported IA input topologies (`PointList`, `LineList`, and `TriangleList`) execute translated GS DXBC; other cases use synthetic expansion (guest GS DXBC does not execute).
   - If translation fails, draws with that GS bound currently return a clear “geometry shader not supported” error.
     - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
     - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
