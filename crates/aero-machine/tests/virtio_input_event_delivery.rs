@@ -669,6 +669,11 @@ fn virtio_input_keyboard_statusq_updates_leds_mask() {
         .unwrap()
         .leds_mask();
     assert_eq!(leds, 0x02, "expected Caps Lock LED bit to be set");
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        leds,
+        "Machine::virtio_input_keyboard_leds should reflect device state"
+    );
 
     // Post a second statusq buffer to clear the Caps Lock LED.
     m.write_physical_u16(avail + 2, 2); // idx
@@ -683,4 +688,9 @@ fn virtio_input_keyboard_statusq_updates_leds_mask() {
         .unwrap()
         .leds_mask();
     assert_eq!(leds, 0x00, "expected Caps Lock LED bit to be cleared");
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        leds,
+        "Machine::virtio_input_keyboard_leds should reflect device state"
+    );
 }

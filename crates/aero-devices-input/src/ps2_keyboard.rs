@@ -43,6 +43,17 @@ impl Ps2Keyboard {
         self.scancode_set
     }
 
+    /// Returns the current PS/2 keyboard LED state as last set by the guest via command `0xED`
+    /// (Set LEDs).
+    ///
+    /// Bit mapping matches the PS/2 Set LEDs payload:
+    /// - bit0: Scroll Lock
+    /// - bit1: Num Lock
+    /// - bit2: Caps Lock
+    pub fn leds(&self) -> u8 {
+        self.leds
+    }
+
     pub fn has_output(&self) -> bool {
         !self.out.is_empty()
     }

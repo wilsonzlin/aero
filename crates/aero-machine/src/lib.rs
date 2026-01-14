@@ -8575,6 +8575,31 @@ impl Machine {
         u64::try_from(self.debugcon_log.borrow().len()).unwrap_or(u64::MAX)
     }
 
+    /// Returns the current PS/2 (i8042) keyboard LED bitmask as last set by the guest OS, or 0 if
+    /// the i8042 controller is not present.
+    ///
+    /// The returned bitmask matches the HID/virtio-input LED layout used by
+    /// [`Machine::usb_hid_keyboard_leds`] and [`Machine::virtio_input_keyboard_leds`]:
+    /// - bit0: Num Lock
+    /// - bit1: Caps Lock
+    /// - bit2: Scroll Lock
+    /// - bit3: Compose
+    /// - bit4: Kana
+    ///
+    /// Note: the underlying PS/2 `Set LEDs` command uses a different bit ordering. This helper
+    /// normalizes it to the shared HID-style layout for convenience.
+    pub fn ps2_keyboard_leds(&self) -> u8 {
+        let Some(ctrl) = &self.i8042 else {
+            return 0;
+        };
+        // PS/2 bit layout (Set LEDs payload): bit0=Scroll, bit1=Num, bit2=Caps.
+        let raw = ctrl.borrow_mut().keyboard_mut().leds() & 0x07;
+        let scroll = raw & 0x01;
+        let num = (raw >> 1) & 0x01;
+        let caps = (raw >> 2) & 0x01;
+        (num) | (caps << 1) | (scroll << 2)
+    }
+
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         // `Machine::inject_browser_key` is primarily a PS/2 injection API (i8042), but browsers
@@ -8876,6 +8901,20 @@ impl Machine {
         self.virtio_input_keyboard
             .as_ref()
             .is_some_and(|dev| dev.borrow().driver_ok())
+    }
+
+    /// Returns the virtio-input keyboard LED bitmask (NumLock/CapsLock/ScrollLock/Compose/Kana)
+    /// as last set by the guest OS via the virtio-input `statusq`, or 0 if the virtio-input
+    /// keyboard function is absent.
+    pub fn virtio_input_keyboard_leds(&self) -> u8 {
+        let Some(kbd) = &self.virtio_input_keyboard else {
+            return 0;
+        };
+        let mut dev = kbd.borrow_mut();
+        let Some(input) = dev.device_mut::<VirtioInput>() else {
+            return 0;
+        };
+        input.leds_mask()
     }
 
     /// Whether the guest driver for the virtio-input mouse has reached `DRIVER_OK`.
@@ -16470,6 +16509,34 @@ mod tests {
         m.inject_mouse_motion(10, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x28, 10, 0xFB]);
+    }
+
+    #[test]
+    fn ps2_keyboard_leds_are_reported_as_hid_style_bitmask() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(m.i8042.is_some(), "sanity: default config enables i8042");
+
+        // Default: no LEDs asserted.
+        assert_eq!(m.ps2_keyboard_leds(), 0);
+
+        // PS/2 Set LEDs payload uses bit1=NumLock. The machine API reports HID-style bit0=NumLock.
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED); // Set LEDs
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x02); // NumLock (PS/2 bit1)
+        assert_eq!(m.ps2_keyboard_leds(), 0x01);
+
+        // PS/2 bit2=CapsLock should map to HID bit1.
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED);
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x04);
+        assert_eq!(m.ps2_keyboard_leds(), 0x02);
+
+        // PS/2 bit0=ScrollLock should map to HID bit2.
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED);
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x01);
+        assert_eq!(m.ps2_keyboard_leds(), 0x04);
     }
 
     #[test]

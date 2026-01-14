@@ -6278,9 +6278,23 @@ impl Machine {
         self.inner.virtio_input_keyboard_driver_ok()
     }
 
+    /// Returns the virtio-input keyboard LED bitmask (NumLock/CapsLock/ScrollLock/Compose/Kana)
+    /// as last set by the guest OS, or 0 if virtio-input is disabled/unavailable.
+    pub fn virtio_input_keyboard_leds(&self) -> u32 {
+        u32::from(self.inner.virtio_input_keyboard_leds())
+    }
+
     /// Whether the guest virtio-input mouse driver has reached `DRIVER_OK`.
     pub fn virtio_input_mouse_driver_ok(&self) -> bool {
         self.inner.virtio_input_mouse_driver_ok()
+    }
+
+    /// Returns the PS/2 (i8042) keyboard LED bitmask as last set by the guest OS, or 0 if the
+    /// i8042 controller is disabled/unavailable.
+    ///
+    /// The bit layout matches [`Machine::usb_hid_keyboard_leds`].
+    pub fn ps2_keyboard_leds(&self) -> u32 {
+        u32::from(self.inner.ps2_keyboard_leds())
     }
 
     // -------------------------------------------------------------------------
