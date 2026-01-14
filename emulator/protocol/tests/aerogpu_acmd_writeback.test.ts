@@ -21,6 +21,7 @@ import {
   decodeAerogpuAllocTable,
   executeAerogpuCmdStream,
 } from "../../../web/src/workers/aerogpu-acmd-executor.ts";
+import { HIGH_RAM_START, LOW_RAM_END } from "../../../web/src/arch/guest_ram_translate.ts";
 
 function buildAllocTable(
   entries: Array<{ allocId: number; flags: number; gpa: number; sizeBytes: number }>,
@@ -71,11 +72,6 @@ test("ACMD COPY_BUFFER writeback updates guest memory backing for dst buffer", (
 });
 
 test("ACMD COPY_BUFFER writeback supports guest paddr in high-RAM remap window (>=4GiB)", () => {
-  // Mirrors the PC/Q35 E820 layout constants used by the web runtime.
-  // Keep in sync with `web/src/runtime/shared_layout.ts`.
-  const LOW_RAM_END = 0xb000_0000;
-  const HIGH_RAM_START = 0x1_0000_0000;
-
   class FakeGuestU8 {
     readonly byteLength: number;
     lastSubarray: { start: number; end: number } | null = null;
