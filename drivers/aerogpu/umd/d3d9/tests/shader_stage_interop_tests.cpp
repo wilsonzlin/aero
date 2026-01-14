@@ -2774,7 +2774,9 @@ bool TestPsOnlyXyzTex1LightingEnabledStillDraws() {
     if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
         hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f)) {
       const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 208 && sc->vec4_count == 29) {
+      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX &&
+          sc->start_register == kFixedfuncLightingStartRegister &&
+          sc->vec4_count == kFixedfuncLightingVec4Count) {
         lighting_uploads++;
       }
     }
