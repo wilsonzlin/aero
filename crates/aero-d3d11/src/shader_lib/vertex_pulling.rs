@@ -6,14 +6,15 @@
 //!
 //! The corresponding WGSL (`vertex_pulling.wgsl`) defines:
 //! - `@group(2) @binding(0)` = uniform metadata (`IaMeta`)
-//! - `@group(2) @binding(1..=8)` = up to 8 IA vertex buffers as `var<storage, read>`
+//! - `@group(2) @binding(1..=3)` = up to 3 IA vertex buffers as `var<storage, read>`
 //!
 //! The metadata encodes per-slot base offset + stride in bytes.
 
-/// Current WebGPU baseline minimum for vertex buffer slots.
+/// Maximum number of IA vertex buffers supported by the shader-lib vertex pulling bindings.
 ///
-/// D3D11 exposes 32 IA slots, but `aero-d3d11` compacts them down to at most 8 for WebGPU.
-pub const IA_MAX_VERTEX_BUFFERS: usize = 8;
+/// Kept conservative so tests that also bind an output storage buffer stay within the lowest
+/// downlevel limit for `max_storage_buffers_per_shader_stage` (4).
+pub const IA_MAX_VERTEX_BUFFERS: usize = 3;
 
 /// Bind group binding index for [`IaMeta`] (`var<uniform>`).
 pub const IA_BINDING_META: u32 = 0;

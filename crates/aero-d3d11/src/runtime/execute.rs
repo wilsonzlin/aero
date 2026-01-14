@@ -247,8 +247,47 @@ impl D3D11Runtime {
             .get(&id)
             .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
 
-        let slice = buffer.buffer.slice(offset..offset.saturating_add(size));
+        if size == 0 {
+            return Ok(Vec::new());
+        }
 
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("read_buffer range overflows u64 (offset={offset} size={size})"))?;
+        if end > buffer.size {
+            bail!(
+                "read_buffer out of bounds: offset={offset} size={size} buffer_size={}",
+                buffer.size
+            );
+        }
+
+        // WebGPU buffers cannot be both `MAP_READ` and `STORAGE`/`VERTEX`/`INDEX`, but tests and
+        // internal tooling frequently want to read back those GPU-only buffers.
+        //
+        // Perform a staging copy into a dedicated `MAP_READ | COPY_DST` buffer and map that.
+        let align = wgpu::COPY_BUFFER_ALIGNMENT;
+        let aligned_offset = offset / align * align;
+        let aligned_end = end.div_ceil(align) * align;
+        let aligned_size = aligned_end
+            .checked_sub(aligned_offset)
+            .ok_or_else(|| anyhow!("read_buffer aligned range underflow"))?;
+
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 read_buffer staging"),
+            size: aligned_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 read_buffer encoder"),
+            });
+        encoder.copy_buffer_to_buffer(&buffer.buffer, aligned_offset, &staging, 0, aligned_size);
+        self.queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).ok();
@@ -260,8 +299,21 @@ impl D3D11Runtime {
             .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
             .context("wgpu: map_async failed")?;
 
-        let data = slice.get_mapped_range().to_vec();
-        buffer.buffer.unmap();
+        let offset_in_staging = offset - aligned_offset;
+        let start = usize::try_from(offset_in_staging)
+            .context("read_buffer offset_in_staging overflows usize")?;
+        let len = usize::try_from(size).context("read_buffer size overflows usize")?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("read_buffer staging range overflows usize"))?;
+
+        let mapped = slice.get_mapped_range();
+        let data = mapped
+            .get(start..end)
+            .ok_or_else(|| anyhow!("read_buffer staging range out of bounds"))?
+            .to_vec();
+        drop(mapped);
+        staging.unmap();
         Ok(data)
     }
 
@@ -2294,12 +2346,12 @@ fn read_index_from_shadow(shadow: &[u8], byte_offset: usize, format: wgpu::Index
 fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {
     let mut out = wgpu::BufferUsages::empty();
     let mut needs_storage = usage.contains(BufferUsage::STORAGE);
-    if usage.contains(BufferUsage::MAP_READ) {
-        out |= wgpu::BufferUsages::MAP_READ;
-    }
-    if usage.contains(BufferUsage::MAP_WRITE) {
-        out |= wgpu::BufferUsages::MAP_WRITE;
-    }
+    // `MAP_READ`/`MAP_WRITE` are intentionally not mapped directly to WebGPU buffer map usages.
+    //
+    // WebGPU forbids combining `MAP_*` with most GPU usages (including `STORAGE`), but for D3D11
+    // tests (and internal tooling) we often want "readback" buffers that are also written by GPU
+    // passes. `D3D11Runtime::read_buffer` performs an explicit staging copy into a dedicated
+    // `MAP_READ | COPY_DST` buffer to support that without requiring invalid usage combinations.
     if usage.contains(BufferUsage::COPY_SRC) {
         out |= wgpu::BufferUsages::COPY_SRC;
     }

@@ -224,3 +224,140 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }
     });
 }
+
+#[test]
+fn compute_vertex_pulling_supports_unaligned_byte_addresses() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::compute_vertex_pulling_supports_unaligned_byte_addresses"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        const VB: u32 = 1;
+        const META: u32 = 2;
+        const OUT: u32 = 3;
+        const SHADER: u32 = 4;
+        const PIPELINE: u32 = 5;
+
+        // Vertex buffer bytes (12 bytes, padded to u32 alignment):
+        //
+        // We intentionally choose an unaligned base offset (1 byte) so the shader must stitch two u32
+        // reads to reconstruct the requested dword.
+        //
+        // At byte offset 1: [0x11, 0x22, 0x33, 0x44] => 0x44332211
+        // At byte offset 5: [0x55, 0x66, 0x77, 0x88] => 0x88776655
+        let vb = vec![
+            0x00u8, // padding byte (unaddressed by the shader)
+            0x11u8,
+            0x22u8,
+            0x33u8,
+            0x44u8,
+            0x55u8,
+            0x66u8,
+            0x77u8,
+            0x88u8,
+            0x00u8,
+            0x00u8,
+            0x00u8,
+        ];
+
+        let mut meta = IaMeta::default();
+        meta.vb[0].base_offset_bytes = 1;
+        meta.vb[0].stride_bytes = 4;
+
+        // Output buffer: 2 dwords.
+        let output_size = 8u64;
+
+        let wgsl = format!(
+            r#"
+{VERTEX_PULLING_WGSL}
+
+struct OutBuf {{
+  data: array<u32>,
+}};
+
+@group(2) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  if (gid.x != 0u) {{ return; }}
+  let a0 = ia_load_u32(0u, ia_vertex_byte_addr(0u, 0u, 0u));
+  let a1 = ia_load_u32(0u, ia_vertex_byte_addr(0u, 1u, 0u));
+  out_buf.data[0u] = a0;
+  out_buf.data[1u] = a1;
+}}
+"#,
+            out_binding = IA_BINDING_VERTEX_BUFFER_END
+        );
+
+        let mut bindings: Vec<BindingDesc> = Vec::new();
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_META,
+            ty: BindingType::UniformBuffer,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            bindings.push(BindingDesc {
+                binding: IA_BINDING_VERTEX_BUFFER_BASE + i,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
+            });
+        }
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_VERTEX_BUFFER_END,
+            ty: BindingType::StorageBufferReadWrite,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+
+        let mut writer = CmdWriter::new();
+        writer.create_buffer(VB, vb.len() as u64, BufferUsage::VERTEX);
+        writer.create_buffer(META, meta.as_bytes().len() as u64, BufferUsage::UNIFORM);
+        writer.create_buffer(OUT, output_size, BufferUsage::STORAGE | BufferUsage::MAP_READ);
+
+        writer.update_buffer(VB, 0, &vb);
+        writer.update_buffer(META, 0, meta.as_bytes());
+
+        writer.create_shader_module_wgsl(SHADER, &wgsl);
+        writer.create_compute_pipeline(PIPELINE, SHADER, &bindings);
+
+        writer.begin_compute_pass();
+        writer.set_pipeline(PipelineKind::Compute, PIPELINE);
+
+        writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + i, VB, 0, 0);
+        }
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_END, OUT, 0, 0);
+
+        writer.dispatch(1, 1, 1);
+        writer.end_compute_pass();
+
+        rt.execute(&writer.finish())
+            .expect("compute dispatch with vertex pulling should succeed");
+
+        let bytes = rt
+            .read_buffer(OUT, 0, output_size)
+            .await
+            .expect("read output buffer");
+        assert_eq!(bytes.len(), output_size as usize);
+
+        let got0 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let got1 = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        assert_eq!(got0, 0x4433_2211);
+        assert_eq!(got1, 0x8877_6655);
+    });
+}
