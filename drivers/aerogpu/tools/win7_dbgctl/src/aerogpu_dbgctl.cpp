@@ -5926,7 +5926,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       rc = 2;
       goto cleanup;
     }
-    if (bytesRead != chunk) {
+    // Treat short reads as errors when the KMD does not report STATUS_PARTIAL_COPY.
+    // (STATUS_PARTIAL_COPY is handled below.)
+    if (op != STATUS_PARTIAL_COPY && bytesRead != chunk) {
       fwprintf(stderr,
                L"read-gpa short read: gpa=0x%I64x requested=%lu got=%lu (status=0x%08lx)\n",
                (unsigned long long)curGpa,
