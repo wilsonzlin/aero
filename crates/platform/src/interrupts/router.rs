@@ -1635,7 +1635,6 @@ mod tests {
 
         assert_eq!(ints.lapics[0].get_pending_vector(), None);
         assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
-    }
 
         // Acknowledge the interrupt on the destination LAPIC to clear its pending state.
         ints.acknowledge_for_apic(1, vector as u8);
