@@ -329,8 +329,8 @@ static int RunD3D101Triangle(int argc, char** argv) {
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
   std::string shader_err;
-  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestBasicColorHlsl,
-                                           strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
+  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestConstantBufferColorHlsl,
+                                           strlen(aerogpu_test::kAeroGpuTestConstantBufferColorHlsl),
                                            "d3d10_1_triangle.hlsl",
                                            "vs_main",
                                            "vs_4_0",
@@ -338,8 +338,8 @@ static int RunD3D101Triangle(int argc, char** argv) {
                                            &shader_err)) {
     return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
   }
-  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestBasicColorHlsl,
-                                           strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
+  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestConstantBufferColorHlsl,
+                                           strlen(aerogpu_test::kAeroGpuTestConstantBufferColorHlsl),
                                            "d3d10_1_triangle.hlsl",
                                            "ps_main",
                                            "ps_4_0",
@@ -387,8 +387,10 @@ static int RunD3D101Triangle(int argc, char** argv) {
   verts[2].pos[0] = 1.0f;
   verts[2].pos[1] = -1.0f;
   for (int i = 0; i < 3; ++i) {
-    verts[i].color[0] = 0.0f;
-    verts[i].color[1] = 1.0f;
+    // Vertex colors are intentionally not used by the shader. Keep them as red so the test
+    // fails if the wrong shader is accidentally compiled/bound.
+    verts[i].color[0] = 1.0f;
+    verts[i].color[1] = 0.0f;
     verts[i].color[2] = 0.0f;
     verts[i].color[3] = 1.0f;
   }
@@ -418,6 +420,50 @@ static int RunD3D101Triangle(int argc, char** argv) {
 
   device->VSSetShader(vs.get());
   device->PSSetShader(ps.get());
+
+  struct Constants {
+    float vs_color[4];
+    float ps_mod[4];
+  };
+  Constants constants{};
+  constants.vs_color[0] = 0.0f;
+  constants.vs_color[1] = 1.0f;
+  constants.vs_color[2] = 0.0f;
+  constants.vs_color[3] = 1.0f;
+  constants.ps_mod[0] = 1.0f;
+  constants.ps_mod[1] = 1.0f;
+  constants.ps_mod[2] = 1.0f;
+  constants.ps_mod[3] = 1.0f;
+
+  D3D10_BUFFER_DESC cb_desc;
+  ZeroMemory(&cb_desc, sizeof(cb_desc));
+  cb_desc.ByteWidth = sizeof(constants);
+  cb_desc.Usage = D3D10_USAGE_DYNAMIC;
+  cb_desc.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
+  cb_desc.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+  cb_desc.MiscFlags = 0;
+
+  ComPtr<ID3D10Buffer> cb0;
+  hr = device->CreateBuffer(&cb_desc, NULL, cb0.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(constant)", hr);
+  }
+
+  void* cb_data = NULL;
+  hr = cb0->Map(D3D10_MAP_WRITE_DISCARD, 0, &cb_data);
+  if (FAILED(hr)) {
+    return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(constant)", hr, device.get());
+  }
+  if (!cb_data) {
+    cb0->Unmap();
+    return reporter.Fail("Map(constant) returned NULL pData");
+  }
+  memcpy(cb_data, &constants, sizeof(constants));
+  cb0->Unmap();
+
+  ID3D10Buffer* cb_ptr = cb0.get();
+  device->VSSetConstantBuffers(0, 1, &cb_ptr);
+  device->PSSetConstantBuffers(0, 1, &cb_ptr);
 
   const FLOAT clear_rgba[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   device->ClearRenderTargetView(rtv.get(), clear_rgba);

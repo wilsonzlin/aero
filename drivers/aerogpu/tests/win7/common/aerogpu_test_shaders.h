@@ -26,5 +26,37 @@ float4 ps_main(VSOut input) : SV_Target {
 }
 )";
 
-}  // namespace aerogpu_test
+// Constant-buffer test shader used to validate VS/PS cbuffer bindings.
+//
+// Expected constant buffer layout (register b0):
+//   float4 vs_color;  // offset 0
+//   float4 ps_mod;    // offset 16
+static const char kAeroGpuTestConstantBufferColorHlsl[] = R"(
+cbuffer CB0 : register(b0) {
+  float4 vs_color;
+  float4 ps_mod;
+};
 
+struct VSIn {
+  float2 pos : POSITION;
+  float4 color : COLOR0;
+};
+
+struct VSOut {
+  float4 pos : SV_Position;
+  float4 color : COLOR0;
+};
+
+VSOut vs_main(VSIn input) {
+  VSOut o;
+  o.pos = float4(input.pos.xy, 0.0f, 1.0f);
+  o.color = vs_color;
+  return o;
+}
+
+float4 ps_main(VSOut input) : SV_Target {
+  return input.color * ps_mod;
+}
+)";
+
+}  // namespace aerogpu_test
