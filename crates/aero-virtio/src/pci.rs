@@ -2192,4 +2192,34 @@ mod tests {
         assert_eq!(state.legacy_raise_count, 1);
         assert!(state.msix_messages.is_empty());
     }
+
+    #[test]
+    fn config_interrupt_intx_disable_suppresses_line_but_retains_pending() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+
+        // Disable INTx delivery at the PCI level (COMMAND.INTX_DISABLE).
+        pci.set_pci_command(1u16 << 10);
+        assert!(!pci.irq_level());
+
+        pci.signal_config_interrupt();
+        assert!(!pci.irq_level());
+        assert_eq!(state.borrow().legacy_raise_count, 0);
+
+        // Re-enable INTx and ensure the pending latch reasserts the line without additional work.
+        pci.set_pci_command(0);
+        assert!(pci.irq_level());
+        assert_eq!(state.borrow().legacy_raise_count, 1);
+
+        // ISR read-to-ack must clear the latch and deassert INTx.
+        let isr = pci.read_isr_and_clear();
+        assert_eq!(isr, VIRTIO_PCI_LEGACY_ISR_CONFIG);
+        assert!(!pci.irq_level());
+        assert_eq!(state.borrow().legacy_lower_count, 1);
+    }
 }
