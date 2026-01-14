@@ -3177,6 +3177,20 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.push(vram.attr_index);
     out.push(vram.attr_flip_flop as u8);
 
+    // Optional trailing VGA port register file (misc + seq/gc/crtc indices + regs).
+    //
+    // While the AeroGPU legacy VGA frontend is intentionally permissive and does not implement a
+    // full VGA pipeline, guests may still read back port-programmed state after snapshot/restore.
+    // Preserve these registers for determinism.
+    out.extend_from_slice(b"VREG");
+    out.push(vram.misc_output);
+    out.push(vram.seq_index);
+    out.extend_from_slice(&vram.seq_regs);
+    out.push(vram.gc_index);
+    out.extend_from_slice(&vram.gc_regs);
+    out.push(vram.crtc_index);
+    out.extend_from_slice(&vram.crtc_regs);
+
     out
 }
 
@@ -3524,6 +3538,33 @@ fn apply_aerogpu_snapshot_v2(
             if let Some(payload) = bytes.get((off + 4)..(off + 4 + PAYLOAD_LEN)) {
                 vram.attr_index = payload[0] & 0x1F;
                 vram.attr_flip_flop = payload[1] != 0;
+            }
+            off = off.saturating_add(TOTAL_LEN);
+            continue;
+        }
+
+        if tag == b"VREG" {
+            const REG_LEN: usize = 256;
+            const PAYLOAD_LEN: usize = 1 + 1 + REG_LEN + 1 + REG_LEN + 1 + REG_LEN;
+            const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+            if bytes.len() < off.saturating_add(TOTAL_LEN) {
+                break;
+            }
+            if let Some(payload) = bytes.get((off + 4)..(off + 4 + PAYLOAD_LEN)) {
+                let mut idx = 0usize;
+                vram.misc_output = payload[idx];
+                idx += 1;
+                vram.seq_index = payload[idx];
+                idx += 1;
+                vram.seq_regs.copy_from_slice(&payload[idx..idx + REG_LEN]);
+                idx += REG_LEN;
+                vram.gc_index = payload[idx];
+                idx += 1;
+                vram.gc_regs.copy_from_slice(&payload[idx..idx + REG_LEN]);
+                idx += REG_LEN;
+                vram.crtc_index = payload[idx];
+                idx += 1;
+                vram.crtc_regs.copy_from_slice(&payload[idx..idx + REG_LEN]);
             }
             off = off.saturating_add(TOTAL_LEN);
             continue;
