@@ -97,6 +97,22 @@ fn parse_allows_misaligned_chunk_offsets() {
 }
 
 #[test]
+fn parse_ignores_trailing_bytes_beyond_total_size() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+    let declared = bytes.len();
+    bytes.extend_from_slice(&[0xcc, 0xdd, 0xee, 0xff]);
+    assert!(bytes.len() > declared);
+
+    let file = DxbcFile::parse(&bytes).expect("parse should succeed");
+    assert_eq!(file.header().total_size as usize, declared);
+    assert_eq!(file.bytes().len(), declared);
+    assert_eq!(
+        file.get_chunk(FourCC(*b"SHDR")).unwrap().data,
+        &[1, 2, 3, 4]
+    );
+}
+
+#[test]
 fn malformed_bad_magic_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     bytes[0..4].copy_from_slice(b"NOPE");
