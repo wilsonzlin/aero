@@ -99,6 +99,10 @@ switching back to `Machine::set_boot_drive(0x80)` selects HDD boot for post-inst
 BIOS boot drive is re-applied during reset/POST, callers should set the desired boot drive number
 and then invoke `Machine::reset()` before starting the boot.
 
+Browser/wasm note: `crates/aero-wasm` exports `Machine` to JS and also exposes
+`machine.set_boot_drive(0xE0|0x80)` alongside `machine.reset()`. The same rule applies: set the boot
+drive number and then reset to re-run BIOS POST with the new `DL` value.
+
 ### 2) Normal boot (after installation)
 
 1. BIOS boot order boots from the **AHCI HDD** (ICH9 AHCI port 0) and enters the boot sector with
