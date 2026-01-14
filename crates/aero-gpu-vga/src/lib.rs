@@ -2585,10 +2585,10 @@ mod tests {
         // pixel, with bit7 corresponding to the leftmost pixel.
         //
         // Colors for the 8 pixels (bit7..bit0): [5, 5, 4, 7, 5, 1, 13, 5]
-        dev.vram[0 * VGA_PLANE_SIZE + 0] = 0xDF; // plane 0
-        dev.vram[1 * VGA_PLANE_SIZE + 0] = 0x10; // plane 1
-        dev.vram[2 * VGA_PLANE_SIZE + 0] = 0xFB; // plane 2
-        dev.vram[3 * VGA_PLANE_SIZE + 0] = 0x02; // plane 3
+        dev.vram[0] = 0xDF; // plane 0
+        dev.vram[VGA_PLANE_SIZE] = 0x10; // plane 1
+        dev.vram[2 * VGA_PLANE_SIZE] = 0xFB; // plane 2
+        dev.vram[3 * VGA_PLANE_SIZE] = 0x02; // plane 3
 
         // Read Mode 0: return the selected plane latch (Read Map Select).
         dev.graphics[5] = 0x00; // read mode 0, write mode 0
@@ -2854,16 +2854,20 @@ mod tests {
         vbe_write(&mut dev, 0x0004, 0x0041); // enable + lfb
 
         // Pixel at (0,0): blue (0x001F).
-        dev.mem_write_u8(SVGA_LFB_BASE + 0, 0x1F);
+        dev.mem_write_u8(SVGA_LFB_BASE, 0x1F);
         dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00);
 
         // Pixel at (x_offset,y_offset) = (1,1): 0x8543 (RGB565).
         //
         // r=0b10000 -> 0x84, g=0b101010 -> 0xAA, b=0b00011 -> 0x18.
         // Expected RGBA8888: 0xFF18AA84.
-        let offset_px = (1u32 * 4 + 1) * 2;
-        dev.mem_write_u8(SVGA_LFB_BASE + offset_px + 0, 0x43);
-        dev.mem_write_u8(SVGA_LFB_BASE + offset_px + 1, 0x85);
+        let bytes_per_pixel = 2u32;
+        let virt_width = 4u32;
+        let x_offset = 1u32;
+        let y_offset = 1u32;
+        let offset_bytes = (y_offset * virt_width + x_offset) * bytes_per_pixel;
+        dev.mem_write_u8(SVGA_LFB_BASE + offset_bytes, 0x43);
+        dev.mem_write_u8(SVGA_LFB_BASE + offset_bytes + 1, 0x85);
 
         dev.present();
 
