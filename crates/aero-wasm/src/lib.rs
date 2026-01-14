@@ -2488,6 +2488,14 @@ mod legacy_demo_vm {
             self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
         }
 
+        pub fn debugcon_output(&mut self) -> Vec<u8> {
+            self.inner.debugcon_output_bytes()
+        }
+
+        pub fn debugcon_output_len(&mut self) -> u32 {
+            self.inner.debugcon_output_len().min(u64::from(u32::MAX)) as u32
+        }
+
         pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
             self.inner
                 .take_snapshot_full()
@@ -3906,6 +3914,18 @@ impl Machine {
     /// Return the current serial output length without copying the bytes into JS.
     pub fn serial_output_len(&mut self) -> u32 {
         self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
+    }
+
+    /// Returns and clears any accumulated ISA DebugCon output (port `0xE9`).
+    pub fn debugcon_output(&mut self) -> Vec<u8> {
+        self.inner.take_debugcon_output()
+    }
+
+    /// Return the current DebugCon output length without copying the bytes into JS.
+    pub fn debugcon_output_len(&mut self) -> u32 {
+        self.inner
+            .debugcon_output_len()
+            .min(u64::from(u32::MAX)) as u32
     }
 
     // -------------------------------------------------------------------------

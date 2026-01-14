@@ -298,6 +298,11 @@ pub struct MachineConfig {
     pub enable_aerogpu: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
+    /// Whether to attach an ISA DebugCon logging port at `0xE9`.
+    ///
+    /// This is a Bochs/QEMU-compatible debug device used for simple early boot logging (e.g. before
+    /// the guest initializes a serial console).
+    pub enable_debugcon: bool,
     /// Whether to attach a legacy i8042 controller at ports `0x60/0x64`.
     pub enable_i8042: bool,
     /// Whether to attach a "fast A20" gate device at port `0x92`.
@@ -337,6 +342,7 @@ impl Default for MachineConfig {
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
+            enable_debugcon: true,
             enable_i8042: true,
             enable_a20_gate: true,
             enable_reset_ctrl: true,
@@ -386,6 +392,7 @@ impl MachineConfig {
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
+            enable_debugcon: true,
             enable_i8042: true,
             enable_a20_gate: true,
             enable_reset_ctrl: true,
@@ -5354,6 +5361,11 @@ Track progress: docs/21-smp.md\n\
         std::mem::take(&mut *self.debugcon_log.borrow_mut())
     }
 
+    /// Return a copy of the DebugCon output accumulated so far without draining it.
+    pub fn debugcon_output_bytes(&mut self) -> Vec<u8> {
+        self.debugcon_log.borrow().clone()
+    }
+
     /// Return the number of bytes currently buffered in the DebugCon output log.
     pub fn debugcon_output_len(&mut self) -> u64 {
         u64::try_from(self.debugcon_log.borrow().len()).unwrap_or(u64::MAX)
@@ -5736,8 +5748,10 @@ Track progress: docs/21-smp.md\n\
 
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
-        // Always expose the Bochs/QEMU-style debug console port for low-overhead early-boot output.
-        register_debugcon(&mut self.io, self.debugcon_log.clone());
+        // Expose the Bochs/QEMU-style debug console port (0xE9) for low-overhead early-boot output.
+        if self.cfg.enable_debugcon {
+            register_debugcon(&mut self.io, self.debugcon_log.clone());
+        }
 
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
 

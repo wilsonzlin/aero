@@ -9,7 +9,6 @@
 //!
 //! This device models that behavior for Aero's canonical machine integration tests: byte writes to
 //! `0xE9` are appended to a host-visible buffer.
-
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -67,4 +66,3 @@ impl PortIoDevice for DebugCon {
 pub fn register_debugcon(bus: &mut IoPortBus, log: SharedDebugConLog) {
     bus.register(DEBUGCON_PORT, Box::new(DebugCon::new(log)));
 }
-
