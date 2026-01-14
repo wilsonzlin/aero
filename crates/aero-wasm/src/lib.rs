@@ -4024,6 +4024,42 @@ impl Machine {
         }
     }
 
+    /// Returns the effective boot device used for the current boot session.
+    ///
+    /// When the firmware "CD-first when present" policy is enabled, this reflects what firmware
+    /// actually booted from (CD vs HDD), rather than just the configured preference.
+    pub fn active_boot_device(&self) -> MachineBootDevice {
+        match self.inner.active_boot_device() {
+            aero_machine::BootDevice::Hdd => MachineBootDevice::Hdd,
+            aero_machine::BootDevice::Cdrom => MachineBootDevice::Cdrom,
+        }
+    }
+
+    /// Enable/disable the firmware "CD-first when present" boot policy.
+    ///
+    /// When enabled and install media is attached, BIOS POST attempts to boot from CD-ROM first
+    /// and falls back to the configured `boot_drive` on failure.
+    ///
+    /// Call [`Machine::reset`] to apply the new policy to the next boot.
+    pub fn set_boot_from_cd_if_present(&mut self, enabled: bool) {
+        self.inner.set_boot_from_cd_if_present(enabled);
+    }
+
+    /// Set the BIOS CD-ROM drive number used when booting under the "CD-first when present" policy.
+    ///
+    /// Valid El Torito CD-ROM drive numbers are `0xE0..=0xEF`.
+    ///
+    /// Call [`Machine::reset`] to apply the new value to the next boot.
+    pub fn set_cd_boot_drive(&mut self, drive: u32) -> Result<(), JsValue> {
+        if !(0xE0..=0xEF).contains(&drive) {
+            return Err(JsValue::from_str(
+                "cd boot drive must be in 0xE0..=0xEF (recommended 0xE0 for first CD-ROM)",
+            ));
+        }
+        self.inner.set_cd_boot_drive(drive as u8);
+        Ok(())
+    }
+
     pub fn set_disk_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         self.inner
             .set_disk_image(bytes.to_vec())
