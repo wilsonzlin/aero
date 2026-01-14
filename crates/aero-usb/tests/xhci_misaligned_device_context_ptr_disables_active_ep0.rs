@@ -11,15 +11,9 @@ mod util;
 
 use util::{Alloc, TestMemory};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct NakThenDataControlDevice {
     calls: usize,
-}
-
-impl Default for NakThenDataControlDevice {
-    fn default() -> Self {
-        Self { calls: 0 }
-    }
 }
 
 impl UsbDeviceModel for NakThenDataControlDevice {

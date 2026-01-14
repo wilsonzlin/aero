@@ -131,9 +131,9 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
 
     // Execute transfers while the controller is running so restore-time execution is meaningful.
     ctrl.mmio_write(
-        aero_usb::xhci::regs::REG_USBCMD,
+        regs::REG_USBCMD,
         4,
-        u64::from(aero_usb::xhci::regs::USBCMD_RUN),
+        u64::from(regs::USBCMD_RUN),
     );
 
     // Endpoint 1 IN => endpoint id 3.
@@ -175,9 +175,9 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
         .expect("load patched xHCI snapshot");
 
     restored.mmio_write(
-        aero_usb::xhci::regs::REG_USBCMD,
+        regs::REG_USBCMD,
         4,
-        u64::from(aero_usb::xhci::regs::USBCMD_RUN),
+        u64::from(regs::USBCMD_RUN),
     );
     restored.tick(&mut mem);
 
