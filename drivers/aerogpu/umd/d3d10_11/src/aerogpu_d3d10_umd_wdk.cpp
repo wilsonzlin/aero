@@ -1776,35 +1776,10 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst, Se
 }
 
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
-  if (!dev || !res) {
-    return;
-  }
-  if (dev->wddm_submit_allocation_list_oom) {
-    return;
-  }
-  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
-    return;
-  }
-  const uint32_t handle = res->wddm_allocation_handle;
-  for (auto& entry : dev->wddm_submit_allocation_handles) {
-    if (entry.allocation_handle == handle) {
-      if (write) {
-        entry.write = 1;
-      }
-      return;
-    }
-  }
-  aerogpu::d3d10_11::WddmSubmitAllocation entry{};
-  entry.allocation_handle = handle;
-  entry.write = write ? 1 : 0;
-  try {
-    dev->wddm_submit_allocation_handles.push_back(entry);
-  } catch (...) {
-    dev->wddm_submit_allocation_list_oom = true;
-    D3D10DDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = dev;
-    SetError(hDevice, E_OUTOFMEMORY);
-  }
+  D3D10DDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = dev;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(
+      dev, res, write, [hDevice](HRESULT hr) { SetError(hDevice, hr); });
 }
 
 static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
