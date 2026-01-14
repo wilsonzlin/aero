@@ -772,6 +772,8 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     // Scope (_SB_) { ... }
     let mut sb = Vec::new();
     sb.extend_from_slice(&aml_device_sys0(cfg));
+    sb.extend_from_slice(&aml_device_pwrb());
+    sb.extend_from_slice(&aml_device_slpb());
     sb.extend_from_slice(&aml_device_pci0(cfg));
     sb.extend_from_slice(&aml_device_hpet(cfg));
     sb.extend_from_slice(&aml_device_rtc());
@@ -1147,6 +1149,32 @@ fn aml_device_timr() -> Vec<u8> {
     body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &timr_crs()));
     aml_device(*b"TIMR", &body)
+}
+
+fn aml_device_pwrb() -> Vec<u8> {
+    // ACPI power button device.
+    //
+    // `_UID=0` follows the single-instance convention used for our other fixed
+    // devices. `_STA=0x0F` marks the device as present/enabled/functioning and
+    // visible, matching typical always-present firmware devices.
+    let mut body = Vec::new();
+    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0C0C"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    aml_device(*b"PWRB", &body)
+}
+
+fn aml_device_slpb() -> Vec<u8> {
+    // ACPI sleep button device.
+    //
+    // `_UID=0` follows the single-instance convention used for our other fixed
+    // devices. `_STA=0x0F` marks the device as present/enabled/functioning and
+    // visible, matching typical always-present firmware devices.
+    let mut body = Vec::new();
+    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0C0E"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    aml_device(*b"SLPB", &body)
 }
 
 fn aml_name_eisa_id(name: [u8; 4], id: &str) -> Vec<u8> {

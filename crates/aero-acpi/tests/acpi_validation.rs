@@ -605,6 +605,30 @@ fn dsdt_system_resources_device_reserves_acpi_pm_ports() {
 }
 
 #[test]
+fn dsdt_exposes_standard_acpi_power_and_sleep_buttons() {
+    let cfg = AcpiConfig::default();
+    let tables = AcpiTables::build(&cfg, AcpiPlacement::default());
+    let aml = &tables.dsdt[36..];
+
+    let pwrb = find_device_body(aml, b"PWRB").expect("expected DSDT to contain _SB_.PWRB");
+    let slpb = find_device_body(aml, b"SLPB").expect("expected DSDT to contain _SB_.SLPB");
+
+    let pnp0c0c = eisa_id_to_u32("PNP0C0C").unwrap().to_le_bytes();
+    let hid_pnp0c0c = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0c0c[..]].concat();
+    assert!(
+        pwrb.windows(hid_pnp0c0c.len()).any(|w| w == hid_pnp0c0c),
+        "expected PWRB._HID to be PNP0C0C (ACPI power button)"
+    );
+
+    let pnp0c0e = eisa_id_to_u32("PNP0C0E").unwrap().to_le_bytes();
+    let hid_pnp0c0e = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0c0e[..]].concat();
+    assert!(
+        slpb.windows(hid_pnp0c0e.len()).any(|w| w == hid_pnp0c0e),
+        "expected SLPB._HID to be PNP0C0E (ACPI sleep button)"
+    );
+}
+
+#[test]
 fn mcfg_is_emitted_and_describes_the_ecam_window_when_enabled() {
     let cfg = AcpiConfig {
         pcie_ecam_base: 0xC000_0000,
