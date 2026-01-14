@@ -37,6 +37,25 @@ fn configure_keyboard_for_reports(kbd: &mut aero_usb::hid::UsbHidKeyboardHandle)
     assert!(kbd.configured(), "keyboard should now be configured");
 }
 
+fn configure_consumer_for_reports(consumer: &mut aero_usb::hid::UsbHidConsumerControlHandle) {
+    if consumer.configured() {
+        return;
+    }
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = consumer.handle_control_request(setup, None);
+    assert!(
+        matches!(resp, ControlResponse::Ack),
+        "expected SET_CONFIGURATION to ACK; got {resp:?}"
+    );
+    assert!(consumer.configured(), "consumer-control should now be configured");
+}
+
 fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
     let uhci = m.uhci().expect("UHCI device should exist");
     let mut uhci = uhci.borrow_mut();
@@ -51,6 +70,20 @@ fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
         .downstream_device_mut(0)
         .expect("hub port 1 should contain a keyboard device");
     keyboard.model_mut().handle_interrupt_in(0x81)
+}
+
+fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
+    let uhci = m.uhci().expect("UHCI device should exist");
+    let mut uhci = uhci.borrow_mut();
+    let root = uhci.controller_mut().hub_mut();
+    let mut dev0 = root
+        .port_device_mut(0)
+        .expect("UHCI root port 0 should have an external hub attached");
+    let hub = dev0.as_hub_mut().expect("root port 0 device should be a hub");
+    let consumer = hub
+        .downstream_device_mut(3)
+        .expect("hub port 4 should contain a consumer-control device");
+    consumer.model_mut().handle_interrupt_in(0x81)
 }
 
 fn synthetic_usb_hid_cfg() -> MachineConfig {
@@ -144,6 +177,16 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         "expected keyboard interrupt IN to return data after injection"
     );
 
+    let mut consumer = m
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should be present");
+    configure_consumer_for_reports(&mut consumer);
+    m.inject_usb_hid_consumer_usage(0x00b5, true); // Scan Next Track
+    assert!(
+        matches!(poll_consumer_interrupt_in(&mut m), UsbInResult::Data(_)),
+        "expected consumer-control interrupt IN to return data after injection"
+    );
+
     m.reset();
     let mut kbd = m
         .usb_hid_keyboard_handle()
@@ -156,6 +199,16 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     assert!(
         matches!(poll_keyboard_interrupt_in(&mut m), UsbInResult::Data(_)),
         "expected keyboard interrupt IN to return data after reset"
+    );
+
+    let mut consumer = m
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should persist across reset");
+    configure_consumer_for_reports(&mut consumer);
+    m.inject_usb_hid_consumer_usage(0x00b6, true); // Scan Previous Track
+    assert!(
+        matches!(poll_consumer_interrupt_in(&mut m), UsbInResult::Data(_)),
+        "expected consumer-control interrupt IN to return data after reset"
     );
 
     let snap = m.take_snapshot_full().unwrap();
@@ -174,6 +227,16 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
             UsbInResult::Data(_)
         ),
         "expected keyboard interrupt IN to return data after snapshot restore"
+    );
+
+    let mut consumer = restored
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should persist across snapshot restore");
+    configure_consumer_for_reports(&mut consumer);
+    restored.inject_usb_hid_consumer_usage(0x00cd, true); // Play/Pause
+    assert!(
+        matches!(poll_consumer_interrupt_in(&mut restored), UsbInResult::Data(_)),
+        "expected consumer-control interrupt IN to return data after snapshot restore"
     );
 }
 
