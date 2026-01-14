@@ -3,7 +3,7 @@
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::uhci::regs;
 use aero_machine::{Machine, MachineConfig};
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbHubAttachError, UsbInResult};
 
 fn uhci_io_base(m: &Machine) -> u16 {
     let pci_cfg = m
@@ -99,6 +99,15 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
             16,
             "external hub port count should match web runtime"
         );
+    }
+
+    // Hub port 4 is reserved for the synthetic consumer-control device.
+    {
+        let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
+        let err = m
+            .usb_attach_at_path(&[0, 4], Box::new(dummy))
+            .expect_err("hub port 4 should be occupied by synthetic consumer-control");
+        assert!(matches!(err, UsbHubAttachError::PortOccupied));
     }
 
     // Ensure the external hub has enough ports by attaching/detaching a dummy device behind it.
