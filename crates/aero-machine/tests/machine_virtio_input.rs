@@ -1,4 +1,5 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pci::profile;
 use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
@@ -72,6 +73,88 @@ fn new_test_machine() -> Machine {
         ..Default::default()
     })
     .unwrap()
+}
+
+fn new_test_machine_with_ps2() -> Machine {
+    Machine::new(MachineConfig {
+        ram_size_bytes: 16 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep the machine minimal/deterministic for these integration tests.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: true,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        enable_uhci: false,
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_virtio_blk: false,
+        ..Default::default()
+    })
+    .unwrap()
+}
+
+fn drain_i8042_output(m: &mut Machine) -> Vec<u8> {
+    let mut out = Vec::new();
+    // Bound the drain to avoid infinite loops if a buggy device leaves the status bit stuck.
+    for _ in 0..64 {
+        let status = m.io_read(I8042_STATUS_PORT, 1) as u8;
+        if (status & 0x01) == 0 {
+            break;
+        }
+        out.push(m.io_read(I8042_DATA_PORT, 1) as u8);
+    }
+    out
+}
+
+fn enable_ps2_mouse_reporting(m: &mut Machine) {
+    // Write mouse command: 0xD4 tells the controller the next data byte is for the mouse.
+    m.io_write(I8042_STATUS_PORT, 1, 0xD4);
+    // 0xF4: Enable data reporting (stream mode).
+    m.io_write(I8042_DATA_PORT, 1, 0xF4);
+
+    // Expect ACK (0xFA).
+    let mut out = drain_i8042_output(m);
+    // Some firmware flows may have left additional bytes in the output buffer; search for the ACK.
+    if !out.contains(&0xFA) {
+        // Poll a bit more in case the ACK is delayed (should be immediate, but stay defensive).
+        for _ in 0..16 {
+            out.extend(drain_i8042_output(m));
+            if out.contains(&0xFA) {
+                break;
+            }
+        }
+    }
+    assert!(
+        out.contains(&0xFA),
+        "expected PS/2 mouse ACK (0xFA) after enabling reporting (got {out:02x?})"
+    );
+}
+
+fn set_virtio_driver_ok(m: &mut Machine, bdf: aero_devices::pci::PciBdf) {
+    // Enable PCI memory decoding so BAR0 MMIO writes reach the virtio transport.
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pci config ports should exist when pc platform is enabled");
+    let cmd = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+    };
+    set_pci_command(m, bdf, cmd | (1 << 1));
+    // Mirror the updated PCI command register into the virtio transport model so its internal
+    // mem-decode gating is coherent for BAR0 accesses.
+    m.process_virtio_input();
+
+    let bar0_base = read_bar0_base(m, bdf);
+    assert_ne!(bar0_base, 0, "{bdf:?} BAR0 must be assigned by BIOS POST");
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+    );
 }
 
 #[test]
@@ -1055,6 +1138,167 @@ fn virtio_input_input_batch_routes_extra_mouse_buttons_via_virtio() {
         let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
         assert_eq!((type_, code_, value_), (ty, code, val));
     }
+}
+
+#[test]
+fn input_batch_keyboard_backend_does_not_switch_to_virtio_until_key_released() {
+    let mut m = new_test_machine_with_ps2();
+    enable_a20(&mut m);
+    // Drain any power-on bytes (should normally be empty).
+    let _ = drain_i8042_output(&mut m);
+
+    let virtio_kb = m.virtio_input_keyboard().expect("virtio-input enabled");
+    assert!(!m.virtio_input_keyboard_driver_ok());
+    assert_eq!(
+        virtio_kb
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0
+    );
+
+    // Batch 1: KeyScancode make + HID usage press. virtio-input is not ready yet, so this should
+    // route via PS/2 (scancode) while still marking the HID usage as pressed for backend stability.
+    let words_press: [u32; 10] = [
+        2, 0, // count, batch_ts
+        // KeyScancode: 0x1C (make)
+        1, 0, 0x1C, 1, // type, ts, a, b
+        // KeyHidUsage: usage=0x04 (A), pressed=1
+        6, 0, 0x0104, 0,
+    ];
+    m.inject_input_batch(&words_press);
+    assert_eq!(drain_i8042_output(&mut m), vec![0x1e]);
+    assert_eq!(
+        virtio_kb
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0,
+        "expected no virtio-input events while PS/2 backend is active"
+    );
+
+    // Guest driver reaches DRIVER_OK between batches.
+    set_virtio_driver_ok(&mut m, profile::VIRTIO_INPUT_KEYBOARD.bdf);
+    assert!(m.virtio_input_keyboard_driver_ok());
+
+    // Batch 2: KeyScancode break + HID usage release. Backend must remain PS/2 for this batch so
+    // press+release are delivered consistently (avoid stuck keys).
+    let words_release: [u32; 10] = [
+        2, 0, // count, batch_ts
+        // KeyScancode: 0xF0 0x1C (break)
+        1, 0, 0x0000_1CF0, 2, // type, ts, a, b
+        // KeyHidUsage: usage=0x04 (A), pressed=0
+        6, 0, 0x0004, 0,
+    ];
+    m.inject_input_batch(&words_release);
+    assert_eq!(drain_i8042_output(&mut m), vec![0x9e]);
+    assert_eq!(
+        virtio_kb
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0,
+        "expected backend switch to be deferred until after the release"
+    );
+
+    // Batch 3: KeyScancode make + HID usage press again. Now that no keys are held, the backend may
+    // switch to virtio-input, meaning the scancode should be ignored and a virtio-input event
+    // should be queued.
+    m.inject_input_batch(&words_press);
+    assert!(
+        drain_i8042_output(&mut m).is_empty(),
+        "expected scancode injection to be disabled after switching to virtio-input"
+    );
+    assert!(
+        virtio_kb
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len()
+            > 0,
+        "expected virtio-input to receive the HID usage once virtio backend is active"
+    );
+}
+
+#[test]
+fn input_batch_mouse_backend_does_not_switch_to_virtio_until_buttons_released() {
+    let mut m = new_test_machine_with_ps2();
+    enable_a20(&mut m);
+    let _ = drain_i8042_output(&mut m);
+    enable_ps2_mouse_reporting(&mut m);
+
+    let virtio_mouse = m.virtio_input_mouse().expect("virtio-input enabled");
+    assert!(!m.virtio_input_mouse_driver_ok());
+    assert_eq!(
+        virtio_mouse
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0
+    );
+
+    // Batch 1: press left button (start drag). This should route via PS/2.
+    let press: [u32; 6] = [1, 0, 3, 0, 0x01, 0];
+    m.inject_input_batch(&press);
+    assert_eq!(drain_i8042_output(&mut m), vec![0x09, 0x00, 0x00]);
+    assert_eq!(
+        virtio_mouse
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0
+    );
+
+    // Guest driver reaches DRIVER_OK mid-drag. Backend must remain PS/2 until release.
+    set_virtio_driver_ok(&mut m, profile::VIRTIO_INPUT_MOUSE.bdf);
+    assert!(m.virtio_input_mouse_driver_ok());
+
+    // Batch 2: relative motion while button held.
+    let move_right: [u32; 6] = [1, 0, 2, 0, 1, 0];
+    m.inject_input_batch(&move_right);
+    assert_eq!(drain_i8042_output(&mut m), vec![0x09, 0x01, 0x00]);
+    assert_eq!(
+        virtio_mouse
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0
+    );
+
+    // Batch 3: release button (end drag). Still PS/2 for this batch.
+    let release: [u32; 6] = [1, 0, 3, 0, 0x00, 0];
+    m.inject_input_batch(&release);
+    assert_eq!(drain_i8042_output(&mut m), vec![0x08, 0x00, 0x00]);
+    assert_eq!(
+        virtio_mouse
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len(),
+        0
+    );
+
+    // Batch 4: now that no buttons are held, backend can switch to virtio-input.
+    m.inject_input_batch(&move_right);
+    assert!(
+        drain_i8042_output(&mut m).is_empty(),
+        "expected PS/2 mouse injection to be disabled after switching to virtio-input"
+    );
+    assert!(
+        virtio_mouse
+            .borrow_mut()
+            .device_mut::<VirtioInput>()
+            .unwrap()
+            .pending_events_len()
+            > 0,
+        "expected virtio-input to receive mouse motion once virtio backend is active"
+    );
 }
 
 #[test]
