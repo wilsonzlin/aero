@@ -3,15 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SRC="${ROOT_DIR}/tests/fixtures/boot/int_sanity.asm"
 OUT="${ROOT_DIR}/tests/fixtures/boot/int_sanity.bin"
 
-if ! command -v nasm >/dev/null 2>&1; then
-  echo "error: nasm not found. Install it (e.g. \`apt-get install nasm\`)." >&2
-  exit 1
-fi
+echo "note: scripts/build-int-sanity-bootsector.sh is a legacy wrapper." >&2
+echo "note: the canonical, assembler-free generator is: cargo xtask fixtures" >&2
+echo >&2
 
-nasm -f bin "${SRC}" -o "${OUT}"
+cd "${ROOT_DIR}"
+cargo xtask fixtures
 
 SIZE="$(stat -c%s "${OUT}")"
 if [[ "${SIZE}" -ne 512 ]]; then
