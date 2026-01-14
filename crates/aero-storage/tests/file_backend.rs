@@ -278,6 +278,73 @@ fn file_backend_open_auto_detects_vhd() {
 }
 
 #[test]
+fn file_backend_qcow2_write_persists_after_reopen() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.qcow2");
+
+    let bytes = make_qcow2_with_pattern().into_vec();
+    std::fs::write(&path, bytes).unwrap();
+
+    let original_len = std::fs::metadata(&path).unwrap().len();
+
+    let write_buf = vec![0xCCu8; SECTOR_SIZE];
+
+    {
+        let backend = FileBackend::open_rw(&path).unwrap();
+        let mut disk = DiskImage::open_auto(backend).unwrap();
+        assert_eq!(disk.format(), DiskFormat::Qcow2);
+
+        // Writing to a different cluster should allocate new storage and grow the file.
+        disk.write_sectors(8, &write_buf).unwrap();
+        disk.flush().unwrap();
+
+        let mut backend = disk.into_backend();
+        let new_len = backend.len().unwrap();
+        assert!(new_len > original_len);
+    }
+
+    // Ensure data persists after reopening.
+    let backend = FileBackend::open_read_only(&path).unwrap();
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(8, &mut back).unwrap();
+    assert_eq!(back, write_buf);
+}
+
+#[test]
+fn file_backend_vhd_fixed_write_persists_after_reopen() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.vhd");
+
+    let bytes = make_vhd_fixed_with_pattern().into_vec();
+    std::fs::write(&path, bytes).unwrap();
+
+    let original_len = std::fs::metadata(&path).unwrap().len();
+
+    let write_buf = vec![0xDDu8; SECTOR_SIZE];
+
+    {
+        let backend = FileBackend::open_rw(&path).unwrap();
+        let mut disk = DiskImage::open_auto(backend).unwrap();
+        assert_eq!(disk.format(), DiskFormat::Vhd);
+
+        disk.write_sectors(1, &write_buf).unwrap();
+        disk.flush().unwrap();
+
+        let mut backend = disk.into_backend();
+        let new_len = backend.len().unwrap();
+        assert_eq!(new_len, original_len);
+    }
+
+    // Ensure data persists after reopening.
+    let backend = FileBackend::open_read_only(&path).unwrap();
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut back).unwrap();
+    assert_eq!(back, write_buf);
+}
+
+#[test]
 fn file_backend_read_only_rejects_writes() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
