@@ -5,6 +5,7 @@ use std::collections::{HashSet, VecDeque};
 use aero_devices::clock::{Clock as _, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
+use aero_devices_gpu::AeroGpuFormat;
 use aero_devices_gpu::ring::{
     write_fence_page, AEROGPU_RING_HEADER_SIZE_BYTES as RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET,
     RING_TAIL_OFFSET,
@@ -99,25 +100,8 @@ impl AeroGpuScanout0State {
             return None;
         }
 
-        let bytes_per_pixel = match self.format {
-            x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-            {
-                4usize
-            }
-            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
-            {
-                2usize
-            }
-            _ => return None,
-        };
+        let format = AeroGpuFormat::from_u32(self.format);
+        let bytes_per_pixel = format.bytes_per_pixel()?;
 
         let width = usize::try_from(self.width).ok()?;
         let height = usize::try_from(self.height).ok()?;
@@ -154,10 +138,8 @@ impl AeroGpuScanout0State {
 
             let dst_row = &mut out[y * width..(y + 1) * width];
 
-            match self.format {
-                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
-                {
+            match format {
+                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         let b = src[0];
                         let g = src[1];
@@ -166,9 +148,7 @@ impl AeroGpuScanout0State {
                         *dst = u32::from_le_bytes([r, g, b, a]);
                     }
                 }
-                x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         let b = src[0];
                         let g = src[1];
@@ -176,21 +156,17 @@ impl AeroGpuScanout0State {
                         *dst = u32::from_le_bytes([r, g, b, 0xFF]);
                     }
                 }
-                x if x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
                     }
                 }
-                x if x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         *dst = u32::from_le_bytes([src[0], src[1], src[2], 0xFF]);
                     }
                 }
-                x if x == pci::AerogpuFormat::B5G6R5Unorm as u32 => {
+                AeroGpuFormat::B5G6R5Unorm => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(2)) {
                         let pix = u16::from_le_bytes([src[0], src[1]]);
                         let b = (pix & 0x1f) as u8;
@@ -202,7 +178,7 @@ impl AeroGpuScanout0State {
                         *dst = u32::from_le_bytes([r8, g8, b8, 0xFF]);
                     }
                 }
-                x if x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                AeroGpuFormat::B5G5R5A1Unorm => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(2)) {
                         let pix = u16::from_le_bytes([src[0], src[1]]);
                         let b = (pix & 0x1f) as u8;
@@ -250,18 +226,8 @@ impl AeroGpuCursorConfig {
         }
 
         // MVP: only accept 32bpp cursor formats.
-        let is_32bpp = matches!(
-            self.format,
-            x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-        );
-        if !is_32bpp {
+        let format = AeroGpuFormat::from_u32(self.format);
+        if format.bytes_per_pixel()? != 4 {
             return None;
         }
 
@@ -299,10 +265,8 @@ impl AeroGpuCursorConfig {
             mem.read_physical(row_gpa, &mut row);
             let dst_row = &mut out[y * width..(y + 1) * width];
 
-            match self.format {
-                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
-                {
+            match format {
+                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         let b = src[0];
                         let g = src[1];
@@ -311,9 +275,7 @@ impl AeroGpuCursorConfig {
                         *dst = u32::from_le_bytes([r, g, b, a]);
                     }
                 }
-                x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         let b = src[0];
                         let g = src[1];
@@ -321,16 +283,12 @@ impl AeroGpuCursorConfig {
                         *dst = u32::from_le_bytes([r, g, b, 0xFF]);
                     }
                 }
-                x if x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
                     }
                 }
-                x if x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-                {
+                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                     for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
                         *dst = u32::from_le_bytes([src[0], src[1], src[2], 0xFF]);
                     }
