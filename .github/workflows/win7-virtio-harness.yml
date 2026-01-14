@@ -369,6 +369,7 @@ jobs:
           serial_log="${log_dir}/win7-virtio-serial.log"
 
           result_marker=""
+          blk_resize_marker=""
           snd_marker=""
           input_events_marker=""
           input_wheel_marker=""
@@ -381,15 +382,19 @@ jobs:
            input_media_keys_inject_marker=""
            input_tablet_inject_marker=""
            pci_preflight_marker=""
-           snd_capture_marker=""
-           snd_duplex_marker=""
-           snd_buffer_limits_marker=""
-           wav_marker=""
+           blk_resize_request_marker=""
+           blk_resize_fail_marker=""
+           blk_resize_host_marker=""
+            snd_capture_marker=""
+            snd_duplex_marker=""
+            snd_buffer_limits_marker=""
+            wav_marker=""
           failure_token=""
           failure_line=""
           error_line=""
           if [[ -f "${serial_log}" ]]; then
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -403,15 +408,24 @@ jobs:
             snd_buffer_limits_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
           fi
            if [[ -f "${harness_log}" ]]; then
-             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
-             input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-             input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-             input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-             pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
-             # Extract the last structured failure token from the harness output, if present.
-             # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
-             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
-            # Fallback: the full last failure line (useful when no structured token is present).
+              wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+              input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+              input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+              input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+              pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
+              blk_resize_host_marker="$(
+                grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|' "${harness_log}" \
+                  | grep -vF '|REQUEST|' \
+                  | grep -vF '|FAIL|reason=' \
+                  | tail -n 1 \
+                  || true
+              )"
+              # Extract the last structured failure token from the harness output, if present.
+              # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
+              failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
+             # Fallback: the full last failure line (useful when no structured token is present).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
             # Fallback: last explicit "ERROR:" line.
             error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
@@ -433,6 +447,18 @@ jobs:
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: ${result_marker}"
+            fi
+            if [[ -n "${blk_resize_marker}" ]]; then
+              echo "- Guest virtio-blk-resize marker: ${blk_resize_marker}"
+            fi
+            if [[ -n "${blk_resize_request_marker}" ]]; then
+              echo "- Host virtio-blk-resize request marker: \`${blk_resize_request_marker}\`"
+            fi
+            if [[ -n "${blk_resize_fail_marker}" ]]; then
+              echo "- Host virtio-blk-resize QMP failure marker: \`${blk_resize_fail_marker}\`"
+            fi
+            if [[ -n "${blk_resize_host_marker}" ]]; then
+              echo "- Host virtio-blk-resize marker: \`${blk_resize_host_marker}\`"
             fi
             if [[ -n "${snd_marker}" ]]; then
               echo "- Guest virtio-snd marker: ${snd_marker}"
