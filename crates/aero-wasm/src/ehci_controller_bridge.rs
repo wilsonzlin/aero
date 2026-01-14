@@ -108,9 +108,7 @@ impl EhciControllerBridge {
         if port_count == 0 {
             return Err(js_error("EHCI controller has no root ports"));
         }
-        let max_root_port = port_count
-            .saturating_sub(1)
-            .min(usize::from(u8::MAX)) as u8;
+        let max_root_port = port_count.saturating_sub(1).min(usize::from(u8::MAX)) as u8;
 
         let parsed = crate::usb_topology::parse_usb_path(path, max_root_port)?;
         if let Some(&root) = parsed.first() {

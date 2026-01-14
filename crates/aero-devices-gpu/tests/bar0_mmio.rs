@@ -648,10 +648,7 @@ fn ring_control_readback_masks_to_enable_bit_and_reset_is_write_only() {
 
     // Writing RESET should trigger the reset path but the register itself only latches ENABLE.
     dev.write(mmio::RING_CONTROL, 4, u64::from(u32::MAX));
-    assert_eq!(
-        dev.read(mmio::RING_CONTROL, 4) as u32,
-        ring_control::ENABLE
-    );
+    assert_eq!(dev.read(mmio::RING_CONTROL, 4) as u32, ring_control::ENABLE);
     assert_eq!(dev.regs.ring_control, ring_control::ENABLE);
 
     // Tick to drain any pending reset-side DMA work (no-op since ring/fence GPAs are unset).
