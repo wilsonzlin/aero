@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
 
-test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-input after DRIVER_OK (no duplicates)", async ({
-  page,
-}) => {
+test(
+  "IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-input after DRIVER_OK (no duplicates)",
+  async ({ page }) => {
   test.setTimeout(45_000);
   await page.goto(`/`, { waitUntil: "load" });
 

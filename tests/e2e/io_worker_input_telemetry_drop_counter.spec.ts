@@ -36,7 +36,19 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
     const views = createSharedMemoryViews(segments);
     const status = views.status;
 
-    const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
+    // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
+    // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
+    // blob-based module worker and import the real worker from there for cross-browser stability.
+    const ioWorkerEntrypoint = new URL("/web/src/workers/io.worker.ts", location.href).toString();
+    const ioWorkerWrapperUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+        ],
+        { type: "text/javascript" },
+      ),
+    );
+    const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
 
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const waitFor = async (predicate: () => boolean, timeoutMs: number, name: string) => {
@@ -79,6 +91,27 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
         ioWorker.addEventListener("error", onError);
       });
     };
+
+    // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
+      const handler = (ev: MessageEvent): void => {
+        const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+        if (!data) return;
+        if (data.type === "__aero_io_worker_imported") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          resolve();
+          return;
+        }
+        if (data.type === "__aero_io_worker_import_failed") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
+        }
+      };
+      ioWorker.addEventListener("message", handler);
+    });
 
     // io.worker waits for an initial boot disk selection message before reporting READY.
     ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
@@ -124,6 +157,7 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
     const after = readTelemetry(status);
 
     ioWorker.terminate();
+    URL.revokeObjectURL(ioWorkerWrapperUrl);
 
     return { before, after, batches };
   });

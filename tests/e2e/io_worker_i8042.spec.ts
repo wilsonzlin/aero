@@ -49,11 +49,46 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
 
     const cpuUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
 
-    const ioWorker = new Worker(new URL("/web/src/workers/io_aipc.worker.ts", location.href), { type: "module" });
+    // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
+    // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
+    // blob-based module worker and import the real worker from there for cross-browser stability.
+    const ioWorkerEntrypoint = new URL("/web/src/workers/io_aipc.worker.ts", location.href).toString();
+    const ioWorkerWrapperUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+        ],
+        { type: "text/javascript" },
+      ),
+    );
+    const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
     const cpuWorker = new Worker(cpuUrl, { type: "module" });
 
     // Note: revoking immediately is safe once the Worker has fetched the script,
     // but keep it simple and revoke after completion.
+
+    // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for io_aipc.worker import marker")), 5000);
+      const handler = (ev: MessageEvent): void => {
+        const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+        if (!data) return;
+        if (data.type === "__aero_io_worker_imported") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          resolve();
+          return;
+        }
+        if (data.type === "__aero_io_worker_import_failed") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          reject(
+            new Error(`io_aipc.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`),
+          );
+        }
+      };
+      ioWorker.addEventListener("message", handler);
+    });
 
     ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["i8042"], tickIntervalMs: 1 });
     cpuWorker.postMessage({ ipcBuffer: buffer });
@@ -69,6 +104,7 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
     cpuWorker.terminate();
     ioWorker.terminate();
     URL.revokeObjectURL(cpuUrl);
+    URL.revokeObjectURL(ioWorkerWrapperUrl);
 
     return cpuResult as {
       statusBefore: number;
@@ -141,8 +177,43 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
 
     const cpuUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
 
-    const ioWorker = new Worker(new URL("/web/src/workers/io_aipc.worker.ts", location.href), { type: "module" });
+    // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
+    // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
+    // blob-based module worker and import the real worker from there for cross-browser stability.
+    const ioWorkerEntrypoint = new URL("/web/src/workers/io_aipc.worker.ts", location.href).toString();
+    const ioWorkerWrapperUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+        ],
+        { type: "text/javascript" },
+      ),
+    );
+    const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
     const cpuWorker = new Worker(cpuUrl, { type: "module" });
+
+    // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for io_aipc.worker import marker")), 5000);
+      const handler = (ev: MessageEvent): void => {
+        const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+        if (!data) return;
+        if (data.type === "__aero_io_worker_imported") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          resolve();
+          return;
+        }
+        if (data.type === "__aero_io_worker_import_failed") {
+          clearTimeout(timer);
+          ioWorker.removeEventListener("message", handler);
+          reject(
+            new Error(`io_aipc.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`),
+          );
+        }
+      };
+      ioWorker.addEventListener("message", handler);
+    });
 
     ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["pci_test"], tickIntervalMs: 1 });
     cpuWorker.postMessage({ ipcBuffer: buffer });
@@ -158,6 +229,7 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
     cpuWorker.terminate();
     ioWorker.terminate();
     URL.revokeObjectURL(cpuUrl);
+    URL.revokeObjectURL(ioWorkerWrapperUrl);
 
     return cpuResult as { idDword: number; bar0: number; mmioReadback: number };
   });
