@@ -10,6 +10,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
@@ -31,6 +32,14 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		t.Fatalf("NewAPI: %v", err)
 	}
 
+	m := metrics.New()
+	sm := relay.NewSessionManager(config.Config{}, m, nil)
+	quota, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	t.Cleanup(quota.Close)
+
 	var closeOnce sync.Once
 	sessClosed := make(chan struct{})
 	sess, err := NewSession(
@@ -38,7 +47,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		nil,
 		relay.DefaultConfig(),
 		nil,
-		nil,
+		quota,
 		"",
 		"",
 		nil,
@@ -93,6 +102,10 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		// ok
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for session close after oversized message")
+	}
+
+	if got := m.Get(metrics.WebRTCDataChannelMessageTooLargeUDP); got != 1 {
+		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelMessageTooLargeUDP, got)
 	}
 }
 

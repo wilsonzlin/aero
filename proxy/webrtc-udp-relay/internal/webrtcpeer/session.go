@@ -200,6 +200,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					if s.quota != nil {
 						sessionID = s.quota.ID()
 					}
+					s.incMetric(metrics.WebRTCDataChannelMessageTooLargeUDP)
 					slog.Warn("udp datachannel message too large",
 						"session_id", sessionID,
 						"msg_bytes", len(msg.Data),
@@ -333,6 +334,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					if s.quota != nil {
 						sessionID = s.quota.ID()
 					}
+					s.incMetric(metrics.WebRTCDataChannelMessageTooLargeL2)
 					slog.Warn("l2 datachannel message too large",
 						"session_id", sessionID,
 						"msg_bytes", len(msg.Data),

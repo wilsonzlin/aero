@@ -65,6 +65,16 @@ const (
 	WebRTCDataChannelRejectedDuplicateL2  = "webrtc_datachannel_rejected_duplicate_l2"
 )
 
+// WebRTC DataChannel oversized message counters.
+//
+// These count messages that exceed the negotiated max message size (SDP
+// `a=max-message-size` / pion SettingEngine max message size) and cause the relay
+// to close the entire session (defense in depth against malicious peers).
+const (
+	WebRTCDataChannelMessageTooLargeUDP = "webrtc_datachannel_udp_message_too_large"
+	WebRTCDataChannelMessageTooLargeL2  = "webrtc_datachannel_l2_message_too_large"
+)
+
 // L2 tunnel bridge (WebRTC DataChannel "l2" <-> backend WS) counters.
 const (
 	L2BridgeDialsTotal              = "l2_bridge_dials_total"
