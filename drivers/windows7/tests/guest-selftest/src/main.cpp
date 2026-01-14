@@ -277,6 +277,10 @@ static uint32_t ReadBe32(const uint8_t* p) {
          (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
 
+static uint16_t ReadBe16(const uint8_t* p) {
+  return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | static_cast<uint16_t>(p[1]));
+}
+
 static std::string HexDump(const uint8_t* p, size_t len) {
   std::string out;
   out.reserve(len * 3);
@@ -5124,6 +5128,45 @@ static std::optional<bool> IsDhcpEnabledForAdapterGuid(const std::wstring& adapt
   return std::nullopt;
 }
 
+static std::vector<IN_ADDR> GetDnsServersForAdapterGuid(const std::wstring& adapter_guid) {
+  std::vector<IN_ADDR> out;
+
+  ULONG size = 0;
+  if (GetAdaptersInfo(nullptr, &size) != ERROR_BUFFER_OVERFLOW || size == 0) {
+    return out;
+  }
+
+  std::vector<BYTE> buf(size);
+  auto* info = reinterpret_cast<IP_ADAPTER_INFO*>(buf.data());
+  if (GetAdaptersInfo(info, &size) != NO_ERROR) {
+    return out;
+  }
+
+  const auto needle = NormalizeGuidLikeString(adapter_guid);
+
+  for (auto* a = info; a != nullptr; a = a->Next) {
+    const auto name = NormalizeGuidLikeString(AnsiToWide(a->AdapterName));
+    if (name != needle) continue;
+
+    std::set<uint32_t> seen;
+    for (auto* dns = &a->DnsServerList; dns != nullptr; dns = dns->Next) {
+      if (dns->IpAddress.String[0] == '\0') continue;
+
+      IN_ADDR addr{};
+      if (InetPtonA(AF_INET, dns->IpAddress.String, &addr) != 1) continue;
+      const uint32_t host = ntohl(addr.S_un.S_addr);
+      if (host == 0u) continue;
+      if (seen.insert(host).second) {
+        out.push_back(addr);
+      }
+    }
+
+    break;
+  }
+
+  return out;
+}
+
 static bool DnsResolve(Logger& log, const std::wstring& hostname) {
   addrinfoW hints{};
   hints.ai_family = AF_UNSPEC;
@@ -5155,7 +5198,7 @@ static bool DnsResolve(Logger& log, const std::wstring& hostname) {
   return true;
 }
 
-static bool DnsResolveWithFallback(Logger& log, const std::wstring& primary_host) {
+static std::vector<std::wstring> DnsResolveCandidates(const std::wstring& primary_host) {
   std::vector<std::wstring> candidates;
   auto add_unique = [&](const std::wstring& h) {
     if (h.empty()) return;
@@ -5171,10 +5214,135 @@ static bool DnsResolveWithFallback(Logger& log, const std::wstring& primary_host
   add_unique(L"dns.lan");
   add_unique(L"example.com");
 
-  for (const auto& host : candidates) {
+  return candidates;
+}
+
+static bool DnsResolveWithFallback(Logger& log, const std::wstring& primary_host) {
+  for (const auto& host : DnsResolveCandidates(primary_host)) {
     if (DnsResolve(log, host)) return true;
   }
   return false;
+}
+
+static bool BuildDnsQueryPacket(const std::string& host, uint16_t txid, std::vector<uint8_t>* out) {
+  if (!out) return false;
+  out->clear();
+
+  if (host.empty() || host.size() > 253) return false;
+
+  // DNS header (12 bytes).
+  auto push16 = [&](uint16_t v) {
+    out->push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    out->push_back(static_cast<uint8_t>(v & 0xFF));
+  };
+
+  push16(txid);   // ID
+  push16(0x0100); // Flags: standard query + recursion desired
+  push16(1);      // QDCOUNT
+  push16(0);      // ANCOUNT
+  push16(0);      // NSCOUNT
+  push16(0);      // ARCOUNT
+
+  // QNAME.
+  size_t start = 0;
+  while (start < host.size()) {
+    size_t dot = host.find('.', start);
+    if (dot == std::string::npos) dot = host.size();
+    if (dot == start) return false; // empty label (e.g. "..")
+
+    const size_t label_len = dot - start;
+    if (label_len == 0 || label_len > 63) return false;
+    out->push_back(static_cast<uint8_t>(label_len));
+    for (size_t i = 0; i < label_len; i++) {
+      const unsigned char c = static_cast<unsigned char>(host[start + i]);
+      // Restrict to ASCII for the selftest; IDN handling isn't needed here.
+      if (c == 0 || c >= 0x80) return false;
+      out->push_back(static_cast<uint8_t>(c));
+    }
+
+    start = dot + 1;
+  }
+  out->push_back(0); // root terminator
+
+  // QTYPE=A, QCLASS=IN.
+  push16(1);
+  push16(1);
+  return true;
+}
+
+static bool UdpDnsQuery(Logger& log,
+                        const IN_ADDR& dns_server,
+                        const std::wstring& query_host,
+                        DWORD timeout_ms,
+                        uint16_t* rcode_out,
+                        int* bytes_sent_out,
+                        int* bytes_recv_out) {
+  if (rcode_out) *rcode_out = 0;
+  if (bytes_sent_out) *bytes_sent_out = 0;
+  if (bytes_recv_out) *bytes_recv_out = 0;
+
+  sockaddr_in dns{};
+  dns.sin_family = AF_INET;
+  dns.sin_port = htons(53);
+  dns.sin_addr = dns_server;
+
+  const uint16_t txid = static_cast<uint16_t>(GetTickCount() & 0xFFFFu);
+  std::vector<uint8_t> pkt;
+  if (!BuildDnsQueryPacket(WideToUtf8(query_host), txid, &pkt)) {
+    return false;
+  }
+
+  SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s == INVALID_SOCKET) {
+    log.Logf("virtio-net: udp dns query: socket failed err=%d", WSAGetLastError());
+    return false;
+  }
+
+  const int timeout = static_cast<int>(timeout_ms);
+  (void)setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+
+  const int sent =
+      sendto(s, reinterpret_cast<const char*>(pkt.data()), static_cast<int>(pkt.size()), 0,
+             reinterpret_cast<const sockaddr*>(&dns), sizeof(dns));
+  if (sent == SOCKET_ERROR) {
+    log.Logf("virtio-net: udp dns query: sendto failed err=%d", WSAGetLastError());
+    closesocket(s);
+    return false;
+  }
+
+  if (bytes_sent_out) *bytes_sent_out = sent;
+
+  uint8_t resp[512];
+  sockaddr_in from{};
+  int from_len = sizeof(from);
+  const int recvd = recvfrom(s, reinterpret_cast<char*>(resp), static_cast<int>(sizeof(resp)), 0,
+                             reinterpret_cast<sockaddr*>(&from), &from_len);
+  if (recvd == SOCKET_ERROR) {
+    log.Logf("virtio-net: udp dns query: recvfrom failed err=%d", WSAGetLastError());
+    closesocket(s);
+    return false;
+  }
+
+  closesocket(s);
+  if (bytes_recv_out) *bytes_recv_out = recvd;
+
+  if (recvd < 12) {
+    log.Logf("virtio-net: udp dns query: response too short bytes=%d", recvd);
+    return false;
+  }
+
+  const uint16_t rid = ReadBe16(resp + 0);
+  const uint16_t flags = ReadBe16(resp + 2);
+  const uint16_t rcode = static_cast<uint16_t>(flags & 0x000Fu);
+  if (rcode_out) *rcode_out = rcode;
+
+  if (rid != txid) {
+    log.Logf("virtio-net: udp dns query: txid mismatch sent=0x%04x recv=0x%04x", txid, rid);
+    return false;
+  }
+
+  // Any response (including NXDOMAIN/SERVFAIL) is sufficient to prove UDP TX/RX is working.
+  return true;
 }
 
 static uint64_t Fnv1a64Update(uint64_t hash, const uint8_t* data, size_t len) {
@@ -5969,6 +6137,52 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   if (!out.udp.ok) return out;
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return out;
+
+  // Best-effort UDP traffic test (exercises UDP TX/RX on the virtio-net path, which is where
+  // UDP checksum offload matters). This does not affect overall PASS/FAIL.
+  {
+    const auto servers = GetDnsServersForAdapterGuid(chosen->instance_id);
+    if (servers.empty()) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|SKIP|no_dns_server");
+    } else {
+      bool udp_ok = false;
+      IN_ADDR used_server{};
+      std::wstring used_host;
+      uint16_t used_rcode = 0;
+      int bytes_sent = 0;
+      int bytes_recv = 0;
+
+      for (const auto& s : servers) {
+        for (const auto& h : DnsResolveCandidates(opt.dns_host)) {
+          if (UdpDnsQuery(log, s, h, 2000, &used_rcode, &bytes_sent, &bytes_recv)) {
+            udp_ok = true;
+            used_server = s;
+            used_host = h;
+            break;
+          }
+        }
+        if (udp_ok) break;
+      }
+
+      const uint32_t dns_host = ntohl(used_server.S_un.S_addr);
+      const uint8_t da = static_cast<uint8_t>((dns_host >> 24) & 0xFF);
+      const uint8_t db = static_cast<uint8_t>((dns_host >> 16) & 0xFF);
+      const uint8_t dc = static_cast<uint8_t>((dns_host >> 8) & 0xFF);
+      const uint8_t dd = static_cast<uint8_t>(dns_host & 0xFF);
+
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|%s|server=%u.%u.%u.%u|query=%s|sent=%d|recv=%d|rcode=%u",
+               udp_ok ? "PASS" : "FAIL",
+               da,
+               db,
+               dc,
+               dd,
+               udp_ok ? WideToUtf8(used_host).c_str() : "-",
+               bytes_sent,
+               bytes_recv,
+               static_cast<unsigned>(used_rcode));
+    }
+  }
+
   if (!HttpGet(log, opt.http_url)) return out;
 
   const std::wstring large_url = UrlAppendSuffix(opt.http_url, L"-large");
