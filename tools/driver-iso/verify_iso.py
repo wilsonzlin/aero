@@ -66,7 +66,7 @@ def _list_iso_files_with_pycdlib(iso_path: Path) -> set[str]:
                         p = f"{root.rstrip('/')}/{f}"
                         files.add(_normalize_iso_path(p))
                 return files
-            except BaseException as e:
+            except Exception as e:
                 last_err = e
                 continue
 
@@ -204,13 +204,6 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
 def _list_iso_files(iso_path: Path) -> set[str]:
     errors: list[str] = []
 
-    # Prefer the in-tree Rust ISO parser when cargo is available (cross-platform).
-    if shutil.which("cargo"):
-        try:
-            return _list_iso_files_with_aero_iso_ls(iso_path)
-        except SystemExit as e:
-            errors.append(str(e))
-
     # Prefer a pure-Python implementation when available so this script works on
     # Linux/macOS without requiring external ISO tooling.
     try:
@@ -222,29 +215,40 @@ def _list_iso_files(iso_path: Path) -> set[str]:
     except SystemExit as e:
         errors.append(str(e))
 
+    # Existing behavior: xorriso on non-Windows hosts (if present).
     xorriso = shutil.which("xorriso")
     if xorriso:
         try:
             return _list_iso_files_with_xorriso(iso_path)
         except SystemExit as e:
             errors.append(str(e))
+
+    # Existing behavior: Mount-DiskImage on Windows hosts.
     if os.name == "nt":
         try:
             return _list_iso_files_with_powershell_mount(iso_path)
         except SystemExit as e:
             errors.append(str(e))
 
-    if errors:
-        formatted = "\n\n".join(errors)
-        raise SystemExit(f"no supported ISO listing backend succeeded:\n\n{formatted}")
+    # Optional: in-tree Rust ISO parser backend (useful when cargo is available but
+    # pycdlib/xorriso are not installed).
+    if shutil.which("cargo"):
+        try:
+            return _list_iso_files_with_aero_iso_ls(iso_path)
+        except SystemExit as e:
+            errors.append(str(e))
 
-    raise SystemExit(
-        "no supported ISO listing backend found.\n"
+    install_hint = (
         "Install one of:\n"
         "- Rust/cargo (to use the in-tree aero_iso_ls backend)\n"
         "- pycdlib: python3 -m pip install pycdlib\n"
         "- xorriso (via your OS package manager)"
     )
+    if errors:
+        formatted = "\n\n".join(errors)
+        raise SystemExit(f"no supported ISO listing backend succeeded:\n\n{formatted}\n\n{install_hint}")
+
+    raise SystemExit(f"no supported ISO listing backend found.\n{install_hint}")
 
 
 def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
