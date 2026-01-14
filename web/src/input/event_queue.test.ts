@@ -63,4 +63,30 @@ describe("InputEventQueue", () => {
     expect(words[base + 6] >>> 0).toBe(0x0000_000c);
     expect(words[base + 7] >>> 0).toBe(0x00e9);
   });
+
+  it("merges consecutive MouseWheel events, accumulating both dz and dx", () => {
+    const queue = new InputEventQueue(8);
+    queue.pushMouseWheel(10, 1, 2);
+    queue.pushMouseWheel(11, 3, -1);
+
+    const state: { posted: InputBatchMessage | null } = { posted: null };
+    const target: InputBatchTarget = {
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
+      },
+    };
+
+    queue.flush(target);
+    if (!state.posted) throw new Error("expected flush to post a batch");
+
+    const words = new Int32Array(state.posted.buffer);
+    expect(words[0]).toBe(1); // count
+
+    const base = 2;
+    expect(words[base + 0]).toBe(InputEventType.MouseWheel);
+    // Timestamp should reflect the later event.
+    expect(words[base + 1]).toBe(11);
+    expect(words[base + 2]).toBe(4); // dz
+    expect(words[base + 3]).toBe(1); // dx
+  });
 });
