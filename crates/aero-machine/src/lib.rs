@@ -4881,6 +4881,13 @@ impl Machine {
     ) -> std::io::Result<()> {
         // Canonical Win7 install flow prefers the first CD-ROM when install media is present, but
         // keeps the configured HDD boot drive as a fallback (e.g. after ejecting the ISO).
+        //
+        // If the machine is currently configured to boot from a CD drive number (e.g. constructed
+        // with `MachineConfig::win7_install_defaults`), override it to HDD0 so the CD-first policy
+        // has a meaningful fallback when the ISO is absent or unbootable.
+        if (0xE0..=0xEF).contains(&self.cfg.boot_drive) {
+            self.set_boot_drive(0x80);
+        }
         self.set_cd_boot_drive(0xE0);
         self.set_boot_from_cd_if_present(true);
 
