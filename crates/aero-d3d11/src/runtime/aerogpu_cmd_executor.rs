@@ -4202,6 +4202,23 @@ impl AerogpuD3d11Executor {
         // silently proceeding.
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
+        if self.state.hs.is_some() && self.state.ds.is_none() {
+            bail!(
+                "tessellation (HS/DS) compute expansion is not wired up yet: hull shader is bound but domain shader is not"
+            );
+        }
+        if self.state.ds.is_some() && self.state.hs.is_none() {
+            bail!(
+                "tessellation (HS/DS) compute expansion is not wired up yet: domain shader is bound but hull shader is not"
+            );
+        }
+
+        // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
+        // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
+        // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
+        // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
+        // topologies) do not crash.
+
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
