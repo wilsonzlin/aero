@@ -161,3 +161,37 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     assert_eq!(restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4), 0x1234);
     assert!(restored.irq_level());
 }
+
+#[test]
+fn xhci_controller_snapshot_roundtrip_preserves_dcbaap_and_port_count() {
+    // Use a non-default port count so we can validate it roundtrips via the HCSPARAMS1 read.
+    let mut ctrl = XhciController::with_port_count(4);
+    let mut mem = PanicMem;
+
+    // Program DCBAAP with a deliberately misaligned value; the controller should mask low bits away.
+    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, 0x1234_5678);
+    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, 0x9abc_def0);
+
+    let expected_dcbaap = 0x9abc_def0_1234_5640u64;
+    assert_eq!(ctrl.dcbaap(), Some(expected_dcbaap));
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_DCBAAP_LO, 4),
+        expected_dcbaap as u32
+    );
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_DCBAAP_HI, 4),
+        (expected_dcbaap >> 32) as u32
+    );
+
+    // Port count is exposed via HCSPARAMS1 bits 31..=24.
+    let hcsparams1 = ctrl.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
+    assert_eq!((hcsparams1 >> 24) & 0xff, 4);
+
+    let bytes = ctrl.save_state();
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+
+    assert_eq!(restored.dcbaap(), Some(expected_dcbaap));
+    let restored_hcsparams1 = restored.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
+    assert_eq!((restored_hcsparams1 >> 24) & 0xff, 4);
+}
