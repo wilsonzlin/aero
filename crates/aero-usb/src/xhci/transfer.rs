@@ -120,6 +120,15 @@ pub struct XhciTransferExecutor {
     pending_events: Vec<TransferEvent>,
 }
 
+impl fmt::Debug for XhciTransferExecutor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("XhciTransferExecutor")
+            .field("endpoints", &self.endpoints)
+            .field("pending_events", &self.pending_events)
+            .finish_non_exhaustive()
+    }
+}
+
 impl XhciTransferExecutor {
     pub fn new(device: Box<dyn UsbDeviceModel>) -> Self {
         Self {
