@@ -27,6 +27,14 @@ export type ScanoutReadbackResult = Readonly<{
   rgba8: Uint8Array<ArrayBuffer>;
 }>;
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (bytes.buffer instanceof ArrayBuffer) return bytes as unknown as Uint8Array<ArrayBuffer>;
+  const buf = new ArrayBuffer(bytes.byteLength);
+  const out = new Uint8Array(buf);
+  out.set(bytes);
+  return out;
+}
+
 // Upper bound used by screenshot + presentation readback paths to prevent untrusted/corrupt
 // scanout descriptors from attempting absurd allocations inside the GPU worker.
 //
@@ -173,7 +181,8 @@ export function readScanoutRgba8FromGuestRam(
   if (totalBytes > MAX_SCANOUT_RGBA8_BYTES) {
     throw new RangeError(`scanout output size exceeds cap (${MAX_SCANOUT_RGBA8_BYTES} bytes): ${width}x${height}`);
   }
-  const rgba8 = dst && dst.byteLength >= totalBytes ? dst.subarray(0, totalBytes) : new Uint8Array(totalBytes);
+  const rgba8Candidate = dst && dst.byteLength >= totalBytes ? dst.subarray(0, totalBytes) : new Uint8Array(totalBytes);
+  const rgba8 = ensureArrayBufferBacked(rgba8Candidate);
 
   const basePaddr = toU64Bigint(desc.basePaddr, "basePaddr");
   const pitchBig = BigInt(pitchBytes);

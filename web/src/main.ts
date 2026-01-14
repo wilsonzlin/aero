@@ -4252,6 +4252,11 @@ function renderAudioPanel(): HTMLElement {
     return (20 * Math.log10(v)).toFixed(1);
   }
 
+  function formatMsOrNa(valueSeconds: number | null): string {
+    if (typeof valueSeconds !== "number" || !Number.isFinite(valueSeconds)) return "n/a";
+    return (valueSeconds * 1000).toFixed(1);
+  }
+
   function snapshotAudioOutputWav(
     out: unknown,
     opts: { maxSeconds: number },
@@ -4902,7 +4907,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, ...res.meta }, null, 2)),
             });
             summaryLines.push(
-              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
+              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} ctx=${res.meta.audioContextState ?? "n/a"} baseLatMs=${formatMsOrNa(res.meta.baseLatencySeconds)} outputLatMs=${formatMsOrNa(res.meta.outputLatencySeconds)} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
             );
           }
 

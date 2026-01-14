@@ -507,7 +507,6 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
         return null;
       }
       if (baseOffset === null) return null;
-      source = "ram";
     }
 
     const key = `${fbGpa64.toString(16)}:${pitchBytes}:${width}x${height}:${this.#cursorFormat >>> 0}`;
