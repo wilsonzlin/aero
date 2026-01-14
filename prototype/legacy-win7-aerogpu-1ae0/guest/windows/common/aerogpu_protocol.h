@@ -16,9 +16,11 @@
 // Direct3D 9 user-mode driver (UMD). The goal of v1 is to be "just enough" for
 // a Win7 D3D9Ex stack to submit work to the host via a paravirtual command ring.
 //
-// NOTE: The actual PCI IDs / MMIO layout must match the host device model
-// (Task 51). The values below are the project defaults used by the guest stack;
-// update them in lockstep with the host.
+// NOTE: The actual PCI IDs / MMIO layout must match the corresponding host device model.
+//
+// The values below are the legacy prototype defaults used by this archived guest stack; if this
+// prototype is ever revived, update them in lockstep with the matching host-side legacy device
+// model.
 
 #include <stdint.h>
 

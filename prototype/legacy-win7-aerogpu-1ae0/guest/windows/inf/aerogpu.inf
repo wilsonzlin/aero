@@ -40,7 +40,7 @@
 ;
 ; Do NOT ship this INF as part of production Guest Tools media.
 ;
-; The PCI IDs must match the host device model (Task 51). The default IDs are
+; The PCI IDs must match the corresponding host device model. The default IDs are
 ; defined in prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h.
 
 [Version]
