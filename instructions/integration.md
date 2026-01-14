@@ -379,9 +379,18 @@ WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
 With `MachineConfig::enable_aerogpu=true` (and `enable_vga=false`), the canonical machine exposes
 the AeroGPU PCI identity (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1
 VRAM aperture) for stable Windows driver binding and enumeration. In `aero_machine` today BAR1 is
-backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into it
-(minimal legacy VGA decode), but the BAR0 WDDM/MMIO/ring protocol + VBE mode set/scanout are
-integrated separately. In this mode the transitional VGA PCI stub (`00:0c.0`) is not installed.
+backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into
+the first 128KiB of that VRAM with permissive legacy VGA port decode.
+
+BAR0 is currently implemented as a **minimal MMIO + ring/fence transport stub** (no-op command
+execution; enough for the in-tree Win7 KMD to initialize and advance fences), but the full
+versioned-AeroGPU device model (command execution + scanout + vblank pacing) still lives in
+`crates/emulator` and is not yet wired into the canonical machine.
+
+When AeroGPU owns the boot display path, firmware derives the VBE mode-info linear framebuffer base
+from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x20000`, aka `VBE_LFB_OFFSET` in `aero_machine`).
+
+In this mode the transitional VGA PCI stub (`00:0c.0`) is not installed.
 
 The transitional VGA/VBE path is a boot-display stepping stone and does **not** implement the full
 AeroGPU WDDM MMIO/ring protocol.

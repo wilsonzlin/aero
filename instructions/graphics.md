@@ -33,7 +33,7 @@ Quick reality check (as of this repo revision):
   to route the fixed VBE LFB through PCI MMIO.
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` / `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM**, legacy VGA window aliasing (`0xA0000..0xC0000`),
-  and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/lib.rs` and
+  minimal BAR0 ring/fence transport (no-op command execution), and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/lib.rs` and
   `crates/aero-machine/tests/{aerogpu_*,boot_int10_aerogpu_vbe_115_sets_mode}.rs`).
 - ✅ AeroGPU ABI/protocol: `emulator/protocol/` (crate `aero-protocol`) contains Rust **and**
   TypeScript mirrors + ABI drift tests; it’s consumed by both Rust (`crates/aero-gpu/`, `crates/emulator/`)
@@ -159,7 +159,7 @@ Legend:
 
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
-| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | Canonical AeroGPU identity at `00:07.0` with BAR1 VRAM aperture + legacy VGA window aliasing + BIOS VBE LFB scanout/text fallback (**no BAR0 WDDM/MMIO/ring yet**) | `crates/aero-machine/src/lib.rs` (AeroGpuDevice + `display_present_aerogpu_*`) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked` |
+| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | Canonical AeroGPU identity at `00:07.0` with BAR1 VRAM aperture + legacy VGA window aliasing + BIOS VBE LFB scanout/text fallback + **minimal BAR0 ring/fence transport stub** (no command execution/scanout yet) | `crates/aero-machine/src/lib.rs` (AeroGpuDevice + `display_present_aerogpu_*`) + `crates/aero-machine/src/aerogpu.rs` (BAR0 stub) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked` |
 | AGPU-DEV-001 | Implemented (in `crates/emulator/`, not yet `aero_machine`) | AeroGPU PCI function (A3A0:0001): BAR0 MMIO, rings, IRQs, vblank tick, scanout regs | `crates/emulator/src/devices/pci/aerogpu.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_device --locked` |
 | AGPU-DEV-002 | Implemented | WebGPU-backed command execution + readback for tests | `crates/emulator/src/gpu_worker/aerogpu_wgpu_backend.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked` |
 | AGPU-WIRE-001 | **Remaining (P0)** | Implement AeroGPU **BAR0** MMIO/ring/IRQ/vblank protocol in `crates/aero-machine` (port/reuse logic from `crates/emulator/src/devices/pci/aerogpu.rs`) | Start at: `crates/aero-machine/src/lib.rs` (currently BAR1-only AeroGpuDevice) + `crates/emulator/src/devices/pci/aerogpu.rs` (reference) + `emulator/protocol/aerogpu/` (ABI) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --locked` |
@@ -265,9 +265,10 @@ npm run test:protocol
 # Run emulator-side AeroGPU device model tests
 bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked
 
-# Run aero_machine AeroGPU BAR1/VBE smoke tests (no BAR0/WDDM yet)
+# Run aero_machine AeroGPU BAR1/VBE + BAR0 ring/fence stub smoke tests
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vram_alias --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
 
 # Run D3D9 integration test
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
