@@ -14606,12 +14606,30 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   if (!Check(draw.hdr != nullptr, "draw emitted")) {
     return false;
   }
-  const CmdLoc set_consts = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted before draw")) {
+
+  // Fixed-function WVP is uploaded to a reserved constant range (c240..c243).
+  CmdLoc wvp_consts{};
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len && offset < draw.offset) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (cmd->stage == AEROGPU_SHADER_STAGE_VERTEX && cmd->start_register == 240 && cmd->vec4_count == 4) {
+        wvp_consts.hdr = hdr;
+        wvp_consts.offset = offset;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(wvp_consts.hdr != nullptr, "WVP set_shader_constants_f emitted before draw")) {
     return false;
   }
 
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
@@ -14621,30 +14639,27 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   if (!Check(const_cmd->start_register == 240 && const_cmd->vec4_count == 4, "WVP constants cover c240..c243")) {
     return false;
   }
+
+  // WVP is uploaded as column vectors. With VIEW/PROJECTION identity, WVP == A.
+  float expected_cols[16] = {};
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      expected_cols[c * 4 + r] = A.m[r][c];
+    }
+  }
+
   const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  // WVP is uploaded as column vectors.
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2 (from A)")) {
-    return false;
+  for (int i = 0; i < 16; ++i) {
+    if (std::fabs(m[i] - expected_cols[i]) > 1e-6f) {
+      std::fprintf(stderr,
+                   "FAIL: WVP constant mismatch at %d (got %f expected %f)\n",
+                   i,
+                   static_cast<double>(m[i]),
+                   static_cast<double>(expected_cols[i]));
+      return false;
+    }
   }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3 (from A)")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4 (from A)")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1 (from A)")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w (from A)")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w (from A)")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w (from A)")) {
-    return false;
-  }
-  return Check(set_consts.offset < draw.offset, "WVP constants uploaded before draw");
+  return Check(wvp_consts.offset < draw.offset, "WVP constants uploaded before draw");
 }
 
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
