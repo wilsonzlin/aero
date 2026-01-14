@@ -919,6 +919,12 @@ function Parse-InfMetadata([string]$path) {
             if ($t.Length -eq 0) { continue }
         }
 
+        # Some INFs list HWIDs as bare lines (e.g. in a [HardwareIds] section) without commas.
+        $bare = $t.Trim('"')
+        if ($bare -match '^(?i)(PCI|USB|HID|ACPI|ROOT|SW)\\') {
+            $hwids[$bare.ToUpper()] = $bare
+        }
+
         if ($t -match '^\[(.+)\]$') {
             $section = $matches[1].Trim()
             continue
