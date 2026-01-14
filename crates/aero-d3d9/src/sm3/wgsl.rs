@@ -1579,6 +1579,16 @@ fn emit_op_line(
                         ShaderStage::Pixel => format!("textureSample({tex}, {samp}, {uv})"),
                     }
                 }
+                crate::sm3::ir::TexSampleKind::Bias => {
+                    if stage != ShaderStage::Pixel {
+                        return Err(err(
+                            "texldb/Bias texture sampling is only supported in pixel shaders",
+                        ));
+                    }
+                    let uv = format!("({coord_e}).{swz}");
+                    let bias = format!("({coord_e}).w");
+                    format!("textureSampleBias({tex}, {samp}, {uv}, {bias})")
+                }
                 crate::sm3::ir::TexSampleKind::ExplicitLod => {
                     let uv = format!("({coord_e}).{swz}");
                     let lod = format!("({coord_e}).w");
@@ -1842,6 +1852,44 @@ fn emit_stmt(
                             format!("({coord_e}).{swz}")
                         };
                         let sample = format!("textureSample({tex}, {samp}, {coord})");
+                        let sample = apply_float_result_modifiers(sample, modifiers)?;
+
+                        let dst_name = reg_var_name(&dst.reg)?;
+                        let line =
+                            emit_assign(dst, format!("select({dst_name}, {sample}, {pred_cond})"))?;
+                        let _ = writeln!(wgsl, "{pad}{line}");
+                    }
+                    IrOp::TexSample {
+                        kind: crate::sm3::ir::TexSampleKind::Bias,
+                        dst,
+                        coord,
+                        sampler,
+                        modifiers,
+                        ..
+                    } if stage == ShaderStage::Pixel => {
+                        let pred_cond = predicate_expr(pred)?;
+                        let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
+                        if coord_ty != ScalarTy::F32 {
+                            return Err(err("texsample coordinate must be float"));
+                        }
+
+                        let dst_ty =
+                            reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+                        if dst_ty != ScalarTy::F32 {
+                            return Err(err("texsample destination must be float"));
+                        }
+
+                        let tex_ty = sampler_types
+                            .get(sampler)
+                            .copied()
+                            .unwrap_or(TextureType::Texture2D);
+                        let swz = tex_coord_swizzle(tex_ty)?;
+
+                        let tex = format!("tex{sampler}");
+                        let samp = format!("samp{sampler}");
+                        let coord = format!("({coord_e}).{swz}");
+                        let bias = format!("({coord_e}).w");
+                        let sample = format!("textureSampleBias({tex}, {samp}, {coord}, {bias})");
                         let sample = apply_float_result_modifiers(sample, modifiers)?;
 
                         let dst_name = reg_var_name(&dst.reg)?;

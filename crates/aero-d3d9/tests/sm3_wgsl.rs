@@ -719,6 +719,51 @@ fn wgsl_texldp_emits_projective_divide() {
 }
 
 #[test]
+fn wgsl_texldb_emits_texture_sample_bias() {
+    // ps_3_0:
+    //   dcl_2d s0
+    //   texldb r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_2d s0 (usage_raw=2 encodes Texture2D for sampler decls)
+        opcode_token(31, 1) | (2u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texldb r0, c0, s0 (specific field is opcode_token[16..19], where 2 = texldb)
+        opcode_token(66, 3) | (2u32 << 16),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
+    assert!(
+        wgsl.contains("textureSampleBias(tex0, samp0, (c0).xy, (c0).w)"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texldd_emits_texture_sample_grad() {
     // ps_3_0:
     //   texldd r0, c0, c1, c2, s0

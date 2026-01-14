@@ -335,6 +335,11 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                         .to_owned(),
                 });
             }
+            if *kind == TexSampleKind::Bias && stage != ShaderStage::Pixel {
+                return Err(VerifyError {
+                    message: "texldb/Bias texture sampling is only valid in pixel shaders".to_owned(),
+                });
+            }
             verify_src(coord)?;
             match kind {
                 TexSampleKind::Grad => {
@@ -347,7 +352,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     verify_src(ddx)?;
                     verify_src(ddy)?;
                 }
-                TexSampleKind::ImplicitLod { .. } | TexSampleKind::ExplicitLod => {
+                TexSampleKind::ImplicitLod { .. } | TexSampleKind::Bias | TexSampleKind::ExplicitLod => {
                     if ddx.is_some() || ddy.is_some() {
                         return Err(VerifyError {
                             message: "non-gradient texture sampling includes gradient operands"

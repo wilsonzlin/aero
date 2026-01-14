@@ -1630,15 +1630,26 @@ fn push_texld(stack: &mut [Frame], inst: &DecodedInstruction) -> Result<(), Buil
     if sampler_src.reg.file != RegFile::Sampler {
         return Err(err(inst, "tex sampler operand is not a sampler register"));
     }
-    let project = match inst.operands.last() {
-        Some(Operand::Imm32(v)) => (*v & 0x1) != 0,
-        _ => false,
+    let specific = match inst.operands.last() {
+        Some(Operand::Imm32(v)) => (*v & 0xF) as u8,
+        _ => 0,
+    };
+    let kind = match specific {
+        0 => TexSampleKind::ImplicitLod { project: false },
+        1 => TexSampleKind::ImplicitLod { project: true },
+        2 => TexSampleKind::Bias,
+        other => {
+            return Err(err(
+                inst,
+                format!("tex has unsupported encoding (specific=0x{other:x})"),
+            ))
+        }
     };
     let modifiers = build_modifiers(inst)?;
     push_stmt(
         stack,
         Stmt::Op(IrOp::TexSample {
-            kind: TexSampleKind::ImplicitLod { project },
+            kind,
             dst,
             coord,
             ddx: None,

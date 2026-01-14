@@ -1013,6 +1013,7 @@ fn exec_op(
                     (coord_v.x / w, coord_v.y / w)
                 }
                 TexSampleKind::ImplicitLod { project: false }
+                | TexSampleKind::Bias
                 | TexSampleKind::ExplicitLod
                 | TexSampleKind::Grad => (coord_v.x, coord_v.y),
             };

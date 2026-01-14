@@ -1403,9 +1403,16 @@ fn decode_operands_and_extras(
                     ),
                 });
             }
-            // texldp is encoded by a flag in opcode_token[16].
-            let project = (opcode_token >> 16) & 0x1;
-            operands.push(Operand::Imm32(project));
+            // `tex` (opcode 66 / 0x42) uses an opcode-specific "specific" field in bits 16..19
+            // to select between variants:
+            //   0 = texld
+            //   1 = texldp
+            //   2 = texldb
+            //
+            // Preserve this as an immediate so the IR builder doesn't need to peek at opcode token
+            // bits.
+            let specific = (opcode_token >> 16) & 0xF;
+            operands.push(Operand::Imm32(specific));
         }
         Opcode::TexLdd => {
             // texldd: dst, coord, ddx, ddy, sampler

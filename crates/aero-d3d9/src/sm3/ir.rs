@@ -331,6 +331,8 @@ pub enum IrOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TexSampleKind {
     ImplicitLod { project: bool },
+    /// Texture sampling with an implicit LOD and a bias (`texldb`).
+    Bias,
     ExplicitLod,
     Grad,
 }
@@ -973,6 +975,7 @@ fn format_op(op: &IrOp) -> String {
             let opname = match kind {
                 TexSampleKind::ImplicitLod { project: false } => "texld",
                 TexSampleKind::ImplicitLod { project: true } => "texldp",
+                TexSampleKind::Bias => "texldb",
                 TexSampleKind::ExplicitLod => "texldl",
                 TexSampleKind::Grad => "texldd",
             };
