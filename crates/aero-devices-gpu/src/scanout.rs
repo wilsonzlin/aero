@@ -186,7 +186,6 @@ fn convert_row_to_rgba(
 }
 
 fn read_rgba_from_guest(
-    enable: bool,
     width: u32,
     height: u32,
     format: AeroGpuFormat,
@@ -195,10 +194,6 @@ fn read_rgba_from_guest(
     mem: &mut dyn MemoryBus,
     max_out_len: usize,
 ) -> Option<Vec<u8>> {
-    if !enable {
-        return None;
-    }
-
     let bytes_per_pixel = format.bytes_per_pixel()?;
     let width = usize::try_from(width).ok()?;
     let height = usize::try_from(height).ok()?;
@@ -265,8 +260,10 @@ impl Default for AeroGpuScanoutConfig {
 
 impl AeroGpuScanoutConfig {
     pub fn read_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        if !self.enable {
+            return None;
+        }
         read_rgba_from_guest(
-            self.enable,
             self.width,
             self.height,
             self.format,
@@ -322,7 +319,6 @@ impl AeroGpuCursorConfig {
         }
 
         read_rgba_from_guest(
-            self.enable,
             self.width,
             self.height,
             self.format,
