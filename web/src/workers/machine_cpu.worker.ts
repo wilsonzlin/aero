@@ -1024,6 +1024,11 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
     } catch {
       // ignore
     }
+
+    // WASM init completes asynchronously relative to the main run loop. If the run loop is
+    // currently waiting on the command ring heartbeat timeout, wake it so pending boot disk
+    // attachment and network config changes apply without an extra delay.
+    wakeRunLoop();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("[machine_cpu.worker] WASM init failed (continuing without WASM):", err);
