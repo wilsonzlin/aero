@@ -1397,6 +1397,8 @@ static VOID AeroGpuTraceCreateAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
 #else
 #define AEROGPU_CONTIG_POOL_RETENTION_CAP_BYTES (8ull * 1024ull * 1024ull) /* 8 MiB */
 #endif
+/* Bound the number of cached buffers per size class to avoid long free lists of tiny allocations. */
+#define AEROGPU_CONTIG_POOL_MAX_ENTRIES_PER_CLASS 16u
 
 static __forceinline BOOLEAN AeroGpuContigPoolClassForSize(_In_ SIZE_T Size, _Out_ UINT* ClassIndexOut, _Out_ SIZE_T* AllocSizeOut)
 {
@@ -1442,6 +1444,7 @@ static VOID AeroGpuContigPoolInit(_Inout_ AEROGPU_ADAPTER* Adapter)
     KeInitializeSpinLock(&Adapter->ContigPool.Lock);
     for (UINT i = 0; i < AEROGPU_CONTIG_POOL_MAX_PAGES; ++i) {
         InitializeListHead(&Adapter->ContigPool.FreeLists[i]);
+        Adapter->ContigPool.FreeCounts[i] = 0;
     }
     Adapter->ContigPool.BytesRetained = 0;
 }
@@ -1492,6 +1495,12 @@ static VOID AeroGpuContigPoolPurge(_Inout_ AEROGPU_ADAPTER* Adapter)
                     } else {
                         Adapter->ContigPool.BytesRetained = 0;
                     }
+                    if (Adapter->ContigPool.FreeCounts[i] != 0) {
+                        Adapter->ContigPool.FreeCounts[i] -= 1;
+                    }
+                } else {
+                    /* Be defensive: keep count consistent with list emptiness. */
+                    Adapter->ContigPool.FreeCounts[i] = 0;
                 }
                 KeReleaseSpinLock(&Adapter->ContigPool.Lock, oldIrql);
             }
@@ -1575,6 +1584,9 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
             } else {
                 Adapter->ContigPool.BytesRetained = 0;
             }
+            if (Adapter->ContigPool.FreeCounts[classIndex] != 0) {
+                Adapter->ContigPool.FreeCounts[classIndex] -= 1;
+            }
 #if DBG
             InterlockedIncrement64(&Adapter->ContigPool.Hits);
 #endif
@@ -1651,8 +1663,10 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
             KeAcquireSpinLock(&Adapter->ContigPool.Lock, &oldIrql);
 
             const SIZE_T cap = (SIZE_T)AEROGPU_CONTIG_POOL_RETENTION_CAP_BYTES;
-            if (Adapter->ContigPool.BytesRetained <= cap && (cap - Adapter->ContigPool.BytesRetained) >= allocSize) {
+            if (Adapter->ContigPool.FreeCounts[classIndex] < (ULONG)AEROGPU_CONTIG_POOL_MAX_ENTRIES_PER_CLASS &&
+                Adapter->ContigPool.BytesRetained <= cap && (cap - Adapter->ContigPool.BytesRetained) >= allocSize) {
                 InsertTailList(&Adapter->ContigPool.FreeLists[classIndex], (PLIST_ENTRY)Va);
+                Adapter->ContigPool.FreeCounts[classIndex] += 1;
                 Adapter->ContigPool.BytesRetained += allocSize;
                 returned = TRUE;
 

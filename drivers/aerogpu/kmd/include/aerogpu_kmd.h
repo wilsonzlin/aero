@@ -64,6 +64,7 @@
 typedef struct _AEROGPU_CONTIG_POOL {
     KSPIN_LOCK Lock;
     LIST_ENTRY FreeLists[AEROGPU_CONTIG_POOL_MAX_PAGES]; /* index 0 == 1 page */
+    ULONG FreeCounts[AEROGPU_CONTIG_POOL_MAX_PAGES]; /* Protected by Lock; bounded per-size-class retention. */
     SIZE_T BytesRetained;
 
 #if DBG
