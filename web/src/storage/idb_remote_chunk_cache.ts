@@ -58,11 +58,16 @@ function validateChunkSize(chunkSize: number): void {
 }
 
 function isQuotaExceededError(err: unknown): boolean {
+  // Browser storage quota failures typically surface as a DOMException named
+  // "QuotaExceededError". Firefox can use a different name for the same condition.
   if (!err) return false;
-  if (err instanceof DOMException && err.name === "QuotaExceededError") return true;
-  if (err instanceof Error && err.name === "QuotaExceededError") return true;
-  if (typeof err === "object" && "name" in err && (err as { name?: unknown }).name === "QuotaExceededError") return true;
-  return false;
+  const name =
+    err instanceof DOMException || err instanceof Error
+      ? err.name
+      : typeof err === "object" && "name" in err
+        ? ((err as { name?: unknown }).name as unknown)
+        : undefined;
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
 
 function signatureMatches(
