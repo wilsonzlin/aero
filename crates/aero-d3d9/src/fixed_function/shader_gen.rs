@@ -120,8 +120,17 @@ impl FixedFunctionShaderDesc {
             write_tex_arg(hash, stage.alpha_arg0);
             write_tex_arg(hash, stage.alpha_arg1);
             write_tex_arg(hash, stage.alpha_arg2);
-            write_u8(hash, stage.texcoord_index.unwrap_or(0xFF));
-            write_u8(hash, stage.texture_transform as u8);
+
+            // Only hash texture coordinate state when it can affect shader generation (i.e. when
+            // this stage actually samples from `D3DTA_TEXTURE`, either explicitly via an arg or
+            // implicitly via the op).
+            if stage_uses_texture(stage) {
+                write_u8(hash, stage.texcoord_index.unwrap_or(0xFF));
+                write_u8(hash, stage.texture_transform as u8);
+            } else {
+                write_u8(hash, 0xFF);
+                write_u8(hash, TextureTransform::Disable as u8);
+            }
             write_u8(hash, stage.result_target as u8);
         }
 

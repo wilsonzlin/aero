@@ -223,6 +223,77 @@ fn shader_cache_hits_on_identical_state() {
 }
 
 #[test]
+fn state_hash_ignores_texcoord_state_when_stage_does_not_sample_texture() {
+    let fvf = Fvf(Fvf::XYZ);
+
+    let make_desc = |texcoord_index, texture_transform| {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
+            // Stage is enabled, but does not reference `D3DTA_TEXTURE`.
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Diffuse,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Diffuse,
+            alpha_arg2: TextureArg::Current,
+            texcoord_index,
+            texture_transform,
+            result_target: TextureResultTarget::Current,
+        };
+        FixedFunctionShaderDesc {
+            fvf,
+            stages,
+            alpha_test: AlphaTestState::default(),
+            fog: FogState::default(),
+            lighting: LightingState::default(),
+        }
+    };
+
+    let a = make_desc(None, TextureTransform::Disable);
+    let b = make_desc(Some(3), TextureTransform::Count2Projected);
+    assert_eq!(
+        a.state_hash(),
+        b.state_hash(),
+        "texcoord_index/texture_transform should not affect shader caching when the stage does not sample a texture"
+    );
+
+    // When the stage does sample a texture, texcoord state must affect the shader cache key.
+    let make_textured_desc = |texture_transform| {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
+            texture_transform,
+            result_target: TextureResultTarget::Current,
+        };
+        FixedFunctionShaderDesc {
+            fvf: Fvf(Fvf::XYZ | (1 << 8)),
+            stages,
+            alpha_test: AlphaTestState::default(),
+            fog: FogState::default(),
+            lighting: LightingState::default(),
+        }
+    };
+
+    let textured_a = make_textured_desc(TextureTransform::Disable);
+    let textured_b = make_textured_desc(TextureTransform::Count2Projected);
+    assert_ne!(
+        textured_a.state_hash(),
+        textured_b.state_hash(),
+        "texture transforms should affect shader caching when the stage samples a texture"
+    );
+}
+
+#[test]
 fn shader_includes_lighting_branch_only_when_enabled() {
     let base = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::NORMAL),
