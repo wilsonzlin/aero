@@ -129,6 +129,7 @@ impl IoPortBus {
     ///
     /// Range devices are searched only if there is no exact port match. This preserves the
     /// historical behavior for fixed legacy devices registered via [`Self::register`].
+    #[track_caller]
     pub fn register_range(&mut self, start: u16, len: u16, dev: Box<dyn PortIoDevice>) {
         assert!(len != 0, "I/O port range length must be non-zero");
 
@@ -279,6 +280,7 @@ impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::capture_panic_location;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -620,11 +622,14 @@ mod tests {
         assert!(overlap.is_err());
 
         // Wrap past 0xFFFF should panic.
-        let wrap = std::panic::catch_unwind(|| {
+        let expected_file = file!();
+        let expected_line = line!() + 3;
+        let (file, line) = capture_panic_location(|| {
             let mut bus = IoPortBus::new();
             bus.register_range(0xFFFE, 4, Box::new(Noop));
         });
-        assert!(wrap.is_err());
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
 
         // Adjacent ranges should be allowed.
         let adjacent = std::panic::catch_unwind(|| {
