@@ -10,8 +10,8 @@
 //!   geometry via `draw_indexed_indirect`.
 //!
 //! The generated compute shader keeps its internal prepass resources in `@group(0)` and declares
-//! any referenced D3D constant buffers (`b#` / `cb#[]`) in the shared executor bind group
-//! `@group(3)`.
+//! any referenced D3D geometry-stage resources (constant buffers `b#` / `cb#[]`, SRVs `t#`,
+//! samplers `s#`) in the shared executor bind group `@group(3)`.
 //!
 //! Note: this module is only **partially wired** into the AeroGPU command executor today:
 //! - `CREATE_SHADER_DXBC` attempts to translate SM4/SM5 GS DXBC into a WGSL compute prepass.
