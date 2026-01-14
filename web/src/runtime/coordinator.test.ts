@@ -262,6 +262,79 @@ describe("runtime/coordinator", () => {
     coordinator.stop();
   });
 
+  it("switches the CPU worker entrypoint when vmRuntime changes via updateConfig()", () => {
+    const coordinator = new WorkerCoordinator();
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
+    const platformFeatures = {
+      crossOriginIsolated: true,
+      sharedArrayBuffer: true,
+      wasmSimd: true,
+      wasmThreads: true,
+      webgpu: true,
+      webusb: false,
+      webhid: false,
+      webgl2: true,
+      opfs: true,
+      opfsSyncAccessHandle: false,
+      audioWorklet: true,
+      offscreenCanvas: true,
+      jit_dynamic_wasm: true,
+    } as const;
+
+    coordinator.start(
+      {
+        vmRuntime: "legacy",
+        guestMemoryMiB: 1,
+        vramMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      },
+      { platformFeatures },
+    );
+
+    const cpuWorkerLegacy = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorkerLegacy.specifier)).toMatch(/cpu\.worker\.ts/);
+    expect(String(cpuWorkerLegacy.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.updateConfig({
+      vmRuntime: "machine",
+      guestMemoryMiB: 1,
+      vramMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    });
+
+    const cpuWorkerMachine = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(cpuWorkerMachine).not.toBe(cpuWorkerLegacy);
+    expect(String(cpuWorkerMachine.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.updateConfig({
+      vmRuntime: "legacy",
+      guestMemoryMiB: 1,
+      vramMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    });
+
+    const cpuWorkerLegacyAgain = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(cpuWorkerLegacyAgain).not.toBe(cpuWorkerMachine);
+    expect(String(cpuWorkerLegacyAgain.specifier)).toMatch(/cpu\.worker\.ts/);
+    expect(String(cpuWorkerLegacyAgain.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.stop();
+  });
+
   it("preserves the machine CPU worker entrypoint across VM reset (shared memory preserved)", () => {
     const coordinator = new WorkerCoordinator();
 
