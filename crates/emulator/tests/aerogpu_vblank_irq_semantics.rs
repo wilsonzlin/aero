@@ -25,9 +25,9 @@ fn enable_mmio_decode_only(dev: &mut AeroGpuPciDevice) {
 #[test]
 fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
     let mut mem = NoDmaMemory;
+    // Keep the interval comfortably above typical test runtime jitter so the "not immediately"
+    // assertions don't become timing-sensitive.
     let cfg = AeroGpuDeviceConfig {
-        // Keep the interval comfortably above typical test runtime jitter so the "not immediately"
-        // assertions don't become timing-sensitive.
         vblank_hz: Some(60),
         // Keep VRAM small for tests (the device allocates BAR1 VRAM backing).
         vram_size_bytes: 2 * 1024 * 1024,
