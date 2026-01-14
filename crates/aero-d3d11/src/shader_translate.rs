@@ -1416,7 +1416,11 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             Sm4Inst::If { cond, .. } => scan_src(cond),
             Sm4Inst::Discard { cond, .. } => scan_src(cond),
             Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
-            Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => scan_src(src),
+            Sm4Inst::Mov { dst: _, src }
+            | Sm4Inst::Utof { dst: _, src }
+            | Sm4Inst::Itof { dst: _, src }
+            | Sm4Inst::Ftoi { dst: _, src }
+            | Sm4Inst::Ftou { dst: _, src } => scan_src(src),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond);
                 scan_src(a);
@@ -1446,7 +1450,7 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             }
             | Sm4Inst::ISubC {
                 dst_diff: _,
-                dst_borrow: _,
+                dst_carry: _,
                 a,
                 b,
             }
