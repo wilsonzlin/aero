@@ -47,6 +47,33 @@ fn stage_ex_legacy_compute_reserved0_zero_does_not_decode_as_pixel() {
 }
 
 #[test]
+fn stage_ex_from_dxbc_program_type_rejects_zero() {
+    // `0` is DXBC Pixel program type, but `reserved0==0` is reserved for legacy compute packets.
+    assert_eq!(AerogpuShaderStageEx::from_dxbc_program_type(0), None);
+    assert_eq!(
+        AerogpuShaderStageEx::from_dxbc_program_type(1),
+        Some(AerogpuShaderStageEx::Vertex)
+    );
+    assert_eq!(
+        AerogpuShaderStageEx::from_dxbc_program_type(2),
+        Some(AerogpuShaderStageEx::Geometry)
+    );
+    assert_eq!(
+        AerogpuShaderStageEx::from_dxbc_program_type(3),
+        Some(AerogpuShaderStageEx::Hull)
+    );
+    assert_eq!(
+        AerogpuShaderStageEx::from_dxbc_program_type(4),
+        Some(AerogpuShaderStageEx::Domain)
+    );
+    assert_eq!(
+        AerogpuShaderStageEx::from_dxbc_program_type(5),
+        Some(AerogpuShaderStageEx::Compute)
+    );
+    assert_eq!(AerogpuShaderStageEx::from_dxbc_program_type(6), None);
+}
+
+#[test]
 fn cmd_writer_stage_ex_option_overrides_shader_stage() {
     let mut w = AerogpuCmdWriter::new();
     w.set_texture_stage_ex(
