@@ -287,6 +287,23 @@ impl Trb {
         ((self.status & Self::STATUS_COMPLETION_CODE_MASK) >> Self::STATUS_COMPLETION_CODE_SHIFT)
             as u8
     }
+
+    /// For Setup Stage TRBs, interpret the parameter field as an 8-byte USB SETUP packet.
+    #[inline]
+    pub fn setup_packet(&self) -> crate::SetupPacket {
+        crate::SetupPacket::from_bytes(self.parameter.to_le_bytes())
+    }
+
+    /// For Data/Status Stage TRBs, returns whether the transfer direction is IN (device-to-host).
+    #[inline]
+    pub const fn dir_in(&self) -> bool {
+        (self.control & Self::CONTROL_DIR) != 0
+    }
+
+    #[inline]
+    pub fn set_dir_in(&mut self, on: bool) {
+        self.control = (self.control & !Self::CONTROL_DIR) | ((on as u32) << 16);
+    }
 }
 
 /// TRB type field.
