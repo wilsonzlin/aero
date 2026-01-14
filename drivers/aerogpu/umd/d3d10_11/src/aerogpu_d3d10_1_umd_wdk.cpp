@@ -6554,12 +6554,11 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
       return;
     }
   } else {
-    // Treat NumBuffers==0 as an unbind request from StartSlot to the end of the
-    // slot range.
+    // Treat NumBuffers==0 as an unbind request for the single slot at StartSlot.
     if (start_slot == kMaxVertexBufferSlots) {
       return;
     }
-    bind_count = kMaxVertexBufferSlots - start_slot;
+    bind_count = 1;
   }
 
   AEROGPU_D3D10_TRACEF_VERBOSE("IaSetVertexBuffers hDevice=%p start_slot=%u count=%u",
