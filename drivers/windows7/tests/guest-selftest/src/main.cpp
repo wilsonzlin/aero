@@ -11545,6 +11545,8 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       }
     }
+  } else {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set");
   }
 
   const auto input = VirtioInputTest(log);

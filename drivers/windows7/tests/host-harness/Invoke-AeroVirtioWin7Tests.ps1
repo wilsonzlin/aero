@@ -7158,7 +7158,11 @@ try {
       if ($null -ne $line) {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
       }
-      Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but -WithBlkReset was enabled (provision the guest with --test-blk-reset)"
+      } else {
+        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

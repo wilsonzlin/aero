@@ -872,6 +872,7 @@ To enable end-to-end testing:
 The guest emits one of:
 
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set` (test not enabled / guest not provisioned)
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` (miniport does not support the reset IOCTL)
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...`
 

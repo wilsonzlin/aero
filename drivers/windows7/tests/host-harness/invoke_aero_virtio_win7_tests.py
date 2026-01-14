@@ -2329,6 +2329,7 @@ def _virtio_snd_buffer_limits_required_failure_message(
 def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-blk miniport reset marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
     marker = marker_line
     if marker is None:
@@ -2339,6 +2340,11 @@ def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason")
         if reason:
+            if reason == "flag_not_set":
+                return (
+                    "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but "
+                    "--with-blk-reset was enabled (provision the guest with --test-blk-reset)"
+                )
             return (
                 f"FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ({reason}) "
                 "but --with-blk-reset was enabled"
@@ -10728,6 +10734,7 @@ def _emit_virtio_blk_reset_host_marker(tail: bytes, *, blk_reset_line: Optional[
 
     Guest markers:
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...
 
