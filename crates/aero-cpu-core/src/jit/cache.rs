@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,31 +90,37 @@ impl CodeCache {
         let entry_rip = handle.entry_rip;
         let byte_len = handle.meta.byte_len as usize;
 
-        if let Some(&idx) = self.map.get(&entry_rip) {
-            let prev_len = self.nodes[idx]
-                .as_ref()
-                .expect("LRU node must exist for map entry")
-                .handle
-                .meta
-                .byte_len as usize;
-            self.current_bytes = self.current_bytes.saturating_sub(prev_len);
-            self.current_bytes = self.current_bytes.saturating_add(byte_len);
-            self.nodes[idx]
-                .as_mut()
-                .expect("LRU node must exist for map entry")
-                .handle = handle;
-            self.touch_idx(idx);
-        } else {
-            self.current_bytes = self.current_bytes.saturating_add(byte_len);
-            let idx = self.alloc_node(LruNode {
-                entry_rip,
-                handle,
-                prev: None,
-                next: None,
-            });
-            self.map.insert(entry_rip, idx);
-            self.link_front(idx);
-        }
+        match self.map.entry(entry_rip) {
+            Entry::Occupied(entry) => {
+                let idx = *entry.get();
+                // Release the mutable borrow of `self.map` before updating other fields.
+                drop(entry);
+                let prev_len = self.nodes[idx]
+                    .as_ref()
+                    .expect("LRU node must exist for map entry")
+                    .handle
+                    .meta
+                    .byte_len as usize;
+                self.current_bytes = self.current_bytes.saturating_sub(prev_len);
+                self.current_bytes = self.current_bytes.saturating_add(byte_len);
+                self.nodes[idx]
+                    .as_mut()
+                    .expect("LRU node must exist for map entry")
+                    .handle = handle;
+                self.touch_idx(idx);
+            }
+            Entry::Vacant(entry) => {
+                self.current_bytes = self.current_bytes.saturating_add(byte_len);
+                let idx = Self::alloc_node_inner(&mut self.nodes, &mut self.free_list, LruNode {
+                    entry_rip,
+                    handle,
+                    prev: None,
+                    next: None,
+                });
+                let _ = entry.insert(idx);
+                self.link_front(idx);
+            }
+        };
 
         self.evict_if_needed()
     }
@@ -161,13 +168,17 @@ impl CodeCache {
         self.link_front(idx);
     }
 
-    fn alloc_node(&mut self, node: LruNode) -> usize {
-        if let Some(idx) = self.free_list.pop() {
-            self.nodes[idx] = Some(node);
+    fn alloc_node_inner(
+        nodes: &mut Vec<Option<LruNode>>,
+        free_list: &mut Vec<usize>,
+        node: LruNode,
+    ) -> usize {
+        if let Some(idx) = free_list.pop() {
+            nodes[idx] = Some(node);
             idx
         } else {
-            let idx = self.nodes.len();
-            self.nodes.push(Some(node));
+            let idx = nodes.len();
+            nodes.push(Some(node));
             idx
         }
     }
