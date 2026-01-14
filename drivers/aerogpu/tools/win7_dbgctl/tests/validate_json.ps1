@@ -92,7 +92,7 @@ Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "nope"
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "foo.bin")
-Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "999999", "--out", "read_gpa_too_large_test.bin")
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "5000", "--out", "read_gpa_chunked_test.bin")
 
 # Best-effort cleanup to avoid clutter in local runs. On failure, artifacts may be left behind for debugging.
 $artifacts = @(
@@ -100,7 +100,7 @@ $artifacts = @(
   "last_cmd_test.bin.txt",
   "last_cmd_test.bin.alloc_table.bin",
   "read_gpa_test.bin",
-  "read_gpa_too_large_test.bin",
+  "read_gpa_chunked_test.bin",
   "scanout_test.bmp",
   "scanout_test.png",
   "cursor_test.bmp",

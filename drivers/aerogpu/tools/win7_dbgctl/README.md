@@ -159,6 +159,7 @@ Minimum supported commands:
   - Without `--out`, dbgctl prints up to 256 bytes by default; use `--force` to print up to 4096 bytes.
   - With `--out`, dbgctl writes the full requested range to a file.
   - On failure (including `STATUS_PARTIAL_COPY`), dbgctl best-effort deletes the `--out` path so callers do not see partial/truncated artifacts.
+  - With `--json`, `data_hex` is capped to a bounded prefix; see `request.size_bytes_effective` and `response.truncated`.
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:

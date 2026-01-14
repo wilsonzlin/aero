@@ -6541,19 +6541,82 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     return 1;
   }
 
-  // `aerogpu_escape_read_gpa_inout` has a fixed payload buffer. Refuse oversize requests
-  // rather than relying on the KMD to validate/clamp `size_bytes` (prevents potential
-  // overflows in buggy drivers and keeps JSON output bounded).
-  if (sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
-    if (outFile && *outFile) {
-      BestEffortDeleteOutputFile(outFile);
+  // `aerogpu_escape_read_gpa_inout` has a fixed payload buffer. For large reads, we must:
+  // - issue multiple bounded escape calls when dumping to `--out`, and
+  // - cap the inline JSON `data_hex` to a bounded prefix (prevents huge JSON payloads).
+  uint32_t jsonPrefixBytes = sizeBytes;
+  if (jsonPrefixBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    jsonPrefixBytes = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  }
+  const bool truncated = (jsonPrefixBytes != sizeBytes);
+
+  // Large reads with `--out`: dump the full range to a file in bounded chunks, then include only
+  // a small prefix in JSON for quick inspection.
+  if (outFile && *outFile && sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outFile, NULL);
+    if (dumpRc != 0) {
+      JsonWriteTopLevelError(out, "read-gpa", f, "Failed to dump GPA range to --out file", STATUS_UNSUCCESSFUL);
+      return dumpRc;
     }
-    JsonWriteTopLevelError(out,
-                           "read-gpa",
-                           f,
-                           "Requested size exceeds AEROGPU_DBGCTL_READ_GPA_MAX_BYTES; use a smaller --size value",
-                           STATUS_INVALID_PARAMETER);
-    return 1;
+
+    std::vector<uint8_t> prefix;
+    if (jsonPrefixBytes != 0) {
+      prefix.resize(jsonPrefixBytes);
+      FILE *fp = NULL;
+      errno_t ferr = _wfopen_s(&fp, outFile, L"rb");
+      if (ferr != 0 || !fp) {
+        JsonWriteTopLevelError(out, "read-gpa", f, "Failed to open --out file to read prefix", STATUS_UNSUCCESSFUL);
+        return 2;
+      }
+      const size_t n = fread(prefix.data(), 1, jsonPrefixBytes, fp);
+      fclose(fp);
+      if (n != jsonPrefixBytes) {
+        JsonWriteTopLevelError(out, "read-gpa", f, "Failed to read prefix bytes from --out file", STATUS_UNSUCCESSFUL);
+        return 2;
+      }
+    }
+
+    JsonWriter w(out);
+    w.BeginObject();
+    w.Key("schema_version");
+    w.Uint32(1);
+    w.Key("command");
+    w.String("read-gpa");
+    w.Key("ok");
+    w.Bool(true);
+
+    w.Key("request");
+    w.BeginObject();
+    JsonWriteU64HexDec(w, "gpa", gpa);
+    w.Key("size_bytes");
+    w.Uint32(sizeBytes);
+    w.Key("size_bytes_effective");
+    w.Uint32(jsonPrefixBytes);
+    w.EndObject();
+
+    w.Key("response");
+    w.BeginObject();
+    w.Key("status");
+    JsonWriteNtStatusError(w, f, 0 /* STATUS_SUCCESS */);
+    w.Key("bytes_copied");
+    w.Uint32(jsonPrefixBytes);
+    w.Key("bytes_copied_reported");
+    w.Uint32(jsonPrefixBytes);
+    w.Key("partial_copy");
+    w.Bool(false);
+    w.Key("truncated");
+    w.Bool(truncated);
+    w.Key("out_path");
+    w.String(WideToUtf8(outFile));
+    w.Key("out_written");
+    w.Bool(true);
+    w.Key("data_hex");
+    w.String(BytesToHex(prefix.data(), jsonPrefixBytes));
+    w.EndObject();
+
+    w.EndObject();
+    out->push_back('\n');
+    return 0;
   }
 
   aerogpu_escape_read_gpa_inout io;
@@ -6563,7 +6626,7 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   io.hdr.size = sizeof(io);
   io.hdr.reserved0 = 0;
   io.gpa = gpa;
-  io.size_bytes = sizeBytes;
+  io.size_bytes = jsonPrefixBytes;
   io.reserved0 = 0;
 
   const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
@@ -6577,8 +6640,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
 
   const NTSTATUS op = (NTSTATUS)io.status;
   uint32_t copied = io.bytes_copied;
-  if (copied > sizeBytes) {
-    copied = sizeBytes;
+  if (copied > jsonPrefixBytes) {
+    copied = jsonPrefixBytes;
   }
   if (copied > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
     copied = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
@@ -6614,6 +6677,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   JsonWriteU64HexDec(w, "gpa", gpa);
   w.Key("size_bytes");
   w.Uint32(sizeBytes);
+  w.Key("size_bytes_effective");
+  w.Uint32(jsonPrefixBytes);
   w.EndObject();
 
   w.Key("response");
@@ -6626,6 +6691,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   w.Uint32(io.bytes_copied);
   w.Key("partial_copy");
   w.Bool(op == STATUS_PARTIAL_COPY);
+  w.Key("truncated");
+  w.Bool(truncated);
   if (outFile && *outFile) {
     w.Key("out_path");
     w.String(WideToUtf8(outFile));
