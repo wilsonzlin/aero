@@ -114,13 +114,16 @@ bool TestGappedRtvBindingIsEncoded() {
     return false;
   }
 
-  if (!Check(cmd->color_count == 2, "gapped RTV binding preserves color_count==2")) {
+  // D3D11 allows gaps. The state encoder should preserve the gap exactly: the
+  // count is the provided number of RTV slots, with any null slots encoded as 0
+  // handles.
+  if (!Check(cmd->color_count == 2, "gapped RTV binding preserves color_count")) {
     return false;
   }
-  if (!Check(cmd->colors[0] == 0, "gapped RTV binding clears colors[0]")) {
+  if (!Check(cmd->colors[0] == 0, "gapped RTV binding encodes colors[0]==0")) {
     return false;
   }
-  if (!Check(cmd->colors[1] == res1.handle, "gapped RTV binding keeps colors[1]")) {
+  if (!Check(cmd->colors[1] == res1.handle, "gapped RTV binding encodes colors[1]")) {
     return false;
   }
   for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {

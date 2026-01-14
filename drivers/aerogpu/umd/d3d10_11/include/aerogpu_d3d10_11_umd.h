@@ -373,63 +373,53 @@ typedef struct AEROGPU_DDIARG_CREATESAMPLER {
   uint32_t AddressW;
 } AEROGPU_DDIARG_CREATESAMPLER;
 
-typedef struct AEROGPU_DDI_RENDER_TARGET_BLEND_DESC {
-  uint32_t BlendEnable; // 0/1
-  uint32_t SrcBlend; // D3D10_BLEND/D3D11_BLEND numeric value
-  uint32_t DestBlend; // D3D10_BLEND/D3D11_BLEND numeric value
-  uint32_t BlendOp; // D3D10_BLEND_OP/D3D11_BLEND_OP numeric value
-  uint32_t SrcBlendAlpha; // D3D10_BLEND/D3D11_BLEND numeric value
-  uint32_t DestBlendAlpha; // D3D10_BLEND/D3D11_BLEND numeric value
-  uint32_t BlendOpAlpha; // D3D10_BLEND_OP/D3D11_BLEND_OP numeric value
-  uint8_t RenderTargetWriteMask; // bit0=R bit1=G bit2=B bit3=A
-  uint8_t reserved0[3];
-} AEROGPU_DDI_RENDER_TARGET_BLEND_DESC;
-
-typedef struct AEROGPU_DDI_BLEND_DESC {
-  // The D3D10/11 runtime supports up to 8 render targets; the minimal ABI subset
-  // models only slot 0 since the AeroGPU protocol currently encodes a single
-  // blend state.
-  AEROGPU_DDI_RENDER_TARGET_BLEND_DESC RenderTarget[1];
-} AEROGPU_DDI_BLEND_DESC;
-
 typedef struct AEROGPU_DDIARG_CREATEBLENDSTATE {
-  // Mirrors the D3D10_BLEND_DESC shape (global blend factors/ops + per-RT enable
-  // + write mask arrays). Numeric enum values match the Windows SDK.
+  // Portable (non-WDK) ABI: protocol-facing blend state.
   //
-  // This is used by the portable (non-WDK) build and unit tests. The real Win7
-  // WDK build uses the official D3D10DDIARG_CREATEBLENDSTATE /
-  // D3D10_1_DDI_BLEND_DESC structures instead.
-  uint32_t AlphaToCoverageEnable; // BOOL
-  uint32_t BlendEnable[8]; // BOOL per render target
-  uint32_t SrcBlend; // D3D10_BLEND / D3D10_DDI_BLEND
-  uint32_t DestBlend;
-  uint32_t BlendOp; // D3D10_BLEND_OP / D3D10_DDI_BLEND_OP
-  uint32_t SrcBlendAlpha;
-  uint32_t DestBlendAlpha;
-  uint32_t BlendOpAlpha;
-  uint8_t RenderTargetWriteMask[8]; // D3D10_COLOR_WRITE_ENABLE bits (0xF = RGBA)
+  // Field values use AeroGPU protocol enums directly:
+  // - `AEROGPU_BLEND_*`     (enum aerogpu_blend_factor)
+  // - `AEROGPU_BLEND_OP_*`  (enum aerogpu_blend_op)
+  //
+  // Mirrors `struct aerogpu_blend_state` excluding the dynamic device fields
+  // (`blend_constant_rgba_f32` + `sample_mask`).
+  uint32_t enable; // 0/1
+  uint32_t src_factor; // AEROGPU_BLEND_*
+  uint32_t dst_factor; // AEROGPU_BLEND_*
+  uint32_t blend_op; // AEROGPU_BLEND_OP_*
+  uint8_t color_write_mask; // bit0=R bit1=G bit2=B bit3=A
+  uint8_t reserved0[3];
+  uint32_t src_factor_alpha; // AEROGPU_BLEND_*
+  uint32_t dst_factor_alpha; // AEROGPU_BLEND_*
+  uint32_t blend_op_alpha; // AEROGPU_BLEND_OP_*
 } AEROGPU_DDIARG_CREATEBLENDSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATERASTERIZERSTATE {
-  // D3D11_RASTERIZER_DESC subset (numeric values from d3d11.h).
+  // Portable (non-WDK) ABI: protocol-facing rasterizer state.
   //
-  // This struct is used by the portable build + host-side unit tests. The real
-  // Win7 WDK build uses the official D3D10/11 DDI structures instead.
-  uint32_t FillMode;
-  uint32_t CullMode;
-  uint32_t FrontCounterClockwise; // 0/1
-  int32_t DepthBias;
-  uint32_t ScissorEnable; // 0/1
-  uint32_t DepthClipEnable; // 0/1
+  // Field values use AeroGPU protocol enums directly:
+  // - `AEROGPU_FILL_*`  (enum aerogpu_fill_mode)
+  // - `AEROGPU_CULL_*`  (enum aerogpu_cull_mode)
+  uint32_t fill_mode; // AEROGPU_FILL_*
+  uint32_t cull_mode; // AEROGPU_CULL_*
+  uint32_t front_ccw; // 0/1
+  uint32_t scissor_enable; // 0/1
+  int32_t depth_bias;
+  uint32_t depth_clip_enable; // 0/1 (FALSE => AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE)
 } AEROGPU_DDIARG_CREATERASTERIZERSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE {
-  uint32_t DepthEnable; // 0/1
-  uint32_t DepthWriteMask; // D3D10_DEPTH_WRITE_MASK/D3D11_DEPTH_WRITE_MASK numeric value
-  uint32_t DepthFunc; // D3D10_COMPARISON_FUNC/D3D11_COMPARISON_FUNC numeric value
-  uint32_t StencilEnable; // 0/1
-  uint8_t StencilReadMask;
-  uint8_t StencilWriteMask;
+  // Portable (non-WDK) ABI: protocol-facing depth/stencil state.
+  //
+  // Field values use AeroGPU protocol enums directly:
+  // - `AEROGPU_COMPARE_*`  (enum aerogpu_compare_func)
+  //
+  // Mirrors `struct aerogpu_depth_stencil_state`.
+  uint32_t depth_enable; // 0/1
+  uint32_t depth_write_enable; // 0/1
+  uint32_t depth_func; // AEROGPU_COMPARE_*
+  uint32_t stencil_enable; // 0/1
+  uint8_t stencil_read_mask;
+  uint8_t stencil_write_mask;
   uint8_t reserved0[2];
 } AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE;
 

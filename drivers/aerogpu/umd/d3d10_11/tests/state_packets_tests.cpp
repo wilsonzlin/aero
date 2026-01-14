@@ -6,27 +6,8 @@
 
 #include "aerogpu_d3d10_11_umd.h"
 #include "aerogpu_cmd.h"
-#include "aerogpu_d3d10_blend_state_validate.h"
 
 namespace {
-
-using namespace aerogpu::d3d10_11;
-
-constexpr uint32_t kD3D10FillWireframe = 2;
-constexpr uint32_t kD3D10CullFront = 2;
-
-constexpr uint32_t kD3D10CompareGreaterEqual = 7;
-constexpr uint32_t kD3D10DepthWriteMaskZero = 0;
-
-// Legacy constant names used by older versions of this test. Prefer the shared
-// `kD3d*` constants from `aerogpu_d3d10_blend_state_validate.h`, but keep these
-// aliases so the intent is obvious (they mirror the D3D10 enum names).
-constexpr uint32_t kD3D10BlendBlendFactor = kD3dBlendBlendFactor;
-constexpr uint32_t kD3D10BlendInvBlendFactor = kD3dBlendInvBlendFactor;
-constexpr uint32_t kD3D10BlendOpSubtract = kD3dBlendOpSubtract;
-constexpr uint32_t kD3D10BlendSrcAlpha = kD3dBlendSrcAlpha;
-constexpr uint32_t kD3D10BlendInvSrcAlpha = kD3dBlendInvSrcAlpha;
-constexpr uint32_t kD3D10BlendOpAdd = kD3dBlendOpAdd;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -269,17 +250,14 @@ bool TestSetBlendStateEmitsPacket() {
   }
 
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
-  desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kD3dBlendBlendFactor;
-  desc.DestBlend = kD3dBlendInvBlendFactor;
-  desc.BlendOp = kD3dBlendOpSubtract;
-  desc.SrcBlendAlpha = kD3dBlendSrcAlpha;
-  desc.DestBlendAlpha = kD3dBlendInvSrcAlpha;
-  desc.BlendOpAlpha = kD3dBlendOpAdd;
-  for (uint32_t i = 0; i < 8; ++i) {
-    desc.BlendEnable[i] = 1;
-    desc.RenderTargetWriteMask[i] = 0x3u;
-  }
+  desc.enable = 1;
+  desc.src_factor = AEROGPU_BLEND_CONSTANT;
+  desc.dst_factor = AEROGPU_BLEND_INV_CONSTANT;
+  desc.blend_op = AEROGPU_BLEND_OP_SUBTRACT;
+  desc.color_write_mask = 0x3u;
+  desc.src_factor_alpha = AEROGPU_BLEND_SRC_ALPHA;
+  desc.dst_factor_alpha = AEROGPU_BLEND_INV_SRC_ALPHA;
+  desc.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
 
   TestBlendState bs{};
   if (!Check(CreateBlendState(&dev, desc, &bs), "CreateBlendState helper")) {
@@ -480,17 +458,14 @@ bool TestSetBlendStateNullBlendFactorDefaultsToOnes() {
   }
 
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
-  desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kD3dBlendBlendFactor;
-  desc.DestBlend = kD3dBlendInvBlendFactor;
-  desc.BlendOp = kD3dBlendOpSubtract;
-  desc.SrcBlendAlpha = kD3dBlendSrcAlpha;
-  desc.DestBlendAlpha = kD3dBlendInvSrcAlpha;
-  desc.BlendOpAlpha = kD3dBlendOpAdd;
-  for (uint32_t i = 0; i < 8; ++i) {
-    desc.BlendEnable[i] = 1;
-    desc.RenderTargetWriteMask[i] = 0x3u;
-  }
+  desc.enable = 1;
+  desc.src_factor = AEROGPU_BLEND_CONSTANT;
+  desc.dst_factor = AEROGPU_BLEND_INV_CONSTANT;
+  desc.blend_op = AEROGPU_BLEND_OP_SUBTRACT;
+  desc.color_write_mask = 0x3u;
+  desc.src_factor_alpha = AEROGPU_BLEND_SRC_ALPHA;
+  desc.dst_factor_alpha = AEROGPU_BLEND_INV_SRC_ALPHA;
+  desc.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
 
   TestBlendState bs{};
   if (!Check(CreateBlendState(&dev, desc, &bs), "CreateBlendState helper (null blend factor)")) {
@@ -548,12 +523,13 @@ bool TestCreateRasterizerStateRejectsUnsupportedFillMode() {
   }
 
   AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
-  desc.FillMode = 1; // invalid (D3D10_FILL_MODE starts at 2)
-  desc.CullMode = kD3D10CullFront;
-  desc.FrontCounterClockwise = 0;
-  desc.DepthBias = 0;
-  desc.DepthClipEnable = 1;
-  desc.ScissorEnable = 0;
+  // Invalid: `fill_mode` is `enum aerogpu_fill_mode` (0..1).
+  desc.fill_mode = AEROGPU_FILL_WIREFRAME + 1u;
+  desc.cull_mode = AEROGPU_CULL_BACK;
+  desc.front_ccw = 0;
+  desc.scissor_enable = 0;
+  desc.depth_bias = 0;
+  desc.depth_clip_enable = 1;
 
   D3D10DDI_HRASTERIZERSTATE hState = {};
   const SIZE_T size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, &desc);
@@ -564,7 +540,7 @@ bool TestCreateRasterizerStateRejectsUnsupportedFillMode() {
   hState.pDrvPrivate = storage.data();
 
   const HRESULT hr = dev.device_funcs.pfnCreateRasterizerState(dev.hDevice, &desc, hState);
-  if (!Check(hr == E_NOTIMPL, "CreateRasterizerState should return E_NOTIMPL for invalid FillMode")) {
+  if (!Check(hr == E_INVALIDARG, "CreateRasterizerState should return E_INVALIDARG for invalid fill_mode")) {
     return false;
   }
 
@@ -583,12 +559,12 @@ bool TestSetRasterizerStateEmitsPacket() {
   }
 
   AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
-  desc.FillMode = kD3D10FillWireframe;
-  desc.CullMode = kD3D10CullFront;
-  desc.FrontCounterClockwise = 1;
-  desc.DepthBias = -5;
-  desc.DepthClipEnable = 0;
-  desc.ScissorEnable = 1;
+  desc.fill_mode = AEROGPU_FILL_WIREFRAME;
+  desc.cull_mode = AEROGPU_CULL_FRONT;
+  desc.front_ccw = 1;
+  desc.scissor_enable = 1;
+  desc.depth_bias = -5;
+  desc.depth_clip_enable = 0;
 
   TestRasterizerState rs{};
   if (!Check(CreateRasterizerState(&dev, desc, &rs), "CreateRasterizerState helper")) {
@@ -692,12 +668,13 @@ bool TestDepthDisableDisablesDepthWrites() {
   }
 
   AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE desc = {};
-  desc.DepthEnable = 0;
-  desc.DepthWriteMask = 1; // D3D10_DEPTH_WRITE_MASK_ALL
-  desc.DepthFunc = kD3D10CompareGreaterEqual;
-  desc.StencilEnable = 0;
-  desc.StencilReadMask = 0xFFu;
-  desc.StencilWriteMask = 0xFFu;
+  desc.depth_enable = 0;
+  // D3D10/11 semantics: depth writes are ignored when depth testing is disabled.
+  desc.depth_write_enable = 1;
+  desc.depth_func = AEROGPU_COMPARE_GREATER_EQUAL;
+  desc.stencil_enable = 0;
+  desc.stencil_read_mask = 0xFFu;
+  desc.stencil_write_mask = 0xFFu;
 
   TestDepthStencilState dss{};
   if (!Check(CreateDepthStencilState(&dev, desc, &dss), "CreateDepthStencilState helper (depth disable)")) {
@@ -744,12 +721,12 @@ bool TestSetDepthStencilStateEmitsPacket() {
   }
 
   AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE desc = {};
-  desc.DepthEnable = 1;
-  desc.DepthWriteMask = kD3D10DepthWriteMaskZero;
-  desc.DepthFunc = kD3D10CompareGreaterEqual;
-  desc.StencilEnable = 1;
-  desc.StencilReadMask = 0x0Fu;
-  desc.StencilWriteMask = 0xF0u;
+  desc.depth_enable = 1;
+  desc.depth_write_enable = 0;
+  desc.depth_func = AEROGPU_COMPARE_GREATER_EQUAL;
+  desc.stencil_enable = 1;
+  desc.stencil_read_mask = 0x0Fu;
+  desc.stencil_write_mask = 0xF0u;
 
   TestDepthStencilState dss{};
   if (!Check(CreateDepthStencilState(&dev, desc, &dss), "CreateDepthStencilState helper")) {
