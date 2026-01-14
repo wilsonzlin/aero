@@ -333,7 +333,7 @@ describe("GamepadCapture", () => {
       connected: boolean;
     };
 
-    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: false };
+    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: true };
     let pad1: StubGamepad = { buttons: makeButtons([1]), axes: [0, 0, 0, 0], index: 1, connected: true };
 
     const capture = new GamepadCapture({
@@ -342,23 +342,22 @@ describe("GamepadCapture", () => {
     });
     const queue = new InputEventQueue(16);
 
-    // First poll should choose the first connected pad (pad1) and emit its state.
+    // First poll should choose the first connected pad (pad0) and emit its state.
     capture.poll(queue, 1, { active: true });
     expect(queue.size).toBe(1);
 
-    // If another pad becomes connected later, the capture should keep using the
-    // existing active pad (no flip-flop).
-    pad0 = { ...pad0, connected: true };
+    // Changes to the inactive pad should be ignored (no flip-flop).
+    pad1 = { ...pad1, axes: [1, 0, 0, 0] };
     capture.poll(queue, 2, { active: true });
     expect(queue.size).toBe(1);
 
     // Changes to the active pad should be emitted...
-    pad1 = { ...pad1, axes: [1, 0, 0, 0] };
+    pad0 = { ...pad0, axes: [1, 0, 0, 0] };
     capture.poll(queue, 3, { active: true });
     expect(queue.size).toBe(2);
 
-    // ...but changes to the inactive pad should be ignored.
-    pad0 = { ...pad0, axes: [1, 0, 0, 0] };
+    // ...and further changes to the inactive pad should still be ignored.
+    pad1 = { ...pad1, axes: [0, 0, 0, 0] };
     capture.poll(queue, 4, { active: true });
     expect(queue.size).toBe(2);
 
@@ -374,8 +373,8 @@ describe("GamepadCapture", () => {
     const words = new Int32Array(state.posted.buffer);
     expect(words[0]).toBe(2);
 
-    const expected1 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
-    const expected2 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 127, y: 0, rx: 0, ry: 0 });
+    const expected1 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expected2 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 127, y: 0, rx: 0, ry: 0 });
 
     const base = 2;
     const ev0 = base + 0 * 4;
