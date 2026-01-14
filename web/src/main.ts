@@ -54,6 +54,7 @@ import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader"
 import { precompileWasm } from "./runtime/wasm_preload";
 import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager, type RemoteCacheStatusSerializable } from "./storage/disk_manager";
+import { pruneRemoteCachesAndRefresh } from "./storage/remote_cache_ui_actions";
 import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
 import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
 import { RuntimeDiskClient, type OpenResult } from "./storage/runtime_disk_client";
@@ -3173,6 +3174,11 @@ function renderDisksPanel(): HTMLElement {
   });
 
   const remoteCachesStatus = el("div", { class: "mono muted", text: "" });
+  const remoteCachesPruneStatus = el("pre", { class: "mono", text: "" });
+  const pruneOlderThanDaysInput = el("input", { type: "number", min: "0", step: "1", value: "30" }) as HTMLInputElement;
+  const pruneMaxCachesInput = el("input", { type: "number", min: "0", step: "1", placeholder: "(optional)" }) as HTMLInputElement;
+  const pruneDryRunInput = el("input", { type: "checkbox", checked: "true" }) as HTMLInputElement;
+  const pruneRemoteCachesBtn = el("button", { text: "Dry-run prune" }) as HTMLButtonElement;
   const remoteCachesTableBody = el("tbody");
   const remoteCachesTable = el(
     "table",
@@ -3195,6 +3201,12 @@ function renderDisksPanel(): HTMLElement {
 
   let remoteCaches: RemoteCacheStatusSerializable[] = [];
   let remoteCacheCorruptKeys: string[] = [];
+
+  function updatePruneRemoteCachesButtonLabel(): void {
+    pruneRemoteCachesBtn.textContent = pruneDryRunInput.checked ? "Dry-run prune" : "Prune now";
+  }
+  pruneDryRunInput.addEventListener("change", updatePruneRemoteCachesButtonLabel);
+  updatePruneRemoteCachesButtonLabel();
 
   function renderRemoteCachesTable(): void {
     remoteCachesTableBody.replaceChildren();
@@ -3250,6 +3262,24 @@ function renderDisksPanel(): HTMLElement {
     }
   }
 
+  function formatRemoteCachePruneResult(
+    result: { pruned: number; examined: number; prunedKeys?: string[] },
+    dryRun: boolean,
+  ): string {
+    const header = `${dryRun ? "Dry-run prune" : "Prune"}: pruned=${result.pruned.toLocaleString()} examined=${result.examined.toLocaleString()}`;
+    if (!dryRun) return header;
+
+    const keys = Array.isArray(result.prunedKeys) ? result.prunedKeys : [];
+    if (keys.length === 0) return `${header}\n(no caches matched)`;
+
+    const maxShown = 50;
+    const shown = keys.slice(0, maxShown);
+    const remaining = keys.length - shown.length;
+    const lines = [header, "prunedKeys:", ...shown];
+    if (remaining > 0) lines.push(`…+${remaining} more`);
+    return lines.join("\n");
+  }
+
   async function refreshRemoteCaches(): Promise<void> {
     try {
       if (!manager) manager = await diskManagerPromise;
@@ -3265,6 +3295,57 @@ function renderDisksPanel(): HTMLElement {
     }
   }
 
+  async function pruneRemoteCachesFromUi(dryRun: boolean): Promise<void> {
+    status.textContent = "";
+    remoteCachesPruneStatus.textContent = "";
+
+    const olderThanDays = Number(pruneOlderThanDaysInput.value);
+    if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
+      const msg = "Invalid olderThanDays (must be a non-negative number).";
+      status.textContent = msg;
+      remoteCachesPruneStatus.textContent = msg;
+      return;
+    }
+
+    let maxCaches: number | undefined;
+    const rawMax = pruneMaxCachesInput.value.trim();
+    if (rawMax) {
+      const n = Number(rawMax);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+        const msg = "Invalid maxCaches (must be a non-negative integer).";
+        status.textContent = msg;
+        remoteCachesPruneStatus.textContent = msg;
+        return;
+      }
+      maxCaches = n;
+    }
+
+    if (!manager) manager = await diskManagerPromise;
+
+    pruneRemoteCachesBtn.disabled = true;
+    remoteCachesPruneStatus.textContent = dryRun ? "Dry-run prune in progress…" : "Pruning in progress…";
+    try {
+      const outcome = await pruneRemoteCachesAndRefresh({
+        manager,
+        olderThanDays,
+        maxCaches,
+        dryRun,
+        refresh: refreshRemoteCaches,
+      });
+      if (!outcome.supported) {
+        remoteCachesPruneStatus.textContent = outcome.message;
+        return;
+      }
+      remoteCachesPruneStatus.textContent = formatRemoteCachePruneResult(outcome.result, dryRun);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      status.textContent = msg;
+      remoteCachesPruneStatus.textContent = `Remote cache prune failed: ${msg}`;
+    } finally {
+      pruneRemoteCachesBtn.disabled = false;
+    }
+  }
+
   const refreshRemoteCachesBtn = el("button", {
     text: "Refresh remote caches",
     onclick: () => {
@@ -3272,6 +3353,10 @@ function renderDisksPanel(): HTMLElement {
       void refreshRemoteCaches();
     },
   }) as HTMLButtonElement;
+
+  pruneRemoteCachesBtn.addEventListener("click", () => {
+    void pruneRemoteCachesFromUi(pruneDryRunInput.checked);
+  });
 
   const addRemoteBtn = el("button", {
     text: "Add remote disk",
@@ -3421,6 +3506,18 @@ function renderDisksPanel(): HTMLElement {
     ),
     el("h3", { text: "Remote caches" }),
     el("div", { class: "row" }, refreshRemoteCachesBtn),
+    el(
+      "div",
+      { class: "row" },
+      el("label", { text: "Older than days:" }),
+      pruneOlderThanDaysInput,
+      el("label", { text: "Max caches:" }),
+      pruneMaxCachesInput,
+      el("label", { text: "Dry run:" }),
+      pruneDryRunInput,
+      pruneRemoteCachesBtn,
+    ),
+    remoteCachesPruneStatus,
     remoteCachesStatus,
     remoteCachesTable,
     status,
