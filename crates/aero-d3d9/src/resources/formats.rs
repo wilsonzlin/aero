@@ -195,6 +195,26 @@ pub fn format_info(
     usage: TextureUsageKind,
 ) -> Result<FormatInfo> {
     let bc_supported = device_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+    let is_depth = matches!(format, D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32);
+    let is_compressed = matches!(format, D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5);
+
+    // Validate usage combinations up-front to avoid creating textures that will fail WebGPU
+    // validation (and to match D3D9 usage rules).
+    match usage {
+        TextureUsageKind::DepthStencil if !is_depth => {
+            return Err(anyhow!(
+                "non-depth format {:?} cannot be used with TextureUsageKind::DepthStencil",
+                format
+            ));
+        }
+        TextureUsageKind::RenderTarget if is_compressed => {
+            return Err(anyhow!(
+                "compressed format {:?} must be used with TextureUsageKind::Sampled",
+                format
+            ));
+        }
+        _ => {}
+    }
 
     match (format, usage) {
         (D3DFormat::A8R8G8B8, _) => Ok(FormatInfo {
@@ -547,9 +567,18 @@ mod tests {
                     let res = format_info(format, features, usage);
 
                     let expects_ok = match (format, usage) {
-                        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, TextureUsageKind::DepthStencil) => true,
-                        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, _) => false,
-                        _ => true,
+                        (
+                            D3DFormat::A8R8G8B8 | D3DFormat::X8R8G8B8,
+                            TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
+                        ) => true,
+                        (D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5, TextureUsageKind::Sampled) => {
+                            true
+                        }
+                        (
+                            D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32,
+                            TextureUsageKind::DepthStencil,
+                        ) => true,
+                        _ => false,
                     };
 
                     assert_eq!(
@@ -574,12 +603,7 @@ mod tests {
                         assert_eq!(info.decompress_to_bgra8, expected.decompress_to_bgra8);
                         assert_eq!(info.force_opaque_alpha, expected.force_opaque_alpha);
                     } else {
-                        let err = res.unwrap_err();
-                        let msg = err.to_string();
-                        assert!(
-                            msg.contains("must be used with TextureUsageKind::DepthStencil"),
-                            "Unexpected error message: {msg}"
-                        );
+                        assert!(res.is_err());
                     }
                 }
             }
