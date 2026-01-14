@@ -141,3 +141,26 @@ fn xhci_mmio_read_does_not_dma_after_host_controller_error() {
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }
+
+#[test]
+fn xhci_hce_sets_hchalted_even_when_run_set() {
+    let mut mem = CountingMem::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // With RUN set, HCHalted should normally clear.
+    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_eq!(
+        sts & regs::USBSTS_HCHALTED,
+        0,
+        "setting RUN should clear HCHalted"
+    );
+
+    force_hce(&mut xhci, &mut mem);
+
+    // Real hardware halts the controller on fatal errors. Mirror that behaviour by reporting
+    // HCHalted even if USBCMD.RUN remains set.
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HCE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+}

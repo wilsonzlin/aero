@@ -2601,8 +2601,9 @@ impl XhciController {
         // Keep derived bits out of the stored `usbsts` field.
         let mut v = self.usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
 
-        // HCHalted is derived from USBCMD.RUN.
-        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+        // HCHalted reports the controller's execution state. RUN=0 => halted, but a fatal Host
+        // Controller Error can also halt execution while RUN remains set.
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 || self.host_controller_error {
             v |= regs::USBSTS_HCH;
         }
 
