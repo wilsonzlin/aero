@@ -66,6 +66,63 @@ fn xhci_doorbell0_processes_command_ring_from_crcr() {
 }
 
 #[test]
+fn xhci_doorbell0_defers_command_ring_until_run() {
+    let mut mem = TestMemory::new(0x20_000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let dcbaa = alloc.alloc(0x200, 0x40) as u64;
+    let cmd_ring = alloc.alloc(0x100, 0x40) as u64;
+
+    let mut xhci = XhciController::new();
+    xhci.set_dcbaap(dcbaa);
+
+    // Seed DCBAA[1] with a non-zero value so we can detect when Enable Slot runs (it zeroes the
+    // entry).
+    mem.write_u64(dcbaa + 8, 0x1122_3344_5566_7788);
+
+    // Program CRCR (pointer + cycle state) but leave the controller halted (USBCMD.RUN=0).
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, cmd_ring | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, cmd_ring >> 32);
+
+    // Command ring: Enable Slot then stop (cycle mismatch).
+    {
+        let mut trb = Trb::new(0, 0, 0);
+        trb.set_trb_type(TrbType::EnableSlotCommand);
+        trb.set_cycle(true);
+        trb.write_to(&mut mem, cmd_ring);
+    }
+    {
+        let mut trb = Trb::new(0, 0, 0);
+        trb.set_trb_type(TrbType::NoOpCommand);
+        trb.set_cycle(false);
+        trb.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
+    }
+
+    // Ring doorbell 0 (command ring) while halted. The doorbell should be remembered, but command
+    // ring execution is gated on USBCMD.RUN.
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    let work0 = xhci.step_1ms(&mut mem);
+    assert_eq!(work0.command_trbs_processed, 0);
+    assert_eq!(xhci.pending_event_count(), 0);
+    assert_eq!(mem.read_u64(dcbaa + 8), 0x1122_3344_5566_7788);
+
+    // Start the controller and tick once. The queued doorbell should now cause the command ring to
+    // execute without requiring another doorbell write.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    let work1 = xhci.step_1ms(&mut mem);
+    assert_eq!(work1.command_trbs_processed, 1);
+
+    let ev = xhci
+        .pop_pending_event()
+        .expect("Enable Slot completion event");
+    assert_eq!(ev.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::Success.as_u8());
+    assert_eq!(ev.slot_id(), 1);
+    assert_eq!(ev.parameter & !0x0f, cmd_ring);
+    assert_eq!(mem.read_u64(dcbaa + 8), 0);
+}
+
+#[test]
 fn xhci_doorbell0_persists_command_ring_state_across_rings() {
     let mut mem = TestMemory::new(0x20_000);
     let mut alloc = Alloc::new(0x1000);
