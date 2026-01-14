@@ -81,8 +81,8 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
     // The u32 fast path only needs `rowBytes` bytes from the last row; it does not require
     // trailing pitch padding to be present. Use a minimal u32 view length so callers can pass
     // slice views that omit the last-row padding bytes (common for VRAM-backed cursors/scanout).
-    const requiredSrcWords = ((height - 1) * srcWordsPerRow + width) >>> 0;
-    const requiredDstWords = ((height - 1) * dstWordsPerRow + width) >>> 0;
+    const requiredSrcWords = (height - 1) * srcWordsPerRow + width;
+    const requiredDstWords = (height - 1) * dstWordsPerRow + width;
     const srcU32 = new Uint32Array(src.buffer, src.byteOffset, requiredSrcWords);
     const dstU32 = new Uint32Array(dst.buffer, dst.byteOffset, requiredDstWords);
 
