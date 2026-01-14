@@ -57,7 +57,7 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
 **Tests:**
-- `crates/aero-d3d9/tests/sm3_wgsl.rs` (core texld/texldp/texldd/texldl + sampler `dcl_*` texture-type coverage)
+- `crates/aero-d3d9/tests/sm3_wgsl.rs` (core texld/texldp/texldd/texldl + sampler `dcl_*` texture-type coverage + wgpu pipeline-layout compatibility check)
 - `crates/aero-d3d9/tests/sm3_wgsl_tex.rs` (additional sampler-type coverage)
 
 **Binding contract (AeroGPU + translators):**
