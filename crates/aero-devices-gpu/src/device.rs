@@ -38,6 +38,14 @@ pub struct AeroGpuBar0MmioDevice {
     boot_time_ns: Option<u64>,
     vblank_period_ns: Option<u64>,
     next_vblank_deadline_ns: Option<u64>,
+
+    /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
+    scanout0_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `SCANOUT0_FB_GPA_LO` without a subsequent HI write.
+    ///
+    /// This avoids exposing a torn 64-bit framebuffer address to scanout readers; drivers
+    /// typically write LO then HI.
+    scanout0_fb_gpa_lo_pending: bool,
 }
 
 impl AeroGpuBar0MmioDevice {
@@ -59,6 +67,8 @@ impl AeroGpuBar0MmioDevice {
             boot_time_ns: None,
             vblank_period_ns,
             next_vblank_deadline_ns: None,
+            scanout0_fb_gpa_pending_lo: 0,
+            scanout0_fb_gpa_lo_pending: false,
         }
     }
 
@@ -153,7 +163,13 @@ impl AeroGpuBar0MmioDevice {
             mmio::SCANOUT0_HEIGHT => self.regs.scanout0.height,
             mmio::SCANOUT0_FORMAT => self.regs.scanout0.format as u32,
             mmio::SCANOUT0_PITCH_BYTES => self.regs.scanout0.pitch_bytes,
-            mmio::SCANOUT0_FB_GPA_LO => self.regs.scanout0.fb_gpa as u32,
+            mmio::SCANOUT0_FB_GPA_LO => {
+                if self.scanout0_fb_gpa_lo_pending {
+                    self.scanout0_fb_gpa_pending_lo
+                } else {
+                    self.regs.scanout0.fb_gpa as u32
+                }
+            }
             mmio::SCANOUT0_FB_GPA_HI => (self.regs.scanout0.fb_gpa >> 32) as u32,
 
             mmio::SCANOUT0_VBLANK_SEQ_LO => self.regs.scanout0_vblank_seq as u32,
@@ -209,6 +225,9 @@ impl AeroGpuBar0MmioDevice {
                         self.executor.flush_pending_fences(&mut self.regs, mem);
                     }
                 }
+                if !new_enable {
+                    self.scanout0_fb_gpa_lo_pending = false;
+                }
                 self.regs.scanout0.enable = new_enable;
             }
             mmio::SCANOUT0_WIDTH => self.regs.scanout0.width = value,
@@ -216,12 +235,18 @@ impl AeroGpuBar0MmioDevice {
             mmio::SCANOUT0_FORMAT => self.regs.scanout0.format = AeroGpuFormat::from_u32(value),
             mmio::SCANOUT0_PITCH_BYTES => self.regs.scanout0.pitch_bytes = value,
             mmio::SCANOUT0_FB_GPA_LO => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid exposing torn 64-bit addresses; treat the HI write as the commit point.
+                self.scanout0_fb_gpa_pending_lo = value;
+                self.scanout0_fb_gpa_lo_pending = true;
             }
             mmio::SCANOUT0_FB_GPA_HI => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                let lo = if self.scanout0_fb_gpa_lo_pending {
+                    self.scanout0_fb_gpa_pending_lo
+                } else {
+                    self.regs.scanout0.fb_gpa as u32
+                };
+                self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | u64::from(lo);
+                self.scanout0_fb_gpa_lo_pending = false;
             }
 
             _ => {
