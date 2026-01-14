@@ -1696,8 +1696,9 @@ def validate_virtio_input_model_lines(
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
 
-    The legacy filename alias is expected to stay in sync with the canonical INF
-    outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) (CI enforces this).
+    The `require_fallback` flag controls which policy is enforced:
+      - `require_fallback=False`: forbid the strict fallback HWID.
+      - `require_fallback=True`: require the strict fallback HWID.
     """
 
     model_entries = parse_inf_model_entries(inf_path)
