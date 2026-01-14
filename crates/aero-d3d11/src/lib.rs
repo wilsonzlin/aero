@@ -6,6 +6,11 @@
 //! - [`sm4`] / [`signature`] / [`sm4_ir`] / [`shader_translate`]: DXBC parsing +
 //!   minimal SM4/SM5 → WGSL translation suitable for FL10_0 bring-up.
 
+// On wasm32, many `wgpu` handle types are `!Send + !Sync` due to JS thread-affinity. We still use
+// `Arc<T>` widely for shared ownership (matching native builds), but those `Arc<T>`s are never sent
+// across threads on wasm. Clippy warns about this pattern; silence it for wasm32 builds.
+#![cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+
 pub mod binding_model;
 pub mod input_layout;
 pub mod runtime;

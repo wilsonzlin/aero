@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use crate::common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::{GuestMemory, VecGuestMemory};

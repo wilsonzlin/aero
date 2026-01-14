@@ -2676,8 +2676,7 @@ impl AerogpuD3d11Executor {
                 .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
             let stream_size = iter.header().size_bytes as usize;
             let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
-            let mut packet_index = 0usize;
-            for next in iter {
+            for (packet_index, next) in iter.enumerate() {
                 let packet = next.map_err(|err| {
                     anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
                 })?;
@@ -2721,7 +2720,6 @@ impl AerogpuD3d11Executor {
                 }
 
                 cursor = cmd_end;
-                packet_index += 1;
             }
         }
 

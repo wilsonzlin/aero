@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -371,9 +369,10 @@ async fn cache_invalidates_when_translator_version_changes() {
     let dxbc = b"fake dxbc";
 
     // Write with version N.
-    let mut flags_v1 = ShaderTranslationFlags::default();
-    flags_v1.caps_hash = Some("caps".to_string());
-    flags_v1.d3d11_translator_version = 1;
+    let flags_v1 = ShaderTranslationFlags {
+        caps_hash: Some("caps".to_string()),
+        d3d11_translator_version: 1,
+    };
     let mut cache = ShaderCache::new();
     let (_artifact, source) = cache
         .get_or_translate_with_source(dxbc, flags_v1.clone(), move || async move {

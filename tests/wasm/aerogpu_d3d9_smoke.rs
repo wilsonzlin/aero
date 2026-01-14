@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use aero_gpu::command_processor_d3d9::{CommandProcessor, ProcessorConfig};
 use aero_gpu::protocol_d3d9::{
     BufferUsage, IndexFormat, ShaderStage, StreamEncoder, TextureFormat, VertexAttributeWire,
