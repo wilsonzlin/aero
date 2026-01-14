@@ -6598,6 +6598,49 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->viewport_min_depth = 0.0f;
   dev->viewport_max_depth = 1.0f;
 
+  // Reset input-assembler state to D3D11 defaults.
+  //
+  // ClearState is required to reset *all* pipeline state. If we only update the
+  // UMD-side tracked state without emitting the corresponding commands, the
+  // host-side command executor can continue using stale input layout / VB / IB
+  // bindings across ClearState.
+  auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!il_cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  il_cmd->input_layout_handle = 0;
+  il_cmd->reserved0 = 0;
+
+  auto* topo_cmd =
+      dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!topo_cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  topo_cmd->topology = dev->current_topology;
+  topo_cmd->reserved0 = 0;
+
+  std::array<aerogpu_vertex_buffer_binding, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> vb_zeros{};
+  auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
+      AEROGPU_CMD_SET_VERTEX_BUFFERS, vb_zeros.data(), vb_zeros.size() * sizeof(vb_zeros[0]));
+  if (!vb_cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  vb_cmd->start_slot = 0;
+  vb_cmd->buffer_count = static_cast<uint32_t>(vb_zeros.size());
+
+  auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  ib_cmd->buffer = 0;
+  ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+  ib_cmd->offset_bytes = 0;
+  ib_cmd->reserved0 = 0;
+
   EmitSetRenderTargetsLocked(dev);
 
   EmitBlendStateLocked(dev, nullptr);
