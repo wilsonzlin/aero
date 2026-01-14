@@ -184,6 +184,88 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect() {
 }
 
 #[test]
+fn hid_keyboard_remote_wakeup_does_not_trigger_without_device_remote_wakeup() {
+    let mut ctrl = UhciController::new();
+    let keyboard = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut().attach(0, Box::new(keyboard.clone()));
+
+    // Force-enable the port (bypassing the 50ms reset timer) so control requests can reach the
+    // device and the hub can later poll for remote-wakeup requests while suspended.
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    // Enable Resume interrupts so a remote wake would latch USBSTS.RESUMEDETECT and raise IRQ.
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+
+    // Minimal enumeration/configuration, but do *not* enable DEVICE_REMOTE_WAKEUP on the device.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(keyboard.configured(), "expected keyboard to be configured");
+
+    // Put the port into suspend.
+    let cur_portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    ctrl.io_write(
+        REG_PORTSC1,
+        2,
+        (cur_portsc | PORTSC_PED | PORTSC_SUSP) as u32,
+    );
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert!(portsc & PORTSC_SUSP != 0, "expected port to be suspended");
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "resume-detect must not be asserted before remote wake triggers"
+    );
+
+    // Inject a key press while suspended. Since DEVICE_REMOTE_WAKEUP is disabled, the HID device
+    // must not request remote wakeup and the root hub must not latch Resume Detect.
+    keyboard.key_event(0x04, true); // HID usage ID for KeyA
+
+    assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..5 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "unexpected Resume Detect even though device remote wake is disabled"
+    );
+
+    let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
+    assert_eq!(
+        usbsts & USBSTS_RESUMEDETECT,
+        0,
+        "unexpected UHCI USBSTS.RESUMEDETECT even though device remote wake is disabled"
+    );
+    assert!(
+        !ctrl.irq_level(),
+        "unexpected IRQ even though device remote wake is disabled"
+    );
+}
+
+#[test]
 fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_usb2_port_mux() {
     let mut ctrl = UhciController::new();
 
