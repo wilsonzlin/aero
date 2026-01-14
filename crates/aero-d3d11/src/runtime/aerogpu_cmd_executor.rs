@@ -3438,6 +3438,8 @@ impl AerogpuD3d11Executor {
     fn exec_geometry_shader_prepass_pointlist(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
         vs_handle: u32,
         gs_handle: u32,
         gs_meta: GsPrepassMetadata,
@@ -4198,13 +4200,98 @@ impl AerogpuD3d11Executor {
             ],
         });
 
+        // The translated GS compute prepass keeps its internal prepass resources in `@group(0)` and
+        // references D3D11 geometry-stage resources (cbuffers/textures/samplers/SRV buffers) via the
+        // shared binding model `@group(3)`.
+        //
+        // Build group(3) layout + binding list from the GS shader's reflection and ensure any guest
+        // resources referenced by those bindings are uploaded before dispatch.
+        let gs_resource_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            std::iter::once(reflection_bindings::ShaderBindingSet::Guest(
+                gs_shader.reflection.bindings.as_slice(),
+            )),
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
+        )
+        .context("GS prepass: build geometry-stage pipeline bindings")?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Geometry,
+            encoder,
+            &gs_resource_bindings,
+            allocs,
+            guest_mem,
+        )?;
+
+        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
+            > ShaderStage::Geometry.as_bind_group_index() as usize
+        {
+            (
+                &gs_resource_bindings.group_layouts[ShaderStage::Geometry.as_bind_group_index()
+                    as usize],
+                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
+                    as usize]
+                    .as_slice(),
+            )
+        } else {
+            (&empty_bgl, &[][..])
+        };
+
+        let gs_group3_bg: Arc<wgpu::BindGroup> = if gs_group3_bindings.is_empty() {
+            self.empty_bind_group.clone()
+        } else {
+            let stage_bindings = self.bindings.stage_mut(ShaderStage::Geometry);
+            let was_dirty = stage_bindings.is_dirty();
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &self.resources,
+                legacy_constants: &self.legacy_constants,
+                cbuffer_scratch: &self.cbuffer_scratch,
+                srv_buffer_scratch: &self.srv_buffer_scratch,
+                storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                    as u64,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+                stage: ShaderStage::Geometry,
+                stage_state: stage_bindings,
+                internal_buffers: &[],
+            };
+            let bg = reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                gs_group3_bgl,
+                gs_group3_bindings,
+                &provider,
+            )?;
+            if was_dirty {
+                stage_bindings.clear_dirty();
+            }
+            bg
+        };
+
+        // Group indices `0..=2` are reserved for VS/PS/CS resources in the binding model, so we
+        // include empty bind group layouts for `@group(1..=2)` to reach `@group(3)`.
         let gs_layout_key = PipelineLayoutKey {
-            bind_group_layout_hashes: vec![gs_bgl.hash],
+            bind_group_layout_hashes: vec![
+                gs_bgl.hash,
+                empty_bgl.hash,
+                empty_bgl.hash,
+                gs_group3_bgl.hash,
+            ],
         };
         let gs_pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
             &gs_layout_key,
-            &[gs_bgl.layout.as_ref()],
+            &[
+                gs_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                gs_group3_bgl.layout.as_ref(),
+            ],
             Some("aerogpu_cmd gs prepass pipeline layout"),
         );
 
@@ -4263,6 +4350,12 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
         {
@@ -4272,6 +4365,12 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
             pass.dispatch_workgroups(1, 1, 1);
         }
 
@@ -4286,6 +4385,8 @@ impl AerogpuD3d11Executor {
     fn exec_geometry_shader_prepass_trianglelist(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
         vs_handle: u32,
         gs_handle: u32,
         gs_meta: GsPrepassMetadata,
@@ -4945,13 +5046,98 @@ impl AerogpuD3d11Executor {
             ],
         });
 
+        // The translated GS compute prepass keeps its internal prepass resources in `@group(0)` and
+        // references D3D11 geometry-stage resources (cbuffers/textures/samplers/SRV buffers) via the
+        // shared binding model `@group(3)`.
+        //
+        // Build group(3) layout + binding list from the GS shader's reflection and ensure any guest
+        // resources referenced by those bindings are uploaded before dispatch.
+        let gs_resource_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            std::iter::once(reflection_bindings::ShaderBindingSet::Guest(
+                gs_shader.reflection.bindings.as_slice(),
+            )),
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
+        )
+        .context("GS prepass: build geometry-stage pipeline bindings")?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Geometry,
+            encoder,
+            &gs_resource_bindings,
+            allocs,
+            guest_mem,
+        )?;
+
+        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
+            > ShaderStage::Geometry.as_bind_group_index() as usize
+        {
+            (
+                &gs_resource_bindings.group_layouts[ShaderStage::Geometry.as_bind_group_index()
+                    as usize],
+                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
+                    as usize]
+                    .as_slice(),
+            )
+        } else {
+            (&empty_bgl, &[][..])
+        };
+
+        let gs_group3_bg: Arc<wgpu::BindGroup> = if gs_group3_bindings.is_empty() {
+            self.empty_bind_group.clone()
+        } else {
+            let stage_bindings = self.bindings.stage_mut(ShaderStage::Geometry);
+            let was_dirty = stage_bindings.is_dirty();
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &self.resources,
+                legacy_constants: &self.legacy_constants,
+                cbuffer_scratch: &self.cbuffer_scratch,
+                srv_buffer_scratch: &self.srv_buffer_scratch,
+                storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                    as u64,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+                stage: ShaderStage::Geometry,
+                stage_state: stage_bindings,
+                internal_buffers: &[],
+            };
+            let bg = reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                gs_group3_bgl,
+                gs_group3_bindings,
+                &provider,
+            )?;
+            if was_dirty {
+                stage_bindings.clear_dirty();
+            }
+            bg
+        };
+
+        // Group indices `0..=2` are reserved for VS/PS/CS resources in the binding model, so we
+        // include empty bind group layouts for `@group(1..=2)` to reach `@group(3)`.
         let gs_layout_key = PipelineLayoutKey {
-            bind_group_layout_hashes: vec![gs_bgl.hash],
+            bind_group_layout_hashes: vec![
+                gs_bgl.hash,
+                empty_bgl.hash,
+                empty_bgl.hash,
+                gs_group3_bgl.hash,
+            ],
         };
         let gs_pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
             &gs_layout_key,
-            &[gs_bgl.layout.as_ref()],
+            &[
+                gs_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                gs_group3_bgl.layout.as_ref(),
+            ],
             Some("aerogpu_cmd gs prepass pipeline layout"),
         );
 
@@ -5010,6 +5196,8 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(ShaderStage::Geometry.as_bind_group_index(), gs_group3_bg.as_ref(), &[]);
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
         {
@@ -5019,6 +5207,8 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(ShaderStage::Geometry.as_bind_group_index(), gs_group3_bg.as_ref(), &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
 
@@ -5919,6 +6109,8 @@ impl AerogpuD3d11Executor {
             let (v_alloc, i_alloc, args_alloc) = match gs_meta.verts_per_primitive {
                 1 => self.exec_geometry_shader_prepass_pointlist(
                     encoder,
+                    allocs,
+                    guest_mem,
                     vs_handle,
                     gs_handle,
                     gs_meta,
@@ -5930,6 +6122,8 @@ impl AerogpuD3d11Executor {
                 )?,
                 3 => self.exec_geometry_shader_prepass_trianglelist(
                     encoder,
+                    allocs,
+                    guest_mem,
                     vs_handle,
                     gs_handle,
                     gs_meta,
