@@ -396,9 +396,9 @@ Supported operand surface (initial):
     `0..GS_INSTANCE_COUNT` per input primitive, values `0..(n-1)`; default is `n=1`, so the ID is
     always `0`)
 
-Unsupported today (non-exhaustive): typed UAV stores, texture UAV stores, barrier/synchronization
-opcodes (`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a
-clear error.
+Unsupported today (non-exhaustive): binding UAV textures from the command stream (so `dcl_uav_typed` /
+`store_uav_typed` is not usable end-to-end yet), barrier/synchronization opcodes (`sync`), and most
+other SM4/SM5 instructions. Unsupported features fail translation with a clear error.
 
 ---
 
@@ -598,7 +598,7 @@ Within each stage’s bind group, D3D register spaces are mapped to disjoint `@b
 | `b#` / `cb#` | `BINDING_BASE_CBUFFER + slot` | constant buffers |
 | `t#` | `BINDING_BASE_TEXTURE + slot` | SRV textures/buffers |
 | `s#` | `BINDING_BASE_SAMPLER + slot` | samplers |
-| `u#` | `BINDING_BASE_UAV + slot` | UAV buffers (SM5) |
+| `u#` | `BINDING_BASE_UAV + slot` | UAV buffers + UAV storage textures (SM5); only UAV buffers are currently bindable via the command stream |
 
 Constants (current defaults):
 
