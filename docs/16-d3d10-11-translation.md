@@ -728,7 +728,7 @@ Notes:
   - Until the relevant emulation kernels exist, the runtime MUST NOT silently reinterpret the
     topology as a non-adjacency/list/strip topology (that would silently misrender).
   - Acceptable behaviors are:
-    - route the draw through the emulation path (which may currently be placeholder/scaffolding for
+    - route the draw through the emulation path (which may currently be bring-up scaffolding / synthetic expansion for
       plumbing tests), or
     - reject the draw with a clear error.
   - Implementation note: the in-tree D3D11 executor currently routes adjacency/patchlist topologies
@@ -749,7 +749,7 @@ if GS/HS/DS are unbound (so the runtime can surface deterministic validation/err
 fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
 `SET_PRIMITIVE_TOPOLOGY`. Until the adjacency/patch emulation kernels land, the runtime MUST NOT
 silently reinterpret them as non-adjacency/list/strip topologies; acceptable behaviors are to route
-through the (possibly placeholder) emulation path or to reject with a clear error (see topology
+through the (bring-up) emulation path or to reject with a clear error (see topology
 extension notes above).
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).

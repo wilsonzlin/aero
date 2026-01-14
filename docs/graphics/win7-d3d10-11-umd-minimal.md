@@ -389,7 +389,7 @@ Geometry shader note:
       - The intended end state is: VS-as-compute (vertex pulling) → GS-as-compute (primitive expansion) → render expanded buffers with a passthrough VS + the original PS.
     * This is **internal** WebGPU compute; it does *not* require exposing the D3D11 compute shader stage (you can still keep D3D11 CS as `NOT_SUPPORTED` initially).
     * Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
-    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path is still a placeholder (fixed triangles) and does **not** execute guest GS DXBC yet; treat the above as the intended design until the prepass is wired to real GS execution. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
+    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path currently uses synthetic expansion geometry and does **not** execute guest GS DXBC yet; treat the above as the intended design until the prepass is wired to real GS execution. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
 * Win7 regression tests that define the minimum semantics to target:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.
