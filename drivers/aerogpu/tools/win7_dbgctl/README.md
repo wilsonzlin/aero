@@ -163,6 +163,9 @@ Minimum supported commands:
   dbgctl also writes a small metadata summary to `<cmd_path>.txt` (ring/fence/GPAs/sizes) when possible (one file per dumped submission).
   Note: this is appended to the full cmd path, so dumping `last_cmd_0.bin` produces `last_cmd_0.bin.txt`.
 
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
+  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
 
 - `aerogpu_dbgctl --watch-ring --samples N --interval-ms M [--ring-id N]`  
