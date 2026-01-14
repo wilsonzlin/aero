@@ -4367,30 +4367,35 @@ impl AerogpuD3d11Executor {
             // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch, so
             // binding different slices of the same underlying buffer as both storage and uniform
             // triggers validation errors.
-            let create_uniform_buffer =
-                |label: &'static str, bytes: &[u8]| -> (wgpu::Buffer, u64) {
-                    assert!(
-                        !bytes.is_empty(),
-                        "uniform buffer payload must be non-empty"
-                    );
-                    let size = bytes.len() as u64;
-                    // Ensure the backing buffer is large enough for the declared binding size and keeps a
-                    // 16-byte granularity (uniform struct alignment).
-                    let size = size.saturating_add(15) & !15;
-                    let mut padded = vec![0u8; size as usize];
-                    padded[..bytes.len()].copy_from_slice(bytes);
-                    let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(label),
-                        size,
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    self.queue.write_buffer(&buffer, 0, &padded);
-                    (buffer, size)
-                };
+            fn create_uniform_buffer(
+                device: &wgpu::Device,
+                queue: &wgpu::Queue,
+                label: &'static str,
+                bytes: &[u8],
+            ) -> (wgpu::Buffer, u64) {
+                assert!(!bytes.is_empty(), "uniform buffer payload must be non-empty");
+                let size = bytes.len() as u64;
+                // Ensure the backing buffer is large enough for the declared binding size and keeps a
+                // 16-byte granularity (uniform struct alignment).
+                let size = size.saturating_add(15) & !15;
+                let mut padded = vec![0u8; size as usize];
+                padded[..bytes.len()].copy_from_slice(bytes);
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&buffer, 0, &padded);
+                (buffer, size)
+            }
 
-            let (params_buffer, _params_buffer_size) =
-                create_uniform_buffer("aerogpu_cmd geometry prepass params uniform", &params_bytes);
+            let (params_buffer, _params_buffer_size) = create_uniform_buffer(
+                &self.device,
+                &self.queue,
+                "aerogpu_cmd geometry prepass params uniform",
+                &params_bytes,
+            );
 
             // Ensure any resources referenced by the placeholder prepass are uploaded before executing
             // the compute pass. The prepass reads GS cbuffer b0 as `@group(3) @binding(0)`.
@@ -4601,6 +4606,8 @@ impl AerogpuD3d11Executor {
 
                     let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
                     let (vp_uniform, vp_uniform_size) = create_uniform_buffer(
+                        &self.device,
+                        &self.queue,
                         "aerogpu_cmd geometry prepass vertex pulling uniform",
                         &uniform_bytes,
                     );
@@ -4642,6 +4649,8 @@ impl AerogpuD3d11Executor {
                         };
                         let params_bytes = params.to_le_bytes();
                         let (params_buffer, params_buffer_size) = create_uniform_buffer(
+                            &self.device,
+                            &self.queue,
                             "aerogpu_cmd geometry prepass index pulling params",
                             &params_bytes,
                         );
@@ -4692,6 +4701,8 @@ impl AerogpuD3d11Executor {
                     };
                     let params_bytes = params.to_le_bytes();
                     let (params_buffer, params_buffer_size) = create_uniform_buffer(
+                        &self.device,
+                        &self.queue,
                         "aerogpu_cmd geometry prepass index pulling params",
                         &params_bytes,
                     );
