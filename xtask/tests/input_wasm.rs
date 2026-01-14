@@ -384,6 +384,7 @@ fn said_with_wasm_rust_only_runs_aero_wasm_integration_tests(
         "--locked",
         "machine_input_injection",
         "machine_input_backends",
+        "machine_virtio_input",
     ] {
         assert!(
             cargo_wasm.iter().any(|arg| arg == expected),
