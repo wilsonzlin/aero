@@ -69,6 +69,15 @@ test("IP policy: understands common non-canonical IPv4 forms", () => {
 
   assert.equal(isPublicIpAddress("010.0.0.1"), true); // octal => 8.0.0.1
   assert.equal(isPublicIpAddress("08.0.0.1"), true); // decimal fallback => 8.0.0.1
+
+  // When any dotted-quad component triggers decimal fallback (e.g. "08"), the
+  // whole address should be parsed as decimal, not mixed octal/decimal.
+  assert.equal(isPublicIpAddress("010.08.0.1"), false); // => 10.8.0.1 (RFC1918)
+  assert.equal(isPublicIpAddress("010.09.0.1"), false); // => 10.9.0.1 (RFC1918)
+
+  // Mixed hex + "08"-style components are not accepted by getaddrinfo.
+  assert.equal(isPublicIpAddress("0x08.0008.0.1"), false);
+  assert.equal(isPublicIpAddress("1.08.0x1.1"), false);
 });
 
 test("host policy: allow/deny lists apply to IP-literal targets", () => {

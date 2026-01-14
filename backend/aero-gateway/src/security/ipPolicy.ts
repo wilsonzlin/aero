@@ -38,24 +38,9 @@ function parseIpv4(ip: string): Uint8Array | null {
 
   if (dots === 3) {
     const bytes = new Uint8Array(4);
-    let part = 0;
-    let start = 0;
-
-    for (let i = 0; i <= ipLen; i += 1) {
-      const isDot = i !== ipLen && ip.charCodeAt(i) === 0x2e /* '.' */;
-      if (!isDot && i !== ipLen) continue;
-
-      if (part >= 4) return null;
-      if (i === start) return null; // empty component
-
-      const value = parseIpv4PartDottedQuad(ip, start, i);
-      if (value === null) return null;
-      bytes[part] = value;
-      part += 1;
-      start = i + 1;
-    }
-
-    return part === 4 ? bytes : null;
+    if (tryParseIpv4DottedQuadBase0(ip, bytes)) return bytes;
+    if (tryParseIpv4DottedQuadDecimal(ip, bytes)) return bytes;
+    return null;
   }
 
   // 1..3 part inet_aton-style forms.
@@ -113,6 +98,55 @@ function parseIpv4(ip: string): Uint8Array | null {
   return null;
 }
 
+function tryParseIpv4DottedQuadBase0(ip: string, out: Uint8Array): boolean {
+  const ipLen = ip.length;
+  let part = 0;
+  let start = 0;
+
+  for (let i = 0; i <= ipLen; i += 1) {
+    const isDot = i !== ipLen && ip.charCodeAt(i) === 0x2e /* '.' */;
+    if (!isDot && i !== ipLen) continue;
+
+    if (part >= 4) return false;
+    if (i === start) return false; // empty component
+
+    const value = parseIpv4PartBase0(ip, start, i);
+    if (value === null || value > 255) return false;
+    out[part] = value;
+    part += 1;
+    start = i + 1;
+  }
+
+  return part === 4;
+}
+
+function tryParseIpv4DottedQuadDecimal(ip: string, out: Uint8Array): boolean {
+  const ipLen = ip.length;
+  let part = 0;
+  let value = 0;
+  let digits = 0;
+
+  for (let i = 0; i <= ipLen; i += 1) {
+    if (i === ipLen || ip.charCodeAt(i) === 0x2e /* '.' */) {
+      if (digits === 0) return false;
+      if (part >= 4) return false;
+      out[part] = value;
+      part += 1;
+      value = 0;
+      digits = 0;
+      continue;
+    }
+
+    const c = ip.charCodeAt(i);
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return false;
+    value = value * 10 + (c - 0x30);
+    if (value > 255) return false;
+    digits += 1;
+  }
+
+  return part === 4;
+}
+
 function parseIpv4PartBase0(ip: string, start: number, end: number): number | null {
   // Base-0 parsing:
   // - "0x" => hex
@@ -159,78 +193,6 @@ function parseIpv4PartBase0(ip: string, start: number, end: number): number | nu
     if (n > 0xffffffff) return null;
   }
 
-  return n;
-}
-
-function parseIpv4PartDottedQuad(ip: string, start: number, end: number): number | null {
-  // Dotted-quad parsing is slightly more permissive than base-0 parsing:
-  // - Supports 0x prefixed hex
-  // - Supports octal components, but also treats 08/09/etc as decimal (rather
-  //   than invalid) for compatibility with getaddrinfo.
-  if (start >= end) return null;
-
-  let i = start;
-
-  if (ip.charCodeAt(i) === 0x30 /* '0' */ && end - start > 1) {
-    const next = ip.charCodeAt(i + 1);
-    if (next === 0x78 /* 'x' */ || next === 0x58 /* 'X' */) {
-      // Hex
-      i += 2;
-      if (i >= end) return null;
-      let n = 0;
-      for (; i < end; i += 1) {
-        const c = ip.charCodeAt(i);
-        let v: number;
-        if (c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */) v = c - 0x30;
-        else if (c >= 0x61 /* 'a' */ && c <= 0x66 /* 'f' */) v = c - 0x61 + 10;
-        else if (c >= 0x41 /* 'A' */ && c <= 0x46 /* 'F' */) v = c - 0x41 + 10;
-        else return null;
-        n = (n << 4) | v;
-        if (n > 255) return null;
-      }
-      return n;
-    }
-
-    // Leading zero without 0x: treat as octal if all digits are 0..7,
-    // otherwise treat as decimal.
-    let has89 = false;
-    for (let j = i + 1; j < end; j += 1) {
-      const c = ip.charCodeAt(j);
-      if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
-      if (c > 0x37 /* '7' */) has89 = true;
-    }
-
-    if (!has89) {
-      // Octal
-      let n = 0;
-      for (; i < end; i += 1) {
-        const c = ip.charCodeAt(i);
-        if (c < 0x30 /* '0' */ || c > 0x37 /* '7' */) return null;
-        n = (n << 3) | (c - 0x30);
-        if (n > 255) return null;
-      }
-      return n;
-    }
-
-    // Decimal
-    let n = 0;
-    for (; i < end; i += 1) {
-      const c = ip.charCodeAt(i);
-      if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
-      n = n * 10 + (c - 0x30);
-      if (n > 255) return null;
-    }
-    return n;
-  }
-
-  // Decimal (no leading zero)
-  let n = 0;
-  for (; i < end; i += 1) {
-    const c = ip.charCodeAt(i);
-    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
-    n = n * 10 + (c - 0x30);
-    if (n > 255) return null;
-  }
   return n;
 }
 
