@@ -446,6 +446,35 @@ mod tests {
     }
 
     #[test]
+    fn format_info_errors_for_invalid_usage_combinations_are_stable() {
+        let features = wgpu::Features::empty();
+
+        let err = format_info(D3DFormat::A8R8G8B8, features, TextureUsageKind::DepthStencil)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("non-depth format") && err.contains("DepthStencil"),
+            "unexpected error message: {err}"
+        );
+
+        let err = format_info(D3DFormat::D16, features, TextureUsageKind::Sampled)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("depth format") && err.contains("DepthStencil"),
+            "unexpected error message: {err}"
+        );
+
+        let err = format_info(D3DFormat::Dxt1, features, TextureUsageKind::RenderTarget)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("compressed format") && err.contains("Sampled"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
     fn format_info_is_exhaustively_tested_and_validates_usage_pairs() {
         // `ALL_FORMATS`/`ALL_USAGES` are used by the tests below and should be updated whenever new
         // variants are introduced. The `expected_ok` match further below is intentionally
