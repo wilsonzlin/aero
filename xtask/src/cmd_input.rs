@@ -6,7 +6,7 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct InputOpts {
     e2e: bool,
     rust_only: bool,
@@ -80,16 +80,6 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     runner.run_step("Rust: cargo test -p aero-usb --locked", &mut cmd)?;
 
     if opts.rust_only {
-        if opts.e2e {
-            return Err(XtaskError::Message(
-                "--rust-only cannot be combined with --e2e".to_string(),
-            ));
-        }
-        if !opts.pw_extra_args.is_empty() {
-            return Err(XtaskError::Message(
-                "extra Playwright args after `--` require `--e2e`".to_string(),
-            ));
-        }
         println!();
         println!("==> Rust-only input test steps passed.");
         return Ok(());
@@ -105,7 +95,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         repo_root.join("node_modules").is_dir() || repo_root.join("web/node_modules").is_dir();
     if !has_node_modules {
         return Err(XtaskError::Message(
-            "node_modules is missing; install Node dependencies first (e.g. `npm ci`)".to_string(),
+            "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
+             or run `cargo xtask input --rust-only` to skip Node/Playwright"
+                .to_string(),
         ));
     }
 
@@ -121,10 +113,6 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         );
         let mut cmd = build_e2e_cmd(&repo_root, &opts.pw_extra_args);
         runner.run_step(&step_desc, &mut cmd)?;
-    } else if !opts.pw_extra_args.is_empty() {
-        return Err(XtaskError::Message(
-            "extra Playwright args after `--` require `--e2e`".to_string(),
-        ));
     }
 
     println!();
@@ -154,6 +142,17 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
                 )));
             }
         }
+    }
+
+    if opts.rust_only && opts.e2e {
+        return Err(XtaskError::Message(
+            "--rust-only cannot be combined with --e2e".to_string(),
+        ));
+    }
+    if !opts.e2e && !opts.pw_extra_args.is_empty() {
+        return Err(XtaskError::Message(
+            "extra Playwright args after `--` require `--e2e`".to_string(),
+        ));
     }
 
     Ok(Some(opts))
@@ -203,6 +202,27 @@ fn e2e_step_detail(pw_extra_args: &[String]) -> String {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn parse_args_rejects_rust_only_with_e2e() {
+        let err = parse_args(vec!["--rust-only".into(), "--e2e".into()])
+            .expect_err("expected parse_args to reject incompatible flags");
+        assert!(
+            err.to_string().contains("--rust-only cannot be combined with --e2e"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_extra_playwright_args_without_e2e() {
+        let err = parse_args(vec!["--".into(), "--project=chromium".into()])
+            .expect_err("expected parse_args to reject stray Playwright args");
+        assert!(
+            err.to_string()
+                .contains("extra Playwright args after `--` require `--e2e`"),
+            "unexpected error message: {err}"
+        );
+    }
 
     #[test]
     fn curated_e2e_specs_include_input_batch_malformed() {
