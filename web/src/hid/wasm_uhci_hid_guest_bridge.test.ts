@@ -263,4 +263,50 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     expect(host.requestFeatureReport).toHaveBeenNthCalledWith(17, { deviceId: 1, requestId: 17, reportId: 3 });
     expect(host.requestFeatureReport).toHaveBeenNthCalledWith(32, { deviceId: 1, requestId: 32, reportId: 3 });
   });
+
+  it("supports legacy feature report completion APIs", () => {
+    const webhid_attach = vi.fn(() => 0);
+    const webhid_detach = vi.fn();
+    const webhid_push_input_report = vi.fn();
+    const webhid_drain_output_reports = vi.fn(() => []);
+    const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 7, reportId: 3 }]);
+
+    const completeCalls: Array<[number, number, number, Uint8Array]> = [];
+    function webhid_complete_feature_report_request(deviceId: number, requestId: number, reportId: number, data: Uint8Array): void {
+      completeCalls.push([deviceId, requestId, reportId, data]);
+    }
+    const failCalls: Array<[number, number, number]> = [];
+    function webhid_fail_feature_report_request(deviceId: number, requestId: number, reportId: number): void {
+      failCalls.push([deviceId, requestId, reportId]);
+    }
+
+    const uhci: UhciRuntimeHidApi = {
+      webhid_attach,
+      webhid_detach,
+      webhid_push_input_report,
+      webhid_drain_output_reports,
+      webhid_drain_feature_report_requests,
+      webhid_complete_feature_report_request,
+      webhid_fail_feature_report_request,
+    };
+
+    const host = {
+      sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const guest = new WasmUhciHidGuestBridge({ uhci, host });
+    guest.poll();
+
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 7, reportId: 3 });
+
+    const data = new Uint8Array([1, 2, 3]);
+    expect(guest.completeFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, data })).toBe(true);
+    expect(completeCalls).toEqual([[1, 7, 3, data]]);
+
+    expect(guest.failFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, error: "nope" })).toBe(true);
+    expect(failCalls).toEqual([[1, 7, 3]]);
+  });
 });

@@ -61,6 +61,12 @@ export class MicCapture extends EventTarget {
   private permissionStatus: PermissionStatus | null = null;
   private deviceChangeListener: (() => void) | null = null;
 
+  private backend: "worklet" | "script" | null = null;
+  private trackLabel: string | null = null;
+  private trackSettings: MediaTrackSettings | null = null;
+  private trackConstraints: MediaTrackConstraints | null = null;
+  private trackCapabilities: MediaTrackCapabilities | null = null;
+
   constructor(opts: MicCaptureOptions = {}) {
     super();
     this.options = {
@@ -105,6 +111,20 @@ export class MicCapture extends EventTarget {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.stream = stream;
 
+      const track = stream.getAudioTracks()[0] ?? null;
+      this.trackLabel = track ? track.label || null : null;
+      this.trackSettings = track && typeof track.getSettings === "function" ? track.getSettings() : null;
+      this.trackConstraints = track && typeof track.getConstraints === "function" ? track.getConstraints() : null;
+      this.trackCapabilities = null;
+      if (track && typeof (track as unknown as { getCapabilities?: unknown }).getCapabilities === "function") {
+        try {
+          // Some browsers may throw; best-effort only.
+          this.trackCapabilities = (track as unknown as { getCapabilities: () => MediaTrackCapabilities }).getCapabilities();
+        } catch {
+          this.trackCapabilities = null;
+        }
+      }
+
       const audioContext = new AudioContext({
         sampleRate: this.options.sampleRate,
         latencyHint: "interactive",
@@ -134,6 +154,7 @@ export class MicCapture extends EventTarget {
 
       const useWorklet = this.options.preferWorklet && isAudioWorkletSupported();
       if (useWorklet) {
+        this.backend = "worklet";
         await audioContext.audioWorklet.addModule(micWorkletProcessorUrl);
         const node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
           numberOfInputs: 1,
@@ -148,6 +169,7 @@ export class MicCapture extends EventTarget {
         node.connect(sinkGain);
         this.workletNode = node;
       } else {
+        this.backend = "script";
         const node = audioContext.createScriptProcessor(2048, 1, 1);
         node.onaudioprocess = (ev) => {
           if (this.muteRequested) return;
@@ -160,7 +182,7 @@ export class MicCapture extends EventTarget {
       }
 
       // Track end covers device removal, permission revocation, etc.
-      stream.getAudioTracks()[0]?.addEventListener("ended", () => {
+      track?.addEventListener("ended", () => {
         // When this happens mid-session, surface a clear state to the UI.
         // Consumers can call start() again to re-request permission.
         void this.stop();
@@ -217,6 +239,12 @@ export class MicCapture extends EventTarget {
       this.audioContext = null;
     }
 
+    this.backend = null;
+    this.trackLabel = null;
+    this.trackSettings = null;
+    this.trackConstraints = null;
+    this.trackCapabilities = null;
+
     if (this.state !== "denied" && this.state !== "error") {
       this.setState("inactive");
     }
@@ -230,6 +258,22 @@ export class MicCapture extends EventTarget {
     if (this.state === "active" || this.state === "muted") {
       this.setState(muted ? "muted" : "active");
     }
+  }
+
+  getDebugInfo(): {
+    backend: "worklet" | "script" | null;
+    trackLabel: string | null;
+    trackSettings: MediaTrackSettings | null;
+    trackConstraints: MediaTrackConstraints | null;
+    trackCapabilities: MediaTrackCapabilities | null;
+  } {
+    return {
+      backend: this.backend,
+      trackLabel: this.trackLabel,
+      trackSettings: this.trackSettings,
+      trackConstraints: this.trackConstraints,
+      trackCapabilities: this.trackCapabilities,
+    };
   }
 
   private async attachPermissionListener(): Promise<void> {

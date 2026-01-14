@@ -235,6 +235,11 @@ type MicAttachmentInfo = {
   sampleRate: number;
   /** Hashed deviceId (fnv1a32 of UTF-8). Avoids exporting raw device IDs. */
   deviceIdHash: string | null;
+  backend: "worklet" | "script" | null;
+  trackLabel: string | null;
+  trackSettings: Record<string, unknown> | null;
+  trackConstraints: Record<string, unknown> | null;
+  trackCapabilities: Record<string, unknown> | null;
   bufferMs: number | null;
   echoCancellation: boolean | null;
   noiseSuppression: boolean | null;
@@ -4283,6 +4288,11 @@ function renderAudioPanel(): HTMLElement {
   type MicWavSnapshotMeta = {
     sampleRate: number;
     deviceIdHash: string | null;
+    backend: "worklet" | "script" | null;
+    trackLabel: string | null;
+    trackSettings: Record<string, unknown> | null;
+    trackConstraints: Record<string, unknown> | null;
+    trackCapabilities: Record<string, unknown> | null;
     bufferMs: number | null;
     echoCancellation: boolean | null;
     noiseSuppression: boolean | null;
@@ -4517,6 +4527,11 @@ function renderAudioPanel(): HTMLElement {
       return {
         sampleRate: att.sampleRate,
         deviceIdHash: att.deviceIdHash,
+        backend: att.backend,
+        trackLabel: att.trackLabel,
+        trackSettings: att.trackSettings,
+        trackConstraints: att.trackConstraints,
+        trackCapabilities: att.trackCapabilities,
         bufferMs: att.bufferMs,
         echoCancellation: att.echoCancellation,
         noiseSuppression: att.noiseSuppression,
@@ -4569,6 +4584,11 @@ function renderAudioPanel(): HTMLElement {
       const meta: MicWavSnapshotMeta = {
         sampleRate,
         deviceIdHash: att.deviceIdHash,
+        backend: att.backend,
+        trackLabel: att.trackLabel,
+        trackSettings: att.trackSettings,
+        trackConstraints: att.trackConstraints,
+        trackCapabilities: att.trackCapabilities,
         bufferMs: att.bufferMs,
         echoCancellation: att.echoCancellation,
         noiseSuppression: att.noiseSuppression,
@@ -5469,11 +5489,29 @@ function renderMicrophonePanel(): HTMLElement {
         mic.setMuted(mutedInput.checked);
 
         const encoder = new TextEncoder();
+        const sanitizeTrackInfo = (value: unknown): Record<string, unknown> | null => {
+          if (!value || typeof value !== "object") return null;
+          const out = { ...(value as Record<string, unknown>) } as Record<string, unknown>;
+          for (const key of ["deviceId", "groupId"]) {
+            const v = out[key];
+            if (typeof v === "string" && v.length) {
+              out[`${key}Hash`] = fnv1a32Hex(encoder.encode(v));
+              delete out[key];
+            }
+          }
+          return out;
+        };
+        const dbg = mic.getDebugInfo();
         const deviceIdHash = deviceSelect.value ? fnv1a32Hex(encoder.encode(deviceSelect.value)) : null;
         micAttachment = {
           ringBuffer: mic.ringBuffer.sab,
           sampleRate: mic.actualSampleRate,
           deviceIdHash,
+          backend: dbg.backend,
+          trackLabel: dbg.trackLabel,
+          trackSettings: sanitizeTrackInfo(dbg.trackSettings),
+          trackConstraints: sanitizeTrackInfo(dbg.trackConstraints),
+          trackCapabilities: sanitizeTrackInfo(dbg.trackCapabilities),
           bufferMs: Math.max(10, Number(bufferMsInput.value || 0) | 0),
           echoCancellation: echoCancellation.checked,
           noiseSuppression: noiseSuppression.checked,
