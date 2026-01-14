@@ -594,8 +594,8 @@ fn bump_reg_max(reg: RegisterRef, max_temp_reg: &mut i32, max_output_reg: &mut i
     match reg.file {
         RegFile::Temp => *max_temp_reg = (*max_temp_reg).max(reg.index as i32),
         RegFile::Output => *max_output_reg = (*max_output_reg).max(reg.index as i32),
-        RegFile::OutputDepth => {}
         RegFile::Input => {}
+        RegFile::OutputDepth => {}
     }
 }
 
@@ -695,18 +695,18 @@ fn emit_src_vec4(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
-            RegFile::OutputDepth => {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
-                })
-            }
             RegFile::Input => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
                     msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
+                })
+            }
+            RegFile::OutputDepth => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
                 })
             }
         },

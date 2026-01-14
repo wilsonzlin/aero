@@ -697,7 +697,13 @@ mod tests {
             }];
 
             let info =
-                build_pipeline_bindings_info(device, &mut layout_cache, [gs.as_slice()]).unwrap();
+                build_pipeline_bindings_info(
+                    device,
+                    &mut layout_cache,
+                    [ShaderBindingSet::Guest(gs.as_slice())],
+                    BindGroupIndexValidation::GuestShaders,
+                )
+                .unwrap();
 
             assert_eq!(info.group_layouts.len(), 4);
             assert_eq!(info.group_bindings.len(), 4);
@@ -1296,7 +1302,8 @@ mod tests {
             );
 
             // Internal GS emulation buffers use a dedicated bind group to avoid colliding with D3D
-            // slot-derived bindings.
+            // slot-derived bindings. Use an existing (otherwise empty) group index so the test stays
+            // within WebGPU's baseline `maxBindGroups >= 4` guarantee.
             let internal_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("gs emulation internal bind group layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
@@ -1316,7 +1323,7 @@ mod tests {
                 .iter()
                 .map(|l| l.layout.as_ref())
                 .collect();
-            layout_refs.push(&internal_layout);
+            layout_refs[2] = &internal_layout;
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("gs emulation pipeline layout"),
@@ -1337,7 +1344,7 @@ struct Vertex {
   color: vec4<f32>,
 };
 
-@group(4) @binding(0) var<storage, read_write> out_vertices: array<Vertex>;
+@group(2) @binding(0) var<storage, read_write> out_vertices: array<Vertex>;
 
 fn base_pos(i: u32) -> vec2<f32> {
   if (i == 0u) { return vec2<f32>(-0.5, -0.5); }
@@ -1736,9 +1743,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     pass.set_pipeline(compute_pipeline);
                     pass.set_bind_group(0, bg0, &[]);
                     pass.set_bind_group(1, empty_bg, &[]);
-                    pass.set_bind_group(2, empty_bg, &[]);
+                    pass.set_bind_group(2, internal_bg, &[]);
                     pass.set_bind_group(3, bg3, &[]);
-                    pass.set_bind_group(4, internal_bg, &[]);
                     pass.dispatch_workgroups(3, 1, 1);
                 }
 
