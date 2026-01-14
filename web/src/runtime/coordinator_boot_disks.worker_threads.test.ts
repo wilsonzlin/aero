@@ -343,6 +343,88 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(newBootDisksMsgs).toHaveLength(0);
   });
 
+  it("preserves disk metadata when mounts are unchanged but setBootDisks is called with null metadata (legacy runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+    (coordinator as any).spawnWorker("io", segments);
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const postedBefore = ioWorker.posted.length;
+
+    // Simulate a refresh where mounts are stable but disk metadata is missing/late-loaded.
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, null, null);
+
+    expect(coordinator.getBootDisks()?.hdd).toBe(hdd);
+    expect(coordinator.getBootDisks()?.cd).toBe(cd);
+
+    const newBootDisksMsgs = ioWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toHaveLength(0);
+  });
+
+  it("updates cached disk metadata without rebroadcasting when mounts are unchanged (legacy runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id }, hdd, null);
+    (coordinator as any).spawnWorker("io", segments);
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const postedBefore = ioWorker.posted.length;
+
+    // Metadata changes (rename) should be reflected in cached bootDisks but must not trigger a remount.
+    const renamedHdd = { ...hdd, name: "renamed.img" } satisfies DiskImageMetadata;
+    coordinator.setBootDisks({ hddId: hdd.id }, renamedHdd, null);
+
+    expect(coordinator.getBootDisks()?.hdd?.name).toBe("renamed.img");
+
+    const newBootDisksMsgs = ioWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toHaveLength(0);
+  });
+
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
