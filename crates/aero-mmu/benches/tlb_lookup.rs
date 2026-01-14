@@ -105,6 +105,7 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     const PTE_US64: u64 = 1 << 2;
 
     const CR0_PG: u64 = 1 << 31;
+    const CR4_PSE: u64 = 1 << 4;
     const CR4_PAE: u64 = 1 << 5;
     const EFER_LME: u64 = 1 << 8;
 
@@ -125,7 +126,10 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     mem.write_u64_raw(pt_base, page_base | PTE_P64 | PTE_RW64 | PTE_US64);
 
     mmu.set_cr3(pml4_base);
-    mmu.set_cr4(CR4_PAE);
+    // Many OSes set CR4.PSE in long mode even if they don't actively map large
+    // pages. This keeps the benchmark representative while still using a 4KiB
+    // mapping.
+    mmu.set_cr4(CR4_PAE | CR4_PSE);
     mmu.set_efer(EFER_LME);
     mmu.set_cr0(CR0_PG);
 

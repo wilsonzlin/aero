@@ -152,6 +152,9 @@ const SETS: usize = 64; // 256 entries per bank, 4-way set associative.
 struct TlbSet {
     entries: [[TlbEntry; WAYS]; SETS],
     next_way: [u8; SETS],
+    has_1g: bool,
+    has_4m: bool,
+    has_2m: bool,
 }
 
 impl TlbSet {
@@ -159,6 +162,9 @@ impl TlbSet {
         Self {
             entries: [[TlbEntry::default(); WAYS]; SETS],
             next_way: [0; SETS],
+            has_1g: false,
+            has_4m: false,
+            has_2m: false,
         }
     }
 
@@ -189,16 +195,24 @@ impl TlbSet {
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size2MAnd4K => {
-                lookup_page_size!(PageSize::Size2M);
+                if self.has_2m {
+                    lookup_page_size!(PageSize::Size2M);
+                }
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size4MAnd4K => {
-                lookup_page_size!(PageSize::Size4M);
+                if self.has_4m {
+                    lookup_page_size!(PageSize::Size4M);
+                }
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size1G2MAnd4K => {
-                lookup_page_size!(PageSize::Size1G);
-                lookup_page_size!(PageSize::Size2M);
+                if self.has_1g {
+                    lookup_page_size!(PageSize::Size1G);
+                }
+                if self.has_2m {
+                    lookup_page_size!(PageSize::Size2M);
+                }
                 lookup_page_size!(PageSize::Size4K);
             }
         }
@@ -207,6 +221,15 @@ impl TlbSet {
     }
 
     fn insert(&mut self, entry: TlbEntry) {
+        // Track which page sizes exist in the set so lookup can skip scanning
+        // sizes that haven't been inserted yet.
+        match entry.page_size {
+            PageSize::Size1G => self.has_1g = true,
+            PageSize::Size4M => self.has_4m = true,
+            PageSize::Size2M => self.has_2m = true,
+            PageSize::Size4K => {}
+        }
+
         let tag = entry.vbase >> 12;
         let set = set_index(tag);
 
@@ -276,6 +299,9 @@ impl TlbSet {
     }
 
     fn flush_all(&mut self) {
+        self.has_1g = false;
+        self.has_4m = false;
+        self.has_2m = false;
         for set in 0..SETS {
             for way in 0..WAYS {
                 self.entries[set][way].valid = false;
