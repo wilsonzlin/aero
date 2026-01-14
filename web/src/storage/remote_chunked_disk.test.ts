@@ -379,6 +379,70 @@ describe("RemoteChunkedDisk", () => {
     ).rejects.toThrow(/chunkIndexWidth.*max/i);
   });
 
+  it("tolerates null size/sha256 entries in chunks[]", async () => {
+    const chunkSize = 512;
+    const chunkCount = 2;
+    const totalSize = chunkSize * chunkCount;
+
+    const chunk0 = new Uint8Array(chunkSize).fill(0x11);
+    const chunk1 = new Uint8Array(chunkSize).fill(0x22);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+      chunks: [
+        { size: null, sha256: null },
+        { size: null, sha256: null },
+      ],
+    };
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      if (url.pathname === "/chunks/0.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(Buffer.from(chunk0));
+        return;
+      }
+      if (url.pathname === "/chunks/1.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(Buffer.from(chunk1));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store: new TestMemoryStore(),
+    });
+    try {
+      const buf0 = new Uint8Array(chunkSize);
+      await disk.readSectors(0, buf0);
+      expect(buf0).toEqual(chunk0);
+
+      const buf1 = new Uint8Array(chunkSize);
+      await disk.readSectors(1, buf1);
+      expect(buf1).toEqual(chunk1);
+    } finally {
+      await disk.close();
+    }
+  });
+
   it("rejects manifests with Content-Length larger than MAX_REMOTE_MANIFEST_JSON_BYTES", async () => {
     const fetchFn = vi
       .fn<[RequestInfo | URL, RequestInit?], Promise<Response>>()

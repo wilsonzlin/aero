@@ -56,14 +56,14 @@ const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
-  imageId?: string;
+  imageId?: string | null;
   version: string;
   mimeType: string;
   totalSize: number;
   chunkSize: number;
   chunkCount: number;
   chunkIndexWidth: number;
-  chunks?: Array<{ size?: number; sha256?: string }>;
+  chunks?: Array<{ size?: number | null; sha256?: string | null }>;
 };
 
 type ParsedChunkedDiskManifest = {
@@ -622,7 +622,11 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
       const item = obj.chunks[i];
       if (!item || typeof item !== "object") throw new Error(`chunks[${i}] must be an object`);
       const size =
-        item.size === undefined ? (i === chunkCount - 1 ? lastChunkSize : chunkSize) : asSafeInt(item.size, `chunks[${i}].size`);
+        item.size === undefined || item.size === null
+          ? i === chunkCount - 1
+            ? lastChunkSize
+            : chunkSize
+          : asSafeInt(item.size, `chunks[${i}].size`);
       if (size <= 0) throw new Error(`chunks[${i}].size must be > 0`);
       if (i < chunkCount - 1 && size !== chunkSize) {
         throw new Error(`chunks[${i}].size mismatch: expected=${chunkSize} actual=${size}`);
@@ -632,7 +636,7 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
       }
       chunkSizes[i] = size;
 
-      if (item.sha256 !== undefined) {
+      if (item.sha256 !== undefined && item.sha256 !== null) {
         if (typeof item.sha256 !== "string") throw new Error(`chunks[${i}].sha256 must be a string`);
         const normalized = item.sha256.trim().toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(normalized)) {
