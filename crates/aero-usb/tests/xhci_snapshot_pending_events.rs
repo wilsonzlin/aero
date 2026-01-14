@@ -232,6 +232,7 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     #[derive(Default)]
     struct NoDmaMem {
         reads: usize,
+        writes: usize,
     }
 
     impl MemoryBus for NoDmaMem {
@@ -244,7 +245,9 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
             buf.fill(0xFF);
         }
 
-        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            self.writes += 1;
+        }
     }
 
     let mut xhci = XhciController::new();
@@ -257,6 +260,7 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     xhci.tick_1ms_with_dma(&mut mem_no_dma);
     assert_eq!(mem_no_dma.reads, 0);
+    assert_eq!(mem_no_dma.writes, 0);
     assert!(
         !xhci.irq_level(),
         "RUN edge should not raise irq_level while DMA is disabled"
@@ -264,6 +268,7 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     // Even if the host integration ticks the controller, DMA should remain gated.
     xhci.tick_1ms_with_dma(&mut mem_no_dma);
     assert_eq!(mem_no_dma.reads, 0);
+    assert_eq!(mem_no_dma.writes, 0);
     assert!(
         !xhci.irq_level(),
         "ticking with DMA disabled should not execute the deferred DMA-on-RUN probe"
