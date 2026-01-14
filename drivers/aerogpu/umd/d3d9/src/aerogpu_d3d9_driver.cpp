@@ -15764,9 +15764,11 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
   }
 
-  // Shader int/bool constants are currently cached only (not emitted to the
-  // AeroGPU command stream), but they must still round-trip via getters and state
-  // blocks.
+  // Shader int/bool constants.
+  //
+  // These mirror D3D9's per-stage `i#`/`b#` constant register files and must be
+  // emitted into the AeroGPU command stream so state blocks restore them
+  // deterministically (matching float constant behavior above).
   auto apply_consts_i = [&](uint32_t stage,
                             const std::bitset<256>& mask,
                             const int32_t* src,
@@ -15786,10 +15788,21 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       std::memcpy(dst + static_cast<size_t>(start) * 4,
                   src + static_cast<size_t>(start) * 4,
                   static_cast<size_t>(count) * 4 * sizeof(int32_t));
+      const int32_t* payload = src + static_cast<size_t>(start) * 4;
+      const size_t payload_size = static_cast<size_t>(count) * 4 * sizeof(int32_t);
+      auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
+          dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, payload, payload_size);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
+      cmd->start_register = start;
+      cmd->vec4_count = count;
+      cmd->reserved0 = 0;
       stateblock_record_shader_const_i_locked(dev,
                                              stage,
                                              start,
-                                             src + static_cast<size_t>(start) * 4,
+                                             payload,
                                              count);
       reg = end + 1;
     }
@@ -15813,6 +15826,33 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       }
       const uint32_t count = (end - start + 1);
       std::memcpy(dst + start, src + start, static_cast<size_t>(count) * sizeof(uint8_t));
+
+      // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
+      // constants uniform buffer. Expand scalar bools into that representation.
+      std::vector<uint32_t> expanded;
+      expanded.resize(static_cast<size_t>(count) * 4u);
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t v = src[start + i] ? 1u : 0u;
+        const size_t base = static_cast<size_t>(i) * 4u;
+        expanded[base + 0] = v;
+        expanded[base + 1] = v;
+        expanded[base + 2] = v;
+        expanded[base + 3] = v;
+      }
+
+      auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
+          dev,
+          AEROGPU_CMD_SET_SHADER_CONSTANTS_B,
+          expanded.data(),
+          expanded.size() * sizeof(uint32_t));
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+      cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
+      cmd->start_register = start;
+      cmd->bool_count = count;
+      cmd->reserved0 = 0;
+
       stateblock_record_shader_const_b_locked(dev, stage, start, src + start, count);
       reg = end + 1;
     }
