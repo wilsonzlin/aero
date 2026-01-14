@@ -72,34 +72,52 @@ export function computeSharedFramebufferLayout(
   if (width <= 0 || height <= 0) {
     throw new Error("width/height must be > 0");
   }
+  // In Rust, all layout inputs are `u32` and intermediate sizes are computed with `checked_*`.
+  // In JS, `number` arithmetic can silently lose precision once intermediate values exceed
+  // `Number.MAX_SAFE_INTEGER` (~9e15). Reject any layout that would require unsafe integers so
+  // all offsets remain exact.
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    !Number.isSafeInteger(strideBytes) ||
+    !Number.isSafeInteger(tileSize)
+  ) {
+    layoutSizeOverflow();
+  }
   if (tileSize !== 0 && (tileSize & (tileSize - 1)) !== 0) {
     throw new Error("tileSize must be 0 (disabled) or a power-of-two");
   }
 
   const bytesPerPixel = 4;
-  const minStrideBytes = width * bytesPerPixel;
+  const minStrideBytes = checkedMul(width, bytesPerPixel);
   if (strideBytes < minStrideBytes) {
     throw new Error(`strideBytes (${strideBytes}) < minimum (${minStrideBytes})`);
   }
 
-  const bufferBytes = strideBytes * height;
+  const bufferBytes = checkedMul(strideBytes, height);
 
   const tilesX = tileSize === 0 ? 0 : divCeil(width, tileSize);
   const tilesY = tileSize === 0 ? 0 : divCeil(height, tileSize);
-  const tileCount = tilesX * tilesY;
+  const tileCount = checkedMul(tilesX, tilesY);
   const dirtyWordsPerBuffer = tileSize === 0 ? 0 : divCeil(tileCount, 32);
 
   let cursor = alignUp(SHARED_FRAMEBUFFER_HEADER_BYTE_LEN, SHARED_FRAMEBUFFER_ALIGNMENT);
 
   const slot0Fb = cursor;
-  cursor = alignUp(slot0Fb + bufferBytes, 4);
+  cursor = alignUp(checkedAdd(slot0Fb, bufferBytes), 4);
   const slot0Dirty = cursor;
-  cursor = alignUp(slot0Dirty + dirtyWordsPerBuffer * 4, SHARED_FRAMEBUFFER_ALIGNMENT);
+  cursor = alignUp(
+    checkedAdd(slot0Dirty, checkedMul(dirtyWordsPerBuffer, 4)),
+    SHARED_FRAMEBUFFER_ALIGNMENT,
+  );
 
   const slot1Fb = cursor;
-  cursor = alignUp(slot1Fb + bufferBytes, 4);
+  cursor = alignUp(checkedAdd(slot1Fb, bufferBytes), 4);
   const slot1Dirty = cursor;
-  cursor = alignUp(slot1Dirty + dirtyWordsPerBuffer * 4, SHARED_FRAMEBUFFER_ALIGNMENT);
+  cursor = alignUp(
+    checkedAdd(slot1Dirty, checkedMul(dirtyWordsPerBuffer, 4)),
+    SHARED_FRAMEBUFFER_ALIGNMENT,
+  );
 
   return {
     width,
@@ -197,19 +215,52 @@ export function dirtyTilesToRects(layout: SharedFramebufferLayout, dirtyWords: U
   return rects;
 }
 
+const LAYOUT_SIZE_OVERFLOW_MESSAGE = "layout size overflow";
+
+function layoutSizeOverflow(): never {
+  throw new Error(LAYOUT_SIZE_OVERFLOW_MESSAGE);
+}
+
+function checkedMul(a: number, b: number): number {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a < 0 || b < 0) {
+    layoutSizeOverflow();
+  }
+  const out = a * b;
+  if (!Number.isSafeInteger(out)) {
+    layoutSizeOverflow();
+  }
+  return out;
+}
+
+function checkedAdd(a: number, b: number): number {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a < 0 || b < 0) {
+    layoutSizeOverflow();
+  }
+  const out = a + b;
+  if (!Number.isSafeInteger(out)) {
+    layoutSizeOverflow();
+  }
+  return out;
+}
+
 function alignUp(value: number, align: number): number {
   if (align <= 0 || (align & (align - 1)) !== 0) throw new Error("align must be a positive power of two");
+  if (!Number.isSafeInteger(value) || value < 0) {
+    layoutSizeOverflow();
+  }
   const rem = value % align;
-  return rem === 0 ? value : value + (align - rem);
+  const out = rem === 0 ? value : value + (align - rem);
+  if (!Number.isSafeInteger(out)) {
+    layoutSizeOverflow();
+  }
+  return out;
 }
 
 function divCeil(value: number, divisor: number): number {
-  if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(divisor) || divisor <= 0) {
-    throw new Error("divCeil: arguments must be safe non-negative integers and divisor must be > 0");
-  }
+  if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(divisor) || divisor <= 0) layoutSizeOverflow();
   const out = Number((BigInt(value) + BigInt(divisor) - 1n) / BigInt(divisor));
   if (!Number.isSafeInteger(out)) {
-    throw new Error("divCeil overflow");
+    layoutSizeOverflow();
   }
   return out;
 }

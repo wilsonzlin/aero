@@ -77,3 +77,35 @@ describe("ipc/shared-layout dirtyTilesToRects", () => {
     expect(dirtyTilesToRects(layout, dirtyWords)).toEqual([{ x: 0, y: 0, w: 8, h: 8 }]);
   });
 });
+
+describe("ipc/shared-layout computeSharedFramebufferLayout overflow", () => {
+  it("throws on unsafe integer overflow in bufferBytes (tileSize=0)", () => {
+    // `strideBytes` and `height` individually fit in u32, but their product does not fit in a JS safe integer.
+    expect(() =>
+      computeSharedFramebufferLayout(
+        /*width=*/ 1,
+        /*height=*/ 0xffff_ffff,
+        /*strideBytes=*/ 0xffff_ffff,
+        FramebufferFormat.RGBA8,
+        /*tileSize=*/ 0,
+      ),
+    ).toThrow(/layout size overflow/);
+  });
+
+  it("throws on unsafe integer overflow in cursor/offset additions (tileSize!=0)", () => {
+    // Choose a `bufferBytes` that is still a safe integer, but large enough that two slots (plus
+    // header/alignment) exceed `Number.MAX_SAFE_INTEGER` and must be rejected.
+    const strideBytes = 70_000_000;
+    const height = 70_000_000;
+
+    expect(() =>
+      computeSharedFramebufferLayout(
+        /*width=*/ 1,
+        height,
+        strideBytes,
+        FramebufferFormat.RGBA8,
+        /*tileSize=*/ 1,
+      ),
+    ).toThrow(/layout size overflow/);
+  });
+});
