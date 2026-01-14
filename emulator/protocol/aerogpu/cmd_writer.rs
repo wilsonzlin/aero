@@ -1900,6 +1900,42 @@ impl AerogpuCmdWriter {
         );
     }
 
+    /// Stage-ex aware variant of [`Self::dispatch`].
+    ///
+    /// Encodes `stage_ex` into the DISPATCH packet's `reserved0` field.
+    ///
+    /// Note: `stage_ex = 0` is reserved for legacy/default Compute dispatch. Use [`Self::dispatch`]
+    /// instead.
+    pub fn dispatch_ex(
+        &mut self,
+        stage_ex: AerogpuShaderStageEx,
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
+    ) {
+        assert!(
+            stage_ex != AerogpuShaderStageEx::None,
+            "DISPATCH stage_ex must be non-zero (0 is reserved for legacy/default)"
+        );
+        // Canonicalize `stage_ex=Compute` to legacy encoding (`reserved0=0`).
+        let (_, reserved0) = encode_stage_ex(stage_ex);
+
+        let base = self.append_raw(AerogpuCmdOpcode::Dispatch, size_of::<AerogpuCmdDispatch>());
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDispatch, group_count_x),
+            group_count_x,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDispatch, group_count_y),
+            group_count_y,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdDispatch, group_count_z),
+            group_count_z,
+        );
+        self.write_u32_at(base + offset_of!(AerogpuCmdDispatch, reserved0), reserved0);
+    }
+
     pub fn present(&mut self, scanout_id: u32, flags: u32) {
         let base = self.append_raw(AerogpuCmdOpcode::Present, size_of::<AerogpuCmdPresent>());
         self.write_u32_at(base + offset_of!(AerogpuCmdPresent, scanout_id), scanout_id);

@@ -1,10 +1,11 @@
 use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_bind_shaders_payload_le, decode_cmd_hdr_le, decode_cmd_stream_header_le,
-    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface, AerogpuCmdHdr,
-    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
+    decode_cmd_bind_shaders_payload_le, decode_cmd_dispatch_le, decode_cmd_hdr_le,
+    decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdBindShaders,
+    AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdDispatch,
+    AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
+    AerogpuCmdPresentEx,
     AerogpuCmdReleaseSharedSurface, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
     AerogpuCmdSetShaderConstantsB, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI,
     AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
@@ -220,6 +221,68 @@ fn cmd_writer_bind_shaders_hs_ds_is_sugar_for_extended_packet() {
             ds: 66,
         })
     );
+}
+
+#[test]
+fn cmd_writer_dispatch_stage_ex_is_encoded_in_reserved0() {
+    let mut w = AerogpuCmdWriter::new();
+    w.dispatch(1, 2, 3);
+    w.dispatch_ex(AerogpuShaderStageEx::Hull, 4, 5, 6);
+    // `stage_ex=Compute` should canonicalize to legacy encoding (`reserved0=0`).
+    w.dispatch_ex(AerogpuShaderStageEx::Compute, 7, 8, 9);
+
+    let buf = w.finish();
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // DISPATCH (legacy)
+    {
+        let cmd = decode_cmd_dispatch_le(&buf[cursor..]).unwrap();
+        let size_bytes = cmd.hdr.size_bytes as usize;
+        let group_count_x = cmd.group_count_x;
+        let group_count_y = cmd.group_count_y;
+        let group_count_z = cmd.group_count_z;
+        let reserved0 = cmd.reserved0;
+        assert_eq!(size_bytes, AerogpuCmdDispatch::SIZE_BYTES);
+        assert_eq!(group_count_x, 1);
+        assert_eq!(group_count_y, 2);
+        assert_eq!(group_count_z, 3);
+        assert_eq!(reserved0, 0);
+        cursor += size_bytes;
+    }
+
+    // DISPATCH (stage_ex=Hull)
+    {
+        let cmd = decode_cmd_dispatch_le(&buf[cursor..]).unwrap();
+        let size_bytes = cmd.hdr.size_bytes as usize;
+        let group_count_x = cmd.group_count_x;
+        let group_count_y = cmd.group_count_y;
+        let group_count_z = cmd.group_count_z;
+        let reserved0 = cmd.reserved0;
+        assert_eq!(size_bytes, AerogpuCmdDispatch::SIZE_BYTES);
+        assert_eq!(group_count_x, 4);
+        assert_eq!(group_count_y, 5);
+        assert_eq!(group_count_z, 6);
+        assert_eq!(reserved0, AerogpuShaderStageEx::Hull as u32);
+        cursor += size_bytes;
+    }
+
+    // DISPATCH (stage_ex=Compute canonicalized)
+    {
+        let cmd = decode_cmd_dispatch_le(&buf[cursor..]).unwrap();
+        let size_bytes = cmd.hdr.size_bytes as usize;
+        let group_count_x = cmd.group_count_x;
+        let group_count_y = cmd.group_count_y;
+        let group_count_z = cmd.group_count_z;
+        let reserved0 = cmd.reserved0;
+        assert_eq!(size_bytes, AerogpuCmdDispatch::SIZE_BYTES);
+        assert_eq!(group_count_x, 7);
+        assert_eq!(group_count_y, 8);
+        assert_eq!(group_count_z, 9);
+        assert_eq!(reserved0, 0);
+        cursor += size_bytes;
+    }
+
+    assert_eq!(cursor, buf.len());
 }
 
 #[test]

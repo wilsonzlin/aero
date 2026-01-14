@@ -8,6 +8,7 @@ import {
   AEROGPU_CMD_BIND_SHADERS_SIZE,
   AEROGPU_CMD_BIND_SHADERS_EX_SIZE,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
+  AEROGPU_CMD_DISPATCH_SIZE,
   AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
@@ -559,13 +560,13 @@ test("AerogpuCmdWriter emits SRV/UAV binding table packets and DISPATCH", () => 
 
   // DISPATCH
   assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Dispatch);
-  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 24);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_DISPATCH_SIZE);
   const dispatch = decodeCmdDispatchPayload(bytes, cursor);
   assert.equal(dispatch.groupCountX, 1);
   assert.equal(dispatch.groupCountY, 2);
   assert.equal(dispatch.groupCountZ, 3);
   assert.equal(dispatch.reserved0, 0);
-  cursor += 24;
+  cursor += AEROGPU_CMD_DISPATCH_SIZE;
 
   // FLUSH
   assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
@@ -573,6 +574,44 @@ test("AerogpuCmdWriter emits SRV/UAV binding table packets and DISPATCH", () => 
   cursor += 16;
 
   assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter.dispatchEx encodes stage_ex into DISPATCH.reserved0", () => {
+  const w = new AerogpuCmdWriter();
+  w.dispatchEx(AerogpuShaderStageEx.Hull, 1, 2, 3);
+  // `stage_ex=Compute` should canonicalize to legacy encoding (`reserved0=0`).
+  w.dispatchEx(AerogpuShaderStageEx.Compute, 4, 5, 6);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // DISPATCH (stage_ex=Hull)
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Dispatch);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_DISPATCH_SIZE);
+  let dispatch = decodeCmdDispatchPayload(bytes, cursor);
+  assert.equal(dispatch.groupCountX, 1);
+  assert.equal(dispatch.groupCountY, 2);
+  assert.equal(dispatch.groupCountZ, 3);
+  assert.equal(dispatch.reserved0, AerogpuShaderStageEx.Hull);
+  cursor += AEROGPU_CMD_DISPATCH_SIZE;
+
+  // DISPATCH (stage_ex=Compute canonicalized)
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Dispatch);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_DISPATCH_SIZE);
+  dispatch = decodeCmdDispatchPayload(bytes, cursor);
+  assert.equal(dispatch.groupCountX, 4);
+  assert.equal(dispatch.groupCountY, 5);
+  assert.equal(dispatch.groupCountZ, 6);
+  assert.equal(dispatch.reserved0, 0);
+  cursor += AEROGPU_CMD_DISPATCH_SIZE;
+
+  assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter.dispatchEx rejects stageEx=0 (legacy/default)", () => {
+  const w = new AerogpuCmdWriter();
+  assert.throws(() => w.dispatchEx(AerogpuShaderStageEx.None, 1, 2, 3), /stageEx=0/i);
 });
 
 test("AerogpuShaderStage includes Geometry=3 and AerogpuCmdWriter accepts it", () => {
