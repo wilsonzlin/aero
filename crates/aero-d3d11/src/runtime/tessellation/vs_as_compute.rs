@@ -687,9 +687,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::U32, 3) => (
             format!(
@@ -719,9 +717,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::I32, 3) => (
             format!(
@@ -752,9 +748,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::U16, 3) => (
             format!(
@@ -784,9 +778,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::I16, 4) => (
             format!(
@@ -801,9 +793,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<u32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::U8, 4) => (
             format!(
@@ -817,9 +807,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 "let v: vec2<i32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
-            format!(
-                "return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"
-            ),
+            format!("return vec4<f32>(bitcast<f32>(v.x), bitcast<f32>(v.y), {int0}, {int1});"),
         ),
         (DxgiFormatComponentType::I8, 4) => (
             format!(

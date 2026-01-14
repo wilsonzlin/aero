@@ -1,10 +1,10 @@
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding,
     AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn push_u32_le(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());

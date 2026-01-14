@@ -576,8 +576,16 @@ fn assert_restart_gap_line_strip_u32(pixels: &[u8], width: u32, height: u32) {
     let right_x = 55usize;
     let mid_y = 32usize;
 
-    assert_eq!(px(left_x, mid_y), &[255, 255, 255, 255], "left line missing");
-    assert_eq!(px(right_x, mid_y), &[255, 255, 255, 255], "right line missing");
+    assert_eq!(
+        px(left_x, mid_y),
+        &[255, 255, 255, 255],
+        "left line missing"
+    );
+    assert_eq!(
+        px(right_x, mid_y),
+        &[255, 255, 255, 255],
+        "right line missing"
+    );
 
     let bg = &[0, 0, 0, 255];
     for (x, y) in [(20usize, 20usize), (24, 24), (28, 28)] {
