@@ -333,7 +333,9 @@ fn aerogpu_vbe_8bpp_vram_fastpath_uses_dac_palette_and_avoids_mmio_reads() {
     m.reset();
 
     let bar1_base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should expose pci_cfg");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()

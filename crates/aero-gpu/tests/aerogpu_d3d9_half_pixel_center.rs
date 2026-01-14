@@ -316,7 +316,7 @@ fn run(exec: &mut AerogpuD3d9Executor, viewport: Option<(f32, f32)>) -> Vec<u8> 
         emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
-            // One binding entry.
+                              // One binding entry.
             push_u32(out, VB_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, 0); // offset_bytes

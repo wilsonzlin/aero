@@ -2798,8 +2798,7 @@ mod tests {
         assert_eq!(dev.vram[3 * VGA_PLANE_SIZE + probe], 0x00);
 
         assert_eq!(
-            dev.vram[VBE_FRAMEBUFFER_OFFSET],
-            0xCC,
+            dev.vram[VBE_FRAMEBUFFER_OFFSET], 0xCC,
             "planar writes overlapped VBE framebuffer region"
         );
     }

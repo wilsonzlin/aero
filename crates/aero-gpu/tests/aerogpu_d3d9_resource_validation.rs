@@ -720,7 +720,9 @@ fn d3d9_create_texture2d_rejects_array_layers_not_one() {
         Err(AerogpuD3d9Error::Validation(msg)) => {
             assert!(msg.contains("array_layers"), "{msg}");
             assert!(
-                msg.contains("not supported") || msg.contains("unsupported") || msg.contains("!= 1"),
+                msg.contains("not supported")
+                    || msg.contains("unsupported")
+                    || msg.contains("!= 1"),
                 "{msg}"
             );
         }

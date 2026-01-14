@@ -59,4 +59,3 @@ fn aerogpu_bochs_vbe_dispi_16bpp_display_present_respects_offsets_and_stride() {
     // Expected RGBA8888: 0xFF18AA84.
     assert_eq!(m.display_framebuffer()[0], 0xFF18_AA84);
 }
-
