@@ -248,21 +248,24 @@ Examples (illustrative) INF model entries:
 %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-; Canonical INF includes SUBSYS-qualified keyboard/mouse IDs for distinct Device Manager naming, plus a strict
-; revision-gated generic fallback (no SUBSYS) for environments where subsystem IDs are absent/ignored:
+; Canonical keyboard/mouse INF is intentionally SUBSYS-only and includes explicit keyboard/mouse
+; model lines so they appear distinctly in Device Manager:
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+; (No generic fallback model line in the canonical INF.)
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
 ; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
-
+  
 ; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
 ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
-; - Filename alias only: from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to
-;   `aero_virtio_input.inf` (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Does not change HWID matching behavior.
+; - Opt-in strict generic fallback binding: the alias adds the model line:
+;   %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+; - Alias sync policy: expected to match `aero_virtio_input.inf` from `[Version]` onward excluding the models sections
+;   (`[Aero.NTx86]` / `[Aero.NTamd64]`); banner/comments may differ (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; - Enabling the alias **does** change HWID matching behavior (it enables the generic fallback binding entry), so install only
+;   one of the two basenames at a time.
 ; - Do not ship/install both INFs at the same time: they match overlapping HWIDs and can cause confusing driver selection.
 ```
 
