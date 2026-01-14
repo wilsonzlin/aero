@@ -14,7 +14,7 @@ thread_local! {
     // allocate concurrently on other threads (result reporting, output capture,
     // etc.). We only want to count allocations performed by the decoder on the
     // current test thread.
-    static COUNT_ALLOC: Cell<bool> = Cell::new(false);
+    static COUNT_ALLOC: Cell<bool> = const { Cell::new(false) };
 }
 
 unsafe impl GlobalAlloc for CountingAlloc {
