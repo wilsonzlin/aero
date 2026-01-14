@@ -276,7 +276,11 @@ fn snapshot_roundtrip_preserves_virtio_input_keyboard_leds_mask() {
     assert!(restored.virtio_input_keyboard_driver_ok());
     assert_eq!(restored.virtio_input_keyboard_leds(), 0x02);
     assert!(
-        !restored.virtio_input_keyboard().unwrap().borrow().irq_level(),
+        !restored
+            .virtio_input_keyboard()
+            .unwrap()
+            .borrow()
+            .irq_level(),
         "restore should not spuriously assert IRQ for virtio-input keyboard"
     );
 }

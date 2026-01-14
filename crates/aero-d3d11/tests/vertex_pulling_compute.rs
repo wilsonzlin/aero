@@ -1454,7 +1454,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 #[test]
 fn compute_can_vertex_pull_f32_and_i32_formats() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::compute_can_vertex_pull_f32_and_i32_formats");
+        let test_name = concat!(
+            module_path!(),
+            "::compute_can_vertex_pull_f32_and_i32_formats"
+        );
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
@@ -1489,7 +1492,7 @@ fn compute_can_vertex_pull_f32_and_i32_formats() {
 
         // v0
         push_f32(&mut vb, 1.25); // r32_float
-        // r32g32b32a32_float
+                                 // r32g32b32a32_float
         push_f32(&mut vb, 2.0);
         push_f32(&mut vb, -3.0);
         push_f32(&mut vb, 0.5);
@@ -1514,7 +1517,7 @@ fn compute_can_vertex_pull_f32_and_i32_formats() {
 
         // v1
         push_f32(&mut vb, -0.75); // r32_float
-        // r32g32b32a32_float
+                                  // r32g32b32a32_float
         push_f32(&mut vb, 0.0);
         push_f32(&mut vb, 1.0);
         push_f32(&mut vb, 2.0);
@@ -1659,19 +1662,19 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
         let expected = [
             // v0
-            [1.25, 0.0, 0.0, 1.0],                  // r32_float
-            [2.0, -3.0, 0.5, 10.0],                 // r32g32b32a32_float
-            [-123_456.0, 0.0, 0.0, 1.0],            // r32_sint
-            [1000.0, -1000.0, 0.0, 1.0],            // r32g32_sint
-            [-1.0, 0.0, 1.0, 1.0],                  // r32g32b32_sint
-            [42.0, -42.0, 32767.0, -32768.0],       // r32g32b32a32_sint
+            [1.25, 0.0, 0.0, 1.0],            // r32_float
+            [2.0, -3.0, 0.5, 10.0],           // r32g32b32a32_float
+            [-123_456.0, 0.0, 0.0, 1.0],      // r32_sint
+            [1000.0, -1000.0, 0.0, 1.0],      // r32g32_sint
+            [-1.0, 0.0, 1.0, 1.0],            // r32g32b32_sint
+            [42.0, -42.0, 32767.0, -32768.0], // r32g32b32a32_sint
             // v1
-            [-0.75, 0.0, 0.0, 1.0],                 // r32_float
-            [0.0, 1.0, 2.0, 3.0],                   // r32g32b32a32_float
-            [0.0, 0.0, 0.0, 1.0],                   // r32_sint
-            [7.0, -7.0, 0.0, 1.0],                  // r32g32_sint
-            [123.0, 456.0, 789.0, 1.0],             // r32g32b32_sint
-            [-5.0, -6.0, -7.0, -8.0],               // r32g32b32a32_sint
+            [-0.75, 0.0, 0.0, 1.0],     // r32_float
+            [0.0, 1.0, 2.0, 3.0],       // r32g32b32a32_float
+            [0.0, 0.0, 0.0, 1.0],       // r32_sint
+            [7.0, -7.0, 0.0, 1.0],      // r32g32_sint
+            [123.0, 456.0, 789.0, 1.0], // r32g32b32_sint
+            [-5.0, -6.0, -7.0, -8.0],   // r32g32b32a32_sint
         ];
 
         for (i, exp) in expected.iter().enumerate() {

@@ -26,4 +26,3 @@ fn sampler_enums_from_u32_decodes_known_values() {
     );
     assert_eq!(AerogpuSamplerAddressMode::from_u32(99), None);
 }
-

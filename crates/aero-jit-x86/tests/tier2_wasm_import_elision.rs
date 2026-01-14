@@ -1890,8 +1890,8 @@ fn tier2_inline_tlb_constant_cross_page_store_binop_value_skips_unreachable_mmu_
 }
 
 #[test]
-fn tier2_inline_tlb_constant_cross_page_u64_store_value_address_skips_unreachable_mmu_translate_calls()
-{
+fn tier2_inline_tlb_constant_cross_page_u64_store_value_address_skips_unreachable_mmu_translate_calls(
+) {
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -1991,8 +1991,8 @@ fn tier2_inline_tlb_constant_cross_page_u64_store_addr_value_skips_unreachable_m
 }
 
 #[test]
-fn tier2_inline_tlb_constant_cross_page_u64_store_binop_value_skips_unreachable_mmu_translate_calls()
-{
+fn tier2_inline_tlb_constant_cross_page_u64_store_binop_value_skips_unreachable_mmu_translate_calls(
+) {
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![

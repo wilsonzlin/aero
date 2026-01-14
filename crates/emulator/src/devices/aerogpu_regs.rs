@@ -15,4 +15,3 @@ mod tests {
         let _: aero_devices_gpu::regs::AeroGpuStats = AeroGpuStats::default();
     }
 }
-

@@ -1345,8 +1345,7 @@ fn tier2_inline_tlb_permission_retranslate_can_clear_is_ram_flag_for_store() {
 
     // Prefill a matching entry, but omit WRITE permission to force a re-translate. Intentionally
     // include `TLB_FLAG_IS_RAM` even though `mmu_translate` will classify this as non-RAM.
-    let tlb_data =
-        (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    let tlb_data = (0x1234u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
 
     let (_ret, got_ram, _gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x1000, &[(0x1234, tlb_data)]);

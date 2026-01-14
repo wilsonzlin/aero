@@ -1985,7 +1985,10 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     };
 
                     let alias_text = read_inf_text(&alias).with_context(|| {
-                        format!("{name}: read virtio-input legacy alias INF {}", alias.display())
+                        format!(
+                            "{name}: read virtio-input legacy alias INF {}",
+                            alias.display()
+                        )
                     })?;
                     validate_virtio_input_device_desc_split(
                         &alias,
@@ -2005,21 +2008,24 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     // Note: this drift check is comment-tolerant (it strips comments/empty lines). For the
                     // strict byte-level check used by CI, run:
                     //   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
-                    let canonical_lines =
-                        normalized_inf_lines_for_alias_diff(&inf_text, /* ignore_models */ true)
-                            .with_context(|| {
-                                format!(
-                                    "{name}: normalize virtio-input canonical INF for alias drift check"
-                                )
-                            })?;
-                    let alias_lines =
-                        normalized_inf_lines_for_alias_diff(&alias_text, /* ignore_models */ true)
-                            .with_context(|| {
-                                format!(
-                                    "{name}: normalize virtio-input alias INF for drift check: {}",
-                                    alias.display()
-                                )
-                            })?;
+                    let canonical_lines = normalized_inf_lines_for_alias_diff(
+                        &inf_text, /* ignore_models */ true,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "{name}: normalize virtio-input canonical INF for alias drift check"
+                        )
+                    })?;
+                    let alias_lines = normalized_inf_lines_for_alias_diff(
+                        &alias_text,
+                        /* ignore_models */ true,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "{name}: normalize virtio-input alias INF for drift check: {}",
+                            alias.display()
+                        )
+                    })?;
                     if canonical_lines != alias_lines {
                         let first_diff = canonical_lines
                             .iter()
@@ -2852,7 +2858,10 @@ Input = "Input Device"
 "#;
         let err = validate_temp_virtio_input_infs(canonical, None).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("missing required legacy virtio-input alias INF"), "{msg}");
+        assert!(
+            msg.contains("missing required legacy virtio-input alias INF"),
+            "{msg}"
+        );
     }
 
     #[test]
