@@ -246,3 +246,55 @@ fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
         "expected canonical tag 26 to contain EP0 TD state (not the time_ms u64)"
     );
 }
+
+#[test]
+fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
+    // Regression test for `pending_dma_on_run`: if the controller observes a RUN rising edge while
+    // DMA is disabled, it defers the synthetic "DMA-on-RUN" interrupt until the next DMA-capable
+    // tick. That pending state should survive snapshot/restore.
+    #[derive(Default)]
+    struct NoDmaMem {
+        reads: usize,
+    }
+
+    impl MemoryBus for NoDmaMem {
+        fn dma_enabled(&self) -> bool {
+            false
+        }
+
+        fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+            self.reads += 1;
+            buf.fill(0xFF);
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+    }
+
+    let mut xhci = XhciController::new();
+    let mut mem_no_dma = NoDmaMem::default();
+
+    // Program CRCR and set RUN while DMA is disabled: the controller should latch the RUN edge but
+    // must not DMA or raise an interrupt yet.
+    xhci.mmio_write(&mut mem_no_dma, regs::REG_CRCR_LO, 4, 0x1000);
+    xhci.mmio_write(&mut mem_no_dma, regs::REG_CRCR_HI, 4, 0);
+    xhci.mmio_write(&mut mem_no_dma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert_eq!(mem_no_dma.reads, 0);
+    assert!(
+        !xhci.irq_level(),
+        "RUN edge should not raise irq_level while DMA is disabled"
+    );
+
+    let bytes = xhci.save_state();
+
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+
+    // Provide DMA-capable memory and step once: the deferred probe must execute and raise an IRQ.
+    let mut mem_dma = TestMemory::new(0x20_000);
+    MemoryBus::write_u32(&mut mem_dma, 0x1000, 0x1234_5678);
+    restored.tick_1ms_with_dma(&mut mem_dma);
+    assert!(
+        restored.irq_level(),
+        "expected deferred DMA-on-RUN interrupt to fire after restore once DMA is available"
+    );
+}
