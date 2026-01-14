@@ -9097,10 +9097,12 @@ impl Machine {
                     }
                     Some(mode) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                            // `ScanoutState` currently only supports a single representable scanout
-                            // format (B8G8R8X8 / 32bpp). If the guest selected a palettized VBE mode
-                            // (e.g. 8bpp), fall back to the implicit legacy path rather than
-                            // publishing a misleading B8G8R8X8 descriptor.
+                            // This legacy VBE scanout publication path currently only supports the
+                            // canonical boot pixel format: 32bpp packed pixels `B8G8R8X8`.
+                            //
+                            // If the guest selected a palettized VBE mode (e.g. 8bpp), fall back to
+                            // the implicit legacy path rather than publishing a misleading 32bpp
+                            // descriptor.
                             if mode_info.bpp != 32 {
                                 scanout_state.publish(legacy_text);
                                 return;
@@ -10161,10 +10163,12 @@ impl Machine {
                                 format: SCANOUT_FORMAT_B8G8R8X8,
                             };
 
-                            // `ScanoutState` currently only supports a single representable scanout
-                            // pixel format (B8G8R8X8 / 32bpp). If the guest selects a palettized VBE
-                            // mode (e.g. 8bpp), fall back to the implicit legacy path rather than
-                            // publishing a misleading B8G8R8X8 descriptor.
+                            // This legacy VBE scanout publication path currently only supports the
+                            // canonical boot pixel format: 32bpp packed pixels `B8G8R8X8`.
+                            //
+                            // If the guest selects a palettized VBE mode (e.g. 8bpp), fall back to
+                            // the implicit legacy path rather than publishing a misleading 32bpp
+                            // descriptor.
                             if mode_info.bpp != 32 {
                                 scanout_state.publish(legacy_text);
                             } else {
