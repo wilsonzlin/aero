@@ -6029,6 +6029,12 @@ impl AerogpuD3d11Executor {
         );
 
         // Build GS prepass pipeline + bind group.
+        // Keep group(0) bindings consistent with `runtime::gs_translate`:
+        // - out_vertices: @binding(0) storage
+        // - out_indices:  @binding(1) storage
+        // - out_state:    @binding(2) storage
+        // - params:       @binding(4) uniform
+        // - gs_inputs:    @binding(5) storage
         let gs_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -6058,9 +6064,7 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES,
-                    ),
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_GS_STATE_SIZE_BYTES),
                 },
                 count: None,
             },
@@ -22617,7 +22621,8 @@ struct Cb0 {
 @compute @workgroup_size(1)
 fn hs_main() {
   let _x: f32 = cb0.v.x;
-  let _y: vec4<f32> = textureSample(tex0, samp0, vec2<f32>(0.0, 0.0));
+  // Compute shaders must use an explicit LOD (no implicit derivatives).
+  let _y: vec4<f32> = textureSampleLevel(tex0, samp0, vec2<f32>(0.0, 0.0), 0.0);
 }
 "#;
             let (wgsl_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
