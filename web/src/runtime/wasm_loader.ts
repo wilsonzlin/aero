@@ -539,17 +539,19 @@ export interface WasmApi {
          readonly jit_ctx_tlb_salt_offset?: number;
          readonly jit_ctx_tlb_offset?: number;
          readonly jit_ctx_header_bytes?: number;
-        readonly jit_ctx_total_bytes?: number;
-        readonly jit_tlb_entries?: number;
-        readonly jit_tlb_entry_bytes?: number;
-        readonly jit_tlb_flag_read?: number;
-        readonly jit_tlb_flag_write?: number;
-        readonly jit_tlb_flag_exec?: number;
-        readonly jit_tlb_flag_is_ram?: number;
-        readonly tier2_ctx_offset?: number;
-        readonly tier2_ctx_size?: number;
-        readonly commit_flag_offset?: number;
-        readonly commit_flag_bytes?: number;
+         readonly jit_ctx_total_bytes?: number;
+         readonly jit_tlb_entries?: number;
+         readonly jit_tlb_entry_bytes?: number;
+         readonly jit_tlb_flag_read?: number;
+         readonly jit_tlb_flag_write?: number;
+         readonly jit_tlb_flag_exec?: number;
+         readonly jit_tlb_flag_is_ram?: number;
+         readonly tier2_ctx_offset?: number;
+         readonly tier2_ctx_size?: number;
+         readonly code_version_table_ptr_offset?: number;
+         readonly code_version_table_len_offset?: number;
+         readonly commit_flag_offset?: number;
+         readonly commit_flag_bytes?: number;
     };
     /**
      * Aero IPC ring helpers for working directly with an AIPC `SharedArrayBuffer`.
