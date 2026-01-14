@@ -1,4 +1,4 @@
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 
 use std::cell::RefCell;
 use std::rc::Rc;

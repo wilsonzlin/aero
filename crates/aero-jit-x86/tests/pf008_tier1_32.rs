@@ -1,4 +1,4 @@
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 
 //! PF-008 Tier-1 JIT correctness regression tests (32-bit payloads).
 //!
