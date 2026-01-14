@@ -16,6 +16,7 @@ fn storage_capabilities_exports_boolean_fields() {
         "isWorkerScope",
         "crossOriginIsolated",
         "sharedArrayBufferSupported",
+        "isSecureContext",
     ] {
         let v = Reflect::get(&caps, &JsValue::from_str(key))
             .unwrap_or_else(|_| panic!("missing storage_capabilities field: {key}"));
