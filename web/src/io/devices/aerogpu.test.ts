@@ -133,6 +133,50 @@ describe("io/devices/aerogpu cursor forwarding", () => {
     expect(g2).toBe(2);
   });
 
+  it("decodes sRGB cursor formats when forwarding via the legacy sink", () => {
+    const guest = new Uint8Array(4096);
+    const gpa = 0x100;
+    // One pixel, BGRA with R=0x80 in an sRGB format.
+    // If treated as linear, we'd see R=0x80. When decoded from sRGB -> linear, it becomes ~0x37.
+    guest.set([0x00, 0x00, 0x80, 0xff], gpa);
+
+    let lastImage: Uint8Array | null = null;
+    let lastState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
+
+    const dev = new AeroGpuPciDevice({
+      guestU8: guest,
+      guestLayout: mkLayout(guest.byteLength),
+      sink: {
+        setImage: (_width, _height, rgba8) => {
+          lastImage = new Uint8Array(rgba8);
+        },
+        setState: (enabled, x, y, hotX, hotY) => {
+          lastState = { enabled, x, y, hotX, hotY };
+        },
+      },
+    });
+
+    dev.debugProgramCursor({
+      enabled: true,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      format: AerogpuFormat.B8G8R8A8UnormSrgb,
+      fbGpa: gpa,
+      pitchBytes: 4,
+    });
+    dev.tick(0);
+
+    expect(lastImage).not.toBeNull();
+    expect(Array.from(lastImage!.subarray(0, 4))).toEqual([0x37, 0x00, 0x00, 0xff]);
+
+    expect(lastState).not.toBeNull();
+    expect(lastState!.enabled).toBe(true);
+  });
+
   it("supports cursor surfaces in the VRAM aperture (including in-place updates)", () => {
     const guest = new Uint8Array(4096);
     const vram = new Uint8Array(4096);

@@ -56,6 +56,46 @@ function fnv1aUpdate(h: number, byte: number): number {
   return Math.imul(h ^ (byte & 0xff), FNV1A_PRIME) >>> 0;
 }
 
+// Lookup table for converting an 8-bit sRGB channel to an 8-bit linear channel.
+//
+// This is used only for the legacy cursor forwarding sink path (cursor.set_image), which does
+// not carry an explicit color-space indicator. The GPU worker treats cursor_set_image RGBA8 as
+// linear and then applies sRGB encoding during presentation. If we forward sRGB cursor bytes as
+// if they were linear, the cursor would be double-gamma encoded.
+//
+// In the preferred shared CursorState path, the GPU worker receives the cursor `format` and
+// can perform this decode itself during readback.
+const SRGB_TO_LINEAR_U8 = (() => {
+  const lut = new Uint8Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    const s = i / 255;
+    const linear = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    lut[i] = Math.min(255, Math.max(0, Math.round(linear * 255)));
+  }
+  return lut;
+})();
+
+const linearizeSrgbRgba8InPlace = (rgba: Uint8Array): void => {
+  // RGB are sRGB-encoded; alpha is linear and must be preserved.
+  for (let i = 0; i + 3 < rgba.byteLength; i += 4) {
+    rgba[i + 0] = SRGB_TO_LINEAR_U8[rgba[i + 0]!]!;
+    rgba[i + 1] = SRGB_TO_LINEAR_U8[rgba[i + 1]!]!;
+    rgba[i + 2] = SRGB_TO_LINEAR_U8[rgba[i + 2]!]!;
+  }
+};
+
+function isCursorFormatSrgb(format: number): boolean {
+  switch (format >>> 0) {
+    case AerogpuFormat.B8G8R8A8UnormSrgb:
+    case AerogpuFormat.B8G8R8X8UnormSrgb:
+    case AerogpuFormat.R8G8B8A8UnormSrgb:
+    case AerogpuFormat.R8G8B8X8UnormSrgb:
+      return true;
+    default:
+      return false;
+  }
+}
+
 type CursorImagePlan = {
   width: number;
   height: number;
@@ -638,6 +678,9 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     const hash = this.#fillCursor(plan, out);
     if (!opts.force && !keyChanged && hash === this.#lastSentImageHash) {
       return false;
+    }
+    if (isCursorFormatSrgb(plan.format)) {
+      linearizeSrgbRgba8InPlace(out);
     }
     try {
       sink.setImage(plan.width, plan.height, out.buffer);
