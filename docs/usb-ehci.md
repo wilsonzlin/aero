@@ -501,6 +501,10 @@ restore (Promises cannot be rewound). The restore path must:
 - drop queued/in-flight host actions/completions, and
 - leave guest-visible schedule descriptors in a state where the guest will retry and re-issue work.
 
+In practice, the EHCI restore plumbing calls `EhciController::reset_host_state_for_restore()` after
+loading the guest-visible snapshot so any attached device models can clear host-side async state
+(e.g. WebUSB/WebHID requests backed by JS Promises) without altering guest-visible USB state.
+
 This is the same rule described for UHCI passthrough in
 [`docs/webusb-passthrough.md#snapshotrestore-save-state`](./webusb-passthrough.md#snapshotrestore-save-state).
 
