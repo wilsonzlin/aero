@@ -364,6 +364,40 @@ mod tests {
     }
 
     #[test]
+    fn scanout_read_respects_pitch_padding() {
+        let mut mem = VecMemory::new(0x1000);
+        let fb_gpa = 0x200u64;
+
+        // 2x2 pixels (row_bytes=8) but pitch is 12 with 4 bytes padding per row.
+        // Row 0: (R=1,G=2,B=3), (R=4,G=5,B=6)
+        // Row 1: (R=7,G=8,B=9), (R=10,G=11,B=12)
+        mem.write_physical(
+            fb_gpa,
+            &[
+                3, 2, 1, 0, 6, 5, 4, 0, 0xDE, 0xAD, 0xBE, 0xEF, // padding
+                9, 8, 7, 0, 12, 11, 10, 0, 0xFE, 0xED, 0xFA, 0xCE, // padding
+            ],
+        );
+
+        let cfg = AeroGpuScanoutConfig {
+            enable: true,
+            width: 2,
+            height: 2,
+            pitch_bytes: 12,
+            fb_gpa,
+            format: AeroGpuFormat::B8G8R8X8Unorm,
+        };
+
+        assert_eq!(
+            cfg.read_rgba(&mut mem).unwrap(),
+            vec![
+                1, 2, 3, 0xff, 4, 5, 6, 0xff, // row 0
+                7, 8, 9, 0xff, 10, 11, 12, 0xff // row 1
+            ]
+        );
+    }
+
+    #[test]
     fn read_rgba_rejects_pitch_too_small() {
         let mut mem = VecMemory::new(0x1000);
         let fb_gpa = 0x100u64;
@@ -417,4 +451,3 @@ mod tests {
         assert!(cursor.read_rgba(&mut mem).is_none());
     }
 }
-

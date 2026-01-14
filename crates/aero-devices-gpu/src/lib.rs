@@ -23,8 +23,8 @@ pub mod ring;
 pub mod scanout;
 
 pub use backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
-    AeroGpuCommandBackend, ImmediateAeroGpuBackend, NullAeroGpuBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
 pub use executor::{AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 pub use memory::MemoryBus;
@@ -40,3 +40,4 @@ pub use ring::{
     FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
+
