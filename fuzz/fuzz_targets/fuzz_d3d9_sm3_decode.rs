@@ -86,11 +86,12 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deeper decode/IR paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 6;
-    let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2;
-    // For the `mova`/relative-constant, `loop`, and `predicate` modes, force SM3 so address/loop
-    // registers are valid and we reach deeper structured-control-flow IR paths more reliably.
-    let major = if mode == 2 || mode == 4 || mode == 5 {
+    let mode = seed.get(6).copied().unwrap_or(0) % 7;
+    let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2 && mode != 6;
+    // For the `mova`/relative-constant, `loop`, `predicate`, and `dcl` modes, force SM3 so
+    // address/loop/predicate registers are valid and we reach deeper semantic-remapping and
+    // structured-control-flow IR paths more reliably.
+    let major = if mode == 2 || mode == 4 || mode == 5 || mode == 6 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -136,7 +137,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
     let def_dst = dst_token(2, c0, 0);
 
-    let mut tokens: Vec<u32> = Vec::with_capacity(16);
+    let mut tokens: Vec<u32> = Vec::with_capacity(24);
     tokens.push(version_token);
     if include_def {
         // def c#, imm0..imm3
@@ -268,7 +269,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(src1);
 
             // breakc src0, src1 (compare op encoded in opcode_token[16..19])
-            let cmp = (seed.get(15).copied().unwrap_or(0) & 0x7) as u32;
+            let cmp = (seed.get(15).copied().unwrap_or(0) % 6) as u32;
             tokens.push(opcode_token(45, 2, 0) | (cmp << 16));
             tokens.push(src0);
             tokens.push(src1);
@@ -278,10 +279,10 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         }
 
         // Predication + setp to exercise predicate decoding and IR modifiers.
-        _ => {
+        5 => {
             // setp p0.x, src0, src1 (comparison op in opcode_token[16..19])
             let p0 = dst_token(19, 0, 0x1);
-            let cmp = (seed.get(13).copied().unwrap_or(0) & 0x7) as u32;
+            let cmp = (seed.get(13).copied().unwrap_or(0) % 6) as u32;
             tokens.push(opcode_token(78, 3, 0) | (cmp << 16));
             tokens.push(p0);
             tokens.push(src0);
@@ -296,6 +297,43 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(src1);
             tokens.push(pred_token);
         }
+
+        // DCL + vertex input semantic remapping to exercise `apply_vertex_input_remap`.
+        6 => {
+            // Declare a couple of input registers with distinct semantics, then use them in a
+            // simple op. Pick non-zero `v#` indices so remapping is likely to actually change the
+            // register indices in the IR.
+            let v_pos = seed.get(13).copied().unwrap_or(1) % 15 + 1;
+            let mut v_norm = seed.get(14).copied().unwrap_or(2) % 15 + 1;
+            while v_norm == v_pos {
+                v_norm = (v_norm % 15) + 1;
+            }
+            let mut v_tex = seed.get(15).copied().unwrap_or(3) % 15 + 1;
+            while v_tex == v_pos || v_tex == v_norm {
+                v_tex = (v_tex % 15) + 1;
+            }
+            let tex_usage_index = seed.get(16).copied().unwrap_or(0) % 8;
+
+            // dcl_position v#
+            tokens.push(opcode_token(31, 1, 0) | (0u32 << 16));
+            tokens.push(dst_token(1, v_pos, 0));
+            // dcl_normal v#
+            tokens.push(opcode_token(31, 1, 0) | (3u32 << 16));
+            tokens.push(dst_token(1, v_norm, 0));
+            // dcl_texcoord{tex_usage_index} v#
+            tokens.push(opcode_token(31, 1, tex_usage_index) | (5u32 << 16));
+            tokens.push(dst_token(1, v_tex, 0));
+
+            // add dst, v_pos, v_tex
+            let v_pos_src = src_token(1, v_pos, swz, src_mod);
+            let v_tex_src = src_token(1, v_tex, swz, src_mod);
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(v_pos_src);
+            tokens.push(v_tex_src);
+        }
+
+        _ => unreachable!("mode is reduced modulo 7"),
     };
 
     // End token.
