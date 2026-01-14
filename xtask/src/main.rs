@@ -5,13 +5,13 @@ use std::path::Path;
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 mod cmd_bios_rom;
+mod cmd_conformance;
+mod cmd_input;
 mod cmd_snapshot;
 mod cmd_test_all;
-mod cmd_input;
 mod cmd_wasm;
 mod cmd_wasm_check;
 mod cmd_web;
-mod cmd_conformance;
 mod error;
 
 // Fixture "sources" are compiled into the `xtask` binary to keep generation
@@ -233,7 +233,7 @@ fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>> {
 }
 
 fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
-    let path_display = display_rel_path(path);
+    let path_display = paths::display_rel_path(path);
     let existing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(err) if err.kind() == io::ErrorKind::NotFound => None,
@@ -260,17 +260,4 @@ fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn display_rel_path(path: &Path) -> String {
-    // Prefer a repo-relative path in errors for readability. This stays stable
-    // across machines and makes CI output more actionable.
-    match paths::repo_root() {
-        Ok(repo_root) => path
-            .strip_prefix(&repo_root)
-            .unwrap_or(path)
-            .display()
-            .to_string(),
-        Err(_) => path.display().to_string(),
-    }
 }

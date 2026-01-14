@@ -52,7 +52,9 @@ pub(crate) fn validate_bios_rom(rom: &[u8]) -> Result<()> {
     }
 
     if rom.get(RESET_VECTOR_OFF..RESET_VECTOR_OFF + 5) != Some(&[0xEA, 0x00, 0xE0, 0x00, 0xF0]) {
-        let got = rom.get(RESET_VECTOR_OFF..RESET_VECTOR_OFF + 5).unwrap_or(&[]);
+        let got = rom
+            .get(RESET_VECTOR_OFF..RESET_VECTOR_OFF + 5)
+            .unwrap_or(&[]);
         return Err(XtaskError::Message(format!(
             "generated BIOS ROM reset vector is invalid at 0x{RESET_VECTOR_OFF:04x}: expected [ea, 00, e0, 00, f0], got {got:02x?}"
         )));
@@ -90,23 +92,24 @@ fn parse_args(args: Vec<String>) -> Result<Option<bool>> {
 }
 
 fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
+    let path_display = paths::display_rel_path(path);
     let existing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(err) if err.kind() == io::ErrorKind::NotFound => None,
         Err(err) => {
-            return Err(XtaskError::Message(format!("read {path:?}: {err}")));
+            return Err(XtaskError::Message(format!("read {path_display}: {err}")));
         }
     };
 
     if check {
         let Some(existing) = existing else {
             return Err(XtaskError::Message(format!(
-                "{path:?} is missing (run `cargo xtask bios-rom`)"
+                "{path_display} is missing (run `cargo xtask bios-rom`)"
             )));
         };
         if existing != expected {
             return Err(XtaskError::Message(format!(
-                "{path:?} is out of date (run `cargo xtask bios-rom`)"
+                "{path_display} is out of date (run `cargo xtask bios-rom`)"
             )));
         }
         return Ok(());
@@ -114,11 +117,12 @@ fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
 
     if existing.as_deref() != Some(expected) {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| XtaskError::Message(format!("create {parent:?}: {e}")))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                XtaskError::Message(format!("create {}: {e}", paths::display_rel_path(parent)))
+            })?;
         }
         fs::write(path, expected)
-            .map_err(|e| XtaskError::Message(format!("write {path:?}: {e}")))?;
+            .map_err(|e| XtaskError::Message(format!("write {path_display}: {e}")))?;
     }
 
     Ok(())

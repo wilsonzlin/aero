@@ -13,6 +13,19 @@ pub fn repo_root() -> Result<PathBuf> {
         .ok_or_else(|| XtaskError::Message("failed to locate repo root".to_string()))
 }
 
+pub fn display_rel_path(path: &Path) -> String {
+    // Prefer repo-relative paths in errors for readability and stable CI output.
+    // Fall back to the provided path as-is if the repo root can't be resolved.
+    match repo_root() {
+        Ok(repo_root) => path
+            .strip_prefix(&repo_root)
+            .unwrap_or(path)
+            .display()
+            .to_string(),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<PathBuf> {
     // Prefer sharing detection logic with other tooling/CI by using the Node-based resolver when
     // available.
