@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.9"
+         version = "2.5.10"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -2332,6 +2332,12 @@ try {
                 $line = $pkg.name + ": " + $inf.inf_rel_path
                 if ($inf.provider) { $line += ", Provider=" + $inf.provider }
                 if ($inf.driver_ver_raw) { $line += ", DriverVer=" + $inf.driver_ver_raw }
+                if ($inf.inf_encoding) {
+                    $enc = ("" + $inf.inf_encoding).Trim().ToLower()
+                    if ($enc.Length -gt 0 -and ($enc -ne "utf-8") -and ($enc -ne "utf-8-bom")) {
+                        $line += ", Encoding=" + $inf.inf_encoding
+                    }
+                }
                 if ($inf.hwid_prefixes -and $inf.hwid_prefixes.Count -gt 0) {
                     $hwids = $inf.hwid_prefixes
                     if ($hwids.Count -le 6) {
