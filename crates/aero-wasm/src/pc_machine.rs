@@ -7,7 +7,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
 use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer};
 
 use crate::RunExit;
@@ -143,67 +143,85 @@ impl PcMachine {
         let Some(stats) = self.inner.network_backend_l2_ring_stats() else {
             return JsValue::NULL;
         };
+        // Destructure to keep this JS surface in lockstep with `L2TunnelRingBackendStats`.
+        //
+        // If the stats struct gains new fields, this becomes a compile error, forcing us to update
+        // the exported JS object and its tests.
+        let aero_net_backend::L2TunnelRingBackendStats {
+            tx_pushed_frames,
+            tx_pushed_bytes,
+            tx_dropped_oversize,
+            tx_dropped_oversize_bytes,
+            tx_dropped_full,
+            tx_dropped_full_bytes,
+            rx_popped_frames,
+            rx_popped_bytes,
+            rx_dropped_oversize,
+            rx_dropped_oversize_bytes,
+            rx_corrupt,
+            rx_broken,
+        } = stats;
 
         let obj = Object::new();
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_pushed_frames"),
-            &BigInt::from(stats.tx_pushed_frames).into(),
+            &BigInt::from(tx_pushed_frames).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_pushed_bytes"),
-            &BigInt::from(stats.tx_pushed_bytes).into(),
+            &BigInt::from(tx_pushed_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_dropped_oversize"),
-            &BigInt::from(stats.tx_dropped_oversize).into(),
+            &BigInt::from(tx_dropped_oversize).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_dropped_oversize_bytes"),
-            &BigInt::from(stats.tx_dropped_oversize_bytes).into(),
+            &BigInt::from(tx_dropped_oversize_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_dropped_full"),
-            &BigInt::from(stats.tx_dropped_full).into(),
+            &BigInt::from(tx_dropped_full).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("tx_dropped_full_bytes"),
-            &BigInt::from(stats.tx_dropped_full_bytes).into(),
+            &BigInt::from(tx_dropped_full_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_popped_frames"),
-            &BigInt::from(stats.rx_popped_frames).into(),
+            &BigInt::from(rx_popped_frames).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_popped_bytes"),
-            &BigInt::from(stats.rx_popped_bytes).into(),
+            &BigInt::from(rx_popped_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_dropped_oversize"),
-            &BigInt::from(stats.rx_dropped_oversize).into(),
+            &BigInt::from(rx_dropped_oversize).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_dropped_oversize_bytes"),
-            &BigInt::from(stats.rx_dropped_oversize_bytes).into(),
+            &BigInt::from(rx_dropped_oversize_bytes).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_corrupt"),
-            &BigInt::from(stats.rx_corrupt).into(),
+            &BigInt::from(rx_corrupt).into(),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("rx_broken"),
-            &JsValue::from_bool(stats.rx_broken),
+            &JsValue::from_bool(rx_broken),
         );
 
         obj.into()
