@@ -7,7 +7,7 @@ const COUNTER_ADDR: u64 = 0x2000;
 const TARGET_TICKS: u16 = 5;
 const SNAPSHOT_TICKS: u16 = 2;
 
-fn build_pit_irq0_counter_boot_sector() -> [u8; 512] {
+fn build_pit_irq0_counter_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     let mut code: Vec<u8> = Vec::new();
 
     // -----------------------------------------------------------------------------------------
@@ -160,7 +160,7 @@ fn build_pit_irq0_counter_boot_sector() -> [u8; 512] {
         code.len()
     );
 
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[..code.len()].copy_from_slice(&code);
     sector[510] = 0x55;
     sector[511] = 0xAA;

@@ -12,8 +12,8 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest never reached HLT");
 }
 
-fn build_cursor_boot_sector(row: u8, col: u8, start: u8, end: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_cursor_boot_sector(row: u8, col: u8, start: u8, end: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position

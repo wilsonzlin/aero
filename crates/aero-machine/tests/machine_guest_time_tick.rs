@@ -1,8 +1,8 @@
 use aero_devices::clock::Clock as _;
 use aero_machine::{Machine, MachineConfig, PcMachine, RunExit, DEFAULT_GUEST_CPU_HZ};
 
-fn busy_loop_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn busy_loop_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     // cli
     sector[0] = 0xFA;
     // jmp short $-2 (infinite loop)

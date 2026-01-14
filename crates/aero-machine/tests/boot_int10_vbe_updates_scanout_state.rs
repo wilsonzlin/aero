@@ -10,8 +10,8 @@ use aero_shared::scanout_state::{
 };
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_set_mode_boot_sector_for_mode(mode: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_set_mode_boot_sector_for_mode(mode: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
@@ -36,12 +36,12 @@ fn build_int10_vbe_set_mode_boot_sector_for_mode(mode: u16) -> [u8; 512] {
     sector
 }
 
-fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
+fn build_int10_vbe_set_mode_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     build_int10_vbe_set_mode_boot_sector_for_mode(0x118)
 }
 
-fn build_int10_vbe_set_mode_then_text_mode_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_set_mode_then_text_mode_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
@@ -72,8 +72,8 @@ fn build_int10_vbe_set_mode_then_text_mode_boot_sector() -> [u8; 512] {
     sector
 }
 
-fn build_int10_vbe_set_mode_and_display_start_boot_sector(x_off: u16, y_off: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_set_mode_and_display_start_boot_sector(x_off: u16, y_off: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
@@ -122,8 +122,8 @@ fn build_int10_vbe_set_mode_stride_bytes_and_display_start_boot_sector(
     bytes_per_scan_line: u16,
     x_off: u16,
     y_off: u16,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)

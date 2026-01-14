@@ -3,8 +3,8 @@ use firmware::bda::{
     BDA_ACTIVE_PAGE_ADDR, BDA_CURSOR_POS_PAGE0_ADDR, BDA_PAGE_SIZE_ADDR, BDA_SCREEN_COLS_ADDR,
 };
 
-fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
@@ -30,8 +30,8 @@ fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
     sector
 }
 
-fn build_int10_set_cursor_pos_on_page_boot_sector(page: u8, row: u8, col: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_set_cursor_pos_on_page_boot_sector(page: u8, row: u8, col: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
@@ -57,8 +57,8 @@ fn build_int10_set_cursor_pos_on_page_boot_sector(page: u8, row: u8, col: u8) ->
     sector
 }
 
-fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x01  ; INT 10h AH=01h Set Cursor Shape
@@ -81,8 +81,8 @@ fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
     sector
 }
 
-fn build_int10_set_active_page_boot_sector(page: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_set_active_page_boot_sector(page: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x05  ; INT 10h AH=05h Select Active Display Page
@@ -107,8 +107,8 @@ fn build_int10_set_cursor_pos_on_page_then_select_active_page_boot_sector(
     cursor_row: u8,
     cursor_col: u8,
     active_page: u8,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
@@ -145,8 +145,8 @@ fn build_int10_set_cursor_pos_on_page_then_select_active_page_boot_sector(
     sector
 }
 
-fn build_int10_teletype_boot_sector(ch: u8, attr: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_teletype_boot_sector(ch: u8, attr: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ah, 0x0E  ; INT 10h AH=0Eh Teletype output
@@ -172,8 +172,8 @@ fn build_int10_teletype_boot_sector(ch: u8, attr: u8) -> [u8; 512] {
     sector
 }
 
-fn build_int10_write_string_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_write_string_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Place the string near the end of the boot sector so it's well away from the code stream.
@@ -223,8 +223,8 @@ fn build_set_start_address_and_set_cursor_pos_boot_sector(
     start_addr: u16,
     row: u8,
     col: u8,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     let start_hi = (start_addr >> 8) as u8;
@@ -292,8 +292,8 @@ fn build_set_start_address_and_set_cursor_pos_boot_sector(
     sector
 }
 
-fn build_set_start_address_and_set_mode_03h_boot_sector(start_addr: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_set_start_address_and_set_mode_03h_boot_sector(start_addr: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     let start_hi = (start_addr >> 8) as u8;

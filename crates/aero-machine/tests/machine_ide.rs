@@ -35,7 +35,7 @@ fn pci_cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
 #[test]
 fn machine_piix3_ide_pio_read_raises_irq14() {
     // Use a deterministic HLT boot sector so `run_slice` is safe to call for device polling.
-    let mut boot = [0u8; 512];
+    let mut boot = [0u8; aero_storage::SECTOR_SIZE];
     boot[0..3].copy_from_slice(&[0xF4, 0xEB, 0xFD]); // hlt; jmp $-3
     boot[510] = 0x55;
     boot[511] = 0xAA;
@@ -106,7 +106,7 @@ fn machine_piix3_ide_pio_read_raises_irq14() {
 #[test]
 fn machine_piix3_ide_secondary_identify_aborts_and_raises_irq15() {
     // Deterministic `hlt; jmp` boot sector so `run_slice` is safe to use as a polling mechanism.
-    let mut boot = [0u8; 512];
+    let mut boot = [0u8; aero_storage::SECTOR_SIZE];
     boot[0..3].copy_from_slice(&[0xF4, 0xEB, 0xFD]); // hlt; jmp $-3
     boot[510] = 0x55;
     boot[511] = 0xAA;

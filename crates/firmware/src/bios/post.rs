@@ -5,7 +5,7 @@ use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 use super::{
     eltorito, ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus,
     BlockDevice, CdromDevice, DiskError, ElToritoBootInfo, ElToritoBootMediaType, BIOS_ALIAS_BASE,
-    BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
+    BIOS_BASE, BIOS_SECTOR_SIZE, BIOS_SEGMENT, CDROM_SECTOR_SIZE, EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -230,7 +230,7 @@ impl Bios {
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
     ) -> Result<(u16, u16), &'static str> {
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; BIOS_SECTOR_SIZE];
         disk.read_sector(0, &mut sector)
             .map_err(|_| "Disk read error")?;
 
@@ -255,10 +255,10 @@ impl Bios {
         let count = u64::from(entry.sector_count);
         let dst = (u64::from(entry.load_segment)) << 4;
         for i in 0..count {
-            let mut buf = [0u8; 512];
+            let mut buf = [0u8; BIOS_SECTOR_SIZE];
             disk.read_sector(start_lba + i, &mut buf)
                 .map_err(|_| "boot image read error")?;
-            bus.write_physical(dst + i * 512, &buf);
+            bus.write_physical(dst + i * BIOS_SECTOR_SIZE as u64, &buf);
         }
 
         // Cache boot metadata for INT 13h AH=4Bh ("El Torito disk emulation services").
@@ -318,10 +318,10 @@ impl Bios {
 
         let dst = (u64::from(entry.load_segment)) << 4;
         for i in 0..count {
-            let mut buf = [0u8; 512];
+            let mut buf = [0u8; BIOS_SECTOR_SIZE];
             disk.read_sector(start_lba + i, &mut buf)
                 .map_err(|_| "Disk read error")?;
-            bus.write_physical(dst + i * 512, &buf);
+            bus.write_physical(dst + i * BIOS_SECTOR_SIZE as u64, &buf);
         }
 
         // Register setup per BIOS conventions.
@@ -402,7 +402,7 @@ impl Bios {
 struct CdromAsBlockDevice<'a> {
     cdrom: &'a mut dyn CdromDevice,
     cached_lba: Option<u64>,
-    cached: [u8; 2048],
+    cached: [u8; CDROM_SECTOR_SIZE],
 }
 
 impl<'a> CdromAsBlockDevice<'a> {
@@ -410,13 +410,13 @@ impl<'a> CdromAsBlockDevice<'a> {
         Self {
             cdrom,
             cached_lba: None,
-            cached: [0u8; 2048],
+            cached: [0u8; CDROM_SECTOR_SIZE],
         }
     }
 }
 
 impl BlockDevice for CdromAsBlockDevice<'_> {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; BIOS_SECTOR_SIZE]) -> Result<(), DiskError> {
         let iso_lba = lba / 4;
         let sub = (lba % 4) as usize;
         if iso_lba >= self.cdrom.size_in_sectors() {
@@ -426,8 +426,8 @@ impl BlockDevice for CdromAsBlockDevice<'_> {
             self.cdrom.read_sector(iso_lba, &mut self.cached)?;
             self.cached_lba = Some(iso_lba);
         }
-        let start = sub * 512;
-        buf.copy_from_slice(&self.cached[start..start + 512]);
+        let start = sub * BIOS_SECTOR_SIZE;
+        buf.copy_from_slice(&self.cached[start..start + BIOS_SECTOR_SIZE]);
         Ok(())
     }
 
@@ -448,7 +448,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
 
         // Invalid boot signature should trigger a BIOS panic.
-        let bad_sector = [0u8; 512];
+        let bad_sector = [0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::from_boot_sector(bad_sector);
 
         bios.post(&mut cpu, &mut mem, &mut disk, None);

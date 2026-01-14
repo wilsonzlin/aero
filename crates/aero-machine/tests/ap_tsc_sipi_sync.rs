@@ -1,11 +1,11 @@
 use aero_machine::{Machine, MachineConfig};
 
-fn boot_sector_spin_forever() -> [u8; 512] {
+fn boot_sector_spin_forever() -> [u8; aero_storage::SECTOR_SIZE] {
     // Minimal MBR/boot sector: `cli; jmp $`.
     //
     // The BIOS loads the boot sector to 0x7C00 and transfers control to it. Running slices against
     // this loop deterministically advances the BSP TSC.
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[0] = 0xFA; // cli
     sector[1] = 0xEB; // jmp short -2
     sector[2] = 0xFE;

@@ -21,8 +21,8 @@ fn run_until_halt(m: &mut Machine) {
     panic!("machine did not halt within budget");
 }
 
-fn build_vbe_boot_sector(mode: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_boot_sector(mode: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -63,8 +63,8 @@ fn build_vbe_boot_sector(mode: u16) -> [u8; 512] {
     sector
 }
 
-fn build_set_cursor_boot_sector(row: u8, col: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_set_cursor_boot_sector(row: u8, col: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor bx, bx (BH=page 0)
@@ -87,8 +87,8 @@ fn build_set_cursor_boot_sector(row: u8, col: u8) -> [u8; 512] {
     sector
 }
 
-fn build_vbe_palette_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_palette_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -181,8 +181,8 @@ fn build_vbe_palette_boot_sector() -> [u8; 512] {
     sector
 }
 
-fn build_vbe_palette_boot_sector_6bit_accepts_8bit_input() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_palette_boot_sector_6bit_accepts_8bit_input() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -282,8 +282,8 @@ fn build_vbe_palette_boot_sector_6bit_accepts_8bit_input() -> [u8; 512] {
     sector
 }
 
-fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Ensure DS=0 so absolute memory operands hit physical 0x0000:xxxx.

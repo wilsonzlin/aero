@@ -1,6 +1,6 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
 
-fn build_int16_read_key_boot_sector(store_addr: u16) -> [u8; 512] {
+fn build_int16_read_key_boot_sector(store_addr: u16) -> [u8; aero_storage::SECTOR_SIZE] {
     // Boot sector program:
     //   cli
     //   xor ax, ax
@@ -31,7 +31,7 @@ fn build_int16_read_key_boot_sector(store_addr: u16) -> [u8; 512] {
         code.len()
     );
 
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[..code.len()].copy_from_slice(&code);
     sector[510] = 0x55;
     sector[511] = 0xAA;

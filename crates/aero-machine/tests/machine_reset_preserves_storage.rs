@@ -242,7 +242,10 @@ fn machine_reset_preserves_ahci_and_ide_media() {
     // Before reset: both devices should be readable.
     let ahci_before = ahci_read_sector0(&mut m);
     assert_eq!(&ahci_before[0..4], b"BOOT");
-    assert_eq!(&ahci_before[510..512], &[0x55, 0xAA]);
+    assert_eq!(
+        &ahci_before[SECTOR_SIZE - 2..SECTOR_SIZE],
+        &[0x55, 0xAA]
+    );
 
     let atapi_before = ide_atapi_read_lba1(&mut m);
     assert_eq!(&atapi_before[0..5], b"WORLD");
@@ -253,7 +256,7 @@ fn machine_reset_preserves_ahci_and_ide_media() {
     // After reset: devices should still be readable without reattaching anything.
     let ahci_after = ahci_read_sector0(&mut m);
     assert_eq!(&ahci_after[0..4], b"BOOT");
-    assert_eq!(&ahci_after[510..512], &[0x55, 0xAA]);
+    assert_eq!(&ahci_after[SECTOR_SIZE - 2..SECTOR_SIZE], &[0x55, 0xAA]);
 
     let atapi_after = ide_atapi_read_lba1(&mut m);
     assert_eq!(&atapi_after[0..5], b"WORLD");

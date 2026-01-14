@@ -3,6 +3,7 @@ use std::sync::Arc;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState};
 use firmware::bios::{
     A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryCdrom, InMemoryDisk, BDA_BASE,
+    BIOS_SECTOR_SIZE,
 };
 use memory::{DenseMemory, MapError, MemoryBus, PhysicalMemoryBus};
 
@@ -309,7 +310,7 @@ fn test_iso_builder_produces_a_minimal_el_torito_layout() {
     // Boot image should contain the marker + tiny program and an MBR-style signature (for sanity).
     assert_eq!(&iso.boot_image[..8], b"AEROISO!");
     assert_eq!(&iso.boot_image[0x10..0x13], &[0xF4, 0xEB, 0xFE]);
-    assert_eq!(&iso.boot_image[510..512], &[0x55, 0xAA]);
+    assert_eq!(&iso.boot_image[510..BIOS_SECTOR_SIZE], &[0x55, 0xAA]);
 }
 
 #[test]
@@ -354,7 +355,7 @@ fn bios_post_cd_boot_with_cdrom_backend_still_advertises_hdd0_in_bda() {
     let mut cdrom = InMemoryCdrom::new(iso.bytes.clone());
 
     // Provide an HDD alongside the CD-ROM, but boot explicitly from CD (`DL=0xE0`).
-    let mut hdd_sector = [0u8; 512];
+    let mut hdd_sector = [0u8; BIOS_SECTOR_SIZE];
     hdd_sector[510] = 0x55;
     hdd_sector[511] = 0xAA;
     let mut hdd = InMemoryDisk::from_boot_sector(hdd_sector);
@@ -387,7 +388,7 @@ fn bios_post_cd_first_policy_boots_cd_but_restores_hdd_boot_drive() {
     let mut cdrom = InMemoryCdrom::new(iso.bytes.clone());
 
     // Provide a valid HDD MBR boot sector as the fallback (not used in this test because CD boot succeeds).
-    let mut hdd_sector = [0u8; 512];
+    let mut hdd_sector = [0u8; BIOS_SECTOR_SIZE];
     hdd_sector[510] = 0x55;
     hdd_sector[511] = 0xAA;
     let mut hdd = InMemoryDisk::from_boot_sector(hdd_sector);
@@ -427,7 +428,7 @@ fn bios_post_cd_first_policy_falls_back_to_hdd_when_cd_is_unbootable() {
     let mut cdrom = InMemoryCdrom::new(vec![0u8; 32 * ISO_SECTOR_SIZE]);
 
     // Valid MBR boot sector.
-    let mut hdd_sector = [0u8; 512];
+    let mut hdd_sector = [0u8; BIOS_SECTOR_SIZE];
     hdd_sector[0..8].copy_from_slice(b"AEROHDD!");
     hdd_sector[510] = 0x55;
     hdd_sector[511] = 0xAA;
@@ -453,7 +454,7 @@ fn bios_post_cd_first_policy_falls_back_to_hdd_when_cd_is_unbootable() {
     assert!(!bios.booted_from_cdrom());
 
     // Boot sector should be loaded into 0000:7C00.
-    let loaded = bus.read_bytes(0x7C00, 512);
+    let loaded = bus.read_bytes(0x7C00, BIOS_SECTOR_SIZE);
     assert_eq!(loaded.as_slice(), &hdd_sector[..]);
 
     // Configured fallback boot drive is still intact.

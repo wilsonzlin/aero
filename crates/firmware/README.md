@@ -89,10 +89,10 @@ struct IsoAsBlockDevice<I> {
 }
 
 impl<I: Iso2048> firmware::bios::BlockDevice for IsoAsBlockDevice<I> {
-    fn read_sector(&mut self, lba512: u64, out: &mut [u8; 512]) -> Result<(), firmware::bios::DiskError> {
+    fn read_sector(&mut self, lba512: u64, out: &mut [u8; firmware::bios::BIOS_SECTOR_SIZE]) -> Result<(), firmware::bios::DiskError> {
         let lba512 = u32::try_from(lba512).map_err(|_| firmware::bios::DiskError::OutOfRange)?;
         let lba2048 = lba512 / 4;
-        let sub = (lba512 % 4) as usize * 512;
+        let sub = (lba512 % 4) as usize * firmware::bios::BIOS_SECTOR_SIZE;
         if lba2048 >= self.iso.block_count() {
             return Err(firmware::bios::DiskError::OutOfRange);
         }
@@ -100,7 +100,7 @@ impl<I: Iso2048> firmware::bios::BlockDevice for IsoAsBlockDevice<I> {
         self.iso
             .read_block(lba2048, &mut block)
             .map_err(|_| firmware::bios::DiskError::OutOfRange)?;
-        out.copy_from_slice(&block[sub..sub + 512]);
+        out.copy_from_slice(&block[sub..sub + firmware::bios::BIOS_SECTOR_SIZE]);
         Ok(())
     }
 

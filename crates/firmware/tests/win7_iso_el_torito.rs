@@ -6,7 +6,7 @@ use std::sync::Arc;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState};
 use firmware::bios::{
     A20Gate, Bios, BiosConfig, CdromDevice, DiskError, FirmwareMemory, InMemoryDisk,
-    CDROM_SECTOR_SIZE,
+    BIOS_SECTOR_SIZE, CDROM_SECTOR_SIZE,
 };
 use memory::{DenseMemory, MapError, MemoryBus, PhysicalMemoryBus};
 
@@ -200,7 +200,7 @@ fn parse_el_torito(cdrom: &mut dyn CdromDevice) -> ElToritoInfo {
     }
     let load_sectors_512 = u16::from_le_bytes([entry[6], entry[7]]) as usize;
     assert!(load_sectors_512 > 0, "invalid El Torito load size");
-    let load_bytes = load_sectors_512 * 512;
+    let load_bytes = load_sectors_512 * BIOS_SECTOR_SIZE;
     let boot_image_lba = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
 
     ElToritoInfo {
@@ -232,7 +232,7 @@ fn win7_iso_el_torito_post_and_int13_cd_reads() {
     let boot = parse_el_torito(&mut cdrom);
 
     // Dummy HDD present as 0x80, but boot from CD (0xE0).
-    let mut hdd = InMemoryDisk::from_boot_sector([0u8; 512]);
+    let mut hdd = InMemoryDisk::from_boot_sector([0u8; BIOS_SECTOR_SIZE]);
 
     let mut bios = Bios::new(BiosConfig {
         boot_drive: 0xE0,

@@ -5,8 +5,8 @@ use firmware::smbios::{
 };
 use pretty_assertions::assert_eq;
 
-fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_serial_boot_sector(message: &[u8]) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov dx, 0x3f8
@@ -41,8 +41,8 @@ fn run_until_halt(m: &mut Machine) {
     }
 }
 
-fn boot_sector(pattern: u8) -> [u8; 512] {
-    let mut sector = [pattern; 512];
+fn boot_sector(pattern: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [pattern; aero_storage::SECTOR_SIZE];
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector
@@ -85,7 +85,7 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     m.reset();
 
     // BIOS must have loaded the boot sector.
-    let loaded = m.read_physical_bytes(0x7C00, 512);
+    let loaded = m.read_physical_bytes(0x7C00, aero_storage::SECTOR_SIZE);
     assert_eq!(loaded[..510], vec![0xAA; 510]);
     assert_eq!(loaded[510], 0x55);
     assert_eq!(loaded[511], 0xAA);

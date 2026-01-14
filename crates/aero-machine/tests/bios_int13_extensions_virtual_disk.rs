@@ -21,8 +21,8 @@ fn rel8(from_next: u16, to: u16) -> u8 {
     (diff as i8) as u8
 }
 
-fn build_int13_ext_read_boot_sector(success: u8, fail: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int13_ext_read_boot_sector(success: u8, fail: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -153,7 +153,7 @@ fn boots_and_reads_lba_via_int13_extensions_from_virtual_disk() {
     // - LBA0: boot sector that reads LBA1 via INT 13h extensions (AH=42h)
     // - LBA1: marker bytes to validate the read succeeded
     let boot = build_int13_ext_read_boot_sector(b'S', b'F');
-    let mut marker = [0u8; 512];
+    let mut marker = [0u8; aero_storage::SECTOR_SIZE];
     marker[0..4].copy_from_slice(b"MARK");
 
     let mut disk = RawDisk::create(MemBackend::new(), (2 * SECTOR_SIZE) as u64).unwrap();

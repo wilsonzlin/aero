@@ -267,10 +267,10 @@ fn win7_iso_el_torito_boot_smoke() {
     let expected_boot_bytes = {
         let mut file = File::open(&iso_path).expect("failed to open ISO for boot image read");
         let want_len = usize::from(boot_info.boot_image_sector_count_512)
-            .saturating_mul(512)
+            .saturating_mul(SECTOR_SIZE)
             // Clamp to a small-ish window so a corrupt catalog cannot cause OOM. Windows install
             // media uses a small no-emulation boot image (typically 4 sectors / 2048 bytes).
-            .min(64 * 512);
+            .min(64 * SECTOR_SIZE);
         let mut buf = vec![0u8; want_len];
         read_exact_at(
             &mut file,

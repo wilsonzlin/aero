@@ -368,7 +368,7 @@ fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
 
     // Read back via the BIOS `BlockDevice` view of the disk.
     let mut bios_disk = m.shared_disk();
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     bios_disk.read_sector(1, &mut sector).unwrap();
     assert_eq!(&sector[..], &pattern[..]);
 }

@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_storage::SECTOR_SIZE;
 
 fn run_until_halt(m: &mut Machine) {
     for _ in 0..100 {
@@ -14,7 +15,7 @@ fn run_until_halt(m: &mut Machine) {
 #[test]
 fn bios_panic_renders_to_vga_text_memory_on_invalid_boot_signature() {
     // A single-sector "disk" with an invalid 0x55AA signature at the end of the boot sector.
-    let disk = vec![0u8; 512];
+    let disk = vec![0u8; SECTOR_SIZE];
 
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,

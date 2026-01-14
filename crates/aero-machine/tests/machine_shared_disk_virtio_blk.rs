@@ -131,7 +131,7 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     let used_addr = alloc(4 + u64::from(queue_size) * 8, 4);
 
     let req_hdr = alloc(16, 16);
-    let data_buf = alloc(512, 512);
+    let data_buf = alloc(SECTOR_SIZE as u64, SECTOR_SIZE as u64);
     let status_buf = alloc(1, 1);
 
     // Modern virtio-pci common config lives at BAR0 + 0x0000.
@@ -188,7 +188,7 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
         desc_addr,
         1,
         data_buf,
-        512,
+        SECTOR_SIZE as u32,
         VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
         2,
     );

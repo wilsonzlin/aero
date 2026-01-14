@@ -1,8 +1,8 @@
 use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
-fn build_mode13h_no_clear_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_mode13h_no_clear_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Write a known palette index into the VGA graphics window *before* setting mode 13h.

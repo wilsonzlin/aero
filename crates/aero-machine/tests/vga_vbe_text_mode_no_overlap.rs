@@ -12,8 +12,8 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest did not halt within budget");
 }
 
-fn build_boot_sector_vbe_then_return_to_text_no_clear() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_boot_sector_vbe_then_return_to_text_no_clear() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Write 'A' with attribute 0x1F (white on blue) to the top-left text cell (B800:0000).

@@ -117,7 +117,7 @@ fn build_minimal_eltorito_iso_int13_hdd_present(success: u8, fail: u8) -> Vec<u8
 
     // Boot image at LBA 21 (one 2048-byte sector).
     {
-        let mut boot_sector = [0u8; 512];
+        let mut boot_sector = [0u8; aero_storage::SECTOR_SIZE];
         let mut i = 0usize;
 
         // xor ax, ax
@@ -181,7 +181,7 @@ fn build_minimal_eltorito_iso_int13_hdd_present(success: u8, fail: u8) -> Vec<u8
         boot_sector[510] = 0x55;
         boot_sector[511] = 0xAA;
         let base = lba_offset(boot_image_lba);
-        iso[base..base + 512].copy_from_slice(&boot_sector);
+        iso[base..base + aero_storage::SECTOR_SIZE].copy_from_slice(&boot_sector);
     }
 
     iso

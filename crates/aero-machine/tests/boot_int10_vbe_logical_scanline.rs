@@ -1,8 +1,8 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Real-mode setup: DS=0 so we can address our GDT/GDTR with absolute disp16 operands.

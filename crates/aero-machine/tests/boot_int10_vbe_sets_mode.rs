@@ -2,8 +2,8 @@ use aero_cpu_core::state::gpr;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -68,7 +68,7 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest did not reach HLT");
 }
 
-fn new_deterministic_test_machine(boot_sector: [u8; 512], enable_aerogpu: bool) -> Machine {
+fn new_deterministic_test_machine(boot_sector: [u8; aero_storage::SECTOR_SIZE], enable_aerogpu: bool) -> Machine {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: !enable_aerogpu,

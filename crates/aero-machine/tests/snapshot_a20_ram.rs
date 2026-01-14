@@ -13,7 +13,7 @@ fn run_until_halt(m: &mut Machine) {
     panic!("did not halt");
 }
 
-fn build_a20_snapshot_boot_sector() -> [u8; 512] {
+fn build_a20_snapshot_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Real-mode boot sector that:
     // 1) Enables A20 via port 0x92
     // 2) Writes distinct bytes to physical 0x000000 and 0x100000
@@ -24,7 +24,7 @@ fn build_a20_snapshot_boot_sector() -> [u8; 512] {
     //
     // This is a regression test for snapshot RAM serialization: it must bypass
     // A20-masked physical reads/writes so underlying RAM contents are preserved.
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov dx, 0x0092

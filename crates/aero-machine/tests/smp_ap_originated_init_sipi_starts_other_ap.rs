@@ -10,12 +10,12 @@ const AP2_PADDR: u64 = (AP2_SIPI_VECTOR as u64) << 12;
 const FLAG_ADDR: u64 = 0x0500;
 const FLAG_VALUE: u8 = 0xA5;
 
-fn boot_sector_spin_forever() -> [u8; 512] {
+fn boot_sector_spin_forever() -> [u8; aero_storage::SECTOR_SIZE] {
     // Minimal MBR/boot sector: `cli; jmp $`.
     //
     // The BIOS loads the boot sector to 0x7C00 and transfers control to it. Running slices against
     // this loop keeps the BSP deterministic while allowing the machine scheduler to run AP vCPUs.
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[0] = 0xFA; // cli
     sector[1] = 0xEB; // jmp short -2
     sector[2] = 0xFE;

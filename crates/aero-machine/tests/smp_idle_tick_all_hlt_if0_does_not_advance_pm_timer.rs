@@ -16,7 +16,7 @@ use aero_cpu_core::state::RFLAGS_IF;
 use aero_devices::acpi_pm::DEFAULT_PM_TMR_BLK;
 use aero_machine::{Machine, MachineConfig, RunExit};
 
-fn build_bsp_cli_hlt_boot_sector() -> [u8; 512] {
+fn build_bsp_cli_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Real-mode boot sector loaded at 0x7C00 by the BIOS.
     //
     // Program:
@@ -27,7 +27,7 @@ fn build_bsp_cli_hlt_boot_sector() -> [u8; 512] {
     //   mov sp, 0x8000
     //   hlt
     //   jmp $-3
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     sector[i] = 0xFA; // cli

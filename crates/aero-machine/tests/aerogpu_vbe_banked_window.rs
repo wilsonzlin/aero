@@ -3,8 +3,8 @@ use pretty_assertions::assert_eq;
 
 const BANK_WINDOW_SIZE: u64 = 0x10000;
 
-fn build_int10_vbe_banked_window_boot_sector(bank: u16, value: u8) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_banked_window_boot_sector(bank: u16, value: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // int 10h AX=4F02: Set VBE mode 0x118 (1024x768x32bpp) with LFB requested.

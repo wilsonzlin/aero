@@ -196,6 +196,9 @@ pub(super) struct ElToritoBootInfo {
 /// ISO9660 / ATAPI CD-ROM sector size used by El Torito and INT 13h CD extensions.
 pub const CDROM_SECTOR_SIZE: usize = 2048;
 
+/// BIOS disk sector size used by the legacy INT 13h block-device path.
+pub const BIOS_SECTOR_SIZE: usize = 512;
+
 /// Minimal 512-byte-sector read interface used by the legacy BIOS INT 13h implementation.
 ///
 /// # Canonical trait note
@@ -205,7 +208,7 @@ pub const CDROM_SECTOR_SIZE: usize = 2048;
 /// traits (`aero_storage::StorageBackend` / `aero_storage::VirtualDisk`) and adapt as needed. See
 /// `docs/20-storage-trait-consolidation.md`.
 pub trait BlockDevice {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError>;
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; BIOS_SECTOR_SIZE]) -> Result<(), DiskError>;
 
     fn size_in_sectors(&self) -> u64;
 }
@@ -237,14 +240,15 @@ pub struct InMemoryDisk {
 
 impl InMemoryDisk {
     pub fn new(mut data: Vec<u8>) -> Self {
-        if !data.len().is_multiple_of(512) {
-            let new_len = (data.len() + 511) & !511;
+        if !data.len().is_multiple_of(BIOS_SECTOR_SIZE) {
+            let new_len =
+                (data.len() + (BIOS_SECTOR_SIZE - 1)) & !(BIOS_SECTOR_SIZE - 1);
             data.resize(new_len, 0);
         }
         Self { data }
     }
 
-    pub fn from_boot_sector(sector: [u8; 512]) -> Self {
+    pub fn from_boot_sector(sector: [u8; BIOS_SECTOR_SIZE]) -> Self {
         Self {
             data: sector.to_vec(),
         }
@@ -252,9 +256,13 @@ impl InMemoryDisk {
 }
 
 impl BlockDevice for InMemoryDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
-        let start = lba.checked_mul(512).ok_or(DiskError::OutOfRange)? as usize;
-        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; BIOS_SECTOR_SIZE]) -> Result<(), DiskError> {
+        let start = lba
+            .checked_mul(BIOS_SECTOR_SIZE as u64)
+            .ok_or(DiskError::OutOfRange)? as usize;
+        let end = start
+            .checked_add(BIOS_SECTOR_SIZE)
+            .ok_or(DiskError::OutOfRange)?;
         if end > self.data.len() {
             return Err(DiskError::OutOfRange);
         }
@@ -263,7 +271,7 @@ impl BlockDevice for InMemoryDisk {
     }
 
     fn size_in_sectors(&self) -> u64 {
-        (self.data.len() / 512) as u64
+        (self.data.len() / BIOS_SECTOR_SIZE) as u64
     }
 }
 
@@ -941,8 +949,8 @@ mod tests {
     use aero_cpu_core::state::{gpr, RFLAGS_IF};
     use font8x8::{UnicodeFonts, BASIC_FONTS};
 
-    fn boot_sector(pattern: u8) -> [u8; 512] {
-        let mut sector = [pattern; 512];
+    fn boot_sector(pattern: u8) -> [u8; BIOS_SECTOR_SIZE] {
+        let mut sector = [pattern; BIOS_SECTOR_SIZE];
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector
@@ -1099,7 +1107,7 @@ mod tests {
 
         bios.post(&mut cpu, &mut mem, &mut disk, None);
 
-        let loaded = mem.read_bytes(0x7C00, 512);
+        let loaded = mem.read_bytes(0x7C00, BIOS_SECTOR_SIZE);
         assert_eq!(loaded[..510], vec![0xAA; 510]);
         assert_eq!(loaded[510], 0x55);
         assert_eq!(loaded[511], 0xAA);

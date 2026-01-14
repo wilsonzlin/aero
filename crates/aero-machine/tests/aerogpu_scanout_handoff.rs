@@ -12,8 +12,8 @@ fn enable_a20(m: &mut Machine) {
     m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
-fn build_boot_sector_vbe_then_wait_then_text_mode() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_boot_sector_vbe_then_wait_then_text_mode() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax

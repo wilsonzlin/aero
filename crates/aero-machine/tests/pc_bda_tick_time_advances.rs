@@ -3,8 +3,8 @@ use firmware::bios::{BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 use memory::MemoryBus as _;
 use pretty_assertions::assert_eq;
 
-fn busy_loop_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn busy_loop_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     // cli
     sector[0] = 0xFA;
     // jmp short $-2 (infinite loop)

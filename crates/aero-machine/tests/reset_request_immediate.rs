@@ -1,7 +1,7 @@
 use aero_machine::{Machine, MachineConfig, PcMachine, RunExit};
 use aero_platform::reset::ResetKind;
 
-fn boot_sector_requests_reset_then_writes_marker() -> [u8; 512] {
+fn boot_sector_requests_reset_then_writes_marker() -> [u8; aero_storage::SECTOR_SIZE] {
     let mut code: Vec<u8> = Vec::new();
 
     // Deterministic real-mode environment.
@@ -35,7 +35,7 @@ fn boot_sector_requests_reset_then_writes_marker() -> [u8; 512] {
 
     assert!(code.len() <= 510, "boot sector too large: {}", code.len());
 
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[..code.len()].copy_from_slice(&code);
     sector[510] = 0x55;
     sector[511] = 0xAA;

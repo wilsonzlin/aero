@@ -1,7 +1,7 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
 
-fn build_outw_vga_sequencer_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_outw_vga_sequencer_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov dx, 0x3C4  ; VGA sequencer index port

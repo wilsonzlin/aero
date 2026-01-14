@@ -15,8 +15,8 @@ fn run_until_halt(m: &mut Machine) {
 fn build_boot_sector_select_page1_set_cursor_and_write_space(
     attr: u8,
     cursor_start: u8,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x0501  ; AH=05 Select Active Display Page, AL=1

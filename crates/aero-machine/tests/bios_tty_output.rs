@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_storage::SECTOR_SIZE;
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
@@ -6,8 +7,8 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
-fn boot_sector_int10_teletype(message: &[u8]) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn boot_sector_int10_teletype(message: &[u8]) -> [u8; SECTOR_SIZE] {
+    let mut sector = [0u8; SECTOR_SIZE];
     let mut i = 0usize;
     for &b in message {
         // mov ax, 0x0E00 | b
@@ -22,8 +23,8 @@ fn boot_sector_int10_teletype(message: &[u8]) -> [u8; 512] {
     // hlt
     sector[i] = 0xF4;
 
-    sector[510] = 0x55;
-    sector[511] = 0xAA;
+    sector[SECTOR_SIZE - 2] = 0x55;
+    sector[SECTOR_SIZE - 1] = 0xAA;
     sector
 }
 
@@ -43,7 +44,7 @@ fn bios_tty_output_exposes_boot_panic_message() {
     let mut m = Machine::new(cfg).expect("machine should construct");
 
     // Deliberately invalid boot sector: missing the 0x55AA signature.
-    let bad_disk = vec![0u8; 512];
+    let bad_disk = vec![0u8; SECTOR_SIZE];
     m.set_disk_image(bad_disk)
         .expect("disk size should be accepted");
     m.reset();

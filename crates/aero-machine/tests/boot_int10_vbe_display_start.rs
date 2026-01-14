@@ -2,8 +2,8 @@ use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_display_start_boot_sector(lfb_base: u32) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_display_start_boot_sector(lfb_base: u32) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)

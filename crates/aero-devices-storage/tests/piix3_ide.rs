@@ -3411,7 +3411,7 @@ fn atapi_identify_packet_device_returns_identify_data() {
     assert!(ide.borrow().controller.secondary_irq_pending());
 
     // Read 256 words.
-    let mut buf = vec![0u8; 512];
+    let mut buf = vec![0u8; SECTOR_SIZE];
     for i in 0..256 {
         let w = io.read(SECONDARY_PORTS.cmd_base, 2) as u16;
         buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());

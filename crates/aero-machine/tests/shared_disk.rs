@@ -18,7 +18,7 @@ fn shared_disk_virtualdisk_writes_are_visible_to_bios_blockdevice_reads() {
 
     // Read it back via the BIOS INT13 `firmware::bios::BlockDevice` path.
     let mut bios = disk.clone();
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     bios.read_sector(2, &mut sector).unwrap();
     assert_eq!(&sector[..], &pattern[..]);
 }

@@ -3,7 +3,7 @@
 //! This module implements enough of the El Torito and ISO9660 structures to locate and load the
 //! initial/default no-emulation boot entry from a typical Windows install ISO.
 
-use super::{BlockDevice, DiskError};
+use super::{BlockDevice, DiskError, BIOS_SECTOR_SIZE};
 
 // Error strings are intentionally stable: they are surfaced via `Bios::tty_output()` when POST
 // fails, and unit tests (and humans) rely on them for debugging.
@@ -28,8 +28,7 @@ const EL_TORITO_BOOT_SYSTEM_ID_SPACES: [u8; 32] = {
 };
 
 const ISO_BLOCK_BYTES: usize = 2048;
-const BIOS_SECTOR_BYTES: usize = 512;
-const BIOS_SECTORS_PER_ISO_BLOCK: u64 = (ISO_BLOCK_BYTES / BIOS_SECTOR_BYTES) as u64; // 4
+const BIOS_SECTORS_PER_ISO_BLOCK: u64 = (ISO_BLOCK_BYTES / BIOS_SECTOR_SIZE) as u64; // 4
 
 /// Default no-emulation load segment per the El Torito spec when the catalog field is zero.
 const DEFAULT_LOAD_SEGMENT: u16 = 0x07C0;
@@ -286,10 +285,10 @@ fn read_iso_block(
         .ok_or(DiskError::OutOfRange)?;
 
     for i in 0..BIOS_SECTORS_PER_ISO_BLOCK {
-        let mut sector = [0u8; BIOS_SECTOR_BYTES];
+        let mut sector = [0u8; BIOS_SECTOR_SIZE];
         disk.read_sector(base + i, &mut sector)?;
-        let off = (i as usize) * BIOS_SECTOR_BYTES;
-        out[off..off + BIOS_SECTOR_BYTES].copy_from_slice(&sector);
+        let off = (i as usize) * BIOS_SECTOR_SIZE;
+        out[off..off + BIOS_SECTOR_SIZE].copy_from_slice(&sector);
     }
 
     Ok(())
@@ -319,7 +318,11 @@ mod tests {
     }
 
     impl BlockDevice for CountingDisk {
-        fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+        fn read_sector(
+            &mut self,
+            lba: u64,
+            buf: &mut [u8; BIOS_SECTOR_SIZE],
+        ) -> Result<(), DiskError> {
             self.reads = self.reads.saturating_add(1);
             assert!(
                 self.reads <= self.max_reads,

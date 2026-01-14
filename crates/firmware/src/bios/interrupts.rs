@@ -7,7 +7,7 @@ use super::{
     CdromDevice, DiskError, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_HEAD_OFFSET,
     BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT, CDROM_SECTOR_SIZE,
     DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
-    KEYBOARD_QUEUE_CAPACITY,
+    KEYBOARD_QUEUE_CAPACITY, BIOS_SECTOR_SIZE,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -47,7 +47,11 @@ impl<'a> CdromAsBlockDevice<'a> {
 }
 
 impl BlockDevice for CdromAsBlockDevice<'_> {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+    fn read_sector(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8; BIOS_SECTOR_SIZE],
+    ) -> Result<(), DiskError> {
         let iso_lba = lba / 4;
         let sub = (lba % 4) as usize;
         if iso_lba >= self.cdrom.size_in_sectors() {
@@ -57,8 +61,8 @@ impl BlockDevice for CdromAsBlockDevice<'_> {
             self.cdrom.read_sector(iso_lba, &mut self.cached)?;
             self.cached_lba = Some(iso_lba);
         }
-        let start = sub * 512;
-        buf.copy_from_slice(&self.cached[start..start + 512]);
+        let start = sub * BIOS_SECTOR_SIZE;
+        buf.copy_from_slice(&self.cached[start..start + BIOS_SECTOR_SIZE]);
         Ok(())
     }
 
@@ -781,9 +785,9 @@ fn handle_int13(
                     };
 
                     for i in 0..count_512 {
-                        let mut buf = [0u8; 512];
+                        let mut buf = [0u8; BIOS_SECTOR_SIZE];
                         match disk.read_sector(lba_512 + i, &mut buf) {
-                            Ok(()) => bus.write_physical(dst + i * 512, &buf),
+                            Ok(()) => bus.write_physical(dst + i * BIOS_SECTOR_SIZE as u64, &buf),
                             Err(e) => {
                                 let status = disk_err_to_int13_status(e);
                                 set_error(bios, cpu, status);
@@ -1035,7 +1039,7 @@ fn handle_int13(
 
             // Many real BIOS implementations use DMA for this path and require the transfer
             // buffer not cross a 64KiB physical boundary.
-            let total_bytes = (count as u64) * 512;
+            let total_bytes = (count as u64) * BIOS_SECTOR_SIZE as u64;
             let Some(end_addr) = dst.checked_add(total_bytes.saturating_sub(1)) else {
                 bios.last_int13_status = 0x09;
                 cpu.rflags |= FLAG_CF;
@@ -1050,10 +1054,10 @@ fn handle_int13(
             }
 
             for i in 0..count as u64 {
-                let mut buf = [0u8; 512];
+                let mut buf = [0u8; BIOS_SECTOR_SIZE];
                 match disk.read_sector(lba + i, &mut buf) {
                     Ok(()) => {
-                        bus.write_physical(dst + i * 512, &buf);
+                        bus.write_physical(dst + i * BIOS_SECTOR_SIZE as u64, &buf);
                     }
                     Err(e) => {
                         cpu.rflags |= FLAG_CF;
@@ -1135,7 +1139,7 @@ fn handle_int13(
 
             let lba = ((cylinder * heads + head) * spt + (sector as u32 - 1)) as u64;
             for i in 0..count as u64 {
-                let mut buf = [0u8; 512];
+                let mut buf = [0u8; BIOS_SECTOR_SIZE];
                 if let Err(e) = disk.read_sector(lba + i, &mut buf) {
                     cpu.rflags |= FLAG_CF;
                     let status = disk_err_to_int13_status(e);
@@ -1405,9 +1409,9 @@ fn handle_int13(
             }
 
             for i in 0..count {
-                let mut buf = [0u8; 512];
+                let mut buf = [0u8; BIOS_SECTOR_SIZE];
                 match disk.read_sector(lba + i, &mut buf) {
-                    Ok(()) => bus.write_physical(dst + i * 512, &buf),
+                    Ok(()) => bus.write_physical(dst + i * BIOS_SECTOR_SIZE as u64, &buf),
                     Err(e) => {
                         let status = disk_err_to_int13_status(e);
                         set_error(bios, cpu, status);
@@ -1542,7 +1546,7 @@ fn handle_int13(
                 bus.write_u64(table_addr + 16, disk.size_in_sectors());
             }
             if write_len >= 26 {
-                bus.write_u16(table_addr + 24, 512); // bytes/sector
+                bus.write_u16(table_addr + 24, BIOS_SECTOR_SIZE as u16); // bytes/sector
             }
             if write_len >= 30 {
                 bus.write_u32(table_addr + 26, 0); // DPTE pointer (unused)
@@ -2220,7 +2224,7 @@ mod tests {
         let mut bios1 = Bios::new(BiosConfig::default());
         let mut cpu1 = CpuState::new(CpuMode::Real);
         let mut mem1 = TestMemory::new(2 * 1024 * 1024);
-        let mut disk1 = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk1 = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         ivt::init_bda(&mut mem1, 0x80);
         cpu1.a20_enabled = mem1.a20_enabled();
@@ -2247,7 +2251,7 @@ mod tests {
         let mut bios2 = Bios::new(BiosConfig::default());
         let mut cpu2 = CpuState::new(CpuMode::Real);
         let mut mem2 = TestMemory::new(2 * 1024 * 1024);
-        let mut disk2 = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk2 = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         ivt::init_bda(&mut mem2, 0x80);
         cpu2.a20_enabled = mem2.a20_enabled();
@@ -2269,8 +2273,8 @@ mod tests {
     #[test]
     fn int13_ext_read_reads_lba_into_memory() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let mut disk_bytes = vec![0u8; 512 * 4];
-        disk_bytes[512..1024].fill(0xAA);
+        let mut disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 4];
+        disk_bytes[BIOS_SECTOR_SIZE..BIOS_SECTOR_SIZE * 2].fill(0xAA);
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2295,15 +2299,15 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
-        let buf = mem.read_bytes(0x1000, 512);
-        assert_eq!(buf, vec![0xAA; 512]);
+        let buf = mem.read_bytes(0x1000, BIOS_SECTOR_SIZE);
+        assert_eq!(buf, vec![0xAA; BIOS_SECTOR_SIZE]);
     }
 
     #[test]
     fn int13_ext_read_24byte_dap_uses_flat_pointer_hdd() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let mut disk_bytes = vec![0u8; 512 * 4];
-        disk_bytes[512..1024].fill(0xAA);
+        let mut disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 4];
+        disk_bytes[BIOS_SECTOR_SIZE..BIOS_SECTOR_SIZE * 2].fill(0xAA);
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2325,7 +2329,7 @@ mod tests {
         let bogus_off: u16 = 0x5678;
         let bogus_seg: u16 = 0x1234;
         let bogus_dst = ((bogus_seg as u64) << 4).wrapping_add(bogus_off as u64);
-        mem.write_physical(bogus_dst, &vec![0x55; 512]);
+        mem.write_physical(bogus_dst, &vec![0x55; BIOS_SECTOR_SIZE]);
 
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
         mem.write_u8(dap_addr, 0x18); // 24-byte DAP
@@ -2341,16 +2345,16 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
-        let buf = mem.read_bytes(FLAT_DST, 512);
-        assert_eq!(buf, vec![0xAA; 512]);
-        let bogus_buf = mem.read_bytes(bogus_dst, 512);
-        assert_eq!(bogus_buf, vec![0x55; 512]);
+        let buf = mem.read_bytes(FLAT_DST, BIOS_SECTOR_SIZE);
+        assert_eq!(buf, vec![0xAA; BIOS_SECTOR_SIZE]);
+        let bogus_buf = mem.read_bytes(bogus_dst, BIOS_SECTOR_SIZE);
+        assert_eq!(bogus_buf, vec![0x55; BIOS_SECTOR_SIZE]);
     }
 
     #[test]
     fn int13_edd_extensions_check_hdd_succeeds_and_reports_features() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         let mut cpu = CpuState::new(CpuMode::Real);
         cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
@@ -2378,7 +2382,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         let mut cpu = CpuState::new(CpuMode::Real);
         cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
@@ -2404,7 +2408,7 @@ mod tests {
         // HDD path.
         {
             let mut bios = Bios::new(BiosConfig::default());
-            let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+            let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
             let mut cpu = CpuState::new(CpuMode::Real);
             cpu.gpr[gpr::RAX] = 0x4100;
             cpu.gpr[gpr::RBX] = 0x1234; // not 0x55AA
@@ -2425,7 +2429,7 @@ mod tests {
                 boot_drive: 0xE0,
                 ..BiosConfig::default()
             });
-            let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+            let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
             let mut cpu = CpuState::new(CpuMode::Real);
             cpu.gpr[gpr::RAX] = 0x4100;
             cpu.gpr[gpr::RBX] = 0x1234; // not 0x55AA
@@ -2444,8 +2448,8 @@ mod tests {
     #[test]
     fn int13_ext_get_drive_params_reports_sector_count() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 8];
-        let sectors = (disk_bytes.len() / 512) as u64;
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 8];
+        let sectors = (disk_bytes.len() / BIOS_SECTOR_SIZE) as u64;
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2466,7 +2470,7 @@ mod tests {
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
         assert_eq!(mem.read_u64(table_addr + 16), sectors);
-        assert_eq!(mem.read_u16(table_addr + 24), 512);
+        assert_eq!(mem.read_u16(table_addr + 24), BIOS_SECTOR_SIZE as u16);
     }
 
     #[derive(Debug)]
@@ -2502,7 +2506,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(16);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2531,7 +2535,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(4);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2564,7 +2568,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(8);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2590,7 +2594,7 @@ mod tests {
             ..BiosConfig::default()
         });
         let iso_sectors = 4;
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(iso_sectors);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2622,7 +2626,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]); // too small to back even 1 ISO sector
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]); // too small to back even 1 ISO sector
         let mut cdrom = PatternCdrom::new(16);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -2655,7 +2659,7 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(32);
         let lba = 1u64;
 
@@ -2701,7 +2705,7 @@ mod tests {
             boot_drive: 0x80,
             ..BiosConfig::default()
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = PatternCdrom::new(32);
         let lba = 1u64;
 
@@ -2750,10 +2754,10 @@ mod tests {
 
         let mut disk_bytes = vec![0u8; 2048 * 4];
         let mut expected = vec![0u8; 2048];
-        expected[0..512].fill(0x11);
-        expected[512..1024].fill(0x22);
-        expected[1024..1536].fill(0x33);
-        expected[1536..2048].fill(0x44);
+        expected[0..BIOS_SECTOR_SIZE].fill(0x11);
+        expected[BIOS_SECTOR_SIZE..BIOS_SECTOR_SIZE * 2].fill(0x22);
+        expected[BIOS_SECTOR_SIZE * 2..BIOS_SECTOR_SIZE * 3].fill(0x33);
+        expected[BIOS_SECTOR_SIZE * 3..BIOS_SECTOR_SIZE * 4].fill(0x44);
         disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
         let mut disk = InMemoryDisk::new(disk_bytes);
 
@@ -2803,10 +2807,10 @@ mod tests {
         });
         let mut disk_bytes = vec![0u8; 2048 * 4];
         let mut expected = vec![0u8; 2048];
-        expected[0..512].fill(0x11);
-        expected[512..1024].fill(0x22);
-        expected[1024..1536].fill(0x33);
-        expected[1536..2048].fill(0x44);
+        expected[0..BIOS_SECTOR_SIZE].fill(0x11);
+        expected[BIOS_SECTOR_SIZE..BIOS_SECTOR_SIZE * 2].fill(0x22);
+        expected[BIOS_SECTOR_SIZE * 2..BIOS_SECTOR_SIZE * 3].fill(0x33);
+        expected[BIOS_SECTOR_SIZE * 3..BIOS_SECTOR_SIZE * 4].fill(0x44);
         disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
         let mut disk = InMemoryDisk::new(disk_bytes);
 
@@ -2850,7 +2854,7 @@ mod tests {
     #[test]
     fn int13_eltorito_services_return_zeroed_fields_without_boot_metadata() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         let mut cpu = CpuState::new(CpuMode::Real);
 
@@ -2913,7 +2917,7 @@ mod tests {
             load_segment: Some(0x07C0),
             sector_count: Some(8),
         });
-        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut disk = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3053,7 +3057,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         // Provide a dummy HDD for the BIOS BlockDevice slot and the ISO as a separate 2048-byte
         // sector CD-ROM backend.
-        let mut hdd = InMemoryDisk::new(vec![0u8; 512]);
+        let mut hdd = InMemoryDisk::new(vec![0u8; BIOS_SECTOR_SIZE]);
         let mut cdrom = InMemoryCdrom::new(img);
 
         bios.post(&mut cpu, &mut mem, &mut hdd, Some(&mut cdrom));
@@ -3130,7 +3134,7 @@ mod tests {
             // CD-ROM drives use 2048-byte sectors internally, but the BIOS disk backend is defined
             // in terms of 512-byte sectors. Keep the test buffer simple and let INT 13h handle the
             // conversion logic for CD drives.
-            let disk_bytes = vec![0u8; 512 * 8];
+            let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 8];
             let mut disk = InMemoryDisk::new(disk_bytes);
             let mut cpu = CpuState::new(CpuMode::Real);
             let mut mem = TestMemory::new(2 * 1024 * 1024);
@@ -3199,7 +3203,7 @@ mod tests {
                 boot_drive: drive,
                 ..BiosConfig::default()
             });
-            let disk_bytes = vec![0u8; 512 * 8];
+            let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 8];
             let mut disk = InMemoryDisk::new(disk_bytes);
 
             let mut cpu = CpuState::new(CpuMode::Real);
@@ -3233,8 +3237,8 @@ mod tests {
     fn int13_chs_read_floppy_maps_head1_sector1_to_lba18() {
         // 1.44MiB floppy = 2880 sectors. Cylinder 0, head 1, sector 1 corresponds to LBA 18.
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let mut disk_bytes = vec![0u8; 512 * 2880];
-        disk_bytes[18 * 512] = 0xCC;
+        let mut disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
+        disk_bytes[18 * BIOS_SECTOR_SIZE] = 0xCC;
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3256,7 +3260,7 @@ mod tests {
     #[test]
     fn int13_get_drive_parameters_floppy_reports_1440k_geometry() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3283,7 +3287,7 @@ mod tests {
     #[test]
     fn int13_get_drive_parameters_fixed_disk_reports_geometry_and_param_table_pointer() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 8];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 8];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3308,7 +3312,7 @@ mod tests {
     #[test]
     fn int13_get_disk_type_floppy_reports_present() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3372,8 +3376,8 @@ mod tests {
     #[test]
     fn int13_verify_sectors_chs_reads_without_writing_memory() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let mut disk_bytes = vec![0u8; 512 * 2880];
-        disk_bytes[18 * 512] = 0xCC;
+        let mut disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
+        disk_bytes[18 * BIOS_SECTOR_SIZE] = 0xCC;
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3398,7 +3402,7 @@ mod tests {
     #[test]
     fn int13_chs_write_reports_write_protected() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 4];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 4];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3421,7 +3425,7 @@ mod tests {
     #[test]
     fn int13_ext_write_reports_write_protected() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 4];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 4];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3450,7 +3454,7 @@ mod tests {
     #[test]
     fn int13_format_track_reports_write_protected() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3469,7 +3473,7 @@ mod tests {
     #[test]
     fn int13_seek_reports_success_for_valid_chs() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3488,7 +3492,7 @@ mod tests {
     #[test]
     fn int13_seek_reports_error_for_invalid_cylinder() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3508,7 +3512,7 @@ mod tests {
     #[test]
     fn int13_check_drive_ready_reports_success() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3526,7 +3530,7 @@ mod tests {
     #[test]
     fn int13_initialize_drive_parameters_reports_success() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3544,7 +3548,7 @@ mod tests {
     #[test]
     fn int13_controller_diagnostics_reports_success() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3562,7 +3566,7 @@ mod tests {
     #[test]
     fn int13_recalibrate_reports_success() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3580,7 +3584,7 @@ mod tests {
     #[test]
     fn int13_alternate_reset_reports_success() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3598,7 +3602,7 @@ mod tests {
     #[test]
     fn int13_get_disk_change_status_reports_not_changed() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512 * 2880];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE * 2880];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3616,7 +3620,7 @@ mod tests {
     #[test]
     fn int13_reset_and_get_status_fail_for_nonexistent_drive() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3640,7 +3644,7 @@ mod tests {
     #[test]
     fn int13_read_sectors_on_nonexistent_drive_reports_zero_sectors_transferred() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3787,7 +3791,7 @@ mod tests {
     #[test]
     fn int13_get_status_reports_last_error() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
-        let disk_bytes = vec![0u8; 512];
+        let disk_bytes = vec![0u8; BIOS_SECTOR_SIZE];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
         let mut cpu = CpuState::new(CpuMode::Real);
@@ -3945,7 +3949,7 @@ mod tests {
         });
         let mut cpu = CpuState::new(CpuMode::Real);
 
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; BIOS_SECTOR_SIZE];
         sector[0] = 0xAA;
         sector[1] = 0xBB;
         sector[510] = 0x55;
@@ -3961,7 +3965,7 @@ mod tests {
         assert_eq!(cpu.segments.ss.selector, 0x0000);
         assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
 
-        let loaded = mem.read_bytes(0x7C00, 512);
+        let loaded = mem.read_bytes(0x7C00, BIOS_SECTOR_SIZE);
         assert_eq!(loaded[0], 0xAA);
         assert_eq!(loaded[1], 0xBB);
         assert_eq!(loaded[510], 0x55);
@@ -4114,7 +4118,7 @@ mod tests {
         });
         let mut cpu = CpuState::new(CpuMode::Real);
 
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; BIOS_SECTOR_SIZE];
         sector[0] = 0xAA;
         sector[510] = 0x55;
         sector[511] = 0xAA;

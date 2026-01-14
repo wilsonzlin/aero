@@ -26,8 +26,8 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
     bytes_per_scan_line: u16,
     x_off: u16,
     y_off: u16,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // INT 10h AX=4F02: Set VBE mode 0x118 (1024x768x32bpp) with LFB requested.

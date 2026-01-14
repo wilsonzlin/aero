@@ -11,14 +11,14 @@ use aero_cpu_core::state::RFLAGS_IF;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bios::BDA_TICK_COUNT_ADDR;
 
-fn build_cli_hlt_boot_sector() -> [u8; 512] {
+fn build_cli_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Real-mode boot sector loaded at 0x7C00 by the BIOS.
     //
     // Program:
     //   cli
     //   hlt
     //   jmp $-3
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[0] = 0xFA; // cli
     sector[1] = 0xF4; // hlt
     sector[2] = 0xEB; // jmp short

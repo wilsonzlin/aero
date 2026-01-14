@@ -1,8 +1,8 @@
 use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
-fn build_int10_set_mode13h_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_set_mode13h_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x0013 (set video mode 13h)

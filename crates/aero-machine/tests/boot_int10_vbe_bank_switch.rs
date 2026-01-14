@@ -1,8 +1,8 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_int10_vbe_bank_switch_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_bank_switch_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // cld (ensure `stosb` increments DI).

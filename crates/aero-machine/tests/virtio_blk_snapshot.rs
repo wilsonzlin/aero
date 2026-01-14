@@ -8,7 +8,7 @@ use aero_devices::pci::{
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
-use aero_virtio::devices::blk::VIRTIO_BLK_T_IN;
+use aero_virtio::devices::blk::{VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_T_IN};
 use aero_virtio::pci::{
     VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG,
     VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
@@ -207,7 +207,7 @@ fn snapshot_restore_roundtrips_virtio_blk_state_and_redrives_intx_level() {
     hdr[4..8].copy_from_slice(&0u32.to_le_bytes());
     hdr[8..16].copy_from_slice(&0u64.to_le_bytes());
     vm.write_physical(hdr_addr, &hdr);
-    vm.write_physical(data_addr, &[0xAA; 512]);
+    vm.write_physical(data_addr, &[0xAA; VIRTIO_BLK_SECTOR_SIZE as usize]);
     vm.write_physical(status_addr, &[0xFF]);
 
     write_desc(
@@ -224,7 +224,7 @@ fn snapshot_restore_roundtrips_virtio_blk_state_and_redrives_intx_level() {
         desc,
         1,
         data_addr,
-        512,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
         VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
         2,
     );

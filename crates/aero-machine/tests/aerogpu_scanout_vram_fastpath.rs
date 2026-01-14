@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_LEGACY_VBE_LFB};
 
-fn build_int10_vbe_115_set_mode_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_115_set_mode_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
@@ -32,8 +32,8 @@ fn build_int10_vbe_115_set_mode_boot_sector() -> [u8; 512] {
     sector
 }
 
-fn build_int10_vbe_103_set_mode_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_103_set_mode_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
@@ -60,8 +60,8 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
     bytes_per_scan_line: u16,
     x_off: u16,
     y_off: u16,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // INT 10h AX=4F02: Set VBE mode 0x118 (1024x768x32bpp) with LFB requested.

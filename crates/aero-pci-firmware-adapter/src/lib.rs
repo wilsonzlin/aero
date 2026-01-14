@@ -137,7 +137,7 @@ mod tests {
     use super::*;
     use aero_devices::pci::{PciBdf, PciBus, PciConfigSpace, PciInterruptPin};
     use aero_pci_routing as pci_routing;
-    use firmware::bios::{A20Gate, Bios, BiosConfig, FirmwareMemory, InMemoryDisk};
+    use firmware::bios::{A20Gate, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SECTOR_SIZE};
     use memory::{DenseMemory, MapError, PhysicalMemoryBus};
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -241,8 +241,8 @@ mod tests {
         }
     }
 
-    fn boot_sector() -> [u8; 512] {
-        let mut sector = [0u8; 512];
+    fn boot_sector() -> [u8; BIOS_SECTOR_SIZE] {
+        let mut sector = [0u8; BIOS_SECTOR_SIZE];
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector

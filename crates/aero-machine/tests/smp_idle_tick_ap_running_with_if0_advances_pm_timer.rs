@@ -25,7 +25,7 @@ const BASELINE_PADDR: u64 = 0x0500;
 const FLAG_PADDR: u64 = 0x0502;
 const FLAG_VALUE: u8 = 0xA5;
 
-fn build_bsp_cli_hlt_boot_sector() -> [u8; 512] {
+fn build_bsp_cli_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Real-mode boot sector loaded at 0x7C00 by the BIOS.
     //
     // Program:
@@ -36,7 +36,7 @@ fn build_bsp_cli_hlt_boot_sector() -> [u8; 512] {
     //   mov sp, 0x8000
     //   hlt
     //   jmp $-3
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     sector[i] = 0xFA; // cli

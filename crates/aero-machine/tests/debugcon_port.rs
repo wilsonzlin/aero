@@ -1,8 +1,8 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-fn build_debugcon_boot_sector(message: &[u8]) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_debugcon_boot_sector(message: &[u8]) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     for &b in message {

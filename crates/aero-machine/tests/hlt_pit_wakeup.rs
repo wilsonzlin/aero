@@ -2,7 +2,7 @@ use aero_devices::pic8259::{MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_machine::{Machine, MachineConfig, RunExit};
 
-fn build_hlt_pit_boot_sector() -> [u8; 512] {
+fn build_hlt_pit_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     let mut code: Vec<u8> = Vec::new();
 
     // cli
@@ -125,7 +125,7 @@ fn build_hlt_pit_boot_sector() -> [u8; 512] {
         code.len()
     );
 
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[..code.len()].copy_from_slice(&code);
     sector[510] = 0x55;
     sector[511] = 0xAA;

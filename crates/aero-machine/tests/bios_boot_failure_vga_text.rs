@@ -18,7 +18,7 @@ fn bios_boot_failure_renders_message_to_vga_text_memory() {
     .unwrap();
 
     // Sector 0 exists but is missing the 0x55AA signature.
-    let bad_boot_sector = [0u8; 512];
+    let bad_boot_sector = [0u8; aero_storage::SECTOR_SIZE];
     m.set_disk_image(bad_boot_sector.to_vec()).unwrap();
     m.reset();
 

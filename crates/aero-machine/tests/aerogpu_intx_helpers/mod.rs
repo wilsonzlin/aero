@@ -6,8 +6,8 @@ pub fn build_real_mode_interrupt_wait_boot_sector(
     vector: u8,
     flag_addr: u16,
     flag_value: u8,
-) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax

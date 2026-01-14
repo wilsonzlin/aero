@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_storage::SECTOR_SIZE;
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
@@ -24,7 +25,7 @@ fn bios_panic_is_mirrored_to_com1_when_serial_enabled() {
     let mut m = Machine::new(cfg).expect("machine should construct");
 
     // Deliberately invalid boot sector: missing the 0x55AA signature.
-    m.set_disk_image(vec![0u8; 512])
+    m.set_disk_image(vec![0u8; SECTOR_SIZE])
         .expect("disk size should be accepted");
     m.reset();
 

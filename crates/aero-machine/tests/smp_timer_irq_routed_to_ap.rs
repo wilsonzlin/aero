@@ -21,11 +21,11 @@ const APIC_ID_AP: u8 = 1;
 const SIPI_VECTOR: u8 = 0x08; // 0x8000 (aligned to 4KiB and below 1MiB).
 const AP_TRAMPOLINE_PADDR: u64 = (SIPI_VECTOR as u64) << 12;
 
-fn build_bsp_hlt_boot_sector() -> [u8; 512] {
+fn build_bsp_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Real-mode boot sector loaded at 0x7C00 by the BIOS.
     //
     // Program: `cli; xor ax, ax; mov ds, ax; mov ss, ax; mov sp, 0x8000; hlt; jmp $-3`
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     sector[i] = 0xFA; // cli

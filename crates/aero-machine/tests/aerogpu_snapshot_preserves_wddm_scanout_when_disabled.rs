@@ -9,8 +9,8 @@ use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM};
 use pretty_assertions::assert_eq;
 
-fn build_vbe_mode_118_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_mode_118_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // INT 10h AX=4F02: Set VBE mode 0x118 (1024x768x32bpp) with LFB requested.

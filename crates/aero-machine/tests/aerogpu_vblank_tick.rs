@@ -24,7 +24,7 @@ fn aerogpu_vblank_ticks_while_halted_and_irq_is_latched_only_when_enabled() {
     .unwrap();
 
     // Boot sector: STI; HLT; JMP $-3 (halt loop).
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[0] = 0xFB; // sti
     sector[1] = 0xF4; // hlt
     sector[2] = 0xEB; // jmp short

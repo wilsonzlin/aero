@@ -12,8 +12,8 @@ fn run_until_halt(m: &mut Machine) {
     panic!("machine did not halt within budget");
 }
 
-fn build_boot_sector_select_page1_write_space_disable_cursor() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_boot_sector_select_page1_write_space_disable_cursor() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // mov ax, 0x0501  ; AH=05 Select Active Display Page, AL=1

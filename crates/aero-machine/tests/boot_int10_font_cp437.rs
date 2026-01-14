@@ -10,8 +10,8 @@ const RESULT_BP: u64 = RESULT_BASE + 6;
 
 const GLYPH_CP437: u8 = 0xC4; // box drawing '─'
 
-fn build_int10_font_cp437_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_font_cp437_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax

@@ -2,8 +2,8 @@ use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
 
-fn build_vbe_mode_info_boot_sector(mode: u16) -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_vbe_mode_info_boot_sector(mode: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax
@@ -48,7 +48,7 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest did not reach HLT");
 }
 
-fn new_deterministic_aerogpu_machine(boot_sector: [u8; 512]) -> Machine {
+fn new_deterministic_aerogpu_machine(boot_sector: [u8; aero_storage::SECTOR_SIZE]) -> Machine {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,

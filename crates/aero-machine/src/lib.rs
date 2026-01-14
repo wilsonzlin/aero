@@ -15804,6 +15804,7 @@ mod tests {
     use crate::test_util::capture_panic_location;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
     use aero_devices::pci::PciInterruptPin;
+    use aero_storage::SECTOR_SIZE;
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
@@ -15811,8 +15812,8 @@ mod tests {
         Arc,
     };
 
-    fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
-        let mut sector = [0u8; 512];
+    fn build_serial_boot_sector(message: &[u8]) -> [u8; SECTOR_SIZE] {
+        let mut sector = [0u8; SECTOR_SIZE];
         let mut i = 0usize;
 
         // mov dx, 0x3f8
@@ -16192,7 +16193,7 @@ mod tests {
         PciBarMmioHandler::write(&mut mmio, 0, 0, 0xDEAD_BEEF);
     }
 
-    fn build_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
+    fn build_paged_serial_boot_sector(message: &[u8]) -> [u8; SECTOR_SIZE] {
         assert!(!message.is_empty());
         assert!(message.len() <= 32, "test boot sector message too long");
 
@@ -16206,7 +16207,7 @@ mod tests {
         const MSG_PHYS_BASE: u16 = 0x2000;
         const MSG_LINEAR_BASE: u16 = 0x4000;
 
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; SECTOR_SIZE];
         let mut i = 0usize;
 
         // xor ax, ax
@@ -16318,7 +16319,7 @@ mod tests {
         sector
     }
 
-    fn build_long_mode_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
+    fn build_long_mode_paged_serial_boot_sector(message: &[u8]) -> [u8; SECTOR_SIZE] {
         assert!(!message.is_empty());
         assert!(
             message.len() <= 64,
@@ -16346,10 +16347,10 @@ mod tests {
         const GDTR_OFF: usize = 0x1E0;
         const GDT_OFF: usize = GDTR_OFF + 6;
 
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; SECTOR_SIZE];
         let mut i = 0usize;
 
-        fn write_dword(sector: &mut [u8; 512], i: &mut usize, addr: u16, value: u32) {
+        fn write_dword(sector: &mut [u8; SECTOR_SIZE], i: &mut usize, addr: u16, value: u32) {
             // 66 c7 06 <disp16> <imm32>
             sector[*i..*i + 9].copy_from_slice(&[
                 0x66,
@@ -16837,7 +16838,7 @@ mod tests {
         .unwrap();
 
         // Simple infinite loop boot sector: CLI; JMP $-2.
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; SECTOR_SIZE];
         sector[0] = 0xFA;
         sector[1] = 0xEB;
         sector[2] = 0xFE;
@@ -16894,7 +16895,7 @@ mod tests {
         .unwrap();
 
         // Boot sector: STI; HLT; JMP $-3 (halt loop).
-        let mut sector = [0u8; 512];
+        let mut sector = [0u8; SECTOR_SIZE];
         sector[0] = 0xFB; // sti
         sector[1] = 0xF4; // hlt
         sector[2] = 0xEB; // jmp short

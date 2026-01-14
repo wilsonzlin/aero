@@ -7,7 +7,7 @@ fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
 }
 
-fn build_a20_aliasing_rep_movsb_df1_boot_sector() -> [u8; 512] {
+fn build_a20_aliasing_rep_movsb_df1_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
     // Exercise a corner case where:
     // - we run in 32-bit protected mode (so `CpuState::apply_a20` does not mask linear addresses),
     // - the chipset A20 gate is disabled (masking physical bit 20),
@@ -22,7 +22,7 @@ fn build_a20_aliasing_rep_movsb_df1_boot_sector() -> [u8; 512] {
     const DST_BASE: u32 = 0x0010_2010; // aliases to 0x0000_2010 when A20 is disabled
     const LEN: u32 = 64;
 
-    let mut sector = [0u8; 512];
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // -------------------------------------------------------------------------

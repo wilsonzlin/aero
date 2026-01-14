@@ -19,8 +19,8 @@ const SENTINEL_VALUE: u8 = 0xA5;
 const ICR_LOW_OFF: u64 = 0x300;
 const ICR_HIGH_OFF: u64 = 0x310;
 
-fn build_bsp_hlt_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_bsp_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // Minimal real-mode setup (DS=SS=0, SP=0x7C00).

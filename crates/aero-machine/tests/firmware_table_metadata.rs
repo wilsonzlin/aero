@@ -1,7 +1,7 @@
 use aero_machine::{Machine, MachineConfig};
 
-fn boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector

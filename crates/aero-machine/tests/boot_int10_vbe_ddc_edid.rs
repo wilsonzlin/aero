@@ -10,8 +10,8 @@ const RESULT1_FLAGS: u64 = RESULT_BUF_BASE + 8;
 
 const EDID_BUF_ADDR: u64 = 0x0600;
 
-fn build_int10_vbe_ddc_edid_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_int10_vbe_ddc_edid_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
     // xor ax, ax

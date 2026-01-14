@@ -22,8 +22,8 @@ fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
     m.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
-fn build_hlt_boot_sector() -> [u8; 512] {
-    let mut sector = [0u8; 512];
+fn build_hlt_boot_sector() -> [u8; aero_storage::SECTOR_SIZE] {
+    let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     // sti; hlt; jmp short $-3 (back to hlt)
     sector[0] = 0xFB;
     sector[1] = 0xF4;
