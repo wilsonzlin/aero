@@ -102,11 +102,22 @@ Once `boot_catalog_lba` is read, convert to BIOS sectors if needed:
 
 ## 3) Boot Catalog (validation entry + initial/default entry)
 
-The **Boot Catalog** is a 2048-byte sector (and may extend beyond one sector if it contains many
-entries). Aero’s minimal implementation assumes the first sector contains:
+The **Boot Catalog** is an array of 32-byte entries (typically stored in 2048-byte ISO sectors). In
+the Windows install ISO case, the “initial/default entry” is commonly the very next entry after the
+validation entry, but Aero does **not** assume that; it scans entries for the first usable BIOS
+no-emulation boot entry.
 
-1. A **Validation Entry** (32 bytes) at offset `0x00`
-2. An **Initial/Default Entry** (32 bytes) at offset `0x20`
+Aero’s implemented behavior:
+
+1. Read the catalog starting at `boot_catalog_lba` (2048-byte ISO LBA).
+   * We read a bounded prefix (currently **up to 4 ISO blocks**) for safety.
+2. Parse entry #0 (offset `0x00`) as the **Validation Entry** and validate it (checksum + key bytes).
+3. Scan subsequent 32-byte entries for a **bootable, no-emulation, BIOS/x86** boot entry:
+   * Bootable: `boot_indicator == 0x88`
+   * No-emulation: `boot_media_type == 0x00`
+   * Platform: **x86 BIOS** (platform id `0`)
+   * Section header entries (`0x90`/`0x91`) update the current platform id for subsequent entries.
+   * Unknown/extension entries are ignored.
 
 Entries are 32 bytes each.
 
@@ -143,9 +154,10 @@ valid = (sum == 0)
 
 If the checksum or the key bytes are wrong, **do not attempt to boot**.
 
-### 3.2 Initial/Default Entry (required)
+### 3.2 Boot Entry (initial/default for Win7) (required)
 
-The Initial/Default Entry specifies the boot image location and how to load it.
+The initial/default boot entry (for typical Win7 media: entry #1) specifies the boot image location
+and how to load it.
 
 | Offset | Size | Field | Notes |
 |---:|---:|---|---|
@@ -358,6 +370,39 @@ In Aero:
 
 * HDD (`DL=0x80..=0xDF`) reports **512 bytes/sector** and `total_sectors` in 512-byte units.
 * CD-ROM (`DL=0xE0..=0xEF`) reports **2048 bytes/sector** and `total_sectors` in 2048-byte units.
+
+### 6.4 AH=4Bh — El Torito disk emulation services (optional compatibility)
+
+Some CD boot images query El Torito metadata via INT 13h `AH=4Bh`. Windows 7 install media does not
+typically require this path, but Aero implements a minimal subset because it is closely tied to
+El Torito boot-catalog parsing.
+
+Behavior implemented by Aero:
+
+* Only available when the BIOS actually booted via El Torito and captured boot-catalog metadata
+  during POST.
+* Only valid for the El Torito boot drive (must match `DL` used to boot).
+
+Supported subfunctions (in `AL`):
+
+* `AX=4B00h` — Terminate disk emulation
+  * For **no-emulation** boots, Aero treats this as a no-op success.
+* `AX=4B01h` — Get disk emulation status
+  * Writes a status packet at `ES:DI` (caller provides the buffer).
+
+Status packet written by Aero (size `0x13` bytes):
+
+| Offset | Size | Field | Notes |
+|---:|---:|---|---|
+| `0x00` | 1 | packet size | `0x13` |
+| `0x01` | 1 | media type | `0x00` = no-emulation |
+| `0x02` | 1 | boot drive | `DL` value used for El Torito boot (typically `0xE0`) |
+| `0x03` | 1 | controller index | currently `0` |
+| `0x04` | 4 | boot image LBA | ISO LBA (2048-byte) of the boot image, little-endian |
+| `0x08` | 4 | boot catalog LBA | ISO LBA (2048-byte) of the boot catalog, little-endian |
+| `0x0C` | 2 | load segment | real-mode segment used to load boot image (e.g. `0x07C0`) |
+| `0x0E` | 2 | sector count | number of **512-byte** sectors loaded for the initial image |
+| `0x10` | 3 | reserved | zero |
 
 ---
 
