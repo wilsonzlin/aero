@@ -339,7 +339,7 @@ pub enum DiskFormat {
     Raw,              // Direct sector mapping
     Qcow2,            // QEMU Copy-on-Write v2
     Vhd,              // Microsoft Virtual Hard Disk
-    Sparse,           // Aero sparse format (`AEROSPAR`)
+    AeroSparse,       // Aero sparse format (`AEROSPAR`)
 }
 
 pub struct VirtualDrive {
