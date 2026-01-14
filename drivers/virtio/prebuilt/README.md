@@ -22,6 +22,18 @@ python3 tools/driver-iso/build.py \
   --output dist/aero-virtio-win7-drivers.iso
 ```
 
+For deterministic builds (recommended), install Rust/cargo and use:
+
+```bash
+python3 tools/driver-iso/build.py \
+  --backend rust \
+  --source-date-epoch 0 \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers.iso
+```
+
+(`--source-date-epoch` defaults to `SOURCE_DATE_EPOCH` when set, otherwise `0`.)
+
 Redistribution note:
 
 - Ensure you ship `THIRD_PARTY_NOTICES.md` (see `drivers/virtio/THIRD_PARTY_NOTICES.md`) alongside any virtio-win-derived binaries.

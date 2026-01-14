@@ -18,3 +18,19 @@ Important:
   - `licenses/virtio-win/` (best-effort copy of upstream LICENSE/NOTICE files when using `make-driver-pack.ps1`)
 
 See `docs/virtio-windows-drivers.md` for installation steps and signing notes.
+
+## Building a mountable “drivers ISO”
+
+Use `tools/driver-iso/build.py` to produce a CD-ROM ISO containing the `win7/` driver directories.
+When Rust/cargo is available, the builder uses the in-tree deterministic ISO writer by default
+(`--backend auto`).
+
+For a deterministic build:
+
+```bash
+python3 tools/driver-iso/build.py \
+  --backend rust \
+  --source-date-epoch 0 \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers.iso
+```
