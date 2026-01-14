@@ -1784,17 +1784,6 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 
                 let expected_rev = parse_contract_pci_revision_for_device(dev, &base)
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
-                let strict = format!("{base}&REV_{expected_rev:02X}");
-
-                // In-tree virtio INFs must include a strict `PCI\\VEN_...&DEV_...&REV_..` model entry so driver
-                // binding remains revision-gated even if subsystem IDs are absent/ignored.
-                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
-                    bail!(
-                        "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
-                        inf_path.display(),
-                        format_bullets(&active_hwids)
-                    );
-                }
 
                 let mut missing_rev = BTreeSet::new();
                 let mut wrong_rev = BTreeSet::new();

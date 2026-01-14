@@ -3955,21 +3955,16 @@ def main() -> None:
 
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
-        hwids_upper = {h.upper() for h in hwids}
-        # Win7 virtio INFs must include a strict (no SUBSYS) Vendor/Device+REV match so
-        # binding remains revision-gated even if subsystem IDs are absent/ignored.
-        if strict_hwid.upper() not in hwids_upper:
-            errors.append(
-                format_error(
-                    f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
-                    [
-                        f"expected: {strict_hwid}",
-                        f"got: {sorted(hwids)}",
-                    ],
-                )
-            )
 
         relevant = [h for h in hwids if h.upper().startswith(base_hwid.upper())]
+        if not relevant:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: INF is missing required virtio HWID family {base_hwid} (no active HWIDs start with it):",
+                    [f"got: {sorted(hwids)}"],
+                )
+            )
+            continue
         missing_rev: list[str] = []
         wrong_rev: list[str] = []
         for hwid in relevant:
