@@ -455,8 +455,9 @@ pub const VIRTIO_BAR0_INDEX: u8 = 0;
 /// Size in bytes of the virtio-pci MMIO register window (BAR0).
 pub const VIRTIO_BAR0_SIZE: u64 = 0x4000;
 
-pub const VIRTIO_BARS: [PciBarProfile; 1] =
-    [PciBarProfile::mem64(VIRTIO_BAR0_INDEX, VIRTIO_BAR0_SIZE, false)];
+// NOTE: Keep VIRTIO_BARS defined using literal values (not derived constants) so
+// CI guardrails can parse it with a simple regex.
+pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
 /// AeroGPU BAR0 index (MMIO control registers).
 pub const AEROGPU_BAR0_INDEX: u8 = 0;
@@ -501,42 +502,32 @@ pub const VIRTIO_DEVICE_CFG_BAR0_OFFSET: u32 = 0x3000;
 /// Virtio BAR0 size of the device-specific configuration structure.
 pub const VIRTIO_DEVICE_CFG_BAR0_SIZE: u32 = 0x0100;
 
-pub const VIRTIO_CAP_COMMON: [u8; 14] = {
-    let off = VIRTIO_COMMON_CFG_BAR0_OFFSET.to_le_bytes();
-    let len = VIRTIO_COMMON_CFG_BAR0_SIZE.to_le_bytes();
-    [
-        16, 1, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
-        len[3],
-    ]
-};
+// NOTE: Keep virtio capability payloads as literal byte arrays so CI guardrails
+// can parse them without evaluating Rust expressions.
+pub const VIRTIO_CAP_COMMON: [u8; 14] = [
+    16, 1, 0, 0, 0, 0,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+];
 
-pub const VIRTIO_CAP_NOTIFY: [u8; 18] = {
-    let off = VIRTIO_NOTIFY_CFG_BAR0_OFFSET.to_le_bytes();
-    let len = VIRTIO_NOTIFY_CFG_BAR0_SIZE.to_le_bytes();
-    let mult = VIRTIO_NOTIFY_OFF_MULTIPLIER.to_le_bytes();
-    [
-        20, 2, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
-        len[3], mult[0], mult[1], mult[2], mult[3],
-    ]
-};
+pub const VIRTIO_CAP_NOTIFY: [u8; 18] = [
+    20, 2, 0, 0, 0, 0,
+    0x00, 0x10, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+    0x04, 0x00, 0x00, 0x00,
+];
 
-pub const VIRTIO_CAP_ISR: [u8; 14] = {
-    let off = VIRTIO_ISR_CFG_BAR0_OFFSET.to_le_bytes();
-    let len = VIRTIO_ISR_CFG_BAR0_SIZE.to_le_bytes();
-    [
-        16, 3, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
-        len[3],
-    ]
-};
+pub const VIRTIO_CAP_ISR: [u8; 14] = [
+    16, 3, 0, 0, 0, 0,
+    0x00, 0x20, 0x00, 0x00,
+    0x20, 0x00, 0x00, 0x00,
+];
 
-pub const VIRTIO_CAP_DEVICE: [u8; 14] = {
-    let off = VIRTIO_DEVICE_CFG_BAR0_OFFSET.to_le_bytes();
-    let len = VIRTIO_DEVICE_CFG_BAR0_SIZE.to_le_bytes();
-    [
-        16, 4, VIRTIO_BAR0_INDEX, 0, 0, 0, off[0], off[1], off[2], off[3], len[0], len[1], len[2],
-        len[3],
-    ]
-};
+pub const VIRTIO_CAP_DEVICE: [u8; 14] = [
+    16, 4, 0, 0, 0, 0,
+    0x00, 0x30, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00,
+];
 
 pub const VIRTIO_VENDOR_CAPS: [PciCapabilityProfile; 4] = [
     PciCapabilityProfile::VendorSpecific {
