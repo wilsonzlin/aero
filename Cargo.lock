@@ -639,6 +639,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-mmu",
  "aero-pc-constants",
+ "criterion",
  "firmware",
  "js-sys",
  "memory",
