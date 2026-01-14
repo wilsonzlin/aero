@@ -1702,6 +1702,126 @@ static void test_pci_legacy_no_interrupt_flag(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_pci_legacy_event_idx_kick_suppression(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    fake_pci_device_t fake;
+    test_io_region_t io_region;
+    virtio_pci_legacy_device_t dev;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    uint32_t align;
+    uint16_t qsz;
+    uint64_t host_features;
+    uint64_t driver_features;
+    uint32_t i;
+    uintptr_t expected_cookie;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    /*
+     * Legacy virtio-pci integration test with EVENT_IDX kick suppression.
+     *
+     * The fake device requests a notify every 4 avail entries, so the driver
+     * should suppress 3 kicks and then notify on the 4th (and repeat).
+     */
+    fake_pci_device_init(&fake, &os_ctx, 8, 4096, VIRTIO_TRUE, 4);
+
+    io_region.kind = TEST_IO_REGION_LEGACY_PIO;
+    io_region.dev = &fake;
+    virtio_pci_legacy_init(&dev, &os_ops, &os_ctx, (uintptr_t)&io_region, VIRTIO_FALSE);
+    virtio_pci_legacy_reset(&dev);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_ACKNOWLEDGE);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_DRIVER);
+
+    host_features = virtio_pci_legacy_read_device_features(&dev);
+    driver_features = host_features & (VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_RING_F_EVENT_IDX);
+    virtio_pci_legacy_write_driver_features(&dev, driver_features);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_FEATURES_OK);
+
+    align = virtio_pci_legacy_get_vring_align();
+    qsz = virtio_pci_legacy_get_queue_size(&dev, 0);
+    assert(align == 4096);
+    assert(qsz == 8);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, qsz, align, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                qsz,
+                                align,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_TRUE,
+                                32) == VIRTIO_OK);
+
+    assert(virtio_pci_legacy_set_queue_pfn(&dev, 0, ring.paddr) == VIRTIO_OK);
+    /*
+     * The fake device "programs" the EVENT_IDX kick threshold (avail_event)
+     * when the queue PFN is set (queue memory becomes visible to the device).
+     */
+    assert(vq.avail_event != NULL);
+    assert(*vq.avail_event == 3); /* notify_batch=4 => initial threshold=3 (kick on new==4). */
+
+    expected_cookie = 1;
+
+    for (i = 0; i < 8; i++) {
+        virtio_sg_entry_t sg[2];
+        uint16_t head;
+        void *cookie_in;
+        virtio_bool_t need_kick;
+
+        sg[0].addr = 0x520000u + ((uint64_t)i * 0x100u);
+        sg[0].len = 16;
+        sg[0].device_writes = VIRTIO_FALSE;
+        sg[1].addr = 0x620000u + ((uint64_t)i * 0x100u);
+        sg[1].len = 1;
+        sg[1].device_writes = VIRTIO_TRUE;
+
+        cookie_in = (void *)(uintptr_t)(i + 1u);
+        assert(virtqueue_split_add_sg(&vq, sg, 2, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+        (void)head;
+
+        need_kick = virtqueue_split_kick_prepare(&vq);
+        assert(vq.last_kick_avail == vq.avail_idx);
+
+        if (need_kick != VIRTIO_FALSE) {
+            virtio_pci_legacy_notify_queue(&dev, 0);
+
+            /* Drain all completions produced by the fake device. */
+            for (;;) {
+                void *cookie_out;
+                uint32_t used_len;
+                if (virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_FALSE) {
+                    break;
+                }
+                assert((uintptr_t)cookie_out == expected_cookie);
+                expected_cookie++;
+                assert(used_len == (sg[0].len + sg[1].len));
+            }
+
+            /* The fake device updates avail_event after processing. */
+            if (i == 3) {
+                assert(*vq.avail_event == 7);
+            }
+        } else {
+            void *cookie_out;
+            uint32_t used_len;
+            /* No notify => fake device did not process => no completions. */
+            assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_FALSE);
+        }
+    }
+
+    assert(expected_cookie == 9);
+    assert(vq.num_free == vq.queue_size);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 int main(void)
 {
     test_ring_size_event_idx();
@@ -1724,6 +1844,7 @@ int main(void)
     test_fuzz();
     test_pci_legacy_integration();
     test_pci_legacy_no_interrupt_flag();
+    test_pci_legacy_event_idx_kick_suppression();
     printf("virtio_common_tests: PASS\n");
     return 0;
 }
