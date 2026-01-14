@@ -90,3 +90,45 @@ fn snapshot_restore_clears_ehci_webusb_host_state() {
     assert_eq!(summary.inflight_control, None);
 }
 
+#[test]
+fn snapshot_restore_clears_muxed_webusb_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_ehci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webusb = UsbWebUsbPassthroughDevice::new();
+    vm.usb_attach_root(0, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind UHCI root port 0");
+
+    // When both UHCI and EHCI are enabled, root port 0 is backed by a shared USB2 mux, so the same
+    // physical device should be visible from both controllers.
+    {
+        let ehci = vm.ehci().expect("ehci enabled");
+        assert!(
+            ehci.borrow().controller().hub().port_device(0).is_some(),
+            "expected EHCI to observe the UHCI-attached device via the shared USB2 mux"
+        );
+    }
+
+    queue_webusb_control_in_action(&webusb);
+    assert_eq!(webusb.pending_summary().queued_actions, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let summary = webusb.pending_summary();
+    assert_eq!(summary.queued_actions, 0);
+    assert_eq!(summary.inflight_control, None);
+}
