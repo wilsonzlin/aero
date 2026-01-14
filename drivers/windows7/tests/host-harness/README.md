@@ -331,6 +331,13 @@ Notes:
   - Exception: for virtio-input, `-RequireVirtioInputMsix` / `--require-virtio-input-msix` requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
 
+Tip (guest-side fail-fast):
+
+- To make the guest fail immediately (instead of waiting for the harness to parse the final marker), provision the guest
+  selftest with:
+  - virtio-net: `aero-virtio-selftest.exe --require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
+    - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireNetMsix`.
+
 Example (PowerShell):
 
 ```powershell

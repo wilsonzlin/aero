@@ -230,6 +230,8 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
     - (Optional guest-side hard requirement: `aero-virtio-selftest.exe --require-input-msix`)
 - For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+- For virtio-net specifically, you can also make MSI-X a **guest-side** hard requirement:
+  - Guest selftest: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
 
 ### virtio-net “offload-sensitive” large transfers
 
