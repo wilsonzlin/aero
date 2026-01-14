@@ -14,8 +14,8 @@
 use core::fmt;
 
 use crate::sm4::opcode::{
-    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
-    OPCODE_MOV, OPCODE_NOP, OPCODE_RET, OPERAND_EXTENDED_BIT,
+    opcode_name, OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT,
+    OPCODE_MASK, OPCODE_MOV, OPCODE_NOP, OPCODE_RET, OPERAND_EXTENDED_BIT,
 };
 use crate::sm4::{ShaderStage, Sm4Program};
 
@@ -44,11 +44,18 @@ impl fmt::Display for WgslBootstrapError {
                 write!(f, "unexpected SM4/5 token stream: {msg}")
             }
             WgslBootstrapError::UnsupportedInstruction { opcode } => {
-                write!(f, "unsupported SM4/5 instruction opcode {opcode}")
+                if let Some(name) = opcode_name(*opcode) {
+                    write!(f, "unsupported SM4/5 instruction {name} (opcode {opcode})")
+                } else {
+                    write!(f, "unsupported SM4/5 instruction opcode {opcode}")
+                }
             }
             WgslBootstrapError::BadInstructionLength { opcode, len } => write!(
                 f,
-                "unexpected SM4/5 instruction length {len} for opcode {opcode}"
+                "unexpected SM4/5 instruction length {len} for {}",
+                opcode_name(*opcode)
+                    .map(|name| format!("{name} (opcode {opcode})"))
+                    .unwrap_or_else(|| format!("opcode {opcode}"))
             ),
             WgslBootstrapError::OperandOutOfBounds => {
                 write!(f, "operand token stream out of bounds")
