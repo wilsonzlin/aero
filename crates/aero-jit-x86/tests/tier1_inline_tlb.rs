@@ -1211,18 +1211,14 @@ fn tier1_inline_tlb_permission_miss_write_uses_updated_physical_base() {
     ram[0x1010..0x1010 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
     ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
 
-    let tlb_data =
-        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
 
     let (next_rip, got_cpu, got_ram, host_state) =
         run_wasm_with_prefilled_tlb(&block, cpu, ram, 0x3000, addr, tlb_data);
 
     assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(
-        &got_ram[0x1010..0x1010 + 4],
-        &0xDDCC_BBAAu32.to_le_bytes()
-    );
+    assert_eq!(&got_ram[0x1010..0x1010 + 4], &0xDDCC_BBAAu32.to_le_bytes());
     assert_eq!(&got_ram[0x2010..0x2010 + 4], &0x3333_4444u32.to_le_bytes());
 
     assert_eq!(host_state.mmu_translate_calls, 1);
