@@ -3266,62 +3266,64 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
         HRESULT lock_hr = CallCbMaybeHandle(ddi->pfnLockCb, dev->hrt_device, &lock_args);
         if (SUCCEEDED(lock_hr)) {
-          uint32_t lock_pitch = 0;
-          __if_exists(D3DDDICB_LOCK::Pitch) {
-            lock_pitch = lock_args.Pitch;
-          }
-          if (lock_pitch != 0 && lock_pitch != res->row_pitch_bytes) {
-            if (lock_pitch < row_bytes) {
-              D3DDDICB_UNLOCK unlock_args = {};
-              unlock_args.hAllocation = lock_args.hAllocation;
-              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-              (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
-
-              set_error(dev, E_INVALIDARG);
-              deallocate_if_needed();
-              res->~AeroGpuResource();
-              AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+          if (lock_args.pData) {
+            uint32_t lock_pitch = 0;
+            __if_exists(D3DDDICB_LOCK::Pitch) {
+              lock_pitch = lock_args.Pitch;
             }
+            if (lock_pitch != 0 && lock_pitch != res->row_pitch_bytes) {
+              if (lock_pitch < row_bytes) {
+                D3DDDICB_UNLOCK unlock_args = {};
+                unlock_args.hAllocation = lock_args.hAllocation;
+                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
 
-            std::vector<Texture2DSubresourceLayout> updated_layouts;
-            uint64_t updated_total_bytes = 0;
-            if (!build_texture2d_subresource_layouts(aer_fmt,
-                                                     res->width,
-                                                     res->height,
-                                                     res->mip_levels,
-                                                     res->array_size,
-                                                     lock_pitch,
-                                                     &updated_layouts,
-                                                     &updated_total_bytes)) {
-              D3DDDICB_UNLOCK unlock_args = {};
-              unlock_args.hAllocation = lock_args.hAllocation;
-              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-              (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+                set_error(dev, E_INVALIDARG);
+                deallocate_if_needed();
+                res->~AeroGpuResource();
+                AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+              }
 
-              set_error(dev, E_FAIL);
-              deallocate_if_needed();
-              res->~AeroGpuResource();
-              AEROGPU_D3D10_RET_HR(E_FAIL);
+              std::vector<Texture2DSubresourceLayout> updated_layouts;
+              uint64_t updated_total_bytes = 0;
+              if (!build_texture2d_subresource_layouts(aer_fmt,
+                                                       res->width,
+                                                       res->height,
+                                                       res->mip_levels,
+                                                       res->array_size,
+                                                       lock_pitch,
+                                                       &updated_layouts,
+                                                       &updated_total_bytes)) {
+                D3DDDICB_UNLOCK unlock_args = {};
+                unlock_args.hAllocation = lock_args.hAllocation;
+                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+
+                set_error(dev, E_FAIL);
+                deallocate_if_needed();
+                res->~AeroGpuResource();
+                AEROGPU_D3D10_RET_HR(E_FAIL);
+              }
+              if (updated_total_bytes == 0 || updated_total_bytes > backing_size ||
+                  updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+                D3DDDICB_UNLOCK unlock_args = {};
+                unlock_args.hAllocation = lock_args.hAllocation;
+                __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+                __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+                (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+
+                set_error(dev, E_INVALIDARG);
+                deallocate_if_needed();
+                res->~AeroGpuResource();
+                AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+              }
+
+              res->row_pitch_bytes = lock_pitch;
+              res->tex2d_subresources = std::move(updated_layouts);
+              total_bytes = updated_total_bytes;
             }
-            if (updated_total_bytes == 0 || updated_total_bytes > backing_size ||
-                updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-              D3DDDICB_UNLOCK unlock_args = {};
-              unlock_args.hAllocation = lock_args.hAllocation;
-              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-              (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
-
-              set_error(dev, E_INVALIDARG);
-              deallocate_if_needed();
-              res->~AeroGpuResource();
-              AEROGPU_D3D10_RET_HR(E_INVALIDARG);
-            }
-
-            res->row_pitch_bytes = lock_pitch;
-            res->tex2d_subresources = std::move(updated_layouts);
-            total_bytes = updated_total_bytes;
           }
 
           D3DDDICB_UNLOCK unlock_args = {};
