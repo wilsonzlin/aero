@@ -1682,6 +1682,44 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memory::{Bus, MemoryBus};
+
+    struct TestIsoBackend {
+        image: Vec<u8>,
+    }
+
+    impl IsoBackend for TestIsoBackend {
+        fn sector_count(&self) -> u32 {
+            let sectors = self.image.len() / AtapiCdrom::SECTOR_SIZE;
+            sectors as u32
+        }
+
+        fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
+            if !buf.len().is_multiple_of(AtapiCdrom::SECTOR_SIZE) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "unaligned buffer length",
+                ));
+            }
+
+            let start = usize::try_from(lba)
+                .ok()
+                .and_then(|v| v.checked_mul(AtapiCdrom::SECTOR_SIZE))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+            let end = start
+                .checked_add(buf.len())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+            if end > self.image.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "read beyond end of ISO image",
+                ));
+            }
+
+            buf.copy_from_slice(&self.image[start..end]);
+            Ok(())
+        }
+    }
 
     #[test]
     fn port_io_size0_is_noop() {
@@ -1900,5 +1938,114 @@ mod tests {
             ctl.primary.irq_pending,
             "DADR read must not clear the channel IRQ latch"
         );
+    }
+
+    #[test]
+    fn atapi_read10_uses_bus_master_dma_and_raises_irq() {
+        const BM_BASE: u16 = 0xC000;
+        const PRD_BASE: u64 = 0x1000;
+        const BUF_BASE: u64 = 0x2000;
+
+        let mut expected = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        for (i, b) in expected.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+
+        let mut cd = AtapiCdrom::new(Some(Box::new(TestIsoBackend {
+            image: expected.clone(),
+        })));
+
+        // The model reports Unit Attention on the first command after media insertion (similar to
+        // real hardware). Clear it so the subsequent READ(10) succeeds.
+        let tur = [0u8; 12];
+        let _ = cd.handle_packet(&tur, false);
+
+        let mut ctl = IdeController::new(BM_BASE);
+        ctl.attach_primary_master_atapi(cd);
+
+        // Guest RAM: PRD table + data buffer.
+        let mut mem = Bus::new(0x10_000);
+
+        // Single-entry PRD pointing at a 2048-byte guest buffer with EOT set.
+        mem.write_u32(PRD_BASE, BUF_BASE as u32);
+        mem.write_u16(PRD_BASE + 4, AtapiCdrom::SECTOR_SIZE as u16);
+        mem.write_u16(PRD_BASE + 6, 0x8000);
+
+        // Program Bus Master IDE registers: PRD pointer + direction=ToMemory + start.
+        ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
+        ctl.io_write(BM_BASE + 0, 1, 0x09);
+
+        // Issue ATAPI PACKET command with the DMA bit set in Features.
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        let ctrl_base = PRIMARY_PORTS.ctrl_base;
+
+        let data_port = cmd_base + ATA_REG_DATA;
+        let features_port = cmd_base + ATA_REG_ERROR_FEATURES;
+        let lba1_port = cmd_base + ATA_REG_LBA1;
+        let lba2_port = cmd_base + ATA_REG_LBA2;
+        let device_port = cmd_base + ATA_REG_DEVICE;
+        let command_port = cmd_base + ATA_REG_STATUS_COMMAND;
+        let alt_status_port = ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL;
+
+        // Select primary master.
+        ctl.io_write(device_port, 1, 0xA0);
+        // Request DMA for PACKET transfers (Features bit 0).
+        ctl.io_write(features_port, 1, 0x01);
+        // Byte count (2048) for the command (LBA Mid/High).
+        ctl.io_write(lba1_port, 1, 0x00);
+        ctl.io_write(lba2_port, 1, 0x08);
+
+        ctl.io_write(command_port, 1, 0xA0);
+
+        // PACKET phase should assert DRQ and raise an IRQ to request the 12-byte packet.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_ne!(st & IDE_STATUS_DRQ, 0);
+        assert_ne!(st & IDE_STATUS_DRDY, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert!(ctl.primary_irq_pending());
+
+        // Acknowledge the PACKET-phase IRQ. DMA completion should re-assert it.
+        let _ = ctl.io_read(command_port, 1);
+        assert!(!ctl.primary_irq_pending());
+
+        // Build an ATAPI READ(10) packet for LBA=0, blocks=1.
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x28; // READ(10)
+        pkt[7..9].copy_from_slice(&1u16.to_be_bytes());
+
+        // Write the packet via the data register (PIO-out, 16-bit words).
+        for chunk in pkt.chunks_exact(2) {
+            let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+            ctl.io_write(data_port, 2, w as u32);
+        }
+
+        // After the packet phase, the device should have queued a DMA request rather than entering
+        // a PIO data-in phase.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_eq!(st & IDE_STATUS_DRQ, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert_ne!(st & IDE_STATUS_DRDY, 0);
+        assert!(!ctl.primary_irq_pending());
+        assert!(ctl.primary.pending_dma.is_some());
+
+        // Run the synchronous DMA engine.
+        ctl.tick(&mut mem);
+
+        // DMA should have written the expected 2048-byte sector into guest memory.
+        let mut actual = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        mem.read_physical(BUF_BASE, &mut actual);
+        assert_eq!(actual, expected);
+
+        // Controller should end in status phase: DRQ cleared and IRQ pending.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_eq!(st & IDE_STATUS_DRQ, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert_eq!(st & IDE_STATUS_ERR, 0);
+        assert!(ctl.primary_irq_pending());
+
+        // Bus Master status should indicate interrupt and no error.
+        let bm_st = ctl.io_read(BM_BASE + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x04, "bus master status: {bm_st:#04x}");
+        assert_ne!(bm_st & (1 << 5), 0, "DMA capability bit should be set");
     }
 }
