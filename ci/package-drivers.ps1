@@ -139,7 +139,12 @@ function Assert-CiPackagedDriversOnly {
     # Only enforce this gate for the CI packaging layout (out/packages/<driverRel>/<arch>/...).
     # This prevents accidentally shipping stray/stale driver packages that were not explicitly
     # opted into CI packaging via drivers/<driverRel>/ci-package.json.
-    $infFiles = @(Get-ChildItem -LiteralPath $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue)
+    # Avoid `-Filter *.inf` because it can be case-sensitive on Linux/macOS; use a
+    # case-insensitive extension match so the script works cross-platform.
+    $infFiles = @(
+        Get-ChildItem -LiteralPath $InputRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '(?i)\\.inf$' }
+    )
     if (-not $infFiles -or $infFiles.Count -eq 0) {
         return
     }
@@ -589,8 +594,12 @@ function Assert-ContainsFileExtension {
         [Parameter(Mandatory = $true)][string] $Extension
     )
 
-    $pattern = "*.$Extension"
-    $found = Get-ChildItem -Path $Root -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    $ext = $Extension.Trim().TrimStart('.').ToLowerInvariant()
+    $pattern = "*.$ext"
+    # `-Filter` is case-sensitive on Linux/macOS, so filter manually on the extension.
+    $found = Get-ChildItem -Path $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -and $_.Extension.TrimStart('.').ToLowerInvariant() -eq $ext } |
+        Select-Object -First 1
     if (-not $found) {
         throw "Expected at least one '$pattern' file under '$Root'."
     }
@@ -739,7 +748,8 @@ function Copy-DriversForArch {
     $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
 
     $infFiles = @(
-        Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue |
+        Get-ChildItem -Path $InputRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '(?i)\\.inf$' } |
             Sort-Object -Property FullName
     )
     if (-not $infFiles) {
