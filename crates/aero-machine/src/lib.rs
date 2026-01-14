@@ -6751,6 +6751,14 @@ impl Machine {
         self.inject_mouse_button(Ps2MouseButton::Middle, pressed);
     }
 
+    pub fn inject_mouse_back(&mut self, pressed: bool) {
+        self.inject_mouse_button(Ps2MouseButton::Side, pressed);
+    }
+
+    pub fn inject_mouse_forward(&mut self, pressed: bool) {
+        self.inject_mouse_button(Ps2MouseButton::Extra, pressed);
+    }
+
     /// Inject a PS/2 mouse motion event into the i8042 controller, if present.
     ///
     /// Coordinate conventions:
@@ -6759,6 +6767,18 @@ impl Machine {
     pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         // `aero_devices_input::Ps2Mouse` expects browser-style +Y=down internally.
         self.inject_mouse_motion(dx, -dy, wheel);
+    }
+
+    /// Inject a PS/2 mouse button state into the i8042 controller, if present.
+    ///
+    /// `buttons` is a bitmask:
+    /// - bit 0: left
+    /// - bit 1: right
+    /// - bit 2: middle
+    /// - bit 3: back/side (only emitted if the guest enabled the IntelliMouse Explorer extension)
+    /// - bit 4: forward/extra (same note as bit 3)
+    pub fn inject_mouse_buttons_mask(&mut self, buttons: u8) {
+        self.inject_ps2_mouse_buttons(buttons);
     }
 
     /// Inject a PS/2 mouse button state into the i8042 controller, if present.
@@ -13078,6 +13098,31 @@ mod tests {
     }
 
     #[test]
+    fn mouse_button_helper_methods_update_host_button_cache() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // `inject_mouse_buttons_mask` should ignore bits above 0x1f.
+        m.inject_mouse_buttons_mask(0xff);
+        assert_eq!(m.ps2_mouse_buttons, 0x1f);
+
+        m.inject_mouse_buttons_mask(0x00);
+        assert_eq!(m.ps2_mouse_buttons, 0x00);
+
+        m.inject_mouse_back(true);
+        assert_eq!(m.ps2_mouse_buttons & 0x08, 0x08);
+        m.inject_mouse_forward(true);
+        assert_eq!(m.ps2_mouse_buttons & 0x10, 0x10);
+
+        m.inject_mouse_back(false);
+        m.inject_mouse_forward(false);
+        assert_eq!(m.ps2_mouse_buttons & 0x18, 0x00);
+    }
+
+    #[test]
     fn inject_ps2_mouse_buttons_resyncs_after_guest_mouse_reset() {
         let mut m = Machine::new(MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
@@ -13233,6 +13278,9 @@ mod tests {
         m.inject_browser_key("KeyA", true);
         m.inject_mouse_motion(1, 2, 3);
         m.inject_mouse_button(Ps2MouseButton::Left, true);
+        m.inject_mouse_back(true);
+        m.inject_mouse_forward(true);
+        m.inject_mouse_buttons_mask(0x1f);
 
         assert!(m.i8042.is_none());
         let devices = snapshot::SnapshotSource::device_states(&m);
