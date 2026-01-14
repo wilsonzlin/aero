@@ -4656,7 +4656,9 @@ function renderAudioPanel(): HTMLElement {
   function snapshotAudioOutputWav(
     out: unknown,
     opts: { maxSeconds: number },
-  ): { ok: true; wav: Uint8Array; meta: AudioOutputWavSnapshotMeta } | { ok: false; error: string } {
+  ):
+    | { ok: true; wav: Uint8Array; meta: AudioOutputWavSnapshotMeta }
+    | { ok: false; error: string; context?: Record<string, unknown> } {
     if (!out || (typeof out !== "object" && typeof out !== "function")) return { ok: false, error: "Audio output missing." };
     const o = out as Record<string, unknown>;
     const ringRaw = o.ringBuffer;
@@ -4707,12 +4709,6 @@ function renderAudioPanel(): HTMLElement {
     }
     let available = (write - read) >>> 0;
     if (available > cap) available = cap;
-    if (available === 0) {
-      return {
-        ok: false,
-        error: `Audio output ringBuffer is empty (read=${read} write=${write} cap=${cap} ctx=${audioContextState ?? "n/a"}).`,
-      };
-    }
 
     let underrunCount = 0;
     let overrunCount = 0;
@@ -4727,6 +4723,26 @@ function renderAudioPanel(): HTMLElement {
       }
     } catch {
       // ignore; best-effort only.
+    }
+
+    if (available === 0) {
+      return {
+        ok: false,
+        error: `Audio output ringBuffer is empty (read=${read} write=${write} cap=${cap} ctx=${audioContextState ?? "n/a"}).`,
+        context: {
+          sampleRate,
+          audioContextState,
+          baseLatencySeconds,
+          outputLatencySeconds,
+          channelCount: cc,
+          capacityFrames: cap,
+          readFrameIndex: read,
+          writeFrameIndex: write,
+          availableFrames: available,
+          underrunCount,
+          overrunCount,
+        },
+      };
     }
 
     const maxFrames = Math.max(1, Math.floor(sampleRate * Math.max(0.1, opts.maxSeconds)));
@@ -4805,7 +4821,7 @@ function renderAudioPanel(): HTMLElement {
 
   function snapshotMicAttachmentWav(opts: {
     maxSeconds: number;
-  }): { ok: true; wav: Uint8Array; meta: MicWavSnapshotMeta } | { ok: false; error: string } {
+  }): { ok: true; wav: Uint8Array; meta: MicWavSnapshotMeta } | { ok: false; error: string; context?: Record<string, unknown> } {
     const att = micAttachment;
     if (!att) return { ok: false, error: "Microphone capture is not active." };
     const sab = att.ringBuffer;
@@ -4826,6 +4842,17 @@ function renderAudioPanel(): HTMLElement {
         return {
           ok: false,
           error: `Microphone ring buffer is empty (readPos=${readPos} writePos=${writePos} cap=${capacitySamples} dropped=${droppedSamples}).`,
+          context: {
+            sampleRate,
+            capacitySamples,
+            readPos,
+            writePos,
+            availableSamples: available,
+            droppedSamples,
+            backend: att.backend,
+            audioContextState: att.audioContextState,
+            muted: att.muted,
+          },
         };
       }
 
@@ -5366,7 +5393,18 @@ function renderAudioPanel(): HTMLElement {
               entries.push({
                 path: `${dir}/audio-output-${item.name}.json`,
                 data: encoder.encode(
-                  JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: wavFile, error: res.error }, null, 2),
+                  JSON.stringify(
+                    {
+                      timeIso,
+                      build: getBuildInfoForExport(),
+                      ok: false,
+                      file: wavFile,
+                      error: res.error,
+                      ...(res.context ? { context: res.context } : {}),
+                    },
+                    null,
+                    2,
+                  ),
                 ),
               });
               entries.push({
@@ -5414,7 +5452,18 @@ function renderAudioPanel(): HTMLElement {
             entries.push({
               path: `${dir}/microphone-buffered.json`,
               data: encoder.encode(
-                JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: micWavFile, error: micRes.error }, null, 2),
+                JSON.stringify(
+                  {
+                    timeIso,
+                    build: getBuildInfoForExport(),
+                    ok: false,
+                    file: micWavFile,
+                    error: micRes.error,
+                    ...(micRes.context ? { context: micRes.context } : {}),
+                  },
+                  null,
+                  2,
+                ),
               ),
             });
             entries.push({ path: `${dir}/microphone-buffered-error.txt`, data: encoder.encode(micRes.error + "\n") });
