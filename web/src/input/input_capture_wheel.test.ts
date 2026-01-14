@@ -487,4 +487,70 @@ describe("InputCapture wheel handling", () => {
       expect((capture as any).queue.size).toBe(0);
     });
   });
+
+  it("does not let non-finite mouse movement deltas poison fractional accumulators", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        mouseSensitivity: 1.0,
+      });
+
+      (capture as any).hasFocus = true;
+      (capture as any).pointerLock.locked = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // A non-finite movement delta should be treated as 0 and must not permanently break
+      // subsequent (finite) mouse movement.
+      (capture as any).handleMouseMove({
+        movementX: Number.NaN,
+        movementY: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 0,
+      } as unknown as MouseEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      (capture as any).handleMouseMove({
+        movementX: Number.POSITIVE_INFINITY,
+        movementY: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 0.5,
+      } as unknown as MouseEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      // Finite movement should still work.
+      (capture as any).handleMouseMove({
+        movementX: 1,
+        movementY: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as MouseEvent);
+      expect((capture as any).queue.size).toBe(1);
+
+      const posted: any[] = [];
+      (capture as any).queue.flush({
+        postMessage: (msg: unknown) => posted.push(msg),
+      });
+
+      expect(posted).toHaveLength(1);
+      const words = decodeFirstEventWords((posted[0] as { buffer: ArrayBuffer }).buffer);
+      expect(words[0]).toBe(1);
+      expect(words[2]).toBe(InputEventType.MouseMove);
+      expect(words[4]).toBe(1);
+      expect(words[5]).toBe(0);
+    });
+  });
 });

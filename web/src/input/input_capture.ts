@@ -1178,11 +1178,21 @@ export class InputCapture {
 
   private takeWholeMouseDelta(axis: 'x' | 'y'): number {
     if (axis === 'x') {
+      if (!Number.isFinite(this.mouseFracX)) {
+        // Defensive: avoid poisoning the fractional accumulator (e.g. if a browser/event shim
+        // produces NaN/Infinity deltas). Reset to a clean state so subsequent motion works.
+        this.mouseFracX = 0;
+        return 0;
+      }
       const whole = this.mouseFracX < 0 ? Math.ceil(this.mouseFracX) : Math.floor(this.mouseFracX);
       this.mouseFracX -= whole;
       return whole | 0;
     }
 
+    if (!Number.isFinite(this.mouseFracY)) {
+      this.mouseFracY = 0;
+      return 0;
+    }
     const whole = this.mouseFracY < 0 ? Math.ceil(this.mouseFracY) : Math.floor(this.mouseFracY);
     this.mouseFracY -= whole;
     return whole | 0;
@@ -1298,12 +1308,20 @@ export class InputCapture {
   }
 
   private takeWholeWheelDelta(): number {
+    if (!Number.isFinite(this.wheelFrac)) {
+      this.wheelFrac = 0;
+      return 0;
+    }
     const whole = this.wheelFrac < 0 ? Math.ceil(this.wheelFrac) : Math.floor(this.wheelFrac);
     this.wheelFrac -= whole;
     return whole | 0;
   }
 
   private takeWholeWheelDeltaX(): number {
+    if (!Number.isFinite(this.wheelFracX)) {
+      this.wheelFracX = 0;
+      return 0;
+    }
     const whole = this.wheelFracX < 0 ? Math.ceil(this.wheelFracX) : Math.floor(this.wheelFracX);
     this.wheelFracX -= whole;
     return whole | 0;
