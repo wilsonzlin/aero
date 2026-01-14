@@ -185,8 +185,14 @@ static bool LessInsensitive(const std::wstring& a, const std::wstring& b) {
 #define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
 #endif
 
-// Userspace mirror of `drivers/windows7/virtio-input/src/log.h` diagnostics IOCTLs.
-// These are used by the selftest to observe interrupt configuration (INTx vs MSI-X).
+// Userspace mirror of `drivers/windows7/virtio-input/src/log.h` diagnostics IOCTLs / structs.
+//
+// The guest selftest intentionally duplicates these definitions so it can be built with a plain Win7-compatible
+// SDK toolchain (without WDK-only headers). Keep them in sync with the driver ABI:
+//   scripts/ci/check-win7-virtio-input-diagnostics-abi-sync.py
+//
+// These are used by the selftest to observe interrupt configuration (INTx vs MSI-X) and to validate virtio-input
+// statusq consumption (keyboard LED output -> statusq counters).
 static constexpr DWORD IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO =
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS);
 
