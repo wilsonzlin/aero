@@ -287,8 +287,9 @@ Notes:
     - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|messages=<n>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
       (and WARN variants like `virtio-blk-miniport-irq|WARN|...` when the miniport contract is missing/truncated)
     - `virtio-<dev>-irq|INFO|mode=intx`
-    - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`
+    - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>` (message interrupts; does not distinguish MSI vs MSI-X)
     - `virtio-<dev>-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when a driver exposes richer MSI-X diagnostics)
+    - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
       (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
   The host harness mirrors the per-test `irq_*` fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
   standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
