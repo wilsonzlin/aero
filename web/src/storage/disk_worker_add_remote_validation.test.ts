@@ -167,6 +167,7 @@ describe("disk_worker add_remote validation", () => {
       return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
+          "cache-control": "no-transform",
           "content-length": String(body.byteLength),
           "content-range": `bytes ${start}-${end}/${probeSize}`,
         },
@@ -189,6 +190,7 @@ describe("disk_worker add_remote validation", () => {
       return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
+          "cache-control": "no-transform",
           "content-length": String(body.byteLength),
           "content-range": `bytes ${start}-${end}/${probeSize}`,
         },
@@ -217,6 +219,7 @@ describe("disk_worker add_remote validation", () => {
       return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
+          "cache-control": "no-transform",
           "content-length": String(body.byteLength),
           "content-range": `bytes ${start}-${end}/${probeSize}`,
         },

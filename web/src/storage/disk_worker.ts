@@ -97,6 +97,33 @@ function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boole
   return true;
 }
 
+function assertIdentityContentEncoding(headers: Headers, label: string): void {
+  const raw = headers.get("content-encoding");
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === "identity") return;
+  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+}
+
+function assertNoTransformCacheControl(headers: Headers, label: string): void {
+  // Disk streaming reads bytes by offset. Any intermediary transform can break byte-addressed
+  // semantics. Require `Cache-Control: no-transform` as defence-in-depth.
+  //
+  // Note: Cache-Control is CORS-safelisted, so it is readable to JS cross-origin without
+  // `Access-Control-Expose-Headers`.
+  const raw = headers.get("cache-control");
+  if (!raw) {
+    throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
+  }
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (!tokens.includes("no-transform")) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  }
+}
+
 async function fetchRemoteRangeBytes(
   url: string,
   range: { start: number; endInclusive: number },
@@ -109,6 +136,8 @@ async function fetchRemoteRangeBytes(
     if (resp.status !== 206) {
       throw new Error(`${opts.label} Range request failed (status=${resp.status})`);
     }
+    assertIdentityContentEncoding(resp.headers, opts.label);
+    assertNoTransformCacheControl(resp.headers, opts.label);
     const expectedLen = range.endInclusive - range.start + 1;
     const bytes = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: opts.label });
     if (bytes.byteLength !== expectedLen) {
