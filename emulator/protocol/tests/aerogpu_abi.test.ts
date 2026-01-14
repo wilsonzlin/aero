@@ -982,6 +982,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_perf_out", "pending_meta_handle_bytes"), 192);
   assert.equal(off("aerogpu_escape_query_perf_out", "get_scanline_cache_hits"), 200);
   assert.equal(off("aerogpu_escape_query_perf_out", "get_scanline_mmio_polls"), 208);
+  assert.equal(off("aerogpu_escape_query_perf_out", "contig_pool_hit"), 216);
+  assert.equal(off("aerogpu_escape_query_perf_out", "contig_pool_miss"), 224);
+  assert.equal(off("aerogpu_escape_query_perf_out", "contig_pool_bytes_saved"), 232);
 
   assert.equal(off("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
   assert.equal(off("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);

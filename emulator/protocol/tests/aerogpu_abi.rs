@@ -2748,6 +2748,18 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "get_scanline_mmio_polls"),
         208
     );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "contig_pool_hit"),
+        216
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "contig_pool_miss"),
+        224
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "contig_pool_bytes_saved"),
+        232
+    );
 
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "flags"), 16);
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_code"), 20);
