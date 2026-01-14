@@ -552,6 +552,104 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(Array.from(c1.data)).toEqual(Array.from(vramU8.subarray(64)));
   });
 
+  it("persists reserved BAR1 VRAM blobs via WorkerVmSnapshot builder (save path)", async () => {
+    const addCalls: Array<{ id: number; version: number; flags: number; data: Uint8Array }> = [];
+    class FakeBuilder {
+      constructor(_guestBase: number, _guestSize: number) {
+        // ignore
+      }
+      set_cpu_state_v2(_cpu: Uint8Array, _mmu: Uint8Array): void {
+        // ignore
+      }
+      add_device_state(id: number, version: number, flags: number, data: Uint8Array): void {
+        addCalls.push({ id, version, flags, data });
+      }
+      async snapshot_full_to_opfs(_path: string): Promise<void> {
+        // ignore
+      }
+      free(): void {
+        // ignore
+      }
+    }
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const vramU8 = new Uint8Array(100);
+    for (let i = 0; i < vramU8.length; i++) vramU8[i] = i & 0xff;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      vramU8,
+      vramChunkBytes: 64,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    const vramAdds = addCalls.filter(
+      (c) => c.id === IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE || c.id === IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + 1,
+    );
+    expect(vramAdds.map((c) => c.id)).toEqual([IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE, IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + 1]);
+    expect(vramAdds[0]!.data).toEqual(vramU8.subarray(0, 64));
+    expect(vramAdds[1]!.data).toEqual(vramU8.subarray(64));
+    expect(vramAdds[0]!.data.buffer).toBe(vramU8.buffer);
+  });
+
+  it("restores reserved BAR1 VRAM blobs via WorkerVmSnapshot builder (restore path) without forwarding", async () => {
+    class FakeBuilder {
+      constructor(_guestBase: number, _guestSize: number) {
+        // ignore
+      }
+      async restore_snapshot_from_opfs(_path: string): Promise<unknown> {
+        return {
+          cpu: new Uint8Array([0xaa]),
+          mmu: new Uint8Array([0xbb]),
+          devices: [
+            { id: IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE, version: 1, flags: 0, data: new Uint8Array([1, 2, 3, 4]) },
+            { id: 123, version: 1, flags: 0, data: new Uint8Array([0xde, 0xad]) },
+          ],
+        };
+      }
+      free(): void {
+        // ignore
+      }
+    }
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const vramU8 = new Uint8Array(16);
+    vramU8.fill(0xff);
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      vramU8,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(vramU8.subarray(0, 4)).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(vramU8.subarray(4)).toEqual(new Uint8Array(12));
+    expect(res.devices?.map((d) => d.kind)).toEqual(["device.123"]);
+    expect(res.restoredDevices.map((d) => d.kind)).toEqual(["device.123"]);
+  });
+
   it("restores BAR1 VRAM blobs into vramU8 and does not forward them to the coordinator", async () => {
     const snapshotVram = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
     const unknown = new Uint8Array([0xde, 0xad]);
