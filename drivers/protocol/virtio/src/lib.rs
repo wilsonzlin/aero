@@ -323,13 +323,25 @@ mod tests {
 
     #[test]
     fn virtio_net_hdr_layout() {
+        // The virtio-net header layout is used as the prefix for both TX and RX
+        // descriptor chains. When `VIRTIO_NET_F_MRG_RXBUF` is negotiated, the
+        // header grows from 10 bytes to 12 bytes by appending `num_buffers`.
+        // Keeping these sizes/offsets stable is critical because drivers/devices
+        // split descriptor chains using the negotiated header length.
         assert_eq!(size_of::<VirtioNetHdr>(), 10);
         assert_eq!(offset_of!(VirtioNetHdr, flags), 0);
+        assert_eq!(offset_of!(VirtioNetHdr, gso_type), 1);
         assert_eq!(offset_of!(VirtioNetHdr, hdr_len), 2);
+        assert_eq!(offset_of!(VirtioNetHdr, gso_size), 4);
+        assert_eq!(offset_of!(VirtioNetHdr, csum_start), 6);
+        assert_eq!(offset_of!(VirtioNetHdr, csum_offset), 8);
     }
 
     #[test]
     fn virtio_net_hdr_mrg_rxbuf_layout() {
+        // The mergeable RX buffer header layout is negotiated by
+        // `VIRTIO_NET_F_MRG_RXBUF` and extends [`VirtioNetHdr`] with a trailing
+        // `num_buffers` field.
         assert_eq!(size_of::<VirtioNetHdrMrgRxbuf>(), 12);
         assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, hdr), 0);
         assert_eq!(offset_of!(VirtioNetHdrMrgRxbuf, num_buffers), 10);
