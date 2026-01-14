@@ -75,6 +75,10 @@ For the in-tree clean-room Aero virtio driver stack, the canonical INF names are
 - `aero_virtio_tablet.inf` (optional; tablet / absolute pointer)
 - `aero_virtio_snd.inf` (optional)
 
+Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
+CI scans this tree for those strings. Use canonical `aero_virtio_*.inf` names in examples; refer to any filename alias
+generically as the `*.inf.disabled` file.
+
 ## Running tests
 
 Example:

@@ -89,6 +89,9 @@ drivers/windows7/tests/
         `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
       - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
         compatibility). Enabling it is **not** required for fallback binding.
+      - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
+        CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
+        the `*.inf.disabled` file.
       - Caveat: avoid installing additional/third-party virtio-input INFs that can match the same HWIDs and steal
         device binding.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
