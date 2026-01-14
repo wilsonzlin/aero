@@ -11,6 +11,9 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
     // encoded via `@ts-expect-error` comments and validated in CI by `tsc`.
     const machine = {
       set_boot_drive: (_drive: number) => {},
+      active_boot_device: () => 0,
+      set_boot_from_cd_if_present: (_enabled: boolean) => {},
+      set_cd_boot_drive: (_drive: number) => {},
       attach_install_media_iso_bytes: (_bytes: Uint8Array) => {},
       set_cd_image: (_bytes: Uint8Array) => {},
       set_cd_opfs_existing: async (_path: string) => {},
@@ -20,6 +23,12 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
     function assertStrictNullChecksEnforced() {
       // @ts-expect-error set_boot_drive may be undefined
       machine.set_boot_drive(0x80);
+      // @ts-expect-error active_boot_device may be undefined
+      machine.active_boot_device();
+      // @ts-expect-error set_boot_from_cd_if_present may be undefined
+      machine.set_boot_from_cd_if_present(true);
+      // @ts-expect-error set_cd_boot_drive may be undefined
+      machine.set_cd_boot_drive(0xe0);
       // @ts-expect-error attach_install_media_iso_bytes may be undefined
       machine.attach_install_media_iso_bytes(new Uint8Array());
       // @ts-expect-error set_cd_image may be undefined
@@ -31,6 +40,15 @@ describe("runtime/wasm_loader (Machine boot media typings)", () => {
 
     if (machine.set_boot_drive) {
       machine.set_boot_drive(0x80);
+    }
+    if (machine.active_boot_device) {
+      machine.active_boot_device();
+    }
+    if (machine.set_boot_from_cd_if_present) {
+      machine.set_boot_from_cd_if_present(true);
+    }
+    if (machine.set_cd_boot_drive) {
+      machine.set_cd_boot_drive(0xe0);
     }
     if (machine.attach_install_media_iso_bytes) {
       machine.attach_install_media_iso_bytes(new Uint8Array([0x01]));

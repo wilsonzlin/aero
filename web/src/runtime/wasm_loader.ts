@@ -72,6 +72,36 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     boot_device?(): number;
+    /**
+     * Returns the effective boot device used for the current boot session.
+     *
+     * When the firmware "CD-first when present" policy is enabled, this reflects what firmware
+     * actually booted from (CD vs HDD), rather than just the configured preference.
+     *
+     * Optional for older WASM builds.
+     */
+    active_boot_device?(): number;
+    /**
+     * Enable/disable the firmware "CD-first when present" boot policy.
+     *
+     * When enabled and install media is attached, BIOS POST attempts to boot from CD-ROM first
+     * and falls back to the configured `boot_drive` on failure.
+     *
+     * This only takes effect after the next {@link reset}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_boot_from_cd_if_present?(enabled: boolean): void;
+    /**
+     * Set the BIOS CD-ROM drive number used when booting under the "CD-first when present" policy.
+     *
+     * Valid El Torito CD-ROM drive numbers are `0xE0..=0xEF` (recommended `0xE0` for first CD-ROM).
+     *
+     * This only takes effect after the next {@link reset}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_cd_boot_drive?(drive: number): void;
     set_disk_image(bytes: Uint8Array): void;
     /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.

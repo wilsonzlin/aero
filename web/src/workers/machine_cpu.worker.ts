@@ -836,9 +836,13 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
   let changed = false;
 
-  // The Aero BIOS does not currently probe multiple devices; it only exposes the selected boot
-  // drive (`DL`) to INT 13h. For Windows install flows (HDD + install ISO), we must explicitly
-  // select the CD drive (`0xE0`) before resetting so BIOS can El Torito boot it.
+  // The Aero BIOS can expose both HDD0 (`DL=0x80`) and CD0 (`DL=0xE0`) via INT 13h when both are
+  // present, but the boot-device choice is still driven by the boot-drive number (`DL`) used when
+  // transferring control to the boot sector (and optionally the firmware "CD-first when present"
+  // policy).
+  //
+  // For Windows install flows (HDD + install ISO), we explicitly select the CD drive (`0xE0`)
+  // before resetting so BIOS can El Torito boot it.
   //
   // Policy:
   // - When an ISO is attached, prefer a CD boot for the next host-triggered reset (install/recovery).
