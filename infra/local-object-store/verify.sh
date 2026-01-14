@@ -127,6 +127,7 @@ echo "$head_proxy" | grep -i '^accept-ranges: *bytes'
 echo "$head_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$head_proxy" | grep -i '^access-control-expose-headers:.*content-length'
 echo "$head_proxy" | grep -i '^access-control-expose-headers:.*etag'
+echo "$head_proxy" | grep -i '^vary:.*access-control-request-method'
 echo "$head_proxy" | grep -i "^cross-origin-resource-policy: ${corp}"
 
 echo "==> Verifying Range GET against proxy..."
@@ -136,6 +137,7 @@ echo "$range_proxy" | grep -i '^content-range:'
 echo "$range_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$range_proxy" | grep -i '^access-control-expose-headers:.*content-range'
 echo "$range_proxy" | grep -i '^access-control-expose-headers:.*etag'
+echo "$range_proxy" | grep -i '^vary:.*access-control-request-method'
 echo "$range_proxy" | grep -i "^cross-origin-resource-policy: ${corp}"
 
 echo "==> Verifying CORS preflight against proxy..."
@@ -151,5 +153,6 @@ echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*range'
 echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-range'
 echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-none-match'
 echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-modified-since'
+echo "$preflight_proxy" | grep -i '^vary:.*access-control-request-method'
 
 echo "==> Success."
