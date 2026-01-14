@@ -11,6 +11,15 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
 }
 
+fn prefix_error(err: JsValue, prefix: &str) -> JsValue {
+    // Prefer the JS Error message if available so we don't lose the original formatting.
+    let msg = err
+        .as_string()
+        .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+        .unwrap_or_else(|| format!("{err:?}"));
+    js_error(format!("{prefix}.{msg}"))
+}
+
 fn expect_object(value: &JsValue, ctx: &str) -> Result<(), JsValue> {
     if value.is_null() || value.is_undefined() {
         return Err(js_error(&format!("{ctx}: expected an object")));
@@ -208,7 +217,7 @@ fn parse_report_info(value: &JsValue) -> Result<webhid::HidReportInfo, JsValue> 
     let mut items = Vec::with_capacity(len as usize);
     for i in 0..len {
         let item = items_arr.get(i);
-        items.push(parse_report_item(&item)?);
+        items.push(parse_report_item(&item).map_err(|err| prefix_error(err, &format!("items[{i}]")))?);
     }
     Ok(webhid::HidReportInfo { report_id, items })
 }
@@ -219,7 +228,9 @@ fn parse_reports(value: &JsValue, ctx: &str) -> Result<Vec<webhid::HidReportInfo
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
         let report = arr.get(i);
-        out.push(parse_report_info(&report)?);
+        out.push(
+            parse_report_info(&report).map_err(|err| prefix_error(err, &format!("{ctx}[{i}]")))?,
+        );
     }
     Ok(out)
 }
@@ -245,7 +256,9 @@ fn parse_collection(value: &JsValue) -> Result<webhid::HidCollectionInfo, JsValu
     let mut children = Vec::with_capacity(children_len as usize);
     for i in 0..children_len {
         let child = children_arr.get(i);
-        children.push(parse_collection(&child)?);
+        children.push(
+            parse_collection(&child).map_err(|err| prefix_error(err, &format!("children[{i}]")))?,
+        );
     }
 
     let input_reports = parse_reports(&get_prop(value, "inputReports")?, "inputReports")?;
@@ -275,7 +288,7 @@ pub fn parse_webhid_collections(
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
         let col = arr.get(i);
-        out.push(parse_collection(&col)?);
+        out.push(parse_collection(&col).map_err(|err| prefix_error(err, &format!("[{i}]")))?);
     }
     Ok(out)
 }
