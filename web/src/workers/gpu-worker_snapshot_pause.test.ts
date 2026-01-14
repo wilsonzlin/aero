@@ -435,6 +435,90 @@ describe("workers/gpu-worker snapshot pause", () => {
     }
   });
 
+  it("waits for in-flight telemetry polling before acknowledging snapshot pause", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: createMinimalSharedFramebuffer(),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+        vram: segments.vram,
+        vramSizeBytes: segments.vram?.byteLength ?? 0,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const wasmModuleUrl = new URL("./test_workers/gpu_mock_presenter_telemetry_delay_module.ts", import.meta.url).href;
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        options: { wasmModuleUrl },
+      });
+
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 10_000);
+
+      // Wait for the telemetry hook to start (runs on an interval).
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_telemetry_started", 10_000);
+
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+
+      await expect(
+        waitForWorkerMessage(
+          worker,
+          (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+          100,
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_telemetry_finished", 10_000);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        5_000,
+      );
+    } finally {
+      await worker.terminate();
+    }
+  });
+
   it("does not disable shared-state globals if a resume races with an in-flight pause", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
