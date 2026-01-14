@@ -36,6 +36,11 @@ In the browser runtime, the “GPU worker” reads a shared framebuffer in a `Sh
 - Shared framebuffer layout (TS mirror): `web/src/ipc/shared-layout.ts`
 - GPU worker consumption and present loop: `web/src/workers/gpu-worker.ts`
 
+Compatibility note: the GPU worker can also consume an older “shared framebuffer protocol” header (RGBA8888 + frame counter, no dirty tiles) used by some harnesses/demos:
+
+- `web/src/display/framebuffer_protocol.ts` (layout)
+- `web/src/workers/gpu-worker.ts` (`refreshFramebufferProtocolViews`)
+
 ### 3) Scanout coordination: `ScanoutState` (seqlock)
 
 There is a second shared-memory structure that is **not a framebuffer**; it is a **lock-free descriptor** of the current scanout source.
@@ -210,7 +215,9 @@ Across the browser presentation code, the “CPU → presenter” source is trea
 Code pointers:
 
 - WebGPU worker presenter uploads: `web/src/gpu/webgpu-presenter-backend.ts` (`frameTexture` is `rgba8unorm`)
+  - Top-left origin convention is enforced in the blit shader: `web/src/gpu/shaders/blit.wgsl`
 - WebGL2 worker presenter uploads: `web/src/gpu/raw-webgl2-presenter-backend.ts` (`tex(Sub)Image2D` with `gl.UNPACK_FLIP_Y_WEBGL = 0`)
+  - Top-left origin convention is enforced in the shaders: `web/src/gpu/shaders/blit.vert.glsl`, `web/src/gpu/shaders/blit.frag.glsl`
 
 ### Alpha policy: treat output as opaque
 
