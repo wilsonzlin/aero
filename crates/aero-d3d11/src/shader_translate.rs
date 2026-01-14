@@ -5075,19 +5075,25 @@ fn emit_instructions(
             Sm4Inst::IShl { dst, a, b } => {
                 let a = emit_src_vec4_u32(a, inst_index, "ishl", ctx)?;
                 let b = emit_src_vec4_u32(b, inst_index, "ishl", ctx)?;
-                let expr = format!("bitcast<vec4<f32>>(({a}) << ({b}))");
+                // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                let sh = format!("({b}) & vec4<u32>(31u)");
+                let expr = format!("bitcast<vec4<f32>>(({a}) << ({sh}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ishl", ctx)?;
             }
             Sm4Inst::IShr { dst, a, b } => {
                 let a = emit_src_vec4_i32(a, inst_index, "ishr", ctx)?;
                 let b = emit_src_vec4_u32(b, inst_index, "ishr", ctx)?;
-                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({b}))");
+                // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                let sh = format!("({b}) & vec4<u32>(31u)");
+                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({sh}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ishr", ctx)?;
             }
             Sm4Inst::UShr { dst, a, b } => {
                 let a = emit_src_vec4_u32(a, inst_index, "ushr", ctx)?;
                 let b = emit_src_vec4_u32(b, inst_index, "ushr", ctx)?;
-                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({b}))");
+                // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                let sh = format!("({b}) & vec4<u32>(31u)");
+                let expr = format!("bitcast<vec4<f32>>(({a}) >> ({sh}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ushr", ctx)?;
             }
             Sm4Inst::IMin { dst, a, b } => {
