@@ -592,6 +592,93 @@ fn virtio_blk_discard_returns_ok() {
 }
 
 #[test]
+fn virtio_blk_discard_multi_segment_zeroes_ranges_best_effort() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Fill the whole disk with non-zero bytes, then DISCARD two disjoint ranges.
+    backing.borrow_mut().fill(0xa5);
+
+    let header = 0x7000;
+    let segs = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_DISCARD).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // Two segments:
+    // - sector 1, 1 sector
+    // - sector 3, 2 sectors
+    write_u64_le(&mut mem, segs, 1).unwrap();
+    write_u32_le(&mut mem, segs + 8, 1).unwrap();
+    write_u32_le(&mut mem, segs + 12, 0).unwrap();
+    write_u64_le(&mut mem, segs + 16, 3).unwrap();
+    write_u32_le(&mut mem, segs + 24, 2).unwrap();
+    write_u32_le(&mut mem, segs + 28, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, segs, 32, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // Confirm only the discarded ranges were zeroed.
+    assert!(backing.borrow()[0..512].iter().all(|b| *b == 0xa5));
+    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
+    assert!(backing.borrow()[1024..1536].iter().all(|b| *b == 0xa5));
+    assert!(backing.borrow()[1536..2560].iter().all(|b| *b == 0));
+    assert!(backing.borrow()[2560..4096].iter().all(|b| *b == 0xa5));
+}
+
+#[test]
+fn virtio_blk_discard_rejects_out_of_bounds_requests() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Mark the whole disk so we can validate the failed request doesn't modify it.
+    backing.borrow_mut().fill(0xa5);
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_DISCARD).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // `setup()` uses a 4096-byte backing store -> 8 sectors. Sector 7 + 2 sectors overflows.
+    write_u64_le(&mut mem, seg, 7).unwrap();
+    write_u32_le(&mut mem, seg + 8, 2).unwrap();
+    write_u32_le(&mut mem, seg + 12, 0).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
+    assert!(backing.borrow().iter().all(|b| *b == 0xa5));
+}
+
+#[test]
 fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
     // Use a real AeroSparseDisk so DISCARD can reclaim storage by clearing allocation table entries
     // (reads of discarded blocks return zeros).
