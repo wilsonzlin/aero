@@ -3734,6 +3734,9 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
              */
             if (ToFreeOut) {
                 *ToFreeOut = node;
+            } else {
+                /* Avoid leaking the unused node if the caller is not collecting it. */
+                ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
             }
             return openCount;
         }
