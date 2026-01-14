@@ -6,6 +6,7 @@ import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { createTarArchive } from "./utils/tar";
 import { encodeWavPcm16 } from "./utils/wav";
+import { encodeLinearRgba8ToSrgbInPlace } from "./utils/srgb";
 import { perf } from "./perf/perf";
 import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling, type AudioOutputMetrics } from "./platform/audio";
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
@@ -758,22 +759,6 @@ async function rgba8ToPngBlob(width: number, height: number, rgba8: Uint8Array):
   //
   // Canvas2D `putImageData` expects sRGB-encoded bytes, so encode linear->sRGB here so the saved
   // PNG matches what users expect to see when viewing the screenshot.
-  const LINEAR_TO_SRGB_U8 = (() => {
-    const lut = new Uint8Array(256);
-    for (let i = 0; i < 256; i += 1) {
-      const l = i / 255;
-      const s = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
-      lut[i] = Math.min(255, Math.max(0, Math.round(s * 255)));
-    }
-    return lut;
-  })();
-  const encodeLinearRgba8ToSrgbInPlace = (bytes: Uint8Array): void => {
-    for (let i = 0; i + 3 < bytes.byteLength; i += 4) {
-      bytes[i + 0] = LINEAR_TO_SRGB_U8[bytes[i + 0]!]!;
-      bytes[i + 1] = LINEAR_TO_SRGB_U8[bytes[i + 1]!]!;
-      bytes[i + 2] = LINEAR_TO_SRGB_U8[bytes[i + 2]!]!;
-    }
-  };
 
   const canvas = document.createElement("canvas");
   canvas.width = width;

@@ -47,6 +47,8 @@ import {
   type GpuRuntimeStatsCountersV1,
 } from "../ipc/gpu-protocol";
 
+import { linearizeSrgbRgba8InPlace } from "../utils/srgb";
+
 import {
   dirtyTilesToRects,
   type DirtyRect,
@@ -808,34 +810,6 @@ const redrawCursor = (): void => {
 };
 
 const MAX_HW_CURSOR_DIM = 256;
-
-// Lookup table for converting an 8-bit sRGB channel to an 8-bit linear channel.
-//
-// This is used for cursor readback when the CursorState format is an sRGB variant
-// (e.g. `B8G8R8A8UnormSrgb`). Presenter shaders blend in linear space and then
-// encode to sRGB for output; if we upload sRGB-encoded bytes as if they were
-// linear we would double-encode gamma and the cursor would look incorrect.
-//
-// We precompute the LUT so cursor updates remain cheap (cursors are small, but
-// can update frequently during pointer movement).
-const SRGB_TO_LINEAR_U8 = (() => {
-  const lut = new Uint8Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    const s = i / 255;
-    const linear = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    lut[i] = Math.min(255, Math.max(0, Math.round(linear * 255)));
-  }
-  return lut;
-})();
-
-const linearizeSrgbRgba8InPlace = (rgba: Uint8Array): void => {
-  // RGB are sRGB-encoded; alpha is linear and must be preserved.
-  for (let i = 0; i + 3 < rgba.byteLength; i += 4) {
-    rgba[i + 0] = SRGB_TO_LINEAR_U8[rgba[i + 0]!]!;
-    rgba[i + 1] = SRGB_TO_LINEAR_U8[rgba[i + 1]!]!;
-    rgba[i + 2] = SRGB_TO_LINEAR_U8[rgba[i + 2]!]!;
-  }
-};
 
 const tryReadHwCursorImageRgba8 = (
   basePaddr: bigint,

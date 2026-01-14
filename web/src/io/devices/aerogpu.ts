@@ -2,6 +2,7 @@ import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { TickableDevice } from "../device_manager.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds, type GuestRamLayout } from "../../runtime/shared_layout.ts";
+import { linearizeSrgbRgba8InPlace } from "../../utils/srgb.ts";
 import {
   CURSOR_FORMAT_B8G8R8A8,
   CURSOR_FORMAT_B8G8R8A8_SRGB,
@@ -73,24 +74,7 @@ function fnv1aUpdate(h: number, byte: number): number {
 //
 // In the preferred shared CursorState path, the GPU worker receives the cursor `format` and
 // can perform this decode itself during readback.
-const SRGB_TO_LINEAR_U8 = (() => {
-  const lut = new Uint8Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    const s = i / 255;
-    const linear = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    lut[i] = Math.min(255, Math.max(0, Math.round(linear * 255)));
-  }
-  return lut;
-})();
-
-const linearizeSrgbRgba8InPlace = (rgba: Uint8Array): void => {
-  // RGB are sRGB-encoded; alpha is linear and must be preserved.
-  for (let i = 0; i + 3 < rgba.byteLength; i += 4) {
-    rgba[i + 0] = SRGB_TO_LINEAR_U8[rgba[i + 0]!]!;
-    rgba[i + 1] = SRGB_TO_LINEAR_U8[rgba[i + 1]!]!;
-    rgba[i + 2] = SRGB_TO_LINEAR_U8[rgba[i + 2]!]!;
-  }
-};
+// Conversion implementation is shared in `web/src/utils/srgb.ts`.
 
 function isCursorFormatSrgb(format: number): boolean {
   switch (format >>> 0) {
