@@ -8,6 +8,7 @@ pub(crate) const DEVICE_KIND_USB: &str = "usb";
 /// Legacy VM snapshot device kind that older builds emitted for `DeviceId::USB`.
 pub(crate) const DEVICE_KIND_USB_UHCI: &str = "usb.uhci";
 pub(crate) const DEVICE_KIND_I8042: &str = "input.i8042";
+pub(crate) const DEVICE_KIND_VIRTIO_INPUT: &str = "input.virtio_input";
 pub(crate) const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
 pub(crate) const DEVICE_KIND_AUDIO_VIRTIO_SND: &str = "audio.virtio_snd";
 pub(crate) const DEVICE_KIND_NET_E1000: &str = "net.e1000";
@@ -21,6 +22,9 @@ pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     }
     if kind == DEVICE_KIND_I8042 {
         return Some(DeviceId::I8042);
+    }
+    if kind == DEVICE_KIND_VIRTIO_INPUT {
+        return Some(DeviceId::VIRTIO_INPUT);
     }
     if kind == DEVICE_KIND_AUDIO_HDA {
         return Some(DeviceId::HDA);
@@ -58,6 +62,9 @@ pub(crate) fn kind_from_device_id(id: DeviceId) -> String {
     if id == DeviceId::I8042 {
         return DEVICE_KIND_I8042.to_string();
     }
+    if id == DeviceId::VIRTIO_INPUT {
+        return DEVICE_KIND_VIRTIO_INPUT.to_string();
+    }
     if id == DeviceId::HDA {
         return DEVICE_KIND_AUDIO_HDA.to_string();
     }
@@ -90,6 +97,10 @@ mod tests {
         // Legacy alias accepted for backwards compatibility.
         assert_eq!(parse_device_kind("usb.uhci"), Some(DeviceId::USB));
         assert_eq!(parse_device_kind("input.i8042"), Some(DeviceId::I8042));
+        assert_eq!(
+            parse_device_kind("input.virtio_input"),
+            Some(DeviceId::VIRTIO_INPUT)
+        );
         assert_eq!(parse_device_kind("audio.hda"), Some(DeviceId::HDA));
         assert_eq!(
             parse_device_kind("audio.virtio_snd"),
@@ -127,6 +138,10 @@ mod tests {
     fn kind_from_device_id_returns_stable_kinds() {
         assert_eq!(kind_from_device_id(DeviceId::USB), "usb");
         assert_eq!(kind_from_device_id(DeviceId::I8042), "input.i8042");
+        assert_eq!(
+            kind_from_device_id(DeviceId::VIRTIO_INPUT),
+            "input.virtio_input"
+        );
         assert_eq!(kind_from_device_id(DeviceId::HDA), "audio.hda");
         assert_eq!(
             kind_from_device_id(DeviceId::VIRTIO_SND),

@@ -12,10 +12,12 @@ import {
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
+  VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT,
   VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   VM_SNAPSHOT_DEVICE_USB_UHCI_KIND_LEGACY,
+  VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
   VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
@@ -98,6 +100,8 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(VM_SNAPSHOT_DEVICE_E1000_KIND).toBe("net.e1000");
     expect(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET).toBe(23);
     expect(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND).toBe("net.virtio_net");
+    expect(VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT).toBe(24);
+    expect(VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND).toBe("input.virtio_input");
     expect(VM_SNAPSHOT_DEVICE_ID_NET_STACK).toBe(20);
     expect(VM_SNAPSHOT_DEVICE_NET_STACK_KIND).toBe("net.stack");
 
@@ -109,6 +113,7 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET);
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT);
 
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
@@ -129,6 +134,9 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET)).toBe(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND);
 
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT)).toBe(VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND);
+
     // Ensure these stable device ids do not collide.
     const ids = [
       VM_SNAPSHOT_DEVICE_ID_USB,
@@ -138,6 +146,7 @@ describe("workers/vm_snapshot_wasm", () => {
       VM_SNAPSHOT_DEVICE_ID_NET_STACK,
       VM_SNAPSHOT_DEVICE_ID_E1000,
       VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
+      VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT,
     ];
     expect(new Set(ids).size).toBe(ids.length);
 

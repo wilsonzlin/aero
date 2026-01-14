@@ -239,7 +239,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
 | `VIRTIO_SND` | `22` | `audio.virtio_snd` | virtio-snd (virtio-pci) audio device state |
 | `VIRTIO_NET` | `23` | `net.virtio_net` | virtio-net (virtio-pci) NIC transport state |
-| `VIRTIO_INPUT` | `24` | `device.24` | virtio-input (virtio-pci) multi-function device state (keyboard + mouse) |
+| `VIRTIO_INPUT` | `24` | `input.virtio_input` | virtio-input (virtio-pci) multi-function device state (keyboard + mouse) |
 
 #### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
