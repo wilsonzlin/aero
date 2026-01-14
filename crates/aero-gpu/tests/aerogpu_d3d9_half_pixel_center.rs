@@ -1,6 +1,7 @@
 mod common;
 
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig};
+use aero_gpu::stats::GpuStats;
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
@@ -10,6 +11,7 @@ use aero_protocol::aerogpu::{
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
 };
+use std::sync::Arc;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
@@ -415,10 +417,11 @@ fn d3d9_half_pixel_center_cases() {
         }
         Err(err) => panic!("failed to create executor: {err}"),
     };
-    // Create a second executor with half_pixel_center enabled.
-    //
-    // Note: we intentionally create a separate executor instead of trying to share the underlying
-    // wgpu device/queue. `wgpu::Device`/`wgpu::Queue` are not `Clone`, and the executor owns them.
+    // Share the underlying wgpu device/queue between executors to avoid repeatedly creating/dropping
+    // devices, which can be fragile on some backends.
+    let device = exec_off.device_arc();
+    let queue = exec_off.queue_arc();
+    let downlevel_flags = exec_off.downlevel_flags();
 
     // Explicit viewport (matches RT).
     let off_explicit = run(&mut exec_off, Some((4.0, 4.0)));
@@ -429,19 +432,19 @@ fn d3d9_half_pixel_center_cases() {
     // Oversized viewport clamped to RT bounds.
     let off_oversized = run(&mut exec_off, Some((8.0, 8.0)));
 
+    // Drop the first executor to release its internal state while keeping the wgpu device/queue
+    // alive via the cloned Arcs above.
     drop(exec_off);
-    let mut exec_on = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
+
+    let mut exec_on = AerogpuD3d9Executor::new_with_shared_device_queue(
+        device,
+        queue,
+        downlevel_flags,
+        Arc::new(GpuStats::new()),
         AerogpuD3d9ExecutorConfig {
             half_pixel_center: true,
         },
-    )) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
-    };
+    );
 
     let on_explicit = run(&mut exec_on, Some((4.0, 4.0)));
     assert_half_pixel_center_shift(&off_explicit, &on_explicit);

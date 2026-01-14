@@ -60,8 +60,8 @@ fn compute_wgpu_caps_hash(device: &wgpu::Device, downlevel_flags: wgpu::Downleve
 /// resource/state tracking to render basic D3D9Ex/DWM scenes, starting with a
 /// deterministic triangle test.
 pub struct AerogpuD3d9Executor {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     stats: Arc<GpuStats>,
 
     /// In-memory DXBC/token-stream -> WGSL cache.
@@ -1649,6 +1649,37 @@ impl AerogpuD3d9Executor {
         stats: Arc<GpuStats>,
         config: AerogpuD3d9ExecutorConfig,
     ) -> Self {
+        Self::new_inner(
+            Arc::new(device),
+            Arc::new(queue),
+            downlevel_flags,
+            stats,
+            config,
+        )
+    }
+
+    /// Create an executor using a shared `wgpu::Device` + `wgpu::Queue`.
+    ///
+    /// `wgpu::Device`/`wgpu::Queue` are not `Clone`, but it is often desirable to reuse a single
+    /// device/queue across multiple executors (for example, in tests that compare behavior across
+    /// different executor configs).
+    pub fn new_with_shared_device_queue(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        downlevel_flags: wgpu::DownlevelFlags,
+        stats: Arc<GpuStats>,
+        config: AerogpuD3d9ExecutorConfig,
+    ) -> Self {
+        Self::new_inner(device, queue, downlevel_flags, stats, config)
+    }
+
+    fn new_inner(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        downlevel_flags: wgpu::DownlevelFlags,
+        stats: Arc<GpuStats>,
+        config: AerogpuD3d9ExecutorConfig,
+    ) -> Self {
         #[cfg(target_arch = "wasm32")]
         let persistent_shader_cache_flags = aero_d3d9::runtime::ShaderTranslationFlags::new(
             config.half_pixel_center,
@@ -2071,11 +2102,19 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn device(&self) -> &wgpu::Device {
-        &self.device
+        self.device.as_ref()
     }
 
     pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
+        self.queue.as_ref()
+    }
+
+    pub fn device_arc(&self) -> Arc<wgpu::Device> {
+        self.device.clone()
+    }
+
+    pub fn queue_arc(&self) -> Arc<wgpu::Queue> {
+        self.queue.clone()
     }
 
     pub fn downlevel_flags(&self) -> wgpu::DownlevelFlags {

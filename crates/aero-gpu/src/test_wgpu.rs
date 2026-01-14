@@ -5,6 +5,7 @@
 //!
 //! To keep the test harness robust, we lazily create (and intentionally keep alive) a small set of
 //! headless `wgpu` devices keyed by the requested feature bits.
+#![allow(dead_code)]
 
 use std::sync::OnceLock;
 
