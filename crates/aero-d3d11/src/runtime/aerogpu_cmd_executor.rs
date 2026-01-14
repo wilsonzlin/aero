@@ -4090,11 +4090,11 @@ impl AerogpuD3d11Executor {
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can keep using executor state while the render pass is alive.
         let render_pipeline_ptr = {
-            let expanded_topology = self
-                .state
-                .primitive_topology
-                .wgpu_topology_for_direct_draw()
-                .unwrap_or(wgpu::PrimitiveTopology::TriangleList);
+            // The placeholder compute prepass always emits triangles (3 verts per input primitive),
+            // so the expanded draw must use TriangleList regardless of the original IA topology.
+            //
+            // Future GS/HS/DS emulation will supply the correct post-expansion topology here.
+            let expanded_topology = wgpu::PrimitiveTopology::TriangleList;
             let (_key, pipeline) = get_or_create_render_pipeline_for_expanded_draw(
                 &self.device,
                 &mut self.pipeline_cache,

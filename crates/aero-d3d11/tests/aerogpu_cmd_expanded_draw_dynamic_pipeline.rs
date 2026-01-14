@@ -3,8 +3,8 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuIndexFormat, AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -54,10 +54,12 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
 
         // Force the compute-prepass expanded-vertex path by binding a dummy GS handle.
         writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
+        // Use a point-list IA topology; the prepass expands each primitive into a triangle list.
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
 
         // The executor replaces this with `draw_indexed_indirect` using the generated indirect args
         // and index buffer.
-        writer.draw_indexed(3, 1, 0, 0, 0);
+        writer.draw_indexed(1, 1, 0, 0, 0);
 
         let stream = writer.finish();
 
@@ -78,4 +80,3 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
         assert_eq!(center, &[255, 0, 0, 255]);
     });
 }
-
