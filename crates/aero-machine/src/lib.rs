@@ -2935,7 +2935,10 @@ impl AeroGpuDevice {
 
         let mut out = 0u64;
         for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
+            // Guard against u64 wrap-around on malformed offsets.
+            let Some(off) = offset.checked_add(i as u64) else {
+                continue;
+            };
             let byte = self.legacy_vga_read_u8(off);
             out |= (byte as u64) << (i * 8);
         }
@@ -2952,7 +2955,10 @@ impl AeroGpuDevice {
         };
 
         for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
+            // Guard against u64 wrap-around on malformed offsets.
+            let Some(off) = offset.checked_add(i as u64) else {
+                continue;
+            };
             let byte = ((value >> (i * 8)) & 0xFF) as u8;
             self.legacy_vga_write_u8(off, byte);
         }
@@ -15127,6 +15133,24 @@ mod tests {
         });
         assert_eq!(file, expected_file);
         assert_eq!(line, expected_line);
+    }
+
+    #[test]
+    fn aerogpu_legacy_vga_mmio_byte_iteration_does_not_wrap_u64_offsets() {
+        // Regression test: `legacy_vga_read`/`legacy_vga_write` iterate bytewise for 1/2/4/8-byte
+        // MMIO accesses. Those offsets are guest-controlled (via the MMIO router), so they must not
+        // wrap around u64 space.
+        //
+        // Before the fix, an `offset = u64::MAX, size = 2` access would use `wrapping_add` and
+        // accidentally touch `offset = 0` for the second byte.
+        let mut dev = new_minimal_aerogpu_device_for_snapshot_tests();
+        dev.vram = vec![0; 1];
+        dev.vram[0] = 0xAA;
+
+        assert_eq!(dev.legacy_vga_read(u64::MAX, 2), 0);
+
+        dev.legacy_vga_write(u64::MAX, 2, 0xBBAA);
+        assert_eq!(dev.vram[0], 0xAA);
     }
 
     #[test]
