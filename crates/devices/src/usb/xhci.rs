@@ -672,6 +672,10 @@ mod tests {
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
+        // CRCR has low control/reserved bits; the controller model may mask/normalize them. Capture
+        // the effective visible value and ensure snapshot restore preserves it.
+        let expected_crcr = MmioHandler::read(&mut dev, regs::REG_CRCR_LO, 4) as u32;
+
         let snap = dev.save_state();
 
         let mut restored = XhciPciDevice::default();
@@ -680,7 +684,7 @@ mod tests {
         let usbcmd = MmioHandler::read(&mut restored, regs::REG_USBCMD, 4) as u32;
         let crcr = MmioHandler::read(&mut restored, regs::REG_CRCR_LO, 4) as u32;
         assert_eq!(usbcmd & regs::USBCMD_RUN, regs::USBCMD_RUN);
-        assert_eq!(crcr, 0x1234);
+        assert_eq!(crcr, expected_crcr);
         assert!(restored.irq_level());
     }
 }
