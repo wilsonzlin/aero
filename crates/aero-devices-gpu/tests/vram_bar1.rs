@@ -4,6 +4,7 @@ use aero_devices_gpu::{
     AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE, LEGACY_VGA_PADDR_END, LEGACY_VGA_VRAM_BYTES,
     VBE_LFB_OFFSET,
 };
+use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 use memory::MmioHandler as _;
 
 #[test]
@@ -118,7 +119,10 @@ fn bar1_layout_constants_match_canonical_vga_vbe_layout() {
     // - guest-visible legacy VGA alias aperture is 128KiB (0xA0000..0xBFFFF).
     // - the VBE LFB begins after the full 4-plane VGA planar region at 0x40000.
     assert_eq!(LEGACY_VGA_VRAM_BYTES, 0x20_000);
-    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+    assert_eq!(
+        VBE_LFB_OFFSET,
+        protocol_pci::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as u64
+    );
     // The BIOS VBE linear framebuffer base must be 64KiB-aligned.
     assert_eq!(VBE_LFB_OFFSET % 0x1_0000, 0);
 }

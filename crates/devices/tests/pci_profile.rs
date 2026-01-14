@@ -221,7 +221,7 @@ fn aerogpu_bar1_vram_is_large_enough_for_vbe_lfb() {
     // reserved for legacy VGA planar memory (4 × 64KiB planes).
     //
     // See `docs/16-aerogpu-vga-vesa-compat.md` (VBE_LFB_OFFSET = 0x40000).
-    const VBE_LFB_OFFSET: u64 = 0x40_000;
+    const VBE_LFB_OFFSET: u64 = protocol_pci::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as u64;
 
     // Keep BAR1 large enough to hold at least one 32bpp 4K-class framebuffer after the offset.
     // Use 4096x2160 to cover DCI 4K as well as UHD.

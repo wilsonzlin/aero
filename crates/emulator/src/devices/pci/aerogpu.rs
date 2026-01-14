@@ -40,9 +40,16 @@ impl Default for AeroGpuDeviceConfig {
 }
 
 // Canonical AeroGPU BAR1 VRAM layout (see `docs/16-aerogpu-vga-vesa-compat.md`):
-// - `0x00000..0x1FFFF`: legacy VGA window backing (`0xA0000..0xBFFFF`, 128KiB)
-// - `0x20000..`: VBE linear framebuffer (LFB)
+// - `VRAM[0..VBE_LFB_OFFSET)`: legacy VGA planar storage (4 × 64KiB planes). The guest-visible
+//   legacy VGA window (`0xA0000..0xBFFFF`, 128KiB) aliases into `VRAM[0..LEGACY_VGA_VRAM_BYTES)`.
+// - `VRAM[VBE_LFB_OFFSET..]`: VBE linear framebuffer (LFB).
 const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_devices_gpu::VBE_LFB_OFFSET as u32;
+const _: () = {
+    assert!(
+        AEROGPU_PCI_BAR1_LFB_OFFSET == aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32,
+        "AeroGPU BAR1 VBE LFB offset must match the canonical VGA/VBE VRAM layout"
+    );
+};
 const LEGACY_VGA_WINDOW_BASE: u32 = aero_devices_gpu::LEGACY_VGA_PADDR_BASE as u32;
 const LEGACY_VGA_WINDOW_SIZE: u32 = aero_devices_gpu::LEGACY_VGA_VRAM_BYTES as u32;
 
