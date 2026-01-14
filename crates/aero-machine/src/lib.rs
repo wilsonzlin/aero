@@ -3652,47 +3652,82 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     //
     // To detect presence, peek at the `pending_flag_u32` and only accept it when it is 0 or 1.
     //
-    // Additionally, reject any payload that begins with one of the known trailing section tags
-    // (`DACP`, etc.). This avoids incorrectly parsing a tagged section as pending state even if
-    // the tag payload happens to begin with 0/1 (e.g. `DACP` with `pel_mask=0`).
-    fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
-        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
-            tag == b"DACP"
-                || tag == b"ATRG"
-                || tag == b"DACI"
-                || tag == b"ATST"
-                || tag == b"VREG"
-                || tag == b"EXEC"
-        })
+    // Older snapshots may have tagged trailing payloads (e.g. `DACP`) immediately after the error
+    // payload, while newer snapshots insert one or two pending pairs before the tags. Avoid
+    // mis-parsing tag payloads as pending state by preferring tag detection at the expected offset
+    // *after* the pending pairs.
+    fn known_tag(bytes: &[u8], off: usize) -> bool {
+        bytes
+            .get(off..off.saturating_add(4))
+            .is_some_and(|tag| {
+                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
+                    || tag == b"VREG"
+                    || tag == b"EXEC"
+            })
     }
-    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
-        && bytes.len() >= off.saturating_add(8)
-        && !looks_like_tag(bytes, off)
-        && bytes
-            .get(off.saturating_add(4)..off.saturating_add(8))
+    fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
+        bytes
+            .get(off..off.saturating_add(4))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .is_some_and(|flag| flag <= 1)
-    {
-        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-        (pending_lo, pending)
-    } else {
-        (0, false)
-    };
-    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
-        && bytes.len() >= off.saturating_add(8)
-        && !looks_like_tag(bytes, off)
-        && bytes
-            .get(off.saturating_add(4)..off.saturating_add(8))
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .is_some_and(|flag| flag <= 1)
-    {
-        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-        (pending_lo, pending)
-    } else {
-        (0, false)
-    };
+    }
+
+    let mut scanout0_fb_gpa_pending_lo = 0;
+    let mut scanout0_fb_gpa_lo_pending = false;
+    let mut cursor_fb_gpa_pending_lo = 0;
+    let mut cursor_fb_gpa_lo_pending = false;
+
+    if has_error_payload {
+        // Prefer a deterministic tag-based probe when a known trailing section tag is present.
+        //
+        // Layout (after error payload):
+        // - legacy: [TAG...]
+        // - pending1: [u32 lo][u32 flag] [TAG...]
+        // - pending2: [u32 lo][u32 flag] [u32 lo][u32 flag] [TAG...]
+        let pending_pair_count = if known_tag(bytes, off.saturating_add(16)) {
+            2
+        } else if known_tag(bytes, off.saturating_add(8)) {
+            1
+        } else if known_tag(bytes, off) {
+            0
+        } else {
+            usize::MAX
+        };
+
+        if pending_pair_count == 2
+            && bytes.len() >= off.saturating_add(16)
+            && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            && peek_flag(bytes, off.saturating_add(12)).is_some_and(|flag| flag <= 1)
+        {
+            scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        } else if pending_pair_count == 1
+            && bytes.len() >= off.saturating_add(8)
+            && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+        {
+            scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        } else if pending_pair_count == 0 {
+            // No pending pairs; tags begin immediately.
+        } else {
+            // Fallback: probe for the raw `(pending_lo, pending_flag_u32)` pair(s).
+            if bytes.len() >= off.saturating_add(8)
+                && !known_tag(bytes, off)
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            {
+                scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
+            if bytes.len() >= off.saturating_add(8)
+                && !known_tag(bytes, off)
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            {
+                cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
+        }
+    }
     let vga_dac = {
         const TAG: &[u8; 4] = b"DACP";
         const PALETTE_LEN: usize = 256 * 3;
@@ -3888,45 +3923,73 @@ fn apply_aerogpu_snapshot_v2(
 
     // Optional scanout0/cursor FB_GPA pending payloads (added after the error fields).
     //
-    // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe.
-    fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
-        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
-            tag == b"DACP"
-                || tag == b"ATRG"
-                || tag == b"DACI"
-                || tag == b"ATST"
-                || tag == b"VREG"
-                || tag == b"EXEC"
-        })
+    // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe and tag-based
+    // detection.
+    fn known_tag(bytes: &[u8], off: usize) -> bool {
+        bytes
+            .get(off..off.saturating_add(4))
+            .is_some_and(|tag| {
+                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
+                    || tag == b"VREG"
+                    || tag == b"EXEC"
+            })
     }
-    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
-        && bytes.len() >= off.saturating_add(8)
-        && !looks_like_tag(bytes, off)
-        && bytes
-            .get(off.saturating_add(4)..off.saturating_add(8))
+    fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
+        bytes
+            .get(off..off.saturating_add(4))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .is_some_and(|flag| flag <= 1)
-    {
-        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-        (pending_lo, pending)
-    } else {
-        (0, false)
-    };
-    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
-        && bytes.len() >= off.saturating_add(8)
-        && !looks_like_tag(bytes, off)
-        && bytes
-            .get(off.saturating_add(4)..off.saturating_add(8))
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .is_some_and(|flag| flag <= 1)
-    {
-        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-        (pending_lo, pending)
-    } else {
-        (0, false)
-    };
+    }
+
+    let mut scanout0_fb_gpa_pending_lo = 0;
+    let mut scanout0_fb_gpa_lo_pending = false;
+    let mut cursor_fb_gpa_pending_lo = 0;
+    let mut cursor_fb_gpa_lo_pending = false;
+
+    if has_error_payload {
+        let pending_pair_count = if known_tag(bytes, off.saturating_add(16)) {
+            2
+        } else if known_tag(bytes, off.saturating_add(8)) {
+            1
+        } else if known_tag(bytes, off) {
+            0
+        } else {
+            usize::MAX
+        };
+
+        if pending_pair_count == 2
+            && bytes.len() >= off.saturating_add(16)
+            && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            && peek_flag(bytes, off.saturating_add(12)).is_some_and(|flag| flag <= 1)
+        {
+            scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        } else if pending_pair_count == 1
+            && bytes.len() >= off.saturating_add(8)
+            && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+        {
+            scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        } else if pending_pair_count == 0 {
+            // No pending pairs; tags begin immediately.
+        } else {
+            if bytes.len() >= off.saturating_add(8)
+                && !known_tag(bytes, off)
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            {
+                scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
+            if bytes.len() >= off.saturating_add(8)
+                && !known_tag(bytes, off)
+                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+            {
+                cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            }
+        }
+    }
     let mut restored_dac = false;
     let mut exec_state: Option<&[u8]> = None;
     // Optional trailing sections:
@@ -18172,6 +18235,80 @@ mod tests {
         assert_eq!(vram.dac_palette[0], [0, 0, 0]);
         assert_eq!(vram.dac_palette[1], [1, 2, 3]);
         assert_eq!(vram.dac_palette[255], [4, 5, 6]);
+    }
+
+    #[test]
+    fn decode_aerogpu_snapshot_v1_parses_pending_pairs_even_when_pending_lo_looks_like_tag() {
+        // The pending FB_GPA pairs are untagged u32 values. Ensure we don't mis-detect their
+        // presence based purely on the *bytes* of the `pending_lo` field.
+        let scanout_pending_lo = u32::from_le_bytes(*b"DACP");
+        let cursor_pending_lo = 0x1122_3344;
+
+        let pel_mask = 0xAA;
+        let mut palette = [[0u8; 3]; 256];
+        palette[0] = [7, 8, 9];
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+
+        // Pending pairs (2 × (pending_lo, pending_flag_u32)).
+        push_u32_le(&mut bytes, scanout_pending_lo);
+        push_u32_le(&mut bytes, 1);
+        push_u32_le(&mut bytes, cursor_pending_lo);
+        push_u32_le(&mut bytes, 0);
+
+        push_aerogpu_snapshot_dacp(&mut bytes, pel_mask, &palette);
+
+        let snap = decode_aerogpu_snapshot_v1(&bytes).expect("snapshot v1 should decode");
+        assert_eq!(snap.bar0.scanout0_fb_gpa_pending_lo, scanout_pending_lo);
+        assert!(snap.bar0.scanout0_fb_gpa_lo_pending);
+        assert_eq!(snap.bar0.cursor_fb_gpa_pending_lo, cursor_pending_lo);
+        assert!(!snap.bar0.cursor_fb_gpa_lo_pending);
+
+        let dac = snap.vga_dac.expect("DACP tag should be parsed");
+        assert_eq!(dac.pel_mask, pel_mask);
+        assert_eq!(dac.palette[0], [7, 8, 9]);
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_parses_pending_pairs_even_when_pending_lo_looks_like_tag() {
+        let scanout_pending_lo = u32::from_le_bytes(*b"DACP");
+        let cursor_pending_lo = 0x1122_3344;
+
+        let pel_mask = 0xAA;
+        let mut palette = [[0u8; 3]; 256];
+        palette[0] = [7, 8, 9];
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_u32_le(&mut bytes, 4096); // page_size
+        push_u32_le(&mut bytes, 0); // page_count
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+
+        push_u32_le(&mut bytes, scanout_pending_lo);
+        push_u32_le(&mut bytes, 1);
+        push_u32_le(&mut bytes, cursor_pending_lo);
+        push_u32_le(&mut bytes, 0);
+
+        push_aerogpu_snapshot_dacp(&mut bytes, pel_mask, &palette);
+
+        let mut vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut bar0 = AeroGpuMmioDevice::default();
+        let restored_dac = apply_aerogpu_snapshot_v2(&bytes, &mut vram, &mut bar0)
+            .expect("snapshot v2 should apply");
+        assert!(restored_dac);
+
+        let regs = bar0.snapshot_v1();
+        assert_eq!(regs.scanout0_fb_gpa_pending_lo, scanout_pending_lo);
+        assert!(regs.scanout0_fb_gpa_lo_pending);
+        assert_eq!(regs.cursor_fb_gpa_pending_lo, cursor_pending_lo);
+        assert!(!regs.cursor_fb_gpa_lo_pending);
+
+        assert_eq!(vram.pel_mask, pel_mask);
+        assert_eq!(vram.dac_palette[0], [7, 8, 9]);
     }
 
     #[test]
