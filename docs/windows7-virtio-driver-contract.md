@@ -871,6 +871,11 @@ virtio-snd config (little-endian):
 | `0x04` | 4 | `streams` | `2` |
 | `0x08` | 4 | `chmaps` | `0` |
 
+> Compatibility note (non-normative): the in-tree Win7 virtio-snd driver tolerates
+> `jacks = 2` as an optional extension so host/device models can emit standard
+> virtio-snd JACK `eventq` notifications while still matching the driver’s fixed
+> two-endpoint topology (speaker + microphone).
+
 #### 3.4.6 Minimal control flow
 
 Drivers and devices MUST follow the virtio-snd specification for message formats.
@@ -981,9 +986,13 @@ Contract v1 reserves virtio-snd `eventq` for future use and forbids drivers from
 
 Compatibility note (non-normative):
 
-- Some virtio-snd implementations may complete `eventq` buffers (e.g., jack connect/disconnect, period elapsed,
-  XRUN, control notify).
-- The Win7 virtio-snd driver is expected to tolerate unexpected `eventq` traffic without impacting audio streaming.
+- Some virtio-snd implementations may complete `eventq` buffers with standard virtio-snd events (e.g., JACK connect/disconnect,
+  PCM period elapsed, XRUN, control notify).
+- The Win7 virtio-snd driver MUST tolerate unexpected `eventq` traffic without impacting audio streaming.
+- Additionally, when JACK events are present, the Win7 virtio-snd driver wires them into the PortCls topology miniport:
+  - `VIRTIO_SND_EVT_JACK_*` updates `KSPROPERTY_JACK_DESCRIPTION*` connection state.
+  - The driver generates `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` so user-mode can refresh plug/unplug state without polling.
+  - Devices may optionally report `DEVICE_CFG.jacks = 2` to match the driver’s fixed two-jack topology.
 
 #### 3.5.4 virtio-snd: multi-format negotiation (optional)
 
