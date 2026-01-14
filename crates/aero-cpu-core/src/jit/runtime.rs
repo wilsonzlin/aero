@@ -577,6 +577,7 @@ where
     B: JitBackend,
     C: CompileRequestSink,
 {
+    #[track_caller]
     pub fn new(config: JitConfig, backend: B, compile: C) -> Self {
         let mut config = config;
         // Clamp the configured table size to the hard safety cap so `JitRuntime::config()` always
@@ -1061,6 +1062,50 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct OversizedCodeVersionTable;
+
+    impl CodeVersionTable for OversizedCodeVersionTable {
+        fn len(&self) -> usize {
+            PageVersionTracker::MAX_TRACKED_PAGES + 1
+        }
+
+        fn get(&self, _idx: usize) -> u32 {
+            0
+        }
+
+        fn set(&self, _idx: usize, _value: u32) {}
+
+        fn bump_range(&self, _start: usize, _end: usize) {}
+
+        fn reset(&self) {}
+
+        fn table_ptr_len(&self) -> (*mut u32, usize) {
+            (
+                core::ptr::NonNull::<u32>::dangling().as_ptr(),
+                self.len(),
+            )
+        }
+    }
+
+    struct BackendWithOversizedTable;
+
+    impl JitBackend for BackendWithOversizedTable {
+        type Cpu = ();
+
+        fn execute(&mut self, _table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+            JitBlockExit {
+                next_rip: 0,
+                exit_to_interpreter: true,
+                committed: false,
+            }
+        }
+
+        fn code_version_table(&mut self) -> Option<Box<dyn CodeVersionTable>> {
+            Some(Box::new(OversizedCodeVersionTable))
+        }
+    }
+
     fn make_runtime(config: JitConfig) -> JitRuntime<DummyBackend, MockCompileSink> {
         JitRuntime::new(config, DummyBackend, MockCompileSink::default())
     }
@@ -1168,6 +1213,21 @@ mod tests {
         let expected_line = line!() + 2;
         let (file, line) = capture_panic_location(|| {
             rt.ensure_code_version_table_len(5);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
+
+    #[test]
+    fn jit_runtime_new_panics_at_call_site_on_oversized_backend_table() {
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _rt = JitRuntime::new(
+                JitConfig::default(),
+                BackendWithOversizedTable,
+                MockCompileSink::default(),
+            );
         });
         assert_eq!(file, expected_file);
         assert_eq!(line, expected_line);
