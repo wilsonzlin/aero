@@ -6658,17 +6658,18 @@ function handleInputBatch(buffer: ArrayBuffer): void {
             }
           }
         } else {
-          // Prefer a combined wheel2 API when available so diagonal scroll events can be represented
-          // as a single HID report (matching `InputEventType.MouseWheel`, which carries both axes).
-          const wheel2 = usbHid?.mouse_wheel2;
-          if (dz !== 0 && dx !== 0 && wheel2) {
-            wheel2(dz, dx);
-          } else {
-            if (dz !== 0) {
-              usbHid?.mouse_wheel(dz);
-            }
-            if (dx !== 0) {
-              usbHid?.mouse_hwheel?.(dx);
+          if (dz !== 0 || dx !== 0) {
+            // Prefer a combined wheel2 API when available so scroll events can be represented as a
+            // single HID report (matching `InputEventType.MouseWheel`, which carries both axes).
+            if (usbHid?.mouse_wheel2) {
+              usbHid?.mouse_wheel2?.(dz, dx);
+            } else {
+              if (dz !== 0) {
+                usbHid?.mouse_wheel(dz);
+              }
+              if (dx !== 0) {
+                usbHid?.mouse_hwheel?.(dx);
+              }
             }
           }
         }
