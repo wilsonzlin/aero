@@ -3074,6 +3074,9 @@ impl XhciController {
     }
 
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
+        if !mem.dma_enabled() {
+            return;
+        }
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
         // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
         // the access.
