@@ -215,13 +215,18 @@ Instead, it supports a simple **best-effort** per-device registry configuration:
 - Registry key (per device instance):
   - `HKLM\\SYSTEM\\CurrentControlSet\\Enum\\<PNP_INSTANCE>\\Device Parameters\\AeroVirtioNet`
 - Value:
-  - `VlanId` (`REG_DWORD`)
-  - Valid range: `1..4094`
+  - Preferred (multiple VLANs): `VlanIds` (`REG_MULTI_SZ`)
+    - Each string entry is a decimal VLAN ID
+    - Valid range per entry: `1..4094`
+    - Maximum entries applied: `64` (duplicates ignored)
+    - If present, `VlanIds` overrides the legacy `VlanId` setting
+  - Legacy (single VLAN): `VlanId` (`REG_DWORD`)
+    - Valid range: `1..4094`
 
-On device start (after `DRIVER_OK`), if `VlanId` is present and the required virtio-net features were negotiated, the
+On device start (after `DRIVER_OK`), if `VlanIds` (or `VlanId`) is present and the required virtio-net features were negotiated, the
 driver sends:
 
-- `VIRTIO_NET_CTRL_VLAN_ADD` with the configured VLAN ID
+- `VIRTIO_NET_CTRL_VLAN_ADD` for each configured VLAN ID
 
 Notes:
 

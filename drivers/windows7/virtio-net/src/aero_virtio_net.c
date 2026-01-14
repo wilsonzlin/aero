@@ -2680,6 +2680,81 @@ static BOOLEAN AerovNetCtrlVqRegistryReadDword(_In_ HANDLE Key, _In_ PCWSTR Name
   return TRUE;
 }
 
+static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Name, _Outptr_result_bytebuffer_(*BytesOut) PWCHAR* ValueOut,
+                                                _Out_ ULONG* BytesOut) {
+  UNICODE_STRING ValueName;
+  ULONG ResultLen;
+  NTSTATUS Status;
+  UCHAR SmallBuf[sizeof(KEY_VALUE_PARTIAL_INFORMATION)];
+  PKEY_VALUE_PARTIAL_INFORMATION Info;
+  BOOLEAN NeedFree;
+  ULONG AllocBytes;
+  ULONG DataBytes;
+  PWCHAR Copy;
+
+  if (ValueOut) {
+    *ValueOut = NULL;
+  }
+  if (BytesOut) {
+    *BytesOut = 0;
+  }
+
+  if (Key == NULL || Name == NULL || ValueOut == NULL || BytesOut == NULL) {
+    return FALSE;
+  }
+
+  RtlInitUnicodeString(&ValueName, Name);
+  ResultLen = 0;
+  Info = (PKEY_VALUE_PARTIAL_INFORMATION)SmallBuf;
+  NeedFree = FALSE;
+  RtlZeroMemory(SmallBuf, sizeof(SmallBuf));
+  Status = ZwQueryValueKey(Key, &ValueName, KeyValuePartialInformation, Info, sizeof(SmallBuf), &ResultLen);
+  if (Status == STATUS_BUFFER_TOO_SMALL || Status == STATUS_BUFFER_OVERFLOW) {
+    AllocBytes = ResultLen;
+    Info = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, AllocBytes, AEROVNET_TAG);
+    if (!Info) {
+      return FALSE;
+    }
+    NeedFree = TRUE;
+    RtlZeroMemory(Info, AllocBytes);
+    ResultLen = 0;
+    Status = ZwQueryValueKey(Key, &ValueName, KeyValuePartialInformation, Info, AllocBytes, &ResultLen);
+  }
+  if (!NT_SUCCESS(Status)) {
+    if (NeedFree) {
+      ExFreePoolWithTag(Info, AEROVNET_TAG);
+    }
+    return FALSE;
+  }
+
+  DataBytes = Info->DataLength;
+  if (Info->Type != REG_MULTI_SZ || DataBytes < sizeof(WCHAR) || (DataBytes % sizeof(WCHAR)) != 0) {
+    if (NeedFree) {
+      ExFreePoolWithTag(Info, AEROVNET_TAG);
+    }
+    return FALSE;
+  }
+
+  // Copy out the MULTI_SZ payload and ensure it is double-NUL terminated so the
+  // parser cannot read past the allocation if the registry data is malformed.
+  Copy = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, DataBytes + sizeof(WCHAR), AEROVNET_TAG);
+  if (!Copy) {
+    if (NeedFree) {
+      ExFreePoolWithTag(Info, AEROVNET_TAG);
+    }
+    return FALSE;
+  }
+  RtlZeroMemory(Copy, DataBytes + sizeof(WCHAR));
+  RtlCopyMemory(Copy, Info->Data, DataBytes);
+
+  if (NeedFree) {
+    ExFreePoolWithTag(Info, AEROVNET_TAG);
+  }
+  *ValueOut = Copy;
+  *BytesOut = DataBytes;
+  return TRUE;
+}
+
 static VOID AerovNetCtrlVqRegistryUpdate(_Inout_ AEROVNET_ADAPTER* Adapter) {
   HANDLE Key;
   ULONGLONG HostFeatures;
@@ -2789,9 +2864,58 @@ static VOID AerovNetCtrlVqRegistryInit(_Inout_ AEROVNET_ADAPTER* Adapter) {
   AerovNetCtrlVqRegistryUpdate(Adapter);
 }
 
+static BOOLEAN AerovNetParseDecimalUlong(_In_z_ const WCHAR* Str, _Out_ ULONG* ValueOut) {
+  const WCHAR* S;
+  ULONG V;
+  BOOLEAN HaveDigit;
+
+  if (ValueOut) {
+    *ValueOut = 0;
+  }
+
+  if (Str == NULL || ValueOut == NULL) {
+    return FALSE;
+  }
+
+  S = Str;
+  while (*S == L' ' || *S == L'\t') {
+    S++;
+  }
+
+  V = 0;
+  HaveDigit = FALSE;
+  while (*S >= L'0' && *S <= L'9') {
+    ULONG Digit = (ULONG)(*S - L'0');
+    if (V > (0xFFFFFFFFu - Digit) / 10u) {
+      return FALSE;
+    }
+    V = (V * 10u) + Digit;
+    HaveDigit = TRUE;
+    S++;
+  }
+
+  while (*S == L' ' || *S == L'\t') {
+    S++;
+  }
+
+  if (!HaveDigit || *S != L'\0') {
+    return FALSE;
+  }
+
+  *ValueOut = V;
+  return TRUE;
+}
+
 static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adapter) {
   ULONG VlanId;
+  PWCHAR VlanIds;
+  ULONG VlanIdsBytes;
   NDIS_STATUS Status;
+  const WCHAR* P;
+  USHORT VidList[64];
+  ULONG VidCount;
+  ULONG I;
+  ULONG MaxVidCount;
 
   if (!Adapter) {
     return;
@@ -2810,12 +2934,67 @@ static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adap
   }
 
   // Optional configuration knob: if the per-device registry key contains a
-  // `VlanId` DWORD, add it to the device VLAN filter table via ctrl_vq.
+  // `VlanIds` MULTI_SZ (or legacy `VlanId` DWORD), add it to the device VLAN
+  // filter table via ctrl_vq.
   //
   // This is best-effort and is only intended for device models that expose
   // virtio-net VLAN filtering (VIRTIO_NET_F_CTRL_VLAN). If unset, the driver
   // does not configure VLAN filtering and continues to accept VLAN-tagged frames
   // via software.
+
+  // Newer configuration: multi-string list of VLAN IDs.
+  //
+  // If present, the legacy single VlanId DWORD is ignored.
+  VlanIds = NULL;
+  VlanIdsBytes = 0;
+  if (AerovNetCtrlVqRegistryReadMultiSz(Adapter->CtrlVqRegKey, L"VlanIds", &VlanIds, &VlanIdsBytes)) {
+    MaxVidCount = (ULONG)(sizeof(VidList) / sizeof(VidList[0]));
+    VidCount = 0;
+    P = VlanIds;
+    while (P && *P) {
+      ULONG Parsed;
+      ULONG Len;
+      BOOLEAN Duplicate;
+
+      // Compute length of current string.
+      Len = 0;
+      while (P[Len] != L'\0') {
+        Len++;
+      }
+
+      Parsed = 0;
+      (VOID)AerovNetParseDecimalUlong(P, &Parsed);
+
+      if (Parsed != 0 && Parsed < 4095u) {
+        USHORT Vid = (USHORT)Parsed;
+        Duplicate = FALSE;
+        for (I = 0; I < VidCount; I++) {
+          if (VidList[I] == Vid) {
+            Duplicate = TRUE;
+            break;
+          }
+        }
+        if (!Duplicate && VidCount < MaxVidCount) {
+          VidList[VidCount++] = Vid;
+        }
+      }
+
+      P += Len + 1;
+    }
+
+    ExFreePoolWithTag(VlanIds, AEROVNET_TAG);
+    VlanIds = NULL;
+
+    for (I = 0; I < VidCount; I++) {
+      Status = AerovNetCtrlVlanUpdate(Adapter, TRUE, VidList[I]);
+#if DBG
+      DbgPrint("virtio-net-ctrl-vq|INFO|vlan_add|vid=%hu|status=0x%08x\n", VidList[I], Status);
+#endif
+    }
+
+    return;
+  }
+
   VlanId = 0;
   if (!AerovNetCtrlVqRegistryReadDword(Adapter->CtrlVqRegKey, L"VlanId", &VlanId)) {
     return;
