@@ -829,10 +829,10 @@ jobs:
 
             # If QEMU fails very early, the harness may not create a serial log. Always upload *something*
             # so the artifact has a stable shape for consumers.
-            if [[ ! -f "${serial_log}" ]]; then
+            if [[ ! -s "${serial_log}" ]]; then
               echo "(serial log was not produced)" >"${serial_log}"
             fi
-            if [[ ! -f "${http_log}" ]]; then
+            if [[ ! -s "${http_log}" ]]; then
               echo "(no HTTP requests were logged)" >"${http_log}"
             fi
 
