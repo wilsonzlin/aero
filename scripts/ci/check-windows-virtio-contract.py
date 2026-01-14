@@ -500,7 +500,13 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
             if tok in constants:
                 val = constants[tok]
             else:
-                val = int(tok.replace("_", ""), 0)
+                try:
+                    val = int(tok.replace("_", ""), 0)
+                except ValueError as e:
+                    raise ValueError(
+                        f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unsupported u8 array token {tok!r} "
+                        + "(only integer literals/constants are supported; avoid inline comments or Rust expressions)"
+                    ) from e
             if not (0 <= val <= 0xFF):
                 raise ValueError(
                     f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: u8 value out of range: {tok!r}"
