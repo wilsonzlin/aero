@@ -86,6 +86,24 @@ describe("ipc/ring_buffer", () => {
     expect(Array.from(ring.tryPop() ?? [])).toEqual([1, 2, 3, 4]);
   });
 
+  it("rejects payload lengths that would wrap the u32 length field", () => {
+    const ring = makeRing(16);
+    // 2^32 would previously wrap to 0 via `>>> 0`, leading to a spurious empty record.
+    expect(
+      ring.tryPushWithWriterSpsc(2 ** 32, (dest) => {
+        dest.fill(0xaa);
+      }),
+    ).toBe(false);
+    expect(ring.tryPop()).toBeNull();
+
+    expect(
+      ring.tryPushWithWriter(2 ** 32, (dest) => {
+        dest.fill(0xbb);
+      }),
+    ).toBe(false);
+    expect(ring.tryPop()).toBeNull();
+  });
+
   it("can consume records without allocating a new payload buffer", () => {
     const ring = makeRing(64);
     expect(ring.tryPush(Uint8Array.of(1, 2, 3))).toBe(true);

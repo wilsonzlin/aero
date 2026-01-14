@@ -23,6 +23,10 @@ function u32(n: number): number {
   return n >>> 0;
 }
 
+// Payload length is stored as a `u32`, and `WRAP_MARKER` reserves `u32::MAX` as a sentinel.
+// Mirror `crates/aero-ipc/src/ring.rs`.
+const MAX_PAYLOAD_LEN = 0xffff_fffe;
+
 function ringBufferCorruption(message: string): Error {
   return new Error(`RingBuffer corrupted (${message}).`);
 }
@@ -129,6 +133,7 @@ export class RingBuffer {
 
   tryPush(payload: Uint8Array): boolean {
     const payloadLen = payload.byteLength;
+    if (payloadLen > MAX_PAYLOAD_LEN) return false;
     const recordSize = alignUp(4 + payloadLen, RECORD_ALIGN);
     if (recordSize > this.cap) return false;
 
@@ -186,7 +191,10 @@ export class RingBuffer {
    * overwrites the same region; callers must copy if they need to retain it.
    */
   tryPushWithWriter(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
-    const len = Math.max(0, Math.floor(payloadLen)) >>> 0;
+    if (!Number.isFinite(payloadLen)) return false;
+    const lenRaw = Math.max(0, Math.floor(payloadLen));
+    if (lenRaw > MAX_PAYLOAD_LEN) return false;
+    const len = lenRaw >>> 0;
     const recordSize = alignUp(4 + len, RECORD_ALIGN);
     if (recordSize > this.cap) return false;
 
@@ -283,7 +291,10 @@ export class RingBuffer {
    * producers pushing to a worker consumer).
    */
   tryPushWithWriterSpsc(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
-    const len = Math.max(0, Math.floor(payloadLen)) >>> 0;
+    if (!Number.isFinite(payloadLen)) return false;
+    const lenRaw = Math.max(0, Math.floor(payloadLen));
+    if (lenRaw > MAX_PAYLOAD_LEN) return false;
+    const len = lenRaw >>> 0;
     const recordSize = alignUp(4 + len, RECORD_ALIGN);
     if (recordSize > this.cap) return false;
 
