@@ -842,6 +842,7 @@ jobs:
           result_marker=""
           blk_resize_marker=""
           blk_reset_marker=""
+          blk_reset_marker_line=""
           blk_reset_recovery_marker=""
           net_link_flap_marker=""
           net_link_flap_host_marker=""
@@ -909,6 +910,9 @@ jobs:
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_reset_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             blk_reset_recovery_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
@@ -1072,6 +1076,9 @@ jobs:
             fi
               if [[ -n "${blk_reset_marker}" ]]; then
                 echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
+              fi
+              if [[ -n "${blk_reset_marker_line}" ]]; then
+                echo "- Guest virtio-blk-reset marker line: \`${blk_reset_marker_line}\`"
               fi
               if [[ -n "${blk_reset_recovery_marker}" ]]; then
                 echo "- Guest virtio-blk-reset-recovery marker: \`${blk_reset_recovery_marker}\`"

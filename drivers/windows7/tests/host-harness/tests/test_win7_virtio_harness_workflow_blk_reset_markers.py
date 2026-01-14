@@ -37,6 +37,16 @@ class Win7VirtioHarnessWorkflowBlkResetMarkerTests(unittest.TestCase):
             self.text,
         )
 
+    def test_workflow_extracts_blk_reset_guest_marker_line(self) -> None:
+        self.assertIn(
+            "blk_reset_marker_line=\"$(",
+            self.text,
+        )
+        self.assertIn(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|",
+            self.text,
+        )
+
     def test_workflow_summary_mentions_blk_reset_recovery_host_marker(self) -> None:
         self.assertIn(
             "Host virtio-blk-reset-recovery marker",
@@ -46,6 +56,12 @@ class Win7VirtioHarnessWorkflowBlkResetMarkerTests(unittest.TestCase):
     def test_workflow_summary_mentions_blk_reset_recovery_guest_marker(self) -> None:
         self.assertIn(
             "Guest virtio-blk-reset-recovery marker",
+            self.text,
+        )
+
+    def test_workflow_summary_mentions_blk_reset_marker_line(self) -> None:
+        self.assertIn(
+            "Guest virtio-blk-reset marker line",
             self.text,
         )
 
