@@ -438,6 +438,12 @@ int main(int argc, char** argv) {
           obj = obj.substr(3);
         }
         obj = TrimAsciiWhitespace(obj);
+        // If a BOM appears after leading whitespace (rare), trim again.
+        if (obj.size() >= 3 && (unsigned char)obj[0] == 0xEF && (unsigned char)obj[1] == 0xBB &&
+            (unsigned char)obj[2] == 0xBF) {
+          obj = obj.substr(3);
+        }
+        obj = TrimAsciiWhitespace(obj);
         if (!obj.empty() && LooksLikeTestReportJsonObject(obj)) {
           have_json = true;
         }
