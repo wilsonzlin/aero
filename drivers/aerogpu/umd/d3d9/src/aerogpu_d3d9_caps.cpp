@@ -360,9 +360,12 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
 
   // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
-  // and some runtimes to validate stage-state combiner operations. The UMD only
-  // implements a minimal stage0 subset; advertise just the operations we handle
-  // end-to-end.
+  // and some runtimes to validate stage-state combiner operations.
+  //
+  // The UMD's fixed-function fallback can interpret a small stage0 subset, but
+  // support is intentionally bring-up level (some ops/sources are only handled
+  // for common TEXTURE↔DIFFUSE/TFACTOR patterns). Keep caps conservative so apps
+  // don't rely on partially-implemented combinations.
   out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
                        D3DTEXOPCAPS_SELECTARG1 |
                        D3DTEXOPCAPS_SELECTARG2 |
