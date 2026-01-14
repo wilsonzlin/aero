@@ -75,6 +75,50 @@ def _list_iso_files_with_pycdlib(iso_path: Path) -> set[str]:
         iso.close()
 
 
+def _list_iso_files_with_aero_iso_ls(iso_path: Path) -> set[str]:
+    """
+    List ISO file paths using the in-tree Rust ISO9660/Joliet parser.
+
+    This backend is useful when Rust/cargo is available but Python ISO tooling
+    (pycdlib) or external tools (xorriso) are not installed.
+    """
+
+    cargo = shutil.which("cargo")
+    if not cargo:
+        raise SystemExit("cargo not found; cannot list ISO contents via aero_iso_ls")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    cargo_toml = repo_root / "tools/packaging/aero_packager/Cargo.toml"
+    if not cargo_toml.is_file():
+        raise SystemExit(f"aero_packager Cargo.toml not found: {cargo_toml}")
+
+    proc = subprocess.run(
+        [
+            cargo,
+            "run",
+            "--quiet",
+            "--locked",
+            "--manifest-path",
+            str(cargo_toml),
+            "--bin",
+            "aero_iso_ls",
+            "--",
+            "--iso",
+            str(iso_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "aero_iso_ls failed while listing ISO files:\n"
+            f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
+        )
+
+    return {_normalize_iso_path(line) for line in proc.stdout.splitlines() if line.strip()}
+
+
 def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
     xorriso = shutil.which("xorriso")
     if not xorriso:
@@ -158,6 +202,15 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
 
 
 def _list_iso_files(iso_path: Path) -> set[str]:
+    errors: list[str] = []
+
+    # Prefer the in-tree Rust ISO parser when cargo is available (cross-platform).
+    if shutil.which("cargo"):
+        try:
+            return _list_iso_files_with_aero_iso_ls(iso_path)
+        except SystemExit as e:
+            errors.append(str(e))
+
     # Prefer a pure-Python implementation when available so this script works on
     # Linux/macOS without requiring external ISO tooling.
     try:
@@ -166,15 +219,29 @@ def _list_iso_files(iso_path: Path) -> set[str]:
         return _list_iso_files_with_pycdlib(iso_path)
     except ModuleNotFoundError:
         pass
+    except SystemExit as e:
+        errors.append(str(e))
 
     xorriso = shutil.which("xorriso")
     if xorriso:
-        return _list_iso_files_with_xorriso(iso_path)
+        try:
+            return _list_iso_files_with_xorriso(iso_path)
+        except SystemExit as e:
+            errors.append(str(e))
     if os.name == "nt":
-        return _list_iso_files_with_powershell_mount(iso_path)
+        try:
+            return _list_iso_files_with_powershell_mount(iso_path)
+        except SystemExit as e:
+            errors.append(str(e))
+
+    if errors:
+        formatted = "\n\n".join(errors)
+        raise SystemExit(f"no supported ISO listing backend succeeded:\n\n{formatted}")
+
     raise SystemExit(
         "no supported ISO listing backend found.\n"
         "Install one of:\n"
+        "- Rust/cargo (to use the in-tree aero_iso_ls backend)\n"
         "- pycdlib: python3 -m pip install pycdlib\n"
         "- xorriso (via your OS package manager)"
     )

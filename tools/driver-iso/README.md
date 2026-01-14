@@ -62,6 +62,12 @@ python3 tools/driver-iso/build.py \
 
 ## Verify
 
+The verifier lists ISO contents using one of:
+
+- `cargo` (preferred): the in-tree `aero_iso_ls` tool
+- `pycdlib` (`python3 -m pip install pycdlib`)
+- `xorriso`
+
 ```bash
 python3 tools/driver-iso/verify_iso.py \
   --iso dist/aero-virtio-win7-drivers-sample.iso

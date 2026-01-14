@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "aero_iso"
 path = "src/aero_iso.rs"
 
+[[bin]]
+name = "aero_iso_ls"
+path = "src/aero_iso_ls.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
