@@ -421,7 +421,41 @@ impl Usb2MuxPort {
 
         if self.ehci.connected {
             v |= CCS;
-            if !self.ehci.reset {
+            if self.effective_owner == Usb2PortOwner::Ehci {
+                // Speed reporting:
+                // - High-speed devices set HSP and clear the line status bits.
+                // - Non-high-speed devices clear HSP and use LS (D+/D-) to indicate idle line state
+                //   so the EHCI driver can decide whether to hand off to a companion controller.
+                if let Some(dev) = self.device.as_ref() {
+                    match dev.speed() {
+                        UsbSpeed::High => {
+                            v |= HSP;
+                            v &= !LS_MASK;
+                        }
+                        UsbSpeed::Full | UsbSpeed::Low => {
+                            v &= !HSP;
+                            if !self.ehci.reset {
+                                let ls = if self.ehci.resuming {
+                                    // Preserve existing behaviour: resuming drives a K-state.
+                                    0b10
+                                } else {
+                                    match dev.speed() {
+                                        UsbSpeed::Full => 0b01, // J-state
+                                        UsbSpeed::Low => 0b10,  // K-state
+                                        UsbSpeed::High => unreachable!(),
+                                    }
+                                };
+                                v |= (ls as u32) << 10;
+                            }
+                        }
+                    }
+                } else if !self.ehci.reset {
+                    // No device object (should be rare); preserve previous MVP behaviour.
+                    let ls = if self.ehci.resuming { 0b10 } else { 0b01 };
+                    v |= (ls as u32) << 10;
+                }
+            } else if !self.ehci.reset {
+                // Port is not owned by EHCI; retain the previous MVP line status behaviour.
                 let ls = if self.ehci.resuming { 0b10 } else { 0b01 };
                 v |= (ls as u32) << 10;
             }
@@ -444,9 +478,6 @@ impl Usb2MuxPort {
         if self.ehci.reset {
             v |= PR;
         }
-        // High-speed indication: only set when the currently visible device is high-speed. For the
-        // MVP mux, we only have FS/LS devices, so always clear.
-        let _ = (HSP, LS_MASK);
         v
     }
 
