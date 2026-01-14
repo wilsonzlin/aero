@@ -7793,11 +7793,14 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
       s += "|cfg_intr_up=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_up));
     }
     if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value()) {
-      s += "|cfg_intr_down_delta=" +
-           std::to_string(static_cast<unsigned long>(*out.cfg_intr_down - *out.cfg_intr_before));
+      const long long delta =
+          static_cast<long long>(*out.cfg_intr_down) - static_cast<long long>(*out.cfg_intr_before);
+      s += "|cfg_intr_down_delta=" + std::to_string(delta);
     }
     if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value()) {
-      s += "|cfg_intr_up_delta=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_up - *out.cfg_intr_down));
+      const long long delta =
+          static_cast<long long>(*out.cfg_intr_up) - static_cast<long long>(*out.cfg_intr_down);
+      s += "|cfg_intr_up_delta=" + std::to_string(delta);
     }
     return s;
   };
