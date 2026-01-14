@@ -47,7 +47,7 @@ Companion tools:
 │ Browser (Aero)                                                            │
 │                                                                           │
 │  Storage stack:                                                          │
-│   VirtualDrive → StreamingDisk → (OPFS SparseDisk cache)                  │
+│   VirtualDrive → StreamingDisk → (OPFS AEROSPAR sparse cache)             │
 │                                                                           │
 │  Network behavior:                                                       │
 │   1) HEAD remote_url  -> discover Content-Length + ETag/Last-Modified     │
@@ -75,6 +75,9 @@ Companion tools:
 ```
 
 Key design principle: **the disk image URL should be stable and immutable** (versioned path). This enables aggressive CDN caching and makes local OPFS caches safe.
+
+Implementation note: in the current browser stack, the OPFS cache format is Aero sparse (`AEROSPAR`)
+as implemented by [`web/src/storage/opfs_sparse.ts`](../web/src/storage/opfs_sparse.ts).
 
 ---
 
@@ -144,7 +147,8 @@ Downloading a 20–40GB disk image before boot is not viable. `StreamingDisk` th
 
 - Improves CDN cache hit rate (many clients will request identical ranges).
 - Reduces request fan-out by batching adjacent reads.
-- Keeps local storage simple (direct mapping to `SparseDisk` blocks).
+- Keeps local storage simple (direct mapping to the local sparse-cache block size, i.e. `AEROSPAR`
+  blocks).
 
 ### Recommended default `CHUNK_SIZE`
 
@@ -156,7 +160,7 @@ Rationale:
 
 - Small enough to avoid excessive over-fetch on random reads.
 - Large enough that request overhead (headers, latency, TLS, CDN processing) is amortized.
-- Aligns well with `SparseDisk` block sizes that are typically ~1 MiB.
+- Aligns well with `AEROSPAR` block sizes that are typically ~1 MiB.
 - Creates a manageable number of total chunks:
   - 20 GiB image ≈ 20,480 chunks
   - 40 GiB image ≈ 40,960 chunks
@@ -640,7 +644,7 @@ For Mode B per-user images:
 
 ### Client-side OPFS caching effect
 
-Once a chunk is written to the local `SparseDisk` in OPFS:
+Once a chunk is written to the local `AEROSPAR` sparse cache file in OPFS:
 
 - repeat reads for the same bytes do not incur network cost
 - boot performance becomes much less sensitive to CDN cache hit rate after the first run
