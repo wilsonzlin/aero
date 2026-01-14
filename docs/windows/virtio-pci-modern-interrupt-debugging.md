@@ -50,7 +50,8 @@ If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.
 - `virtio-input-irq|INFO|mode=intx`
 - `virtio-input-irq|INFO|mode=msi|messages=<n>`
 - `virtio-snd-irq|INFO|mode=intx`
-- `virtio-snd-irq|INFO|mode=msi|messages=<n>`
+- `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` *(when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)*
+- `virtio-snd-irq|INFO|mode=msi|messages=<n>` *(fallback: message interrupts; does not distinguish MSI vs MSI-X)*
 
 For `virtio-blk`, the selftest emits a richer line from the miniport IOCTL query:
 
@@ -58,7 +59,7 @@ For `virtio-blk`, the selftest emits a richer line from the miniport IOCTL query
 
 Notes:
 
-- `mode=msi` means **message-signaled interrupts** (MSI or MSI-X). The markers do not attempt to distinguish MSI vs MSI-X except for virtio-blk (where `mode=msix` is reported if vectors are assigned).
+- `mode=msi` means **message-signaled interrupts** (MSI or MSI-X). Most markers do not attempt to distinguish MSI vs MSI-X, but some drivers may report `mode=msix` when additional vector routing diagnostics are available (for example via a device-specific diag interface).
 - `messages=<n>` / `message_count=<n>` is the number of interrupt messages Windows granted. Drivers must remain functional even when Windows grants fewer than requested (or only INTx).
 - The tool logs to `C:\aero-virtio-selftest.log` and emits markers on stdout/COM1 for host-side parsing.
 

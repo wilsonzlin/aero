@@ -159,7 +159,8 @@ You can also use `aero-virtio-selftest.exe`:
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
 - The selftest also emits a `virtio-snd-irq|INFO|...` line indicating which interrupt mode Windows assigned:
   - `virtio-snd-irq|INFO|mode=intx`
-  - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+  - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)
+  - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (fallback: message-signaled interrupts; does not distinguish MSI vs MSI-X)
 - See `../../tests/guest-selftest/README.md`.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).

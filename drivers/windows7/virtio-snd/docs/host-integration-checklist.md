@@ -88,7 +88,8 @@ To quickly confirm what Windows (and the driver) selected at runtime:
   - `virtiosnd: interrupt mode: polling-only`
 - `aero-virtio-selftest.exe` emits a `virtio-snd-irq|INFO|...` line indicating what Windows assigned:
   - `virtio-snd-irq|INFO|mode=intx`
-  - `virtio-snd-irq|INFO|mode=msi|messages=<n>`
+  - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)
+  - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (fallback: message interrupts; does not distinguish MSI vs MSI-X)
 
 ### MSI/MSI-X (message-signaled interrupts)
 
