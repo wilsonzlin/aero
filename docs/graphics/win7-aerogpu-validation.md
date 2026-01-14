@@ -196,6 +196,8 @@ The fastest way to make progress is to **never skip steps**. Each step has a “
   - draws a rotating triangle,
   - presents at vsync (or at least repeatedly),
   - exits cleanly.
+- For D3D11 compute bring-up (FL10\_0): run `drivers/aerogpu/tests/win7/d3d11_compute_smoke` to validate
+  `ID3D11ComputeShader` creation, SRV/UAV buffer binding, `Dispatch`, and staging readback.
 
 **Pass criteria**
 
