@@ -478,9 +478,8 @@ Some bring-up entrypoints correspond primarily to **fixed-function** and legacy 
 
 In particular:
 
-- **Patch caps**: keep N-patch/patch caps conservative (keep `MaxNpatchTessellationLevel` finite). The current UMD
-  advertises `D3DDEVCAPS_RTPATCHES`/`D3DDEVCAPS_NPATCHES` with a finite `MaxNpatchTessellationLevel` (currently 64.0) so
-  Win7 runtimes can route patch calls without requesting unbounded tessellation; keep these values conservative until patch
-  rendering is exercised more widely on Win7.
+- **Patch caps**: keep N-patch/patch caps conservative. Patch rendering entrypoints may still exist, but the caps are
+  intentionally not advertised (`D3DDEVCAPS_*PATCHES` / `MaxNpatchTessellationLevel`) so the runtime/apps prefer the core
+  triangle/VB/IB paths.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`). 
